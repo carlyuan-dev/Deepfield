@@ -27,7 +27,7 @@ export interface WorkerLoop {
 interface ActiveExecution {
   controller: AbortController;
   settled: boolean;
-  settle: (code: string, message: string) => void;
+  settle: (code: string, message: string, abortSignal: boolean) => void;
 }
 
 function safeRequestId(value: unknown): string | undefined {
@@ -65,7 +65,7 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
     const request = value;
     const existing = active.get(request.requestId);
     if (existing) {
-      existing.settle("duplicate_request", "a request with this id is already active");
+      existing.settle("duplicate_request", "a request with this id is already active", true);
       return;
     }
 
@@ -75,13 +75,21 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
       settled: false,
       settle: () => {},
     };
-    execution.settle = (code: string, message: string): void => {
+    const finalize = (): void => {
       if (execution.settled) {
         return;
       }
       execution.settled = true;
       active.delete(request.requestId);
-      execution.controller.abort();
+    };
+    execution.settle = (code: string, message: string, abortSignal: boolean): void => {
+      if (execution.settled) {
+        return;
+      }
+      finalize();
+      if (abortSignal) {
+        execution.controller.abort();
+      }
       if (!disposed) {
         endpoint.postMessage({
           requestId: request.requestId,
@@ -101,13 +109,11 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
         !Value.Check(AgentWorkerEventSchema, event) ||
         safeRequestId(event) !== request.requestId
       ) {
-        execution.settle("invalid_event", "agent emitted an invalid event");
+        execution.settle("invalid_event", "agent emitted an invalid event", true);
         return;
       }
       if (event.type === "completed" || event.type === "failed") {
-        execution.settled = true;
-        active.delete(request.requestId);
-        execution.controller.abort();
+        finalize();
         endpoint.postMessage(event);
         return;
       }
@@ -118,11 +124,15 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
       .then(() => chatAgent.run(request, emit, controller.signal))
       .then(() => {
         if (!execution.settled && !disposed) {
-          execution.settle("agent_no_terminal_event", "agent finished without a terminal event");
+          execution.settle(
+            "agent_no_terminal_event",
+            "agent finished without a terminal event",
+            false,
+          );
         }
       })
       .catch(() => {
-        execution.settle("agent_error", "agent execution failed");
+        execution.settle("agent_error", "agent execution failed", false);
       });
   }
 

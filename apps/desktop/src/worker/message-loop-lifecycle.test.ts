@@ -162,4 +162,94 @@ describe("worker message loop lifecycle", () => {
       },
     ]);
   });
+
+  it("keeps the signal un-aborted when the agent completes normally", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let capturedSignal: AbortSignal | undefined;
+    const completingAgent: ChatAgent = {
+      async run(workerRequest, emit, signal) {
+        capturedSignal = signal;
+        emit({ requestId: workerRequest.requestId, type: "started" });
+        emit({ requestId: workerRequest.requestId, type: "completed", text: "done" });
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, completingAgent);
+    endpoint.emit(request());
+    await flushPending();
+    expect(endpoint.posted).toEqual([
+      { requestId: "req-1", type: "started" },
+      { requestId: "req-1", type: "completed", text: "done" },
+    ]);
+    expect(loop.activeCount()).toBe(0);
+    expect(capturedSignal?.aborted).toBe(false);
+  });
+
+  it("keeps the signal un-aborted when the agent emits a failed terminal", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let capturedSignal: AbortSignal | undefined;
+    const failingAgent: ChatAgent = {
+      async run(workerRequest, emit, signal) {
+        capturedSignal = signal;
+        emit({
+          requestId: workerRequest.requestId,
+          type: "failed",
+          code: "business_failure",
+          message: "no result",
+        });
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, failingAgent);
+    endpoint.emit(request());
+    await flushPending();
+    expect(endpoint.posted).toEqual([
+      {
+        requestId: "req-1",
+        type: "failed",
+        code: "business_failure",
+        message: "no result",
+      },
+    ]);
+    expect(loop.activeCount()).toBe(0);
+    expect(capturedSignal?.aborted).toBe(false);
+  });
+
+  it("keeps the signal un-aborted when the agent rejects", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let capturedSignal: AbortSignal | undefined;
+    const rejectingAgent: ChatAgent = {
+      async run(workerRequest, emit, signal) {
+        capturedSignal = signal;
+        throw new Error("provider failure");
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, rejectingAgent);
+    endpoint.emit(request());
+    await flushPending();
+    expect(endpoint.posted).toEqual([
+      {
+        requestId: "req-1",
+        type: "failed",
+        code: "agent_error",
+        message: "agent execution failed",
+      },
+    ]);
+    expect(loop.activeCount()).toBe(0);
+    expect(capturedSignal?.aborted).toBe(false);
+  });
+
+  it("keeps the signal un-aborted when the agent finishes without a terminal event", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let capturedSignal: AbortSignal | undefined;
+    const silentAgent: ChatAgent = {
+      async run(workerRequest, emit, signal) {
+        capturedSignal = signal;
+        emit({ requestId: workerRequest.requestId, type: "started" });
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, silentAgent);
+    endpoint.emit(request());
+    await flushPending();
+    expect(loop.activeCount()).toBe(0);
+    expect(capturedSignal?.aborted).toBe(false);
+  });
 });
