@@ -68,6 +68,7 @@ export const stubModel = {
 export class FakePiAgent implements PiAgentHandle {
   aborted = false;
   promptedWith: string | undefined;
+  promptCallCount = 0;
   receivedOptions: AgentOptions | undefined;
   listenerCount = 0;
   private listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
@@ -87,13 +88,16 @@ export class FakePiAgent implements PiAgentHandle {
     };
   }
 
+  // Mirrors real Pi Agent.abort(): it only interrupts an active run. Calling it
+  // before prompt() must not poison a later prompt, so we never abort the
+  // internal signal here; pending runs are released via resolvePending.
   abort(): void {
     this.aborted = true;
-    this.signalController.abort();
     this.resolvePending?.();
   }
 
   async prompt(input: string): Promise<void> {
+    this.promptCallCount += 1;
     this.promptedWith = input;
     if (this.script.pending) {
       await new Promise<void>((resolve) => {

@@ -25,18 +25,25 @@ describe("pi chat agent lifecycle", () => {
     expect(fake.listenerCount).toBe(0);
   });
 
-  it("calls agent.abort when the supplied signal is already aborted", async () => {
-    const fake = new FakePiAgent({ events: [agentEnd([assistant("ok")])] });
+  it("never starts the prompt when the supplied signal is already aborted", async () => {
+    const fake = new FakePiAgent({ events: [] });
     const agent = createPiChatAgent(makeRuntime(fake, stubModel));
     const controller = new AbortController();
     controller.abort();
     const result = await capture(agent, controller.signal);
-    expect(result.error).toBeUndefined();
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
     expect(fake.aborted).toBe(true);
+    expect(fake.promptCallCount).toBe(0);
+    expect(fake.promptedWith).toBeUndefined();
+    expect(result.events).toEqual([]);
+    expect(result.error?.message).not.toContain("sk-secret-test-key");
+    expect(result.error?.message).not.toContain("当前问题");
   });
 
   it("maps history, keeps the prompt out of history, disables tools/thinking and injects the key", async () => {
-    const fake = new FakePiAgent({ events: [agentEnd([assistant("ok")])] });
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+    });
     await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
 
     const options = fake.receivedOptions!;

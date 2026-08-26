@@ -22,6 +22,7 @@ describe("pi chat agent", () => {
         textDelta("你"),
         thinkingDelta(),
         textDelta("好"),
+        { type: "agent_start" },
         { type: "tool_execution_start", toolCallId: "t1", toolName: "x", args: {} },
         { type: "message_end", message: assistant("你好") },
         agentEnd([assistant("你好")]),
@@ -87,11 +88,22 @@ describe("pi chat agent", () => {
   });
 
   it("does not abort on a normal completion and cleans up listeners", async () => {
-    const fake = new FakePiAgent({ events: [agentEnd([assistant("ok")])] });
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+    });
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeUndefined();
     expect(fake.aborted).toBe(false);
     expect(fake.listenerCount).toBe(0);
+  });
+
+  it("treats agent_end without agent_start as a protocol failure", async () => {
+    const fake = new FakePiAgent({ events: [agentEnd([assistant("ok")])] });
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect(result.events.some((event) => event.type === "started")).toBe(false);
+    expect(result.events.some((event) => event.type === "completed")).toBe(false);
+    expect(result.error?.message).not.toContain("sk-secret-test-key");
   });
 });
 

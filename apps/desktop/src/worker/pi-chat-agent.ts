@@ -85,6 +85,7 @@ export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): Chat
       }
 
       let finalText = "";
+      let startedEmitted = false;
       let sawAgentEnd = false;
       let providerFailure = false;
       let adapterSettled = false;
@@ -111,7 +112,23 @@ export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): Chat
         toolExecution: "sequential",
       });
 
+      const abort = (): void => agent.abort();
+      if (signal.aborted) {
+        // Pi's abort() is a no-op before an active run exists; never start a
+        // prompt that is already meant to be cancelled.
+        abort();
+        throw new PiChatAgentError("agent execution aborted before start");
+      }
+      signal.addEventListener("abort", abort, { once: true });
+
       const unsubscribe = agent.subscribe((event) => {
+        if (event.type === "agent_start") {
+          if (!startedEmitted) {
+            startedEmitted = true;
+            emit({ requestId: request.requestId, type: "started" });
+          }
+          return;
+        }
         if (
           event.type === "message_update" &&
           event.assistantMessageEvent.type === "text_delta"
@@ -122,6 +139,7 @@ export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): Chat
             type: "text_delta",
             delta: event.assistantMessageEvent.delta,
           });
+          return;
         }
         if (event.type === "agent_end") {
           sawAgentEnd = true;
@@ -130,14 +148,7 @@ export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): Chat
           }
         }
       });
-      const abort = (): void => agent.abort();
-      if (signal.aborted) {
-        abort();
-      } else {
-        signal.addEventListener("abort", abort, { once: true });
-      }
 
-      emit({ requestId: request.requestId, type: "started" });
       try {
         await agent.prompt(request.prompt);
       } catch {
@@ -150,8 +161,8 @@ export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): Chat
       if (providerFailure) {
         throw new PiChatAgentError("agent execution failed");
       }
-      if (!sawAgentEnd) {
-        throw new PiChatAgentError("agent finished without a terminal event");
+      if (!startedEmitted || !sawAgentEnd) {
+        throw new PiChatAgentError("agent finished without a complete start/end sequence");
       }
       emitTerminal({ requestId: request.requestId, type: "completed", text: finalText });
     },
