@@ -32,9 +32,11 @@ cat node_modules/electron/path.txt   # 应为 Electron.app/Contents/MacOS/Electr
 node_modules/.bin/electron --version # 应为 v43.4.0
 ```
 
-> 本机 GitHub 直连不通时，可让官方脚本经 npm 配置的 registry 镜像下载：
-> `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`
-> 不使用未批准的第三方镜像。
+> **下载源与信任说明**：默认优先官方 Electron 下载源（GitHub releases）。
+> 本机 GitHub 直连不可达（443 连接超时）时，本次恢复使用了用户环境已存在并接受的
+> **第三方镜像 npmmirror**（`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
+> 传给官方 install.js）。该镜像不是官方来源；使用第三方镜像前需自行评估并接受其
+> 供应链信任。如有官方源可达的环境，应优先使用官方源。
 
 ## 日常开发
 
@@ -102,7 +104,8 @@ npm run dist:local   # build + electron-builder --mac dmg zip --arm64（identity
 `Mach-O 64-bit executable arm64`；可用 Playwright `executablePath` 指向
 `Deepfield.app/Contents/MacOS/Deepfield` 加 `DEEPFIELD_E2E=1`/fake/隔离 userData 做冒烟。
 
-> GitHub 直连不通时给 electron-builder 加同一镜像：
+> 默认优先官方 Electron 下载源；GitHub 直连不可达时，可给 electron-builder 传同一
+> **第三方镜像**（非官方来源，需自行接受供应链信任）：
 > `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run dist:dir`
 
 ## 签名状态（重要）
@@ -121,7 +124,8 @@ npm run dist:local   # build + electron-builder --mac dmg zip --arm64（identity
 - **Electron failed to install correctly** → 见上文官方恢复命令。
 - **preload 报 module not found: typebox/value** → 重新 `npm run build`；
   preload 构建已强制内联全部依赖（沙箱 preload 无法 require node_modules）。
-- **dist 打包 connect ETIMEDOUT 20.205.243.166** → GitHub 不可达，使用
-  `ELECTRON_MIRROR` 镜像环境变量重试。
+- **dist 打包 connect ETIMEDOUT 20.205.243.166** → GitHub 不可达；默认应优先官方源，
+  确需离线恢复时可使用本机环境已接受的第三方镜像（npmmirror，非官方来源，
+  供应链信任自负）经 `ELECTRON_MIRROR` 环境变量重试。
 - **DMG 已挂载未卸载** → `hdiutil detach '/Volumes/Deepfield 0.1.0-arm64'`。
 - **E2E 失败** → 查看 `test-results/` 下的 error-context；确认网络无关（fake 模式）。

@@ -44,6 +44,63 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
+interface ShellMetrics {
+  bodyScrollTop: number;
+  htmlScrollHeight: number;
+  htmlClientHeight: number;
+  workspaceScrollTop: number;
+  workspaceScrollHeight: number;
+  workspaceClientHeight: number;
+  sidebarScrollTop: number;
+  brand: { top: number; bottom: number; left: number; right: number } | null;
+  context: { top: number; bottom: number; left: number; right: number } | null;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+async function readShellMetrics(page: Page): Promise<ShellMetrics> {
+  return page.evaluate(() => {
+    const rect = (el: Element | null) => {
+      if (!el) {
+        return null;
+      }
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+    };
+    const workspace = document.querySelector("main.workspace");
+    const sidebar = document.querySelector(".sidebar");
+    return {
+      bodyScrollTop: document.scrollingElement?.scrollTop ?? 0,
+      htmlScrollHeight: document.documentElement.scrollHeight,
+      htmlClientHeight: document.documentElement.clientHeight,
+      workspaceScrollTop: workspace?.scrollTop ?? -1,
+      workspaceScrollHeight: workspace?.scrollHeight ?? -1,
+      workspaceClientHeight: workspace?.clientHeight ?? -1,
+      sidebarScrollTop: sidebar?.scrollTop ?? -1,
+      brand: rect(document.querySelector(".sidebar .brand")),
+      context: rect(document.querySelector(".chat-context")),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+}
+
+// The shell must never scroll: message growth happens inside .messages only.
+async function assertChatShellStable(page: Page): Promise<void> {
+  const metrics = await readShellMetrics(page);
+  expect(metrics, JSON.stringify(metrics)).toMatchObject({
+    bodyScrollTop: 0,
+    workspaceScrollTop: 0,
+    sidebarScrollTop: 0,
+  });
+  expect(metrics.htmlScrollHeight - metrics.htmlClientHeight).toBeLessThanOrEqual(1);
+  expect(metrics.workspaceScrollHeight - metrics.workspaceClientHeight).toBeLessThanOrEqual(1);
+  expect(metrics.brand?.top).toBeGreaterThanOrEqual(0);
+  expect(metrics.brand?.bottom).toBeLessThanOrEqual(metrics.viewportHeight);
+  expect(metrics.context?.top).toBeGreaterThanOrEqual(0);
+  expect(metrics.context?.bottom).toBeLessThanOrEqual(metrics.viewportHeight);
+}
+
 test("foundation vertical slice survives a restart", async () => {
   const userDataRoot = mkdtempSync(join(tmpdir(), "deepfield-e2e-"));
   try {
@@ -81,6 +138,7 @@ test("foundation vertical slice survives a restart", async () => {
     await page.getByRole("button", { name: "发送" }).click();
     await expect(page.getByText("测试回复")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".message", { hasText: "你好" })).toHaveCount(1);
+    await assertChatShellStable(page);
     await assertNoHorizontalOverflow(page);
     await page.screenshot({ path: SCREENSHOTS.chat });
 

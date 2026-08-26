@@ -2,7 +2,11 @@
 .chat-view {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   height: 100%;
+  /* Nested flex must be allowed to shrink so message growth scrolls inside
+     .messages instead of scrolling the outer workspace/shell. */
+  min-height: 0;
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
@@ -35,7 +39,10 @@
 }
 
 .messages {
-  flex: 1;
+  flex: 1 1 auto;
+  /* Shrink below content height so overflow-y: auto scrolls inside the list
+     rather than pushing the outer chat-view/workspace. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
