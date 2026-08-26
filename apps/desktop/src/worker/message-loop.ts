@@ -24,6 +24,12 @@ export interface WorkerLoop {
   activeCount(): number;
 }
 
+interface ActiveExecution {
+  controller: AbortController;
+  settled: boolean;
+  settle: (code: string, message: string) => void;
+}
+
 function safeRequestId(value: unknown): string | undefined {
   if (typeof value === "object" && value !== null) {
     const requestId = (value as { requestId?: unknown }).requestId;
@@ -35,7 +41,7 @@ function safeRequestId(value: unknown): string | undefined {
 }
 
 export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: ChatAgent): WorkerLoop {
-  const active = new Map<string, AbortController>();
+  const active = new Map<string, ActiveExecution>();
   let disposed = false;
   const unsubscribe = endpoint.onMessage((value) => handleInbound(value));
 
@@ -57,26 +63,25 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
     }
 
     const request = value;
-    if (active.has(request.requestId)) {
-      endpoint.postMessage({
-        requestId: request.requestId,
-        type: "failed",
-        code: "duplicate_request",
-        message: "a request with this id is already active",
-      } satisfies AgentWorkerEvent);
+    const existing = active.get(request.requestId);
+    if (existing) {
+      existing.settle("duplicate_request", "a request with this id is already active");
       return;
     }
 
     const controller = new AbortController();
-    active.set(request.requestId, controller);
-    let settled = false;
-
-    const settle = (code: string, message: string): void => {
-      if (settled) {
+    const execution: ActiveExecution = {
+      controller,
+      settled: false,
+      settle: () => {},
+    };
+    execution.settle = (code: string, message: string): void => {
+      if (execution.settled) {
         return;
       }
-      settled = true;
+      execution.settled = true;
       active.delete(request.requestId);
+      execution.controller.abort();
       if (!disposed) {
         endpoint.postMessage({
           requestId: request.requestId,
@@ -86,18 +91,23 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
         } satisfies AgentWorkerEvent);
       }
     };
+    active.set(request.requestId, execution);
 
     const emit = (event: unknown): void => {
-      if (disposed || settled) {
+      if (disposed || execution.settled) {
         return;
       }
-      if (!Value.Check(AgentWorkerEventSchema, event) || safeRequestId(event) !== request.requestId) {
-        settle("invalid_event", "agent emitted an invalid event");
+      if (
+        !Value.Check(AgentWorkerEventSchema, event) ||
+        safeRequestId(event) !== request.requestId
+      ) {
+        execution.settle("invalid_event", "agent emitted an invalid event");
         return;
       }
       if (event.type === "completed" || event.type === "failed") {
-        settled = true;
+        execution.settled = true;
         active.delete(request.requestId);
+        execution.controller.abort();
         endpoint.postMessage(event);
         return;
       }
@@ -107,12 +117,12 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
     void Promise.resolve()
       .then(() => chatAgent.run(request, emit, controller.signal))
       .then(() => {
-        if (!settled && !disposed) {
-          settle("agent_no_terminal_event", "agent finished without a terminal event");
+        if (!execution.settled && !disposed) {
+          execution.settle("agent_no_terminal_event", "agent finished without a terminal event");
         }
       })
       .catch(() => {
-        settle("agent_error", "agent execution failed");
+        execution.settle("agent_error", "agent execution failed");
       });
   }
 
@@ -123,8 +133,9 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
       }
       disposed = true;
       unsubscribe();
-      for (const controller of active.values()) {
-        controller.abort();
+      for (const execution of active.values()) {
+        execution.settled = true;
+        execution.controller.abort();
       }
       active.clear();
     },

@@ -37,6 +37,18 @@ describe("isAllowedNavigation", () => {
     expect(isAllowedNavigation(`${app}?x=1`, app)).toBe(false);
   });
 
+  it("rejects file navigation to a different hostname", () => {
+    expect(
+      isAllowedNavigation("file:///app/index.html", "file://remote/app/index.html"),
+    ).toBe(false);
+    expect(
+      isAllowedNavigation("file://remote/app/index.html", "file:///app/index.html"),
+    ).toBe(false);
+    expect(
+      isAllowedNavigation("file://remote/a/index.html", "file://remote/a/index.html"),
+    ).toBe(true);
+  });
+
   it("rejects scheme switches and unsupported schemes", () => {
     const app = "file:///tmp/app/index.html";
     expect(isAllowedNavigation(app, "http://localhost:5173/")).toBe(false);

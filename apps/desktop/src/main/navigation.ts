@@ -15,7 +15,11 @@ export function isAllowedNavigation(currentUrl: string, nextUrl: string): boolea
     return false;
   }
   if (current.protocol === "file:") {
-    return current.pathname === next.pathname && current.search === next.search;
+    return (
+      current.hostname === next.hostname &&
+      current.pathname === next.pathname &&
+      current.search === next.search
+    );
   }
   if (current.protocol === "http:" || current.protocol === "https:") {
     return current.origin === next.origin;

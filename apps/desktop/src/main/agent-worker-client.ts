@@ -98,7 +98,7 @@ export class AgentWorkerClient {
     }
     return {
       [Symbol.asyncIterator]: () => ({
-        next: () => this.next(request.requestId, stream),
+        next: () => this.next(stream),
         return: () => {
           this.cleanup(request.requestId, stream);
           return Promise.resolve({ value: undefined, done: true } as StreamIteratorResult);
@@ -154,10 +154,11 @@ export class AgentWorkerClient {
     if (stream.error || stream.terminalSeen) {
       return;
     }
+    const terminal = isTerminal(event);
     const waiter = stream.waiters.shift();
     if (waiter) {
       waiter.resolve({ value: event, done: false });
-      if (isTerminal(event)) {
+      if (terminal) {
         stream.terminalSeen = true;
         this.cleanup(requestId, stream);
         for (const pendingWaiter of stream.waiters.splice(0)) {
@@ -171,21 +172,18 @@ export class AgentWorkerClient {
       return;
     }
     stream.queue.push(event);
-    if (isTerminal(event)) {
+    if (terminal) {
       stream.terminalSeen = true;
+      this.cleanup(requestId, stream);
     }
   }
 
-  private next(requestId: string, stream: PendingStream): Promise<StreamIteratorResult> {
+  private next(stream: PendingStream): Promise<StreamIteratorResult> {
     if (stream.error) {
       return Promise.reject(stream.error);
     }
     if (stream.queue.length > 0) {
-      const event = stream.queue.shift()!;
-      if (stream.terminalSeen && stream.queue.length === 0) {
-        this.cleanup(requestId, stream);
-      }
-      return Promise.resolve({ value: event, done: false });
+      return Promise.resolve({ value: stream.queue.shift()!, done: false });
     }
     if (stream.terminalSeen) {
       return Promise.resolve({ value: undefined, done: true });
