@@ -8,6 +8,7 @@ export interface ChatMessageView {
   content: string;
   status: "done" | DraftStatus;
   requestId: string | undefined;
+  pending: boolean;
 }
 
 export interface ChatState {
@@ -40,9 +41,9 @@ export type ChatAction =
   | { type: "LOAD_START"; projectId: string }
   | { type: "LOAD_SUCCESS"; projectId: string; messages: ChatMessage[] }
   | { type: "LOAD_ERROR"; projectId: string; error: string }
-  | { type: "USER_SUBMIT"; content: string }
+  | { type: "USER_SUBMIT"; content: string; requestId: string }
   | { type: "WORKER_EVENT"; projectId: string | undefined; event: AgentWorkerEvent }
-  | { type: "SEND_ERROR"; error: string }
+  | { type: "SEND_ERROR"; requestId: string; error: string }
   | { type: "RESET" };
 
 function toView(message: ChatMessage): ChatMessageView {
@@ -52,6 +53,7 @@ function toView(message: ChatMessage): ChatMessageView {
     content: message.content,
     status: "done",
     requestId: undefined,
+    pending: false,
   };
 }
 
@@ -89,9 +91,19 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             role: "user",
             content: action.content,
             status: "done",
-            requestId: undefined,
+            requestId: action.requestId,
+            pending: true,
           },
         ],
+      };
+    case "SEND_ERROR":
+      return {
+        ...state,
+        sending: false,
+        sendError: action.error,
+        messages: state.messages.filter(
+          (message) => !(message.pending && message.requestId === action.requestId),
+        ),
       };
     case "WORKER_EVENT": {
       const { event, projectId } = action;
@@ -107,6 +119,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (requestProjects[requestId] === undefined) {
         requestProjects[requestId] = projectId;
       }
+      const messages = state.messages.map((message) =>
+        message.pending && message.requestId === requestId ? { ...message, pending: false } : message,
+      );
       let draft: ChatMessageView =
         existing ?? {
           key: `draft-${requestId}`,
@@ -114,6 +129,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           content: "",
           status: "streaming",
           requestId,
+          pending: false,
         };
       const draftOrder =
         existing === undefined ? [...state.draftOrder, requestId] : state.draftOrder;
@@ -137,13 +153,12 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         sending,
+        messages,
         requestProjects,
         draftOrder,
         drafts: { ...state.drafts, [requestId]: draft },
       };
     }
-    case "SEND_ERROR":
-      return { ...state, sending: false, sendError: action.error };
     case "RESET":
       return initialChatState;
   }

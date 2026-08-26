@@ -53,14 +53,14 @@ describe("preload api", () => {
     await api.projects.list();
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
-    await api.chat.send("p1", "你好");
+    await api.chat.send("p1", "你好", "req-1");
     await api.chat.listMessages("p1");
     expect(invokes).toEqual([
       { channel: IPC_CHANNELS.projectsCreate, args: [input] },
       { channel: IPC_CHANNELS.projectsList, args: [] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
-      { channel: IPC_CHANNELS.chatSend, args: ["p1", "你好"] },
+      { channel: IPC_CHANNELS.chatSend, args: ["p1", "你好", "req-1"] },
       { channel: IPC_CHANNELS.chatListMessages, args: ["p1"] },
     ]);
   });

@@ -85,12 +85,10 @@ export function makeChatService(
   db: TestDb,
   worker: FakeWorker,
   key = "sk-configured",
-  requestIdFactory: () => string = () => "req-1",
 ): { service: ChatService; finished: { promise: Promise<void>; resolve: () => void } } {
   const contextBuilder = new ContextBuilder(db.repos);
   const finished = deferred();
   const service = new ChatService(db.repos, contextBuilder, makeSecrets(key), worker, {
-    requestIdFactory,
     onConsumptionFinished: () => finished.resolve(),
   });
   return { service, finished };

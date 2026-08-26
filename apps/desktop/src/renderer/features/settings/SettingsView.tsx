@@ -14,11 +14,19 @@ export function SettingsView({ api, onBack }: SettingsViewProps) {
 
   useEffect(() => {
     let cancelled = false;
-    void api.settings.hasDeepSeekKey().then((has) => {
-      if (!cancelled) {
-        setConfigured(has);
-      }
-    });
+    void api.settings.hasDeepSeekKey().then(
+      (has) => {
+        if (!cancelled) {
+          setConfigured(has);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setConfigured(false);
+          setError("无法读取设置，请重试");
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };

@@ -56,7 +56,7 @@ export function workspaceReducer(
 ): WorkspaceState {
   switch (action.type) {
     case "OPEN_CHAT":
-      return { ...state, view: "chat" };
+      return { ...state, view: "chat", chat: { projectId: undefined } };
     case "OPEN_CAPABILITY_DIRECT":
       return {
         ...state,

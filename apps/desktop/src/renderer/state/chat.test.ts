@@ -46,14 +46,55 @@ describe("chat reducer", () => {
     expect(visibleMessages(state).map((message) => message.content)).toEqual(["a", "b"]);
   });
 
-  it("appends the local user message immediately and disables sending", () => {
-    const state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好" });
+  it("appends the local user message immediately with a pending marker and disables sending", () => {
+    const state = chatReducer(loadedProject("p1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
     expect(state.sending).toBe(true);
-    expect(state.messages.at(-1)).toMatchObject({ role: "user", content: "你好" });
+    expect(state.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "你好",
+      requestId: "r1",
+      pending: true,
+    });
+  });
+
+  it("removes the pending user message when the send is rejected", () => {
+    let state = chatReducer(loadedProject("p1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, { type: "SEND_ERROR", requestId: "r1", error: "发送失败，请重试" });
+    expect(state.sending).toBe(false);
+    expect(state.sendError).toBe("发送失败，请重试");
+    expect(state.messages.some((message) => message.role === "user" && message.content === "你好")).toBe(false);
+  });
+
+  it("marks the pending user as persisted once worker events arrive", () => {
+    let state = chatReducer(loadedProject("p1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
+    expect(state.messages[state.messages.length - 1]).toMatchObject({ pending: false });
+  });
+
+  it("keeps the user message when the worker reports failure", () => {
+    let state = chatReducer(loadedProject("p1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "failed", "provider_error") });
+    expect(state.messages.some((message) => message.role === "user" && message.content === "你好")).toBe(true);
   });
 
   it("builds a draft from started and appends deltas in order", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好" });
+    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "测") });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "试回") });
@@ -62,7 +103,7 @@ describe("chat reducer", () => {
   });
 
   it("replaces the draft with the completed text and restores sending", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好" });
+    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "completed", "测试回复") });
     expect(state.drafts["r1"]).toMatchObject({ status: "done", content: "测试回复" });
@@ -70,7 +111,7 @@ describe("chat reducer", () => {
   });
 
   it("marks the draft failed and restores sending without a final text", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好" });
+    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "failed", "provider_error") });
     expect(state.drafts["r1"]).toMatchObject({ status: "failed" });
@@ -78,7 +119,7 @@ describe("chat reducer", () => {
   });
 
   it("ignores late deltas after completion", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好" });
+    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "completed", "最终") });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "晚到") });
     expect(state.drafts["r1"]).toMatchObject({ status: "done", content: "最终" });
@@ -86,14 +127,14 @@ describe("chat reducer", () => {
 
   it("applies events before the send promise resolves via the request id", () => {
     let state = loadedProject("p1");
-    state = chatReducer(state, { type: "USER_SUBMIT", content: "你好" });
+    state = chatReducer(state, { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
     expect(state.drafts["r1"]).toMatchObject({ status: "streaming", content: "" });
   });
 
   it("ignores events from other projects", () => {
     let state = loadedProject("p2");
-    state = chatReducer(state, { type: "USER_SUBMIT", content: "你好" });
+    state = chatReducer(state, { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     const before = state;
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
     expect(state.drafts).toEqual(before.drafts);
@@ -102,7 +143,7 @@ describe("chat reducer", () => {
 
   it("keeps old-project drafts out of the current project render", () => {
     let state = loadedProject("p1");
-    state = chatReducer(state, { type: "USER_SUBMIT", content: "你好" });
+    state = chatReducer(state, { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
     state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "旧") });
     state = chatReducer(state, { type: "LOAD_START", projectId: "p2" });

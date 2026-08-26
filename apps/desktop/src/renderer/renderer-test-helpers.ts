@@ -21,7 +21,7 @@ export interface FakeDesktopApi extends DesktopApi {
     setDeepSeekKey: Mock<(value: string) => Promise<void>>;
   };
   chat: {
-    send: Mock<(projectId: string, content: string) => Promise<{ requestId: string }>>;
+    send: Mock<(projectId: string, content: string, requestId: string) => Promise<{ requestId: string }>>;
     subscribe: Mock<(listener: (event: AgentWorkerEvent) => void) => () => void>;
     listMessages: Mock<(projectId: string) => Promise<ChatMessage[]>>;
   };
@@ -51,10 +51,11 @@ export function makeFakeApi(): FakeDesktopApi {
       setDeepSeekKey: vi.fn(async (_value: string): Promise<void> => {}),
     },
     chat: {
-      send: vi.fn(async (_projectId: string, _content: string): Promise<{ requestId: string }> => {
-        sendSeq += 1;
-        return { requestId: `req-${sendSeq}` };
-      }),
+      send: vi.fn(
+        async (_projectId: string, _content: string, requestId: string): Promise<{ requestId: string }> => {
+          return { requestId };
+        },
+      ),
       subscribe: vi.fn((listener: (event: AgentWorkerEvent) => void): (() => void) => {
         listeners.add(listener);
         return () => {

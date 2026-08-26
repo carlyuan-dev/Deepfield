@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
@@ -11,7 +10,7 @@ import {
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { ContextBuilder } from "./context-builder.js";
-import type { AgentWorkerPort, RequestIdFactory, SecretReader } from "./ports.js";
+import type { AgentWorkerPort, SecretReader } from "./ports.js";
 
 export const DEEPSEEK_KEY_NAME = "deepseek.apiKey";
 
@@ -27,7 +26,6 @@ export interface ChatSendResult {
 }
 
 export interface ChatServiceOptions {
-  requestIdFactory?: RequestIdFactory;
   onConsumptionFinished?: (requestId: string) => void;
 }
 
@@ -45,10 +43,14 @@ export class ChatService {
   async send(
     projectId: string,
     content: string,
+    requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
   ): Promise<ChatSendResult> {
     if (typeof content !== "string" || content.trim().length === 0) {
       throw new ChatServiceError("content must not be blank");
+    }
+    if (typeof requestId !== "string" || requestId.length === 0) {
+      throw new ChatServiceError("request id must not be blank");
     }
     const apiKey = this.secrets.get(DEEPSEEK_KEY_NAME);
     if (apiKey === undefined || apiKey.trim().length === 0) {
@@ -75,7 +77,6 @@ export class ChatService {
     }
     const context = this.contextBuilder.build(project.id, { excludeMessageId: userMessage.id });
 
-    const requestId = this.options.requestIdFactory?.() ?? randomUUID();
     const request: AgentWorkerRequest = {
       requestId,
       kind: "chat.prompt",

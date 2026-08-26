@@ -11,7 +11,7 @@ export interface DesktopApi {
     setDeepSeekKey(value: string): Promise<void>;
   };
   chat: {
-    send(projectId: string, content: string): Promise<{ requestId: string }>;
+    send(projectId: string, content: string, requestId: string): Promise<{ requestId: string }>;
     subscribe(listener: (event: AgentWorkerEvent) => void): () => void;
     listMessages(projectId: string): Promise<ChatMessage[]>;
   };

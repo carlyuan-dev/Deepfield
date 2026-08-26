@@ -77,14 +77,14 @@ describe("workspace reducer", () => {
     expect(state.capability.directUi.chatRail).toBe("hidden");
   });
 
-  it("opening chat does not clear an existing project binding", () => {
+  it("opening chat clears any bound project so 新对话 starts fresh", () => {
     let state = workspaceReducer(initialWorkspaceState, {
       type: "OPEN_PROJECT_CHAT",
       projectId: "p1",
     });
     state = workspaceReducer(state, { type: "OPEN_CHAT" });
     expect(state.view).toBe("chat");
-    expect(state.chat.projectId).toBe("p1");
+    expect(state.chat.projectId).toBeUndefined();
   });
 
   it("opening a direct capability with a project id binds the workspace", () => {

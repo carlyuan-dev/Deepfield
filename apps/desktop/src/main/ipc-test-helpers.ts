@@ -108,15 +108,20 @@ export class FakeSecretSettings {
 }
 
 export class FakeChatService {
-  sendCalls: Array<{ projectId: string; content: string }> = [];
+  sendCalls: Array<{ projectId: string; content: string; requestId: string }> = [];
   listMessagesCalls: string[] = [];
   history: ChatMessage[] = [];
   private listeners: Array<(event: AgentWorkerEvent) => void> = [];
 
-  send(projectId: string, content: string, onEvent: (event: AgentWorkerEvent) => void) {
-    this.sendCalls.push({ projectId, content });
+  send(
+    projectId: string,
+    content: string,
+    requestId: string,
+    onEvent: (event: AgentWorkerEvent) => void,
+  ) {
+    this.sendCalls.push({ projectId, content, requestId });
     this.listeners.push(onEvent);
-    return Promise.resolve({ requestId: "req-1" });
+    return Promise.resolve({ requestId });
   }
 
   listMessages(projectId: string): ChatMessage[] {

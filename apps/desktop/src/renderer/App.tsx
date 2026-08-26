@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { DesktopApi, Project } from "@deepfield/contracts";
 import { initialWorkspaceState, workspaceReducer } from "./state/workspace.js";
-import { emitChatEvent } from "./state/chat-events.js";
+import { createChatEventHub } from "./state/chat-event-hub.js";
+import { createRequestId } from "./request-id.js";
 import { Sidebar, type SidebarActive } from "./components/Sidebar.js";
 import { ChatView } from "./components/ChatView.js";
 import { ChatRail } from "./components/ChatRail.js";
@@ -10,18 +11,23 @@ import { SettingsView } from "./features/settings/SettingsView.js";
 
 export interface AppProps {
   api: DesktopApi;
+  requestIdFactory?: () => string;
 }
 
-export function App({ api }: AppProps) {
+export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const [workspace, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const eventHub = useMemo(() => createChatEventHub(), []);
 
   useEffect(() => {
-    const unsubscribe = api.chat.subscribe((event) => emitChatEvent(event));
-    return unsubscribe;
-  }, [api]);
+    const unsubscribe = api.chat.subscribe((event) => eventHub.emit(event));
+    return () => {
+      unsubscribe();
+      eventHub.dispose();
+    };
+  }, [api, eventHub]);
 
   const refreshProjects = useCallback((): void => {
     void api.projects.list().then(
@@ -76,6 +82,8 @@ export function App({ api }: AppProps) {
         ) : workspace.view === "chat" ? (
           <ChatView
             api={api}
+            eventHub={eventHub}
+            requestIdFactory={requestIdFactory}
             projectId={chatProjectId}
             projectLabel={chatProjectLabel}
             onOpenResearch={() =>
@@ -109,6 +117,8 @@ export function App({ api }: AppProps) {
       {showRail && (
         <ChatRail
           api={api}
+          eventHub={eventHub}
+          requestIdFactory={requestIdFactory}
           projectId={activeCapability.projectId}
           collapsed={activeCapability.chatRail === "collapsed"}
           onCollapse={() => dispatch({ type: "COLLAPSE_CHAT" })}

@@ -70,4 +70,17 @@ describe("settings view", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     expect(screen.queryByText(/sk-failing-key/)).toBeNull();
   });
+
+  it("shows a generic error when the key check fails instead of hanging", async () => {
+    const fake = makeFakeApi();
+    fake.projects.list.mockResolvedValue([]);
+    fake.settings.hasDeepSeekKey.mockRejectedValue(new Error("store boom"));
+    const { user } = await renderApp(fake);
+
+    await openSettings(fake, user);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(screen.queryByText("检测中…")).toBeNull();
+    expect(screen.queryByText(/store boom/)).toBeNull();
+    expect(screen.queryByText(/sk-/)).toBeNull();
+  });
 });

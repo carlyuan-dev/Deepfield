@@ -33,7 +33,7 @@ describe("chat service", () => {
     const service = new ChatService(db.repos, contextBuilder, secrets, worker);
     const { project, conversation } = makeProject(db);
 
-    await expect(service.send(project.id, "   ", () => {})).rejects.toBeInstanceOf(
+    await expect(service.send(project.id, "   ", "req-1", () => {})).rejects.toBeInstanceOf(
       ChatServiceError,
     );
     expect(secrets.getCalls).toBe(0);
@@ -49,7 +49,7 @@ describe("chat service", () => {
     const { project, conversation } = makeProject(db);
 
     const missing = new ChatService(db.repos, contextBuilder, makeSecrets(undefined), worker);
-    await expect(missing.send(project.id, "你好", () => {})).rejects.toBeInstanceOf(
+    await expect(missing.send(project.id, "你好", "req-1", () => {})).rejects.toBeInstanceOf(
       ChatServiceError,
     );
     expect(worker.requests).toHaveLength(0);
@@ -58,7 +58,7 @@ describe("chat service", () => {
     expect(db.repos.conversations.listRecent()).toEqual([]);
 
     const blank = new ChatService(db.repos, contextBuilder, makeSecrets("   "), worker);
-    await expect(blank.send(project.id, "你好", () => {})).rejects.toBeInstanceOf(
+    await expect(blank.send(project.id, "你好", "req-1", () => {})).rejects.toBeInstanceOf(
       ChatServiceError,
     );
     expect(worker.requests).toHaveLength(0);
@@ -86,7 +86,7 @@ describe("chat service", () => {
       contextMessagesAtSend = request.context.messages;
     };
 
-    const result = await service.send(project.id, "你好", (event) => forwarded.push(event));
+    const result = await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
     expect(result.requestId).toBe("req-1");
     await finished.promise;
 
@@ -138,7 +138,7 @@ describe("chat service", () => {
     const { project, conversation } = makeProject(db);
 
     const forwarded: AgentWorkerEvent[] = [];
-    await service.send(project.id, "你好", (event) => forwarded.push(event));
+    await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
     await finished.promise;
 
     expect(forwarded).toEqual([
@@ -166,7 +166,7 @@ describe("chat service", () => {
     const { project, conversation } = makeProject(db);
 
     const forwarded: AgentWorkerEvent[] = [];
-    await service.send(project.id, "你好", (event) => forwarded.push(event));
+    await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
     await finished.promise;
 
     expect(forwarded).toEqual([{ requestId: "req-1", type: "completed", text: "最终" }]);
@@ -182,10 +182,10 @@ describe("chat service", () => {
     const worker = new FakeWorker({
       events: (request) => [chatEvent(request.requestId, "completed", "ok")],
     });
-    const { service, finished } = makeService(db, worker, "sk-configured", () => "custom-id-9");
+    const { service, finished } = makeService(db, worker);
     const { project } = makeProject(db);
 
-    const result = await service.send(project.id, "你好", () => {});
+    const result = await service.send(project.id, "你好", "custom-id-9", () => {});
     await finished.promise;
 
     expect(result.requestId).toBe("custom-id-9");
@@ -199,7 +199,7 @@ describe("chat service", () => {
     const { service } = makeService(db, worker);
     const { project } = makeProject(db);
 
-    const result = await service.send(project.id, "你好", () => {});
+    const result = await service.send(project.id, "你好", "req-1", () => {});
     expect(result.requestId).toBe("req-1");
     await new Promise((resolve) => setImmediate(resolve));
     expect(worker.requests).toHaveLength(1);
@@ -218,7 +218,7 @@ describe("chat service", () => {
     const { project, conversation } = makeProject(db);
 
     let sinkCalls = 0;
-    await service.send(project.id, "你好", () => {
+    await service.send(project.id, "你好", "req-1", () => {
       sinkCalls += 1;
       throw new Error("sink destroyed");
     });

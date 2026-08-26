@@ -37,8 +37,10 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, value) as Promise<void>,
     },
     chat: {
-      send: (projectId: string, content: string) =>
-        ipc.invoke(IPC_CHANNELS.chatSend, projectId, content) as Promise<{ requestId: string }>,
+      send: (projectId: string, content: string, requestId: string) =>
+        ipc.invoke(IPC_CHANNELS.chatSend, projectId, content, requestId) as Promise<{
+          requestId: string;
+        }>,
       subscribe: (listener: (event: AgentWorkerEvent) => void) =>
         ipc.on(IPC_CHANNELS.chatEvents, (_event, value) => {
           if (Value.Check(AgentWorkerEventSchema, value)) {

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { App } from "./App.js";import {
+import { App } from "./App.js";
+import {
   chatMessage,
   makeFakeApi,
   project,
@@ -10,9 +11,11 @@ import { App } from "./App.js";import {
   type FakeDesktopApi,
 } from "./renderer-test-helpers.js";
 
+const REQUEST_ID = "fixed-req";
+
 async function renderApp(fake: FakeDesktopApi) {
   const user = userEvent.setup();
-  const utils = render(<App api={fake} />);
+  const utils = render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
   return { user, ...utils };
 }
 
@@ -29,33 +32,31 @@ describe("app chat", () => {
     const { user } = await renderApp(fake);
     await openProjectChat(fake, user);
 
-    const input = screen.getByLabelText("消息输入");
+    const input = screen.getByLabelText("消息输入") as HTMLTextAreaElement;
     await user.type(input, "你好");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    // local user message appears immediately; typing more keeps the send
-    // button disabled while the request is in flight
+    // local user message appears immediately and the composer is disabled
     expect(screen.getByText("你好")).toBeTruthy();
-    await user.type(input, "追加");
-    expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(input.disabled).toBe(true));
+    expect(fake.chat.send).toHaveBeenCalledWith("p1", "你好", REQUEST_ID);
 
-    const requestId = "req-stream-1";
-    fake.emit(workerEvent(requestId, "started"));
-    fake.emit(workerEvent(requestId, "text_delta", "测"));
-    fake.emit(workerEvent(requestId, "text_delta", "试回"));
-    fake.emit(workerEvent(requestId, "completed", "测试回复"));
+    fake.emit(workerEvent(REQUEST_ID, "started"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "测"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "试回"));
+    fake.emit(workerEvent(REQUEST_ID, "completed", "测试回复"));
 
     await waitFor(() => expect(screen.getByText("测试回复")).toBeTruthy());
-    await user.type(screen.getByLabelText("消息输入"), "再问");
+    await waitFor(() => expect(input.disabled).toBe(false));
+    await user.type(input, "再问");
     await waitFor(() =>
       expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(
         false,
       ),
     );
-    expect(fake.chat.send).toHaveBeenCalledWith("p1", "你好");
   });
 
-  it("marks a failed request visibly and restores the composer", async () => {
+  it("marks a failed request visibly, keeps the user message and restores the composer", async () => {
     const fake = makeFakeApi();
     fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
     const { user } = await renderApp(fake);
@@ -63,15 +64,13 @@ describe("app chat", () => {
 
     await user.type(screen.getByLabelText("消息输入"), "你好");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    fake.emit(workerEvent("req-fail", "started"));
-    fake.emit(workerEvent("req-fail", "failed", "provider_error"));
+    fake.emit(workerEvent(REQUEST_ID, "started"));
+    fake.emit(workerEvent(REQUEST_ID, "failed", "provider_error"));
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
-    await user.type(screen.getByLabelText("消息输入"), "再问");
+    expect(screen.getByText("你好")).toBeTruthy(); // worker failure keeps the persisted user
     await waitFor(() =>
-      expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
+      expect((screen.getByLabelText("消息输入") as HTMLTextAreaElement).disabled).toBe(false),
     );
   });
 
@@ -91,10 +90,10 @@ describe("app chat", () => {
     await user.type(screen.getByLabelText("消息输入"), "你好");
     await user.click(screen.getByRole("button", { name: "发送" }));
     // event arrives before send() resolves
-    fake.emit(workerEvent("req-early", "started"));
-    fake.emit(workerEvent("req-early", "text_delta", "早到"));
+    fake.emit(workerEvent(REQUEST_ID, "started"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "早到"));
     await waitFor(() => expect(screen.getByText("早到")).toBeTruthy());
-    resolveSend({ requestId: "req-early" });
+    resolveSend({ requestId: REQUEST_ID });
   });
 
   it("ignores late deltas after completion", async () => {
@@ -105,8 +104,8 @@ describe("app chat", () => {
 
     await user.type(screen.getByLabelText("消息输入"), "你好");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    fake.emit(workerEvent("req-late", "completed", "最终"));
-    fake.emit(workerEvent("req-late", "text_delta", "晚到"));
+    fake.emit(workerEvent(REQUEST_ID, "completed", "最终"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "晚到"));
 
     await waitFor(() => expect(screen.getByText("最终")).toBeTruthy());
     expect(screen.queryByText(/最终晚到/)).toBeNull();
@@ -120,19 +119,16 @@ describe("app chat", () => {
     ]);
     const { user } = await renderApp(fake);
 
-    // start a request in p1 and use its real request id for the event stream
     await openProjectChat(fake, user);
     await user.type(screen.getByLabelText("消息输入"), "你好");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    const sendResult = await fake.chat.send.mock.results[0]!.value;
-    const requestId = sendResult.requestId;
-    fake.emit(workerEvent(requestId, "started"));
+    fake.emit(workerEvent(REQUEST_ID, "started"));
 
     // switch to p2
     const p2Button = await screen.findByRole("button", { name: "低空经济" });
     await user.click(p2Button);
     await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
-    fake.emit(workerEvent(requestId, "text_delta", "旧项目内容"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "旧项目内容"));
 
     await waitFor(() => expect(screen.queryByText("旧项目内容")).toBeNull());
     await waitFor(() => expect(screen.getByText("还没有消息")).toBeTruthy());

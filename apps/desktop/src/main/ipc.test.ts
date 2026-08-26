@@ -83,15 +83,24 @@ describe("ipc handlers", () => {
   it("validates chat input and delegates to the service", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(1);
-    const result = await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好");
+    const result = await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(sender),
+      "p1",
+      "你好",
+      "req-1",
+    );
     expect(result).toEqual({ requestId: "req-1" });
-    expect(chat.sendCalls).toEqual([{ projectId: "p1", content: "你好" }]);
+    expect(chat.sendCalls).toEqual([{ projectId: "p1", content: "你好", requestId: "req-1" }]);
 
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "", "你好"),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "", "你好", "req-1"),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "   "),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "   ", "req-1"),
+    ).rejects.toThrow();
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", ""),
     ).rejects.toThrow();
     expect(chat.sendCalls).toHaveLength(1);
   });
@@ -117,8 +126,8 @@ describe("ipc handlers", () => {
     const { ipcMain, chat } = makeDeps();
     const senderA = new FakeWebContents(10);
     const senderB = new FakeWebContents(11);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(senderA), "p1", "你好");
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(senderB), "p1", "你好");
+    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(senderA), "p1", "你好", "req-1");
+    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(senderB), "p1", "你好", "req-2");
 
     chat.emitToLast(workerEvent("req-2"));
     expect(senderA.sent).toEqual([]);
@@ -130,15 +139,15 @@ describe("ipc handlers", () => {
   it("keeps a single destroyed listener per sender across repeated sends", async () => {
     const { ipcMain } = makeDeps();
     const sender = new FakeWebContents(10);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "a");
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "b");
+    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "a", "req-1");
+    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "b", "req-2");
     expect(sender.destroyedListenerCount).toBe(1);
   });
 
   it("drops events silently after the sender is destroyed", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(10);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好");
+    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1");
     sender.destroy();
     expect(sender.destroyedListenerCount).toBe(0);
 
@@ -149,7 +158,7 @@ describe("ipc handlers", () => {
   it("dispose removes all handlers, listeners and the registry", async () => {
     const { ipcMain, chat, dispose } = makeDeps();
     const sender = new FakeWebContents(10);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好");
+    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1");
     expect(sender.destroyedListenerCount).toBe(1);
 
     dispose();

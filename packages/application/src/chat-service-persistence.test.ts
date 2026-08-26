@@ -32,7 +32,7 @@ describe("chat service persistence guarantees", () => {
     const forwarded: AgentWorkerEvent[] = [];
     let observed: { assistant: boolean; activity: boolean } | undefined;
 
-    await service.send(project.id, "你好", (event) => {
+    await service.send(project.id, "你好", "req-1", (event) => {
       forwarded.push(event);
       if (event.type === "completed") {
         observed = {
@@ -71,7 +71,7 @@ describe("chat service persistence guarantees", () => {
     const { project, conversation } = makeProject(db);
     const forwarded: AgentWorkerEvent[] = [];
 
-    await service.send(project.id, "你好", (event) => forwarded.push(event));
+    await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
     await finished.promise;
 
     expect(forwarded.some((event) => event.type === "completed")).toBe(false);
@@ -106,7 +106,7 @@ describe("chat service persistence guarantees", () => {
     const { project, conversation } = makeProject(db);
     const forwarded: AgentWorkerEvent[] = [];
 
-    await service.send(project.id, "你好", (event) => forwarded.push(event));
+    await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
     await finished.promise;
 
     expect(forwarded.some((event) => event.type === "completed")).toBe(false);
@@ -135,7 +135,7 @@ describe("chat service persistence guarantees", () => {
     const worker = new FakeWorker();
     const { service } = makeChatService(db, worker);
 
-    await expect(service.send(project.id, "你好", () => {})).rejects.toBeInstanceOf(
+    await expect(service.send(project.id, "你好", "req-1", () => {})).rejects.toBeInstanceOf(
       ChatServiceError,
     );
     expect(worker.requests).toHaveLength(0);

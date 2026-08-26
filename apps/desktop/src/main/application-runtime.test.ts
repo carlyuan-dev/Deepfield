@@ -39,11 +39,16 @@ describe("application runtime composition", () => {
     });
     const conversation = db.repos.conversations.listByProject(project.id)[0]!;
     const forwarded: unknown[] = [];
-    const result = await runtime.chatService.send(project.id, "你好", (event) => forwarded.push(event));
+    const result = await runtime.chatService.send(
+      project.id,
+      "你好",
+      "runtime-req-1",
+      (event) => forwarded.push(event),
+    );
     // Drain the background consumption deterministically (all pending microtasks).
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(result.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(result.requestId).toBe("runtime-req-1");
     expect(requests).toEqual([result.requestId]);
     expect(forwarded).toEqual([
       { requestId: result.requestId, type: "started" },

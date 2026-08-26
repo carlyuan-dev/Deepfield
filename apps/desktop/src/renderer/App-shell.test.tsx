@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
-import { makeFakeApi, project, type FakeDesktopApi } from "./renderer-test-helpers.js";
+import {
+  chatMessage,
+  makeFakeApi,
+  project,
+  type FakeDesktopApi,
+} from "./renderer-test-helpers.js";
 
 async function renderApp(fake: FakeDesktopApi) {
   const user = userEvent.setup();
@@ -98,5 +103,21 @@ describe("app shell", () => {
     await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
     const live = document.querySelector('[aria-live="polite"]');
     expect(live).not.toBeNull();
+  });
+
+  it("clears the bound project when 新对话 is clicked", async () => {
+    const fake = makeFakeApi();
+    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    fake.chat.listMessages.mockResolvedValue([chatMessage("m1", "user", "历史问题")]);
+    const { user } = await renderApp(fake);
+
+    const projectButton = await screen.findByRole("button", { name: "人形机器人" });
+    await user.click(projectButton);
+    await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
+    await waitFor(() => expect(screen.getByText("历史问题")).toBeTruthy());
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    expect(screen.getByText(/请先创建或选择一个项目/)).toBeTruthy();
+    expect(screen.queryByText("历史问题")).toBeNull();
   });
 });

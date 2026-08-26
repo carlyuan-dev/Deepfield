@@ -1,12 +1,15 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DesktopApi } from "@deepfield/contracts";
 import { useChat } from "../state/use-chat.js";
+import type { ChatEventHub } from "../state/chat-event-hub.js";
 import { visibleMessages } from "../state/chat.js";
 import { Composer } from "./Composer.js";
 import { Messages } from "./Messages.js";
 
 export interface ChatViewProps {
   api: DesktopApi;
+  eventHub: ChatEventHub;
+  requestIdFactory: () => string;
   projectId: string | undefined;
   projectLabel: string | undefined;
   onOpenResearch(): void;
@@ -15,23 +18,34 @@ export interface ChatViewProps {
 
 export function ChatView({
   api,
+  eventHub,
+  requestIdFactory,
   projectId,
   projectLabel,
   onOpenResearch,
   onNeedProject,
 }: ChatViewProps) {
-  const { state, submit } = useChat(api, projectId);
+  const { state, submit, reload } = useChat(api, projectId, eventHub, requestIdFactory);
   const [mode, setMode] = useState<"chat" | "research">("chat");
+  const [draft, setDraft] = useState("");
+  const lastSubmitted = useRef("");
   const messages = visibleMessages(state);
+
+  useEffect(() => {
+    if (state.sendError !== undefined && lastSubmitted.current.length > 0) {
+      setDraft(lastSubmitted.current);
+    }
+  }, [state.sendError]);
 
   return (
     <section className="chat-view" aria-label="项目 Chat">
       <header className="chat-header">
         <div className="chat-context">项目：{projectLabel ?? "未选择项目"}</div>
         {state.loadState === "error" && (
-          <p className="error" role="alert">
+          <div className="error" role="alert">
             {state.loadError}
-          </p>
+            <button onClick={reload}>重新加载</button>
+          </div>
         )}
         {state.sendError !== undefined && (
           <p className="error" role="alert">
@@ -66,8 +80,14 @@ export function ChatView({
         <>
           <Messages messages={messages} />
           <Composer
+            value={draft}
+            onChange={setDraft}
             disabled={state.sending || state.loadState !== "ready"}
-            onSubmit={submit}
+            onSubmit={(content) => {
+              lastSubmitted.current = content;
+              setDraft("");
+              submit(content);
+            }}
           />
         </>
       )}

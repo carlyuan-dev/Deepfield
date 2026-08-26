@@ -52,14 +52,14 @@ describe("ipc handler arity", () => {
     expect(settings.setCalls).toHaveLength(0);
   });
 
-  it("requires exactly two arguments for chat.send", async () => {
+  it("requires exactly three arguments for chat.send", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(1);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1"),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好"),
     ).rejects.toThrow(/invalid chat input/);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "extra"),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1", "extra"),
     ).rejects.toThrow(/invalid chat input/);
     expect(chat.sendCalls).toHaveLength(0);
   });

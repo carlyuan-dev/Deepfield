@@ -42,6 +42,7 @@ export interface ChatServiceLike {
   send(
     projectId: string,
     content: string,
+    requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
   ): Promise<{ requestId: string }>;
   listMessages(projectId: string): ChatMessage[];
@@ -126,17 +127,20 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   deps.ipcMain.handle(IPC_CHANNELS.chatSend, async (event, ...args) => {
     const projectId = args[0];
     const content = args[1];
+    const requestId = args[2];
     if (
-      args.length !== 2 ||
+      args.length !== 3 ||
       typeof projectId !== "string" ||
       projectId.length === 0 ||
       typeof content !== "string" ||
-      content.trim().length === 0
+      content.trim().length === 0 ||
+      typeof requestId !== "string" ||
+      requestId.length === 0
     ) {
       throw new Error("invalid chat input");
     }
     trackSender(event.sender);
-    return deps.chat.send(projectId, content, (workerEvent) => {
+    return deps.chat.send(projectId, content, requestId, (workerEvent) => {
       emitToSender(event.sender, workerEvent);
     });
   });

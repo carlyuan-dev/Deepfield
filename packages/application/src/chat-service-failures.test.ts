@@ -17,7 +17,6 @@ function makeService(db: TestDb, worker: FakeWorker) {
   const contextBuilder = new ContextBuilder(db.repos);
   const finished = deferred();
   const service = new ChatService(db.repos, contextBuilder, { get: () => "sk-configured" }, worker, {
-    requestIdFactory: () => "req-1",
     onConsumptionFinished: () => finished.resolve(),
   });
   return { service, finished };
@@ -40,7 +39,7 @@ async function runFailureCase(
   const { service, finished } = makeService(db, worker);
   const { project, conversation } = makeProject(db);
   const forwarded: AgentWorkerEvent[] = [];
-  await service.send(project.id, "你好", (event) => forwarded.push(event));
+  await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
   await finished.promise;
   return {
     forwarded,
