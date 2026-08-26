@@ -1,5 +1,8 @@
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
 import type { AgentWorkerPort, SecretReader } from "./ports.js";
+import type { TestDb } from "./application-test-helpers.js";
+import { ChatService } from "./chat-service.js";
+import { ContextBuilder } from "./context-builder.js";
 
 export class FakeWorker implements AgentWorkerPort {
   requests: AgentWorkerRequest[] = [];
@@ -76,4 +79,29 @@ export function chatEvent(
     case "failed":
       return { requestId, type: "failed", code: payload ?? "error", message: "boom" };
   }
+}
+
+export function makeChatService(
+  db: TestDb,
+  worker: FakeWorker,
+  key = "sk-configured",
+  requestIdFactory: () => string = () => "req-1",
+): { service: ChatService; finished: { promise: Promise<void>; resolve: () => void } } {
+  const contextBuilder = new ContextBuilder(db.repos);
+  const finished = deferred();
+  const service = new ChatService(db.repos, contextBuilder, makeSecrets(key), worker, {
+    requestIdFactory,
+    onConsumptionFinished: () => finished.resolve(),
+  });
+  return { service, finished };
+}
+
+export function makeProject(db: TestDb) {
+  const project = db.repos.projects.createWithConversation({
+    industry: "人形机器人",
+    scope: {},
+    launchSource: "direct-ui",
+  });
+  const conversation = db.repos.conversations.listByProject(project.id)[0]!;
+  return { project, conversation };
 }

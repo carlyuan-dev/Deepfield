@@ -85,28 +85,46 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     sender.send(IPC_CHANNELS.chatEvents, event);
   };
 
-  deps.ipcMain.handle(IPC_CHANNELS.projectsCreate, async (_event, input) => {
-    if (!Value.Check(CreateProjectInputSchema, input) || input.industry.trim().length === 0) {
+  deps.ipcMain.handle(IPC_CHANNELS.projectsCreate, async (_event, ...args) => {
+    const input = args[0];
+    if (
+      args.length !== 1 ||
+      input === undefined ||
+      !Value.Check(CreateProjectInputSchema, input) ||
+      input.industry.trim().length === 0
+    ) {
       throw new Error("invalid project input");
     }
     return deps.projects.create(input);
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.projectsList, async () => deps.projects.list());
+  deps.ipcMain.handle(IPC_CHANNELS.projectsList, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid list input");
+    }
+    return deps.projects.list();
+  });
 
-  deps.ipcMain.handle(IPC_CHANNELS.settingsHasDeepSeekKey, async () =>
-    deps.settings.has(DEEPSEEK_KEY_NAME),
-  );
+  deps.ipcMain.handle(IPC_CHANNELS.settingsHasDeepSeekKey, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid settings input");
+    }
+    return deps.settings.has(DEEPSEEK_KEY_NAME);
+  });
 
-  deps.ipcMain.handle(IPC_CHANNELS.settingsSetDeepSeekKey, async (_event, value) => {
-    if (typeof value !== "string" || value.trim().length === 0) {
-      throw new Error("invalid api key value");
+  deps.ipcMain.handle(IPC_CHANNELS.settingsSetDeepSeekKey, async (_event, ...args) => {
+    const value = args[0];
+    if (args.length !== 1 || typeof value !== "string" || value.trim().length === 0) {
+      throw new Error("invalid settings input");
     }
     deps.settings.set(DEEPSEEK_KEY_NAME, value);
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.chatSend, async (event, projectId, content) => {
+  deps.ipcMain.handle(IPC_CHANNELS.chatSend, async (event, ...args) => {
+    const projectId = args[0];
+    const content = args[1];
     if (
+      args.length !== 2 ||
       typeof projectId !== "string" ||
       projectId.length === 0 ||
       typeof content !== "string" ||

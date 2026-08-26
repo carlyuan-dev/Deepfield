@@ -54,6 +54,7 @@ export interface Repositories {
   conversations: ConversationRepository;
   messages: MessageRepository;
   activities: ActivityRepository;
+  runInTransaction<T>(work: () => T): T;
 }
 
 export interface NewConversation {

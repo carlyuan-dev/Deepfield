@@ -5,6 +5,7 @@ import {
   DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
+  type ChatMessage,
   type ConversationId,
   type ProjectId,
 } from "@deepfield/contracts";
@@ -62,8 +63,16 @@ export class ChatService {
       throw new ChatServiceError("conversation not found");
     }
 
-    const userMessage = this.repositories.messages.append(conversation.id, "user", content);
-    this.repositories.conversations.markHasUserMessage(conversation.id);
+    let userMessage: ChatMessage;
+    try {
+      userMessage = this.repositories.runInTransaction(() => {
+        const message = this.repositories.messages.append(conversation.id, "user", content);
+        this.repositories.conversations.markHasUserMessage(conversation.id);
+        return message;
+      });
+    } catch {
+      throw new ChatServiceError("failed to persist user message");
+    }
     const context = this.contextBuilder.build(project.id, { excludeMessageId: userMessage.id });
 
     const requestId = this.options.requestIdFactory?.() ?? randomUUID();
@@ -122,24 +131,33 @@ export class ChatService {
         if (!Value.Check(AgentWorkerEventSchema, event)) {
           continue;
         }
-        safeEmit(event);
         if (event.type === "completed") {
+          try {
+            this.repositories.runInTransaction(() => {
+              this.repositories.messages.append(conversationId, "assistant", event.text);
+              this.repositories.activities.append(
+                projectId,
+                "chat.message.completed",
+                "chat",
+                "normal",
+                "Chat 回复完成",
+                { requestId: request.requestId, conversationId },
+              );
+            });
+          } catch {
+            fail("chat_persistence_failed");
+            return;
+          }
           settled = true;
-          this.repositories.messages.append(conversationId, "assistant", event.text);
-          this.repositories.activities.append(
-            projectId,
-            "chat.message.completed",
-            "chat",
-            "normal",
-            "Chat 回复完成",
-            { requestId: request.requestId, conversationId },
-          );
+          safeEmit(event);
           return;
         }
         if (event.type === "failed") {
+          safeEmit(event);
           settled = true;
           return;
         }
+        safeEmit(event);
       }
       fail("worker_stream_ended_without_terminal");
     } catch {

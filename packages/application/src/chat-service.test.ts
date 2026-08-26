@@ -7,7 +7,13 @@ import {
 import { ChatService, ChatServiceError } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
-import { chatEvent, deferred, FakeWorker, makeSecrets } from "./chat-service-helpers.js";
+import {
+  chatEvent,
+  FakeWorker,
+  makeChatService as makeService,
+  makeProject,
+  makeSecrets,
+} from "./chat-service-helpers.js";
 
 const dbs: TestDb[] = [];
 
@@ -16,31 +22,6 @@ afterEach(() => {
     db.cleanup();
   }
 });
-
-function makeService(
-  db: TestDb,
-  worker: FakeWorker,
-  key = "sk-configured",
-  requestIdFactory: () => string = () => "req-1",
-) {
-  const contextBuilder = new ContextBuilder(db.repos);
-  const finished = deferred();
-  const service = new ChatService(db.repos, contextBuilder, makeSecrets(key), worker, {
-    requestIdFactory,
-    onConsumptionFinished: () => finished.resolve(),
-  });
-  return { service, finished };
-}
-
-function makeProject(db: TestDb) {
-  const project = db.repos.projects.createWithConversation({
-    industry: "人形机器人",
-    scope: {},
-    launchSource: "direct-ui",
-  });
-  const conversation = db.repos.conversations.listByProject(project.id)[0]!;
-  return { project, conversation };
-}
 
 describe("chat service", () => {
   it("rejects blank content before any secret, db or worker access", async () => {
