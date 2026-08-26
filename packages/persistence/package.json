@@ -1,0 +1,6 @@
+{
+  "name": "@deepfield/persistence",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" }
+}
