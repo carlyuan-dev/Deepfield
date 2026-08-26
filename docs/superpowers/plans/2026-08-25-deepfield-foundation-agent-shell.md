@@ -87,17 +87,18 @@ packages/persistence/src/project-repository.ts project writes and queries
 packages/persistence/src/conversation-repository.ts lazy conversation persistence
 packages/persistence/src/message-repository.ts ordered message persistence
 packages/persistence/src/activity-repository.ts project activity persistence
+packages/persistence/src/transactions.ts shared synchronous transaction boundary
 packages/persistence/src/repositories.ts repository composition
 packages/persistence/src/index.ts    persistence public API
 
 packages/application/package.json    application workspace exports
+packages/application/src/ports.ts    secret, worker and ID generation ports
 packages/application/src/project-service.ts direct project use cases
 packages/application/src/context-builder.ts main Agent context assembly
 packages/application/src/chat-service.ts chat persistence and worker orchestration
 packages/application/src/index.ts    application public API
 
 tests/e2e/foundation.spec.ts          packaged process and persistence journey
-tests/fixtures/fake-agent.ts          deterministic streamed Agent responses
 ```
 
 ---
@@ -800,14 +801,27 @@ git commit -m "feat: stream pure chat through Pi and DeepSeek"
 - Create: `packages/application/src/project-service.ts`
 - Create: `packages/application/src/context-builder.ts`
 - Create: `packages/application/src/chat-service.ts`
+- Create: `packages/application/src/ports.ts`
 - Create: `packages/application/src/index.ts`
+- Create: `packages/persistence/src/transactions.ts`
 - Create: `apps/desktop/src/main/ipc.ts`
+- Create: `apps/desktop/src/main/application-runtime.ts`
 - Modify: `apps/desktop/src/main/index.ts`
-- Test: `packages/application/src/application.test.ts`
+- Test: focused project, context, Chat, persistence, IPC, and composition suites
 
 **Interfaces:**
 - Consumes: persistence repositories, `SecretStore`, `AgentWorkerClient`, shared contracts.
 - Produces: `ProjectService.create(input)`, `ProjectService.list()`, `ContextBuilder.build(projectId)`, and `ChatService.send(projectId, content, onEvent)`.
+
+**As-built adjustment:** Application services depend on narrow secret and worker
+ports rather than Electron classes. The current user message is persisted before
+dispatch but excluded from the immutable history snapshot so it is not duplicated
+with `request.prompt`. User-message visibility and assistant/activity completion
+use explicit SQLite transactions. A `completed` event becomes visible to the
+Renderer only after its assistant message and activity commit; persistence failure
+rolls both back and emits a sanitized `chat_persistence_failed`. Main IPC handlers
+enforce exact argument counts and route stream events only to the originating
+Renderer.
 
 - [ ] **Step 1: Write the direct-Capability no-Agent test**
 
