@@ -156,7 +156,12 @@ export function createSecretStoreCore(
       fd = fileOps.openSync(tempPath, "wx", 0o600);
       let written = 0;
       while (written < content.length) {
-        written += fileOps.writeSync(fd, content.subarray(written));
+        const remaining = content.subarray(written);
+        const result = fileOps.writeSync(fd, remaining);
+        if (!Number.isInteger(result) || result <= 0 || result > remaining.length) {
+          throw new Error("failed to write secret file");
+        }
+        written += result;
       }
       fileOps.fsyncSync(fd);
       fileOps.closeSync(fd);
@@ -193,11 +198,14 @@ export function createSecretStoreCore(
       if (!crypto.isAvailable()) {
         throw new SecretEncryptionUnavailableError();
       }
-      let ciphertext: Buffer;
+      let ciphertext: unknown;
       try {
         ciphertext = crypto.encrypt(value);
-      } catch (error) {
-        throw new Error("failed to encrypt secret value", { cause: error });
+      } catch {
+        throw new Error("secret encryption failed");
+      }
+      if (!Buffer.isBuffer(ciphertext) || ciphertext.length === 0) {
+        throw new Error("secret encryption produced an invalid result");
       }
       const existing = readStore() ?? {};
       existing[name] = ciphertext.toString("base64");
@@ -228,7 +236,11 @@ export function createSecretStoreCore(
         throw new SecretStoreCorruptError(filePath);
       }
       try {
-        return crypto.decrypt(buffer);
+        const decrypted: unknown = crypto.decrypt(buffer);
+        if (typeof decrypted !== "string") {
+          throw new SecretStoreCorruptError(filePath);
+        }
+        return decrypted;
       } catch {
         throw new SecretStoreCorruptError(filePath);
       }
