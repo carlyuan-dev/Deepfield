@@ -54,6 +54,9 @@ apps/desktop/src/preload/preload-api.ts fixed typed IPC mapping
 apps/desktop/src/worker/index.ts     utility process message loop
 apps/desktop/src/worker/message-loop.ts validated worker protocol lifecycle
 apps/desktop/src/worker/pi-chat-agent.ts Pi Agent Core adapter
+apps/desktop/src/worker/pi-message-mapper.ts immutable context to Pi message mapping
+apps/desktop/src/worker/fake-chat-agent.ts deterministic offline streaming agent
+apps/desktop/src/worker/select-chat-agent.ts environment-gated agent selection
 
 apps/desktop/src/renderer/index.html renderer document
 apps/desktop/src/renderer/main.tsx   React bootstrap
@@ -299,7 +302,7 @@ export interface AgentWorkerRequest {
   prompt: string;
   context: AgentContextSnapshot;
   apiKey: string;
-  modelId: "deepseek-chat";
+  modelId: "deepseek-v4-flash";
 }
 ```
 
@@ -679,12 +682,28 @@ git commit -m "feat: isolate agent runtime in utility process"
 
 **Files:**
 - Create: `apps/desktop/src/worker/pi-chat-agent.ts`
-- Create: `tests/fixtures/fake-agent.ts`
+- Create: `apps/desktop/src/worker/pi-message-mapper.ts`
+- Create: `apps/desktop/src/worker/fake-chat-agent.ts`
+- Create: `apps/desktop/src/worker/select-chat-agent.ts`
+- Modify: `apps/desktop/src/worker/index.ts`
+- Modify: `packages/contracts/src/chat.ts`
 - Test: `apps/desktop/src/worker/pi-chat-agent.test.ts`
+- Test: `apps/desktop/src/worker/pi-chat-agent-lifecycle.test.ts`
+- Test: `apps/desktop/src/worker/pi-message-mapper.test.ts`
+- Test: `apps/desktop/src/worker/fake-chat-agent.test.ts`
+- Test: `apps/desktop/src/worker/select-chat-agent.test.ts`
 
 **Interfaces:**
-- Consumes: `AgentContextSnapshot`, API key, `modelId: "deepseek-chat"`.
-- Produces: `ChatAgent.run(request, emit, signal): Promise<void>` and `createPiChatAgent()`.
+- Consumes: `AgentContextSnapshot`, API key, `modelId: "deepseek-v4-flash"`.
+- Produces: `ChatAgent.run(request, emit, signal): Promise<void>`, `createPiChatAgent()`, immutable Pi history mapping, deterministic fake mode, and environment-gated agent selection.
+
+**As-built adjustment:** Pi 0.84.3's installed DeepSeek catalog no longer contains
+`deepseek-chat`, so the first slice is pinned to `deepseek-v4-flash`. Historical
+assistant messages are expanded into complete Pi messages with zeroed usage. Only
+the first `agent_start` emits `started`; successful completion requires a matching
+`agent_end`. Pre-aborted requests never call `prompt()`, provider failures are
+sanitized by the worker boundary, tools remain disabled, and the real-provider
+smoke test stays opt-in behind `DEEPSEEK_API_KEY`.
 
 - [ ] **Step 1: Write a failing event-mapping test**
 
