@@ -1,6 +1,8 @@
 import { Type, type Static } from "typebox";
 import type { ConversationId, MessageId } from "./ids.js";
 
+export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-v4-flash" as const;
+
 export const AgentContextMessageSchema = Type.Object(
   {
     role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
@@ -29,7 +31,7 @@ export const AgentWorkerRequestSchema = Type.Object(
     prompt: Type.String(),
     context: AgentContextSnapshotSchema,
     apiKey: Type.String(),
-    modelId: Type.Literal("deepseek-chat"),
+    modelId: Type.Literal(DEFAULT_DEEPSEEK_MODEL_ID),
   },
   { additionalProperties: false },
 );

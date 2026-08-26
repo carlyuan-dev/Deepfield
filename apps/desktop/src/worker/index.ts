@@ -1,19 +1,10 @@
 import {
   createWorkerMessageLoop,
-  type ChatAgent,
   type WorkerEndpoint,
 } from "./message-loop.js";
-
-const unavailableAgent: ChatAgent = {
-  async run(request, emit) {
-    emit({
-      requestId: request.requestId,
-      type: "failed",
-      code: "agent_not_configured",
-      message: "agent is not configured",
-    });
-  },
-};
+import { createFakeChatAgent } from "./fake-chat-agent.js";
+import { createPiChatAgent } from "./pi-chat-agent.js";
+import { selectChatAgent } from "./select-chat-agent.js";
 
 interface ParentPortLike {
   postMessage(value: unknown): void;
@@ -32,7 +23,11 @@ function startWorker(parentPort: ParentPortLike): void {
       };
     },
   };
-  createWorkerMessageLoop(endpoint, unavailableAgent);
+  const agent = selectChatAgent(process.env.DEEPFIELD_AGENT_MODE, {
+    fake: () => createFakeChatAgent(),
+    pi: () => createPiChatAgent(),
+  });
+  createWorkerMessageLoop(endpoint, agent);
 }
 
 const parentPort = (process as { parentPort?: unknown }).parentPort as ParentPortLike | undefined;

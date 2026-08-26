@@ -4,6 +4,7 @@ import {
   AgentWorkerRequestSchema,
   AgentWorkerEventSchema,
   CreateProjectInputSchema,
+  DEFAULT_DEEPSEEK_MODEL_ID,
 } from "./index.js";
 
 describe("shared contracts", () => {
@@ -44,7 +45,7 @@ describe("agent worker request schema", () => {
       ],
     },
     apiKey: "sk-test-only",
-    modelId: "deepseek-chat",
+    modelId: DEFAULT_DEEPSEEK_MODEL_ID,
   } as const;
 
   it("accepts a valid worker request with strict nested messages", () => {
@@ -104,5 +105,24 @@ describe("agent worker request schema", () => {
     expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "text_delta", delta: "d", extra: 1 })).toBe(false);
     expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "completed", text: "t", extra: 1 })).toBe(false);
     expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "failed", code: "c", message: "m", extra: 1 })).toBe(false);
+  });
+
+  it("exports the fixed deepseek model id", () => {
+    expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-v4-flash");
+  });
+
+  it("locks the request model id to the fixed deepseek model", () => {
+    expect(
+      Value.Check(AgentWorkerRequestSchema, { ...validRequest, modelId: "deepseek-v4-flash" }),
+    ).toBe(true);
+    expect(
+      Value.Check(AgentWorkerRequestSchema, { ...validRequest, modelId: "deepseek-v4-pro" }),
+    ).toBe(false);
+    const literal = (
+      AgentWorkerRequestSchema as unknown as {
+        properties: { modelId: { const?: string } };
+      }
+    ).properties.modelId;
+    expect(literal.const).toBe(DEFAULT_DEEPSEEK_MODEL_ID);
   });
 });
