@@ -7,6 +7,13 @@ export default defineConfig({
     index: resolve("apps/desktop/src/main/index.ts"),
     "agent-worker": resolve("apps/desktop/src/worker/index.ts"),
   } } } },
-  preload: { build: { rollupOptions: { input: resolve("apps/desktop/src/preload/index.ts") } } },
-  renderer: { root: "apps/desktop/src/renderer", plugins: [react()] },
+  preload: { build: { rollupOptions: {
+    input: resolve("apps/desktop/src/preload/index.ts"),
+    output: { format: "cjs", entryFileNames: "[name].js" },
+  } } },
+  renderer: {
+    root: resolve("apps/desktop/src/renderer"),
+    build: { rollupOptions: { input: resolve("apps/desktop/src/renderer/index.html") } },
+    plugins: [react()],
+  },
 });
