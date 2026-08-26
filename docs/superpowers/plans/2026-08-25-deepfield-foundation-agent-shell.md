@@ -64,12 +64,17 @@ apps/desktop/src/renderer/App.tsx    route and workspace composition
 apps/desktop/src/renderer/app.css    shell layout and tokens
 apps/desktop/src/renderer/api.ts     typed `window.deepfield` access
 apps/desktop/src/renderer/state/workspace.ts workspace state reducer
+apps/desktop/src/renderer/state/chat.ts project Chat view state
+apps/desktop/src/renderer/state/chat-event-hub.ts instance-scoped request routing
+apps/desktop/src/renderer/state/use-chat.ts history and streaming controller
+apps/desktop/src/renderer/request-id.ts Renderer correlation ID generation
 apps/desktop/src/renderer/components/Sidebar.tsx
 apps/desktop/src/renderer/components/Composer.tsx
 apps/desktop/src/renderer/components/ChatView.tsx
 apps/desktop/src/renderer/components/ChatRail.tsx
 apps/desktop/src/renderer/features/projects/ProjectForm.tsx
 apps/desktop/src/renderer/features/projects/ProjectWorkspace.tsx
+apps/desktop/src/renderer/features/settings/SettingsView.tsx
 
 packages/contracts/package.json      contracts workspace exports
 packages/contracts/src/ids.ts        branded entity identifiers
@@ -912,17 +917,32 @@ git commit -m "feat: add direct projects and lazy project chat"
 - Create: `apps/desktop/src/renderer/app.css`
 - Create: `apps/desktop/src/renderer/api.ts`
 - Create: `apps/desktop/src/renderer/state/workspace.ts`
+- Create: `apps/desktop/src/renderer/state/chat.ts`
+- Create: `apps/desktop/src/renderer/state/chat-event-hub.ts`
+- Create: `apps/desktop/src/renderer/state/use-chat.ts`
+- Create: `apps/desktop/src/renderer/request-id.ts`
 - Create: `apps/desktop/src/renderer/components/Sidebar.tsx`
 - Create: `apps/desktop/src/renderer/components/Composer.tsx`
 - Create: `apps/desktop/src/renderer/components/ChatView.tsx`
 - Create: `apps/desktop/src/renderer/components/ChatRail.tsx`
 - Create: `apps/desktop/src/renderer/features/projects/ProjectForm.tsx`
 - Create: `apps/desktop/src/renderer/features/projects/ProjectWorkspace.tsx`
-- Test: `apps/desktop/src/renderer/App.test.tsx`
+- Create: `apps/desktop/src/renderer/features/settings/SettingsView.tsx`
+- Modify: typed Chat history and correlation APIs across contracts, preload, application, and main IPC
+- Test: focused workspace, Chat routing, shell, settings, preload, application, and IPC suites
 
 **Interfaces:**
 - Consumes: `DesktopApi`, `Project`, `AgentWorkerEvent`.
 - Produces: `WorkspaceState`, direct Capability journey, Chat journey, and docked Chat rail behavior.
+
+**As-built adjustment:** The foundation UI includes a masked DeepSeek settings
+screen and a read-only project Chat history API so the vertical slice can be
+configured and restored after restart. The Renderer generates a correlation
+request ID before invoking IPC; an App-scoped event hub maps that ID to its
+project, drops unknown or late events, and releases terminal mappings. This
+prevents early stream events from being attributed to whichever project happens
+to be visible. “新对话” intentionally clears the project binding because
+standalone persisted conversations are outside this foundation slice.
 
 - [ ] **Step 1: Write failing layout-state tests**
 
