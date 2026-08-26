@@ -1022,6 +1022,16 @@ git commit -m "feat: add agent-native shell and adaptive chat rail"
 - Consumes: built Electron app and fake Agent mode.
 - Produces: repeatable E2E launch with isolated `userData`, unsigned local arm64 package smoke artifact, and developer setup documentation.
 
+**As-built adjustment:** The packaged E2E path uses an environment-gated
+`userData` override, available only in development or when
+`DEEPFIELD_E2E=1`. The sandboxed preload bundles all non-Electron dependencies
+so it never relies on packaged `node_modules` resolution. The Chat shell fixes
+nested flex shrink boundaries so messages scroll inside their list without
+moving the outer workspace. Local arm64 DMG and ZIP artifacts remain unsigned;
+the final rebuilt artifacts were verified for integrity and launched from the
+ZIP with an isolated fake-Agent profile. Electron remains pinned exactly to
+`43.4.0`.
+
 - [ ] **Step 1: Write the failing Electron E2E journey**
 
 Use Playwright’s `_electron.launch` with environment `DEEPFIELD_AGENT_MODE=fake` and a unique `DEEPFIELD_USER_DATA_DIR`. Test:
@@ -1133,3 +1143,19 @@ Before writing Plan 2, run the complete verification set from Task 8 and review 
 - no user-owned architecture image or untracked `.DS_Store` was committed.
 
 Only after this gate passes should `docs/superpowers/plans/2026-08-25-deepfield-tool-platform.md` be written from the validated interfaces.
+
+## Phase 1 Acceptance Record
+
+Accepted on 2026-08-27 at HEAD `b611ba8`. Fresh verification completed with
+209 passing tests and one opt-in real-provider smoke test skipped, two
+consecutive real-Electron E2E passes, an arm64 packaged-app launch, a valid DMG
+checksum, and a clean ZIP integrity check. The final local artifacts are:
+
+- `release/Deepfield-0.1.0-arm64.dmg` — SHA-256
+  `7019e4cfffbee979b0496057ff339d05abb4fced86131b1ac4071604ca36b20d`
+- `release/Deepfield-0.1.0-arm64.zip` — SHA-256
+  `f6638c5521bbab1a9459e5032b8f125ed8d42f149205efa91bd3fff38db486b2`
+
+These ignored files are unsigned development artifacts, not final public
+distribution packages. Signing, notarization, and update delivery remain later
+work.
