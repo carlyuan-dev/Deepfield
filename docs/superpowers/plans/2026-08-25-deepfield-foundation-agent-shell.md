@@ -6,7 +6,7 @@
 
 **Architecture:** Electron owns the trusted macOS boundary; its sandboxed Renderer uses a typed preload API. SQLite and application services live in the main process, while Pi Agent Core runs in a utility process behind a request/event bridge. Direct Capability project creation never invokes the main Agent; Chat constructs a fresh project context from SQLite and streams worker events back through IPC.
 
-**Tech Stack:** Node.js 24.18.x, Electron 43.4.0, React 19.2.7, TypeScript ESM, electron-vite, Pi Agent Core/Pi AI 0.84.3, `node:sqlite`, TypeBox, Vitest, React Testing Library, Playwright Electron.
+**Tech Stack:** Node.js 24.18.x, Electron 43.4.0, React 19.2.7, TypeScript ESM, electron-vite 5.0.0, Vite 7.3.6, Pi Agent Core/Pi AI 0.84.3, `node:sqlite`, TypeBox, Vitest, React Testing Library, Playwright Electron.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-deepfield-agent-native-research-design.md`
 
@@ -212,7 +212,7 @@ Run:
 
 ```bash
 npm install --save-exact electron@43.4.0 react@19.2.7 react-dom@19.2.7 @earendil-works/pi-agent-core@0.84.3 @earendil-works/pi-ai@0.84.3 typebox@1.3.7
-npm install --save-dev --save-exact electron-vite vite@8.2.2 @vitejs/plugin-react typescript vitest jsdom @testing-library/react @testing-library/user-event @types/node @types/react @types/react-dom @playwright/test@1.62.1 electron-builder
+npm install --save-dev --save-exact electron-vite@5.0.0 vite@7.3.6 @vitejs/plugin-react@5.2.0 typescript vitest jsdom @testing-library/react @testing-library/user-event @types/node @types/react @types/react-dom @playwright/test@1.62.1 electron-builder
 ```
 
 Expected: `package-lock.json` is generated and all packages resolve on Node 24.
