@@ -85,6 +85,21 @@ describe("project persistence", () => {
     }
   });
 
+  it("rolls back the migration tracking table when migration 001 fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "deepfield-db-"));
+    const path = join(dir, "deepfield.sqlite");
+    const db = openDatabase(path);
+    openHandles.push({ dir, path, db });
+    db.exec("CREATE TABLE projects(id TEXT PRIMARY KEY);");
+
+    expect(() => migrate(db)).toThrow(/already exists/);
+
+    const tracking = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+      .all();
+    expect(tracking).toEqual([]);
+  });
+
   it("returns the same conversation id on repeated getOrCreate calls", () => {
     const { db } = openTestDb();
     const repos = createRepositories(db);
@@ -127,6 +142,42 @@ describe("project persistence", () => {
     const messages = reposAfterRestart.messages.listByConversation(conversation.id);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages.map((message) => message.content)).toEqual(["第一条", "第二条"]);
+  });
+
+  it("returns the newest N messages in chronological order", () => {
+    const { db } = openTestDb();
+    const repos = createRepositories(db);
+
+    const project = repos.projects.createWithConversation({
+      industry: "人形机器人",
+      scope: {},
+      launchSource: "chat",
+    });
+    const conversation = repos.conversations.getOrCreateForProject(project.id);
+    repos.messages.append(conversation.id, "user", "m1");
+    repos.messages.append(conversation.id, "assistant", "m2");
+    repos.messages.append(conversation.id, "user", "m3");
+    repos.messages.append(conversation.id, "assistant", "m4");
+
+    const latestTwo = repos.messages.listByConversation(conversation.id, 2);
+    expect(latestTwo.map((message) => message.content)).toEqual(["m3", "m4"]);
+    expect(latestTwo.map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("rejects non-positive or non-integer limits", () => {
+    const { db } = openTestDb();
+    const repos = createRepositories(db);
+
+    const project = repos.projects.createWithConversation({
+      industry: "人形机器人",
+      scope: {},
+      launchSource: "chat",
+    });
+    const conversation = repos.conversations.getOrCreateForProject(project.id);
+
+    expect(() => repos.messages.listByConversation(conversation.id, 0)).toThrow(/positive integer/);
+    expect(() => repos.messages.listByConversation(conversation.id, -3)).toThrow(/positive integer/);
+    expect(() => repos.messages.listByConversation(conversation.id, 2.5)).toThrow(/positive integer/);
   });
 
   it("rolls back the whole creation when the conversation insert fails", () => {

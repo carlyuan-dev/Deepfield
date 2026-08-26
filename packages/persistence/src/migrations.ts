@@ -39,11 +39,11 @@ const MIGRATIONS: readonly Migration[] = [
 ];
 
 export function migrate(db: DatabaseSync): void {
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
-  );
   db.exec("BEGIN IMMEDIATE;");
   try {
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+    );
     const applied = db.prepare("SELECT version FROM schema_migrations WHERE version = ?");
     const record = db.prepare(
       "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",

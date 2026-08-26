@@ -8,4 +8,4 @@ export type {
   ProjectActivityEvent,
   ProjectRepository,
   Repositories,
-} from "./repositories.js";
+} from "./types.js";
