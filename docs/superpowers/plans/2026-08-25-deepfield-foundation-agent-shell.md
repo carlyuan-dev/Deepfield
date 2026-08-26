@@ -46,9 +46,13 @@ apps/desktop/src/main/paths.ts       injected user-data paths
 apps/desktop/src/main/secret-store.ts encrypted secret public API
 apps/desktop/src/main/secret-store-core.ts atomic encrypted-file implementation
 apps/desktop/src/main/agent-worker-client.ts utility process request/event bridge
+apps/desktop/src/main/agent-worker-runtime.ts utility child lifecycle adapter
+apps/desktop/src/main/navigation.ts pure navigation allow policy
 
 apps/desktop/src/preload/index.ts    minimal contextBridge API
+apps/desktop/src/preload/preload-api.ts fixed typed IPC mapping
 apps/desktop/src/worker/index.ts     utility process message loop
+apps/desktop/src/worker/message-loop.ts validated worker protocol lifecycle
 apps/desktop/src/worker/pi-chat-agent.ts Pi Agent Core adapter
 
 apps/desktop/src/renderer/index.html renderer document
@@ -574,10 +578,22 @@ git commit -m "feat: add encrypted local secret storage"
 - Create: `apps/desktop/src/main/paths.ts`
 - Create: `apps/desktop/src/main/window.ts`
 - Create: `apps/desktop/src/main/agent-worker-client.ts`
+- Create: `apps/desktop/src/main/agent-worker-runtime.ts`
+- Create: `apps/desktop/src/main/navigation.ts`
 - Create: `apps/desktop/src/main/index.ts`
 - Create: `apps/desktop/src/preload/index.ts`
+- Create: `apps/desktop/src/preload/preload-api.ts`
 - Create: `apps/desktop/src/worker/index.ts`
+- Create: `apps/desktop/src/worker/message-loop.ts`
+- Modify: `packages/contracts/src/chat.ts`
+- Modify: `packages/contracts/src/contracts.test.ts`
+- Modify: `apps/desktop/src/renderer/index.html`
 - Test: `apps/desktop/src/main/agent-worker-client.test.ts`
+- Test: `apps/desktop/src/main/agent-worker-runtime.test.ts`
+- Test: `apps/desktop/src/main/navigation.test.ts`
+- Test: `apps/desktop/src/worker/message-loop.test.ts`
+- Test: `apps/desktop/src/worker/message-loop-lifecycle.test.ts`
+- Test: `apps/desktop/src/preload/preload-api.test.ts`
 
 **Interfaces:**
 - Consumes: `AgentWorkerRequest`, `AgentWorkerEvent`, `DesktopApi`.
