@@ -1,5 +1,6 @@
-import { BrowserWindow, session } from "electron";
+import { BrowserWindow } from "electron";
 import { join } from "node:path";
+import { isAllowedNavigation } from "./navigation.js";
 
 export function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -20,20 +21,12 @@ export function createWindow(): BrowserWindow {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
   window.webContents.on("will-navigate", (event, url) => {
-    const currentUrl = window.webContents.getURL();
-    if (currentUrl.length === 0) {
-      return;
-    }
-    try {
-      if (new URL(url).origin !== new URL(currentUrl).origin) {
-        event.preventDefault();
-      }
-    } catch {
+    if (!isAllowedNavigation(window.webContents.getURL(), url)) {
       event.preventDefault();
     }
   });
 
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
 

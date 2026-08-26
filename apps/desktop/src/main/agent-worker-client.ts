@@ -65,6 +65,8 @@ export class AgentWorkerClient {
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeExit: () => void;
   private disposed = false;
+  private exited = false;
+  private exitCode = 0;
 
   constructor(private readonly endpoint: MessageEndpoint) {
     this.unsubscribeMessage = endpoint.onMessage((value) => this.handleMessage(value));
@@ -74,6 +76,9 @@ export class AgentWorkerClient {
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent> {
     if (this.disposed) {
       throw new Error("agent worker client is disposed");
+    }
+    if (this.exited) {
+      throw new AgentWorkerExitedError(this.exitCode);
     }
     if (this.pending.has(request.requestId)) {
       throw new Error(`duplicate request id: ${request.requestId}`);
@@ -206,9 +211,13 @@ export class AgentWorkerClient {
   }
 
   private handleExit(code: number): void {
-    if (this.disposed) {
+    if (this.disposed || this.exited) {
       return;
     }
+    this.exited = true;
+    this.exitCode = code;
+    this.unsubscribeMessage();
+    this.unsubscribeExit();
     const error = new AgentWorkerExitedError(code);
     for (const [requestId, stream] of [...this.pending]) {
       this.close(requestId, stream, error);

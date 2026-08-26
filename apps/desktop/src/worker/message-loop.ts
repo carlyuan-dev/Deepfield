@@ -21,6 +21,7 @@ export interface WorkerEndpoint {
 
 export interface WorkerLoop {
   dispose(): void;
+  activeCount(): number;
 }
 
 function safeRequestId(value: unknown): string | undefined {
@@ -34,9 +35,14 @@ function safeRequestId(value: unknown): string | undefined {
 }
 
 export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: ChatAgent): WorkerLoop {
+  const active = new Map<string, AbortController>();
+  let disposed = false;
   const unsubscribe = endpoint.onMessage((value) => handleInbound(value));
 
   function handleInbound(value: unknown): void {
+    if (disposed) {
+      return;
+    }
     if (!Value.Check(AgentWorkerRequestSchema, value)) {
       const requestId = safeRequestId(value);
       if (requestId !== undefined) {
@@ -51,54 +57,79 @@ export function createWorkerMessageLoop(endpoint: WorkerEndpoint, chatAgent: Cha
     }
 
     const request = value;
-    let settled = false;
-    const controller = new AbortController();
+    if (active.has(request.requestId)) {
+      endpoint.postMessage({
+        requestId: request.requestId,
+        type: "failed",
+        code: "duplicate_request",
+        message: "a request with this id is already active",
+      } satisfies AgentWorkerEvent);
+      return;
+    }
 
-    const emit = (event: unknown): void => {
+    const controller = new AbortController();
+    active.set(request.requestId, controller);
+    let settled = false;
+
+    const settle = (code: string, message: string): void => {
       if (settled) {
         return;
       }
-      if (!Value.Check(AgentWorkerEventSchema, event)) {
-        if (safeRequestId(event) === request.requestId) {
-          settled = true;
-          endpoint.postMessage({
-            requestId: request.requestId,
-            type: "failed",
-            code: "invalid_event",
-            message: "agent emitted an invalid event",
-          } satisfies AgentWorkerEvent);
-        }
-        return;
-      }
-      if (event.requestId !== request.requestId) {
-        return;
-      }
-      if (event.type === "completed" || event.type === "failed") {
-        settled = true;
-      }
-      endpoint.postMessage(event);
-    };
-
-    const fail = (): void => {
-      if (!settled) {
-        settled = true;
+      settled = true;
+      active.delete(request.requestId);
+      if (!disposed) {
         endpoint.postMessage({
           requestId: request.requestId,
           type: "failed",
-          code: "agent_error",
-          message: "agent execution failed",
+          code,
+          message,
         } satisfies AgentWorkerEvent);
       }
     };
 
+    const emit = (event: unknown): void => {
+      if (disposed || settled) {
+        return;
+      }
+      if (!Value.Check(AgentWorkerEventSchema, event) || safeRequestId(event) !== request.requestId) {
+        settle("invalid_event", "agent emitted an invalid event");
+        return;
+      }
+      if (event.type === "completed" || event.type === "failed") {
+        settled = true;
+        active.delete(request.requestId);
+        endpoint.postMessage(event);
+        return;
+      }
+      endpoint.postMessage(event);
+    };
+
     void Promise.resolve()
       .then(() => chatAgent.run(request, emit, controller.signal))
-      .catch(fail);
+      .then(() => {
+        if (!settled && !disposed) {
+          settle("agent_no_terminal_event", "agent finished without a terminal event");
+        }
+      })
+      .catch(() => {
+        settle("agent_error", "agent execution failed");
+      });
   }
 
   return {
     dispose() {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
       unsubscribe();
+      for (const controller of active.values()) {
+        controller.abort();
+      }
+      active.clear();
+    },
+    activeCount() {
+      return active.size;
     },
   };
 }

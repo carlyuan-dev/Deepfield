@@ -240,4 +240,39 @@ describe("agent worker client", () => {
     endpoint.emit(event("req-1", "completed", "x"));
     expect(client.pendingCount()).toBe(0);
   });
+
+  it("enters a permanent closed state after exit", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const stream = client.send(request("req-1"));
+    endpoint.emitExit(3);
+
+    const result = await collectError(stream);
+    expect(result.error).toBeInstanceOf(AgentWorkerExitedError);
+    expect(endpoint.messageListenerCount()).toBe(0);
+    expect(endpoint.exitListenerCount()).toBe(0);
+
+    const postedBefore = endpoint.posted.length;
+    expect(() =>
+      client.send({ ...request("req-2"), prompt: "super-secret-prompt", apiKey: "sk-secret-api-key" }),
+    ).toThrow(AgentWorkerExitedError);
+    expect(endpoint.posted.length).toBe(postedBefore);
+
+    try {
+      client.send({ ...request("req-3"), prompt: "super-secret-prompt", apiKey: "sk-secret-api-key" });
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain("super-secret-prompt");
+      expect(message).not.toContain("sk-secret-api-key");
+      expect(message).not.toContain("req-3");
+    }
+  });
+
+  it("still rejects sends after dispose", () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    client.dispose();
+    expect(() => client.send(request("req-1"))).toThrow(/disposed/);
+  });
 });

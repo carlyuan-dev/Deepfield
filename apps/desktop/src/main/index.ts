@@ -1,35 +1,30 @@
 import { app, BrowserWindow, utilityProcess } from "electron";
 import { join } from "node:path";
-import { AgentWorkerClient, type MessageEndpoint } from "./agent-worker-client.js";
+import {
+  createAgentWorkerRuntime,
+  type AgentWorkerRuntime,
+} from "./agent-worker-runtime.js";
 import { createWindow } from "./window.js";
 
 let mainWindow: BrowserWindow | undefined;
-let workerClient: AgentWorkerClient | undefined;
+let agentRuntime: AgentWorkerRuntime | undefined;
 
-function startAgentWorker(): AgentWorkerClient {
+function startAgentWorker(): AgentWorkerRuntime {
   const child = utilityProcess.fork(join(__dirname, "agent-worker.js"), [], {
     serviceName: "Deepfield Agent",
   });
-  const endpoint: MessageEndpoint = {
-    postMessage: (value) => child.postMessage(value),
-    onMessage: (listener) => {
-      child.on("message", listener);
-      return () => {
-        child.off("message", listener);
-      };
-    },
-    onExit: (listener) => {
-      child.on("exit", listener);
-      return () => {
-        child.off("exit", listener);
-      };
-    },
-  };
-  return new AgentWorkerClient(endpoint);
+  const runtime = createAgentWorkerRuntime(child);
+  child.on("exit", () => {
+    if (agentRuntime === runtime) {
+      agentRuntime = undefined;
+    }
+  });
+  agentRuntime = runtime;
+  return runtime;
 }
 
 void app.whenReady().then(() => {
-  workerClient = startAgentWorker();
+  startAgentWorker();
   mainWindow = createWindow();
 
   app.on("activate", () => {
@@ -46,6 +41,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  workerClient?.dispose();
-  workerClient = undefined;
+  agentRuntime?.dispose();
+  agentRuntime = undefined;
 });
