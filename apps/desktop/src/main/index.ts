@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from "electron";
 import { join } from "node:path";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
-import { createAppPaths } from "./paths.js";
+import { createAppPaths, resolveUserDataRoot } from "./paths.js";
 import { SecretStore } from "./secret-store.js";
 import { createAgentWorkerRuntime, type AgentWorkerRuntime } from "./agent-worker-runtime.js";
 import {
@@ -37,7 +37,13 @@ function startAgentWorker(): AgentWorkerRuntime {
 }
 
 void app.whenReady().then(() => {
-  const paths = createAppPaths(app.getPath("userData"));
+  const userDataRoot = resolveUserDataRoot({
+    defaultRoot: app.getPath("userData"),
+    override: process.env.DEEPFIELD_USER_DATA_DIR,
+    isPackaged: app.isPackaged,
+    isE2E: process.env.DEEPFIELD_E2E === "1",
+  });
+  const paths = createAppPaths(userDataRoot);
   database = openDatabase(paths.database);
   migrate(database);
   const repositories = createRepositories(database);

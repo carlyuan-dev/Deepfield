@@ -7,9 +7,15 @@ export default defineConfig({
     index: resolve("apps/desktop/src/main/index.ts"),
     "agent-worker": resolve("apps/desktop/src/worker/index.ts"),
   } } } },
-  preload: { build: { rollupOptions: {
+  preload: { build: {
+    // The preload runs sandboxed (sandbox: true) and cannot require
+    // node_modules at runtime, so everything except electron must be bundled
+    // (electron-vite would otherwise externalize deps like typebox).
+    externalizeDeps: false,
+    rollupOptions: {
     input: resolve("apps/desktop/src/preload/index.ts"),
     output: { format: "cjs", entryFileNames: "[name].js" },
+    external: ["electron"],
   } } },
   renderer: {
     root: resolve("apps/desktop/src/renderer"),

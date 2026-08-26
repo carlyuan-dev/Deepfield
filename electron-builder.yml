@@ -1,0 +1,19 @@
+appId: com.deepfield.desktop
+productName: Deepfield
+asar: true
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+# node_modules (production deps only: @earendil-works/pi-*, typebox) are
+# included automatically by electron-builder from package.json dependencies.
+mac:
+  category: public.app-category.productivity
+  identity: null
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+artifactName: Deepfield-${version}-${arch}.${ext}
