@@ -43,7 +43,8 @@ apps/desktop/src/main/index.ts       Electron lifecycle and composition root
 apps/desktop/src/main/window.ts      hardened BrowserWindow construction
 apps/desktop/src/main/ipc.ts         typed IPC handler registration
 apps/desktop/src/main/paths.ts       injected user-data paths
-apps/desktop/src/main/secret-store.ts macOS-backed encrypted secret persistence
+apps/desktop/src/main/secret-store.ts encrypted secret public API
+apps/desktop/src/main/secret-store-core.ts atomic encrypted-file implementation
 apps/desktop/src/main/agent-worker-client.ts utility process request/event bridge
 
 apps/desktop/src/preload/index.ts    minimal contextBridge API
@@ -495,7 +496,10 @@ git commit -m "feat: persist projects and lazy conversations"
 
 **Files:**
 - Create: `apps/desktop/src/main/secret-store.ts`
+- Create: `apps/desktop/src/main/secret-store-core.ts`
 - Test: `apps/desktop/src/main/secret-store.test.ts`
+- Test: `apps/desktop/src/main/secret-store-hardening.test.ts`
+- Test support: `apps/desktop/src/main/secret-store-test-helpers.ts`
 
 **Interfaces:**
 - Consumes: injected secret file path and Electron `safeStorage` adapter.
