@@ -73,7 +73,13 @@ packages/contracts/src/index.ts      public contract exports
 packages/persistence/package.json    persistence workspace exports
 packages/persistence/src/database.ts SQLite connection and pragmas
 packages/persistence/src/migrations.ts ordered transactional migrations
-packages/persistence/src/repositories.ts project/conversation/message/event repositories
+packages/persistence/src/types.ts    repository and SQLite row contracts
+packages/persistence/src/mappers.ts  SQLite row-to-domain mapping
+packages/persistence/src/project-repository.ts project writes and queries
+packages/persistence/src/conversation-repository.ts lazy conversation persistence
+packages/persistence/src/message-repository.ts ordered message persistence
+packages/persistence/src/activity-repository.ts project activity persistence
+packages/persistence/src/repositories.ts repository composition
 packages/persistence/src/index.ts    persistence public API
 
 packages/application/package.json    application workspace exports
@@ -351,6 +357,12 @@ git commit -m "build: scaffold desktop workspace and contracts"
 **Files:**
 - Create: `packages/persistence/src/database.ts`
 - Create: `packages/persistence/src/migrations.ts`
+- Create: `packages/persistence/src/types.ts`
+- Create: `packages/persistence/src/mappers.ts`
+- Create: `packages/persistence/src/project-repository.ts`
+- Create: `packages/persistence/src/conversation-repository.ts`
+- Create: `packages/persistence/src/message-repository.ts`
+- Create: `packages/persistence/src/activity-repository.ts`
 - Create: `packages/persistence/src/repositories.ts`
 - Create: `packages/persistence/src/index.ts`
 - Test: `packages/persistence/src/persistence.test.ts`
