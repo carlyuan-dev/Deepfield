@@ -1,5 +1,5 @@
 import type { CreateProjectInput, Project } from "./projects.js";
-import type { AgentWorkerEvent } from "./chat.js";
+import type { AgentWorkerEvent, ChatMessage } from "./chat.js";
 
 export interface DesktopApi {
   projects: {
@@ -13,5 +13,6 @@ export interface DesktopApi {
   chat: {
     send(projectId: string, content: string): Promise<{ requestId: string }>;
     subscribe(listener: (event: AgentWorkerEvent) => void): () => void;
+    listMessages(projectId: string): Promise<ChatMessage[]>;
   };
 }

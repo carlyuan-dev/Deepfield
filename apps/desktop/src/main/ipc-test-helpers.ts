@@ -1,4 +1,10 @@
-import type { AgentWorkerEvent, CreateProjectInput, Project, ProjectId } from "@deepfield/contracts";
+import type {
+  AgentWorkerEvent,
+  ChatMessage,
+  CreateProjectInput,
+  Project,
+  ProjectId,
+} from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
   registerIpcHandlers,
@@ -103,12 +109,19 @@ export class FakeSecretSettings {
 
 export class FakeChatService {
   sendCalls: Array<{ projectId: string; content: string }> = [];
+  listMessagesCalls: string[] = [];
+  history: ChatMessage[] = [];
   private listeners: Array<(event: AgentWorkerEvent) => void> = [];
 
   send(projectId: string, content: string, onEvent: (event: AgentWorkerEvent) => void) {
     this.sendCalls.push({ projectId, content });
     this.listeners.push(onEvent);
     return Promise.resolve({ requestId: "req-1" });
+  }
+
+  listMessages(projectId: string): ChatMessage[] {
+    this.listMessagesCalls.push(projectId);
+    return this.history;
   }
 
   emitToLast(event: AgentWorkerEvent): void {

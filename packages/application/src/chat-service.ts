@@ -91,6 +91,18 @@ export class ChatService {
     return { requestId };
   }
 
+  listMessages(projectId: string): ChatMessage[] {
+    const project = this.repositories.projects.getById(projectId as ProjectId);
+    if (!project) {
+      throw new ChatServiceError("project not found");
+    }
+    const conversation = this.repositories.conversations.listByProject(projectId as ProjectId)[0];
+    if (!conversation) {
+      throw new ChatServiceError("conversation not found");
+    }
+    return this.repositories.messages.listByConversation(conversation.id);
+  }
+
   private async consume(
     request: AgentWorkerRequest,
     conversationId: ConversationId,

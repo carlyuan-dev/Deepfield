@@ -2,6 +2,7 @@ import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
   type AgentWorkerEvent,
+  type ChatMessage,
   type CreateProjectInput,
   type DesktopApi,
   type Project,
@@ -14,6 +15,7 @@ export const IPC_CHANNELS = {
   settingsSetDeepSeekKey: "deepfield:settings:setDeepSeekKey",
   chatSend: "deepfield:chat:send",
   chatEvents: "deepfield:chat:events",
+  chatListMessages: "deepfield:chat:listMessages",
 } as const;
 
 export interface IpcBridge {
@@ -43,6 +45,8 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
             listener(value);
           }
         }),
+      listMessages: (projectId: string) =>
+        ipc.invoke(IPC_CHANNELS.chatListMessages, projectId) as Promise<ChatMessage[]>,
     },
   };
 }

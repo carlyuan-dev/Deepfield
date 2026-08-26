@@ -1,0 +1,34 @@
+/* Chat rail */
+.chat-rail {
+  width: 360px;
+  flex: none;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.chat-rail.collapsed {
+  width: 52px;
+  align-items: center;
+  padding: 12px 8px;
+}
+
+.chat-rail.collapsed button {
+  writing-mode: vertical-rl;
+  padding: 8px 4px;
+}
+
+.rail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.rail-hint {
+  font-size: 13px;
+}

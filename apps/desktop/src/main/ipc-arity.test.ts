@@ -63,4 +63,16 @@ describe("ipc handler arity", () => {
     ).rejects.toThrow(/invalid chat input/);
     expect(chat.sendCalls).toHaveLength(0);
   });
+
+  it("requires exactly one argument for chat.listMessages", async () => {
+    const { ipcMain, chat } = makeDeps();
+    const sender = new FakeWebContents(1);
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.chatListMessages, event(sender)),
+    ).rejects.toThrow(/invalid chat input/);
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.chatListMessages, event(sender), "p1", "extra"),
+    ).rejects.toThrow(/invalid chat input/);
+    expect(chat.listMessagesCalls).toHaveLength(0);
+  });
 });

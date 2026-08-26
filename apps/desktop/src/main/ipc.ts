@@ -2,6 +2,7 @@ import { Value } from "typebox/value";
 import {
   CreateProjectInputSchema,
   type AgentWorkerEvent,
+  type ChatMessage,
   type CreateProjectInput,
   type Project,
 } from "@deepfield/contracts";
@@ -43,6 +44,7 @@ export interface ChatServiceLike {
     content: string,
     onEvent: (event: AgentWorkerEvent) => void,
   ): Promise<{ requestId: string }>;
+  listMessages(projectId: string): ChatMessage[];
 }
 
 export interface IpcServiceDeps {
@@ -58,6 +60,7 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.settingsHasDeepSeekKey,
   IPC_CHANNELS.settingsSetDeepSeekKey,
   IPC_CHANNELS.chatSend,
+  IPC_CHANNELS.chatListMessages,
 ] as const;
 
 export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
@@ -136,6 +139,14 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.chat.send(projectId, content, (workerEvent) => {
       emitToSender(event.sender, workerEvent);
     });
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.chatListMessages, async (_event, ...args) => {
+    const projectId = args[0];
+    if (args.length !== 1 || typeof projectId !== "string" || projectId.length === 0) {
+      throw new Error("invalid chat input");
+    }
+    return deps.chat.listMessages(projectId);
   });
 
   return () => {

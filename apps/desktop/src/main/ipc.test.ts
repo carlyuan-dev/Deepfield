@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ConversationId, MessageId } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
   channels,
@@ -9,7 +10,7 @@ import {
 } from "./ipc-test-helpers.js";
 
 describe("ipc handlers", () => {
-  it("registers exactly the five invoke channels and no chat.events handler", () => {
+  it("registers exactly the six invoke channels and no chat.events handler", () => {
     const { ipcMain } = makeDeps();
     const registered = [...ipcMain.handlers.keys()].sort();
     expect(registered).toEqual(
@@ -19,6 +20,7 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.settingsHasDeepSeekKey,
         IPC_CHANNELS.settingsSetDeepSeekKey,
         IPC_CHANNELS.chatSend,
+        IPC_CHANNELS.chatListMessages,
       ].sort(),
     );
     expect(ipcMain.handlers.has(IPC_CHANNELS.chatEvents)).toBe(false);
@@ -92,6 +94,23 @@ describe("ipc handlers", () => {
       ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "   "),
     ).rejects.toThrow();
     expect(chat.sendCalls).toHaveLength(1);
+  });
+
+  it("delegates chat message history for the project", async () => {
+    const { ipcMain, chat } = makeDeps();
+    const sender = new FakeWebContents(1);
+    chat.history = [
+      {
+        id: "m1" as MessageId,
+        conversationId: "c1" as ConversationId,
+        role: "user",
+        content: "a",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    const history = await ipcMain.invoke(IPC_CHANNELS.chatListMessages, event(sender), "p1");
+    expect(chat.listMessagesCalls).toEqual(["p1"]);
+    expect(history).toEqual(chat.history);
   });
 
   it("routes chat events only to the originating renderer", async () => {
