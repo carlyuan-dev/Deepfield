@@ -36,6 +36,35 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        CREATE TABLE tool_executions(
+          id TEXT PRIMARY KEY,
+          trace_id TEXT NOT NULL,
+          project_id TEXT,
+          actor TEXT NOT NULL,
+          tool_name TEXT NOT NULL,
+          tool_version INTEGER NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('running','completed','failed','cancelled')),
+          input_summary_json TEXT,
+          output_summary_json TEXT,
+          error_code TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          bytes_received INTEGER NOT NULL DEFAULT 0,
+          result_count INTEGER NOT NULL DEFAULT 0,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          duration_ms INTEGER
+        );
+        CREATE INDEX idx_tool_executions_trace_id ON tool_executions(trace_id);
+        CREATE INDEX idx_tool_executions_project_id ON tool_executions(project_id);
+        CREATE INDEX idx_tool_executions_started_at_id ON tool_executions(started_at, id);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

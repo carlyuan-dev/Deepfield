@@ -75,7 +75,7 @@ describe("project persistence", () => {
     const versions = db
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all() as unknown as Array<{ version: number }>;
-    expect(versions).toEqual([{ version: 1 }]);
+    expect(versions).toEqual([{ version: 1 }, { version: 2 }]);
 
     for (const table of ["projects", "conversations", "messages", "project_activity_events"]) {
       const row = db

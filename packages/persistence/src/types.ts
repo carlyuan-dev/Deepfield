@@ -49,11 +49,65 @@ export interface ActivityRepository {
   listByProject(projectId: ProjectId): ProjectActivityEvent[];
 }
 
+export type ToolExecutionStatus = "running" | "completed" | "failed" | "cancelled";
+
+export interface ToolExecution {
+  id: string;
+  traceId: string;
+  projectId?: string;
+  actor: string;
+  toolName: string;
+  toolVersion: number;
+  status: ToolExecutionStatus;
+  inputSummary?: unknown;
+  outputSummary?: unknown;
+  errorCode?: string;
+  attempts: number;
+  retries: number;
+  bytesReceived: number;
+  resultCount: number;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+}
+
+export interface ToolExecutionStart {
+  id: string;
+  traceId: string;
+  projectId?: string;
+  actor: string;
+  toolName: string;
+  toolVersion: number;
+  inputSummary?: unknown;
+  startedAt: string;
+}
+
+export interface ToolExecutionFinish {
+  id: string;
+  status: "completed" | "failed" | "cancelled";
+  outputSummary?: unknown;
+  errorCode?: string;
+  attempts: number;
+  retries: number;
+  bytesReceived: number;
+  resultCount: number;
+  finishedAt: string;
+  durationMs?: number;
+}
+
+export interface ToolExecutionRepository {
+  start(record: ToolExecutionStart): void;
+  finish(record: ToolExecutionFinish): void;
+  getById(id: string): ToolExecution | undefined;
+  listRecent(limit: number): ToolExecution[];
+}
+
 export interface Repositories {
   projects: ProjectRepository;
   conversations: ConversationRepository;
   messages: MessageRepository;
   activities: ActivityRepository;
+  toolExecutions: ToolExecutionRepository;
   runInTransaction<T>(work: () => T): T;
 }
 
@@ -99,4 +153,24 @@ export interface ActivityRow {
   summary: string;
   payload_json: string | null;
   created_at: string;
+}
+
+export interface ToolExecutionRow {
+  id: string;
+  trace_id: string;
+  project_id: string | null;
+  actor: string;
+  tool_name: string;
+  tool_version: number;
+  status: ToolExecutionStatus;
+  input_summary_json: string | null;
+  output_summary_json: string | null;
+  error_code: string | null;
+  attempts: number;
+  retries: number;
+  bytes_received: number;
+  result_count: number;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
 }

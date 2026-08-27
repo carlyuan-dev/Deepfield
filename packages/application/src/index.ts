@@ -6,5 +6,6 @@ export {
   ContextBuilderError,
 } from "./context-builder.js";
 export { ChatService, ChatServiceError, DEEPSEEK_KEY_NAME } from "./chat-service.js";
+export { SqliteToolAudit, SqliteToolAuditError } from "./tool-audit.js";
 export type { ChatSendResult, ChatServiceOptions } from "./chat-service.js";
 export type { AgentWorkerPort, RequestIdFactory, SecretReader } from "./ports.js";

@@ -3,6 +3,7 @@ import { createActivityRepository } from "./activity-repository.js";
 import { createConversationRepository } from "./conversation-repository.js";
 import { createMessageRepository } from "./message-repository.js";
 import { createProjectRepository } from "./project-repository.js";
+import { createToolExecutionRepository } from "./tool-execution-repository.js";
 import { runInTransaction } from "./transactions.js";
 import type { Repositories } from "./types.js";
 
@@ -12,6 +13,7 @@ export function createRepositories(db: DatabaseSync): Repositories {
     conversations: createConversationRepository(db),
     messages: createMessageRepository(db),
     activities: createActivityRepository(db),
+    toolExecutions: createToolExecutionRepository(db),
     runInTransaction: (work) => runInTransaction(db, work),
   };
 }
