@@ -50,3 +50,27 @@ export {
   type LinkOutput,
   type LinkToolDeps,
 } from "./link-tool.js";
+export {
+  createParseHtmlDefinition,
+  extractHtml,
+  ParseHtmlInputSchema,
+  ParseHtmlOutputSchema,
+  HtmlLinkSchema,
+  HtmlLocatorSchema,
+  type HtmlLink,
+  type HtmlLocator,
+  type ParseHtmlDeps,
+  type ParseHtmlInput,
+  type ParseHtmlOutput,
+} from "./html-tool.js";
+export {
+  createParsePdfDefinition,
+  joinPageText,
+  ParsePdfInputSchema,
+  ParsePdfOutputSchema,
+  PdfPageTextSchema,
+  type ParsePdfDeps,
+  type ParsePdfInput,
+  type ParsePdfOutput,
+  type PdfPageText,
+} from "./pdf-tool.js";
