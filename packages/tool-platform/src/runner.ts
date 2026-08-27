@@ -1,6 +1,7 @@
 import { Value } from "typebox/value";
 import type { ToolCallRequest, ToolExecutionResult } from "@deepfield/contracts";
-import type { ToolBudgetLedger, ToolBudgetToken } from "./budget.js";import type { ToolDefinition, ToolRunContext } from "./definition.js";
+import type { ToolBudgetLedger } from "./budget.js";
+import type { ToolDefinition, ToolRunContext } from "./definition.js";
 import { makeToolFailure, type ToolFailure, type ToolFailureCode } from "./errors.js";
 import {
   ToolEventEmitter,
@@ -22,11 +23,9 @@ import {
 } from "./snapshot.js";
 import {
   acquireExecutionSlots,
-  GLOBAL_CONCURRENCY_KEY,
   invalidInputPlaceholder,
   type ToolRunnerOptions,
 } from "./runner-internals.js";
-
 export type { ToolRunnerOptions } from "./runner-internals.js";
 
 /**
@@ -44,7 +43,6 @@ export class ToolRunner {
   readonly #audit: ToolAuditSink;
   readonly #clock: RetryClock;
   readonly #concurrency: ToolConcurrencyLimiter;
-
   constructor(options: ToolRunnerOptions) {
     this.#registry = options.registry;
     this.#policy = options.policy;
@@ -110,7 +108,6 @@ export class ToolRunner {
       return fail(makeToolFailure("invalid_input", 1, false));
     }
     const { input, scope, policyContext } = entry;
-
     let definition: ToolDefinition<any, any>;
     try {
       definition = this.#registry.resolve(tool);
@@ -152,6 +149,7 @@ export class ToolRunner {
         : {}),
       ledger,
       tool,
+      effect: definition.effect,
       category: definition.meter.category,
       definitionConcurrency: definition.concurrency,
     });

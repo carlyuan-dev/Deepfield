@@ -4,7 +4,7 @@ import type { RetryClock } from "./retry.js";
 import type { ToolAuditSink } from "./audit.js";
 import { makeToolFailure } from "./errors.js";
 import type { ToolConcurrencyLimiter } from "./limiter.js";
-import type { ToolMeterCategory } from "./definition.js";
+import type { ToolEffect, ToolMeterCategory } from "./definition.js";
 import { ToolPolicy } from "./policy.js";
 import { ToolRegistry } from "./registry.js";
 
@@ -19,9 +19,11 @@ export interface ToolRunnerOptions {
   /** Process-wide concurrency cap across all traces (0/undefined = unlimited). */
   globalConcurrency?: number;
   /**
-   * Hard per-identity concurrency cap for network tools (meter.category !=
-   * "none"): effective limit = min(definition.concurrency, this cap), applied
-   * per name@version so different network tools never share one slot.
+   * Hard per-identity concurrency cap for network tools (ToolEffect
+   * "network.read.public" only — meter.category is a budgeting dimension and
+   * never the network classifier): effective limit = min(definition.concurrency,
+   * this cap), applied per name@version so different network tools never share
+   * one slot.
    */
   networkToolConcurrency?: number;
 }
@@ -56,10 +58,12 @@ export interface ExecutionSlots {
 
 /**
  * Atomically acquires the global slot, the per-trace budget token and the
- * per-tool-identity concurrency slot. Network tools (category != "none") are
- * additionally capped by networkToolConcurrency per identity — different
- * network tools never share one slot. Returns undefined on any saturation so
- * the caller can fail with a safe budget_exceeded.
+ * per-tool-identity concurrency slot. The network concurrency cap applies only
+ * when the tool's formal ToolEffect is "network.read.public"; meter.category is
+ * purely a budgeting dimension and is orthogonal to whether a tool touches the
+ * network, so it must never be used as the network classifier. Different
+ * network tools keep their own slots (never merged). Returns undefined on any
+ * saturation so the caller can fail with a safe budget_exceeded.
  */
 export function acquireExecutionSlots(
   concurrency: ToolConcurrencyLimiter,
@@ -68,6 +72,7 @@ export function acquireExecutionSlots(
     networkToolConcurrency?: number;
     ledger: ToolBudgetLedger;
     tool: ToolIdentity;
+    effect: ToolEffect;
     category: ToolMeterCategory;
     definitionConcurrency: number;
   },
@@ -86,8 +91,9 @@ export function acquireExecutionSlots(
     releaseGlobal?.();
     return undefined;
   }
+  const isNetworkTool = options.effect === "network.read.public";
   const toolLimit =
-    options.category !== "none" && options.networkToolConcurrency !== undefined
+    isNetworkTool && options.networkToolConcurrency !== undefined
       ? Math.min(options.definitionConcurrency, options.networkToolConcurrency)
       : options.definitionConcurrency;
   const releaseTool = concurrency.acquire(
