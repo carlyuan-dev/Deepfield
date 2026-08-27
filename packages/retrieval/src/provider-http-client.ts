@@ -154,15 +154,23 @@ export class ProviderHttpClient {
   readonly #totalTimeoutMs: number;
 
   constructor(deps: ProviderHttpClientDeps) {
-    this.#endpoint = validateEndpoint(deps.endpoint);
+    this.#endpoint = Object.freeze(validateEndpoint(deps.endpoint));
     this.#transport = deps.transport;
     this.#timer = deps.timer ?? defaultHostTimer;
     this.#maxResponseBytes = requirePositiveInt(deps.maxResponseBytes, "maxResponseBytes", 2 * 1024 * 1024);
     this.#totalTimeoutMs = requirePositiveInt(deps.totalTimeoutMs, "totalTimeoutMs", 30_000);
   }
 
+  /** Read-only view of the bound (validated + frozen) endpoint. */
+  get endpoint(): ProviderEndpoint {
+    return this.#endpoint;
+  }
+
   async request(options: ProviderHttpRequestOptions): Promise<ProviderHttpResponse> {
     const path = validateRequestPath(this.#endpoint.pathPrefix, options.path);
+    const requestedBytes = options.maxResponseBytes === undefined ? this.#maxResponseBytes : requirePositiveInt(options.maxResponseBytes, "maxResponseBytes", 1);
+    // a single call can NEVER raise the constructor hard max
+    const effectiveMaxBytes = Math.min(requestedBytes, this.#maxResponseBytes);
     const { signal } = options;
     if (signal.aborted) {
       throw new SearchProviderError("cancelled");
@@ -188,7 +196,7 @@ export class ProviderHttpClient {
     });
     try {
       return await Promise.race([
-        this.#perform(path, options, controller),
+        this.#perform(path, options, controller, effectiveMaxBytes),
         deadlinePromise,
         abortDeferred,
       ]);
@@ -215,6 +223,7 @@ export class ProviderHttpClient {
     path: string,
     options: ProviderHttpRequestOptions,
     controller: AbortController,
+    maxBytes: number,
   ): Promise<ProviderHttpResponse> {
     const response = await this.#transport.request(this.#endpoint, {
       method: options.method,
@@ -233,7 +242,7 @@ export class ProviderHttpClient {
       ({ buffer: body } = await readBoundedBody(
         response,
         encoding,
-        options.maxResponseBytes ?? this.#maxResponseBytes,
+        maxBytes,
         "GET",
         controller.signal,
       ));

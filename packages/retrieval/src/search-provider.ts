@@ -121,7 +121,7 @@ export function isValidDateString(value: string): boolean {
 export function assertValidSearchRequest(request: SearchRequest): void {
   if (
     typeof request.query !== "string" ||
-    request.query.length === 0 ||
+    request.query.trim().length === 0 || // whitespace-only queries are rejected
     request.query.length > MAX_QUERY_LENGTH
   ) {
     throw new SearchProviderError("invalid_request");
@@ -168,11 +168,12 @@ function requireSafeUrl(value: unknown): string {
     throw new SearchProviderError("dangerous_url");
   }
   // percent-encoding can expand non-ASCII input beyond the bound: re-check the
-  // NORMALIZED href; the output stays the complete (never truncated) URL
+  // NORMALIZED href; the output is the full verified parsed href, never a
+  // truncated or raw-unvalidated value
   if (parsed.href.length > MAX_RESULT_URL_LENGTH) {
     throw new SearchProviderError("dangerous_url");
   }
-  return value;
+  return parsed.href;
 }
 
 function requireDate(value: unknown): string {

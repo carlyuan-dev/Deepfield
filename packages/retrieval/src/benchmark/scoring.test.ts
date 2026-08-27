@@ -160,7 +160,7 @@ describe("benchmark scoring (focused revision)", () => {
       linkValidity: { a: { valid: 20, total: 20 }, b: { valid: 20, total: 20 } },
     });
     const emptyChineseResult = scoreBenchmark(emptyChinese);
-    expect(emptyChineseResult.eligibility.find((entry) => entry.provider === "a")!.reasons).toContain("chinese queries empty");
+    expect(emptyChineseResult.eligibility.find((entry) => entry.provider === "a")!.reasons.some((reason) => /chinese query empty: q[1-7]/.test(reason))).toBe(true);
     expect(emptyChineseResult.eligibility.find((entry) => entry.provider === "b")!.eligible).toBe(true);
 
     // dangerous URL -> per-provider reason

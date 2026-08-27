@@ -84,7 +84,7 @@ describe("candidate provider adapters (focused revision)", () => {
     const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-test" });
     const response = await provider.search({ query: "人形机器人 公司", maxResults: 20 }, new AbortController().signal);
     expect(response.results).toHaveLength(2);
-    expect(response.results[0]).toMatchObject({ title: "Official Site", url: "https://example.com", rank: 1, provider: "brave" });
+    expect(response.results[0]).toMatchObject({ title: "Official Site", url: "https://example.com/", rank: 1, provider: "brave" });
     expect(requests[0]!.method).toBe("GET");
     expect(requests[0]!.path).toContain("count=20");
     expect(requests[0]!.headers["X-Subscription-Token"]).toBe("sk-test");
@@ -112,6 +112,26 @@ describe("candidate provider adapters (focused revision)", () => {
     const wordError = await errorOf(provider.search({ query: manyWords, maxResults: 5 }, new AbortController().signal));
     expect(wordError).toMatchObject({ code: "invalid_request" });
     expect(requests).toHaveLength(1); // only the timeRange request reached the transport
+  });
+
+  it("rejects a client bound to a DIFFERENT endpoint before any secret or transport call", async () => {
+    const attackerEndpoint: ProviderEndpoint = { origin: "https://attacker.example", pathPrefix: "/res/v1/web/search" };
+    const { transport, requests } = scriptedTransport([() => jsonResponse(200, { web: { results: [] } })]);
+    const attackerClient = new ProviderHttpClient({ transport, endpoint: attackerEndpoint });
+    expect(() => createBraveProvider({ client: attackerClient, token: "sk-attacker-token" })).toThrow(SearchProviderError);
+    // the brave adapter must NOT have contacted the attacker origin
+    expect(requests).toHaveLength(0);
+
+    const { transport: transport2, requests: requests2 } = scriptedTransport([() => jsonResponse(200, { organic: [] })]);
+    const mismatchedClient = new ProviderHttpClient({ transport: transport2, endpoint: SERPER_ENDPOINT });
+    expect(() => createBraveProvider({ client: mismatchedClient, token: "sk-x" })).toThrow(SearchProviderError);
+    expect(requests2).toHaveLength(0);
+
+    const { transport: transport3, requests: requests3 } = scriptedTransport([() => jsonResponse(200, { results: [] })]);
+    const braveClient = new ProviderHttpClient({ transport: transport3, endpoint: BRAVE_ENDPOINT });
+    expect(() => createTavilyProvider({ client: braveClient, token: "sk-x" })).toThrow(SearchProviderError);
+    expect(() => createSerperProvider({ client: braveClient, token: "sk-x" })).toThrow(SearchProviderError);
+    expect(requests3).toHaveLength(0);
   });
 
   it("brave: 401, 429 with retry-after, 5xx, invalid JSON, missing results and dangerous URL", async () => {
@@ -142,7 +162,7 @@ describe("candidate provider adapters (focused revision)", () => {
       { query: "humanoid robot", maxResults: 20, timeRange: { from: "2026-08-01", to: "2026-08-31" } },
       new AbortController().signal,
     );
-    expect(response.results[0]).toMatchObject({ title: "Tavily Result", url: "https://tavily.example", rank: 1, date: "2026-08-20" });
+    expect(response.results[0]).toMatchObject({ title: "Tavily Result", url: "https://tavily.example/", rank: 1, date: "2026-08-20" });
     expect(requests[0]!.method).toBe("POST");
     expect(JSON.parse(requests[0]!.body ?? "{}")).toMatchObject({
       api_key: "sk-test",
@@ -158,7 +178,7 @@ describe("candidate provider adapters (focused revision)", () => {
     const { transport, requests } = scriptedTransport([() => jsonResponse(200, body)]);
     const provider = createSerperProvider({ client: clientFor(transport, SERPER_ENDPOINT), token: "sk-test" });
     const response = await provider.search({ query: "actuator supplier", maxResults: 20 }, new AbortController().signal);
-    expect(response.results[0]).toMatchObject({ title: "Serper Result", url: "https://serper.example", rank: 1, date: "2026-08-22" });
+    expect(response.results[0]).toMatchObject({ title: "Serper Result", url: "https://serper.example/", rank: 1, date: "2026-08-22" });
     expect(requests[0]!.headers["X-API-KEY"]).toBe("sk-test");
 
     // capability declared false: timeRange is rejected up front, never silently ignored

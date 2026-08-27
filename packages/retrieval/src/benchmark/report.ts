@@ -18,10 +18,17 @@ export interface BenchmarkReport {
   providerConfig: ProviderConfigSummary[];
   failures: string[];
   runs: BenchmarkedRun[];
-  /** Expected total measurements = providers x queries x runsPerQuery. */
+  /** Fixed up front: selectedProviders x queries x runsPerQuery; never grows with progress. */
   expectedMeasurements: number;
-  /** Measurements recorded so far (checkpointed incrementally). */
-  completedMeasurements: number;
+  /** Success + failed attempts (incremented even when a run fails). */
+  attemptedMeasurements: number;
+  /** Successful runs only (=== runs.length). */
+  successfulMeasurements: number;
+  /** True ONLY when attempted === expected AND the outer loop finished normally. */
+  benchmarkComplete: boolean;
+  /** Non-secret per-request USD pricing (Task-9-confirmed; never contains keys). */
+  pricingUsd: Record<string, number>;
+  pricingNote: string;
   completions: ProviderCompletion[];
   eligibility: ProviderEligibility[];
   scores: ProviderScore[];

@@ -20,6 +20,14 @@ export interface TavilyProviderDeps {
   token: string;
 }
 
+function assertClientEndpoint(client: ProviderHttpClient, expected: ProviderEndpoint): void {
+  const actual = client.endpoint;
+  if (actual.origin !== expected.origin || actual.pathPrefix !== expected.pathPrefix) {
+    // stable safe error: never carries the token or the mismatched origin
+    throw new SearchProviderError("invalid_request");
+  }
+}
+
 function parseJson(body: Buffer): unknown {
   try {
     return JSON.parse(body.toString("utf8")) as unknown;
@@ -30,6 +38,7 @@ function parseJson(body: Buffer): unknown {
 
 export function createTavilyProvider(deps: TavilyProviderDeps): SearchProvider {
   const { client, token } = deps;
+  assertClientEndpoint(client, ENDPOINT);
   return {
     id: "tavily",
     capabilities: { timeRange: true },

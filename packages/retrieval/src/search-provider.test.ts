@@ -32,7 +32,7 @@ describe("search provider normalized contract (focused revision)", () => {
     expect(response).toEqual({
       provider: "fake",
       results: [
-        { title: "Official", url: "https://example.com", snippet: "snippet one", rank: 1, provider: "fake" },
+        { title: "Official", url: "https://example.com/", snippet: "snippet one", rank: 1, provider: "fake" },
         { title: "Second", url: "https://other.example/path", snippet: "snippet two", rank: 2, provider: "fake" },
       ],
     });
@@ -41,7 +41,7 @@ describe("search provider normalized contract (focused revision)", () => {
       { title: "A", url: "https://a.example", snippet: "s", internal: { secret: "never-leak" }, token: "sk-x" },
     ];
     const normalized = normalizeSearchResults("fake", withExtra, 20);
-    expect(normalized.results[0]).toEqual({ title: "A", url: "https://a.example", snippet: "s", rank: 1, provider: "fake" });
+    expect(normalized.results[0]).toEqual({ title: "A", url: "https://a.example/", snippet: "s", rank: 1, provider: "fake" });
     expect(JSON.stringify(normalized)).not.toContain("sk-x");
   });
 
@@ -66,9 +66,9 @@ describe("search provider normalized contract (focused revision)", () => {
     const emojiPath = "\u{1F600}".repeat(300); // raw ≈ 618, normalized ≈ 3600
     expect(emojiPath.length).toBeLessThan(MAX_RESULT_URL_LENGTH);
     expectCode(() => normalizeSearchResults("fake", [{ title: "A", url: `https://x.example/${emojiPath}`, snippet: "s" }], 20), "dangerous_url");
-    // the normalized output uses the full normalized href (never a truncated one)
+    // the normalized output is the VERIFIED parsed href (never the raw value)
     const ok = normalizeSearchResults("fake", [{ title: "A", url: "https://EXAMPLE.com/a%20b", snippet: "s" }], 20);
-    expect(ok.results[0]!.url).toBe("https://EXAMPLE.com/a%20b");
+    expect(ok.results[0]!.url).toBe("https://example.com/a%20b");
   });
 
   it("validates provider ids: non-empty and bounded", () => {
@@ -104,6 +104,21 @@ describe("search provider normalized contract (focused revision)", () => {
       expectCode(() => normalizeSearchResults("fake", [{ title: "A", url, snippet: "s" }], 20), "dangerous_url");
     }
     expect(() => normalizeSearchResults("fake", [{ title: "A", url: undefined, snippet: "s" }], 20)).toThrow(SearchProviderError);
+  });
+
+  it("normalizes URLs and rejects percent-encoded expansion beyond the bound", () => {
+    const emojiPath = "\u{1F600}".repeat(300); // raw ≈ 618, normalized ≈ 3600
+    expect(emojiPath.length).toBeLessThan(MAX_RESULT_URL_LENGTH);
+    expectCode(() => normalizeSearchResults("fake", [{ title: "A", url: `https://x.example/${emojiPath}`, snippet: "s" }], 20), "dangerous_url");
+    // the normalized output is the VERIFIED parsed href (never the raw value)
+    const ok = normalizeSearchResults("fake", [{ title: "A", url: "https://EXAMPLE.com/a%20b", snippet: "s" }], 20);
+    expect(ok.results[0]!.url).toBe("https://example.com/a%20b");
+  });
+
+  it("rejects whitespace-only queries at the shared request boundary", () => {
+    expectCode(() => assertValidSearchRequest({ query: "   ", maxResults: 5 }), "invalid_request");
+    expectCode(() => assertValidSearchRequest({ query: "\t\n ", maxResults: 5 }), "invalid_request");
+    expect(() => assertValidSearchRequest({ query: " 人形机器人 ", maxResults: 5 })).not.toThrow();
   });
 
   it("rejects malformed strings and caps every string field", () => {

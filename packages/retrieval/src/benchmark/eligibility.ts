@@ -27,6 +27,8 @@ export interface ProviderCompletion {
   missing: string[];
   duplicateRounds: string[];
   unknownQueries: string[];
+  /** Runs whose queryId exists but whose query text differs from the frozen set. */
+  queryTextMismatches: string[];
 }
 
 export interface ProviderEligibility {
@@ -56,9 +58,15 @@ export function computeCompletions(input: EligibilityInput): ProviderCompletion[
     const providerRuns = input.runs.filter((run) => run.provider === provider);
     const roundsByQuery = new Map<string, number[]>();
     const unknownQueries: string[] = [];
+    const queryTextMismatches: string[] = [];
     for (const run of providerRuns) {
-      if (!queryById.has(run.queryId)) {
+      const frozen = queryById.get(run.queryId);
+      if (frozen === undefined) {
         unknownQueries.push(run.queryId);
+        continue;
+      }
+      if (run.query !== frozen.query) {
+        queryTextMismatches.push(`${run.queryId}:wrong-text`);
         continue;
       }
       const rounds = roundsByQuery.get(run.queryId) ?? [];
@@ -96,6 +104,7 @@ export function computeCompletions(input: EligibilityInput): ProviderCompletion[
     }
     const completed =
       unknownQueries.length === 0 &&
+      queryTextMismatches.length === 0 &&
       missing.length === 0 &&
       duplicateRounds.length === 0 &&
       providerRuns.length === queryIds.length * input.runsPerQuery;
@@ -107,6 +116,7 @@ export function computeCompletions(input: EligibilityInput): ProviderCompletion[
       missing,
       duplicateRounds,
       unknownQueries,
+      queryTextMismatches,
     };
   });
 }
@@ -153,9 +163,13 @@ export function computeEligibility(input: EligibilityInput): ProviderEligibility
       reasons.push("dangerous url");
     }
 
-    const chineseRuns = runs.filter((run) => chineseQueryIds.has(run.queryId));
-    if (chineseRuns.length > 0 && chineseRuns.every((run) => run.results.length === 0)) {
-      reasons.push("chinese queries empty");
+    // EVERY fixed Chinese query must have valid results in at least one of
+    // its rounds (rule fixed in code + tests); reasons carry the queryId.
+    for (const queryId of chineseQueryIds) {
+      const queryRuns = runs.filter((run) => run.queryId === queryId);
+      if (queryRuns.length > 0 && queryRuns.every((run) => run.results.length === 0)) {
+        reasons.push(`chinese query empty: ${queryId}`);
+      }
     }
 
     const validity = input.linkValidity[provider];

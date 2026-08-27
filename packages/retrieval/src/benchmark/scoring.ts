@@ -14,6 +14,14 @@ import {
 export { computeCompletions, computeEligibility, isValidDangerousUrl };
 export type { BenchmarkedRun, LinkValiditySample, ProviderCompletion, ProviderEligibility };
 
+/** Fail-closed input validation: illegal measurements reject the whole benchmark. */
+export class BenchmarkInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BenchmarkInputError";
+  }
+}
+
 export const WEIGHTS = {
   companyRecall: 0.35,
   chineseOfficialCoverage: 0.25,
@@ -107,6 +115,55 @@ function requireFiniteNonNegative(value: number, name: string): number {
 }
 
 /**
+ * Strict fail-closed input validation: any illegal measurement (non-finite,
+ * negative, wrong integer type, mismatched query text, illegal link sample)
+ * rejects the WHOLE benchmark before scoring — never clamped, interpolated or
+ * rewarded.
+ */
+export function assertValidScoringInput(input: BenchmarkScoringInput): void {
+  if (!Number.isInteger(input.runsPerQuery) || input.runsPerQuery <= 0) {
+    throw new BenchmarkInputError("invalid runsPerQuery");
+  }
+  const queryById = new Map(input.queries.queries.map((query) => [query.id, query]));
+  for (const run of input.runs) {
+    if (typeof run.provider !== "string" || run.provider.length === 0 || run.provider.length > 64) {
+      throw new BenchmarkInputError(`invalid provider in run ${run.queryId}`);
+    }
+    if (typeof run.queryId !== "string" || !queryById.has(run.queryId)) {
+      throw new BenchmarkInputError(`unknown query id "${run.queryId}"`);
+    }
+    if (typeof run.query !== "string" || run.query !== queryById.get(run.queryId)!.query) {
+      throw new BenchmarkInputError(`query text mismatch for ${run.queryId}`);
+    }
+    if (!Number.isInteger(run.round) || run.round < 0 || run.round >= input.runsPerQuery) {
+      throw new BenchmarkInputError(`invalid round ${run.round} for ${run.queryId}`);
+    }
+    if (!Number.isFinite(run.latencyMs) || run.latencyMs < 0) {
+      throw new BenchmarkInputError(`invalid latencyMs for ${run.queryId}`);
+    }
+    if (!Number.isFinite(run.costUsd) || run.costUsd < 0) {
+      throw new BenchmarkInputError(`invalid costUsd for ${run.queryId}`);
+    }
+    if (!Array.isArray(run.results)) {
+      throw new BenchmarkInputError(`invalid results for ${run.queryId}`);
+    }
+  }
+  for (const [provider, sample] of Object.entries(input.linkValidity)) {
+    if (
+      typeof sample !== "object" ||
+      sample === null ||
+      !Number.isInteger(sample.total) ||
+      sample.total < 0 ||
+      !Number.isInteger(sample.valid) ||
+      sample.valid < 0 ||
+      sample.valid > sample.total
+    ) {
+      throw new BenchmarkInputError(`invalid link validity sample for ${provider}`);
+    }
+  }
+}
+
+/**
  * Deterministic offline scoring. Raw measured values are kept separate from
  * normalized scores; a missing/partial provider run is never silently
  * imputed. Only providers that COMPLETE every query exactly runsPerQuery
@@ -115,6 +172,7 @@ function requireFiniteNonNegative(value: number, name: string): number {
  * coverage) decide eligibility without poisoning other providers.
  */
 export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringResult {
+  assertValidScoringInput(input);
   const chineseQueryIds = new Set(
     input.queries.queries
       .filter((query) => /[\u4e00-\u9fff]/.test(query.query))

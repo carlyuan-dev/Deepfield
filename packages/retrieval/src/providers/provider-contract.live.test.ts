@@ -4,36 +4,44 @@ import { createNodeProviderTransport } from "../provider-node-transport.js";
 import { createBraveProvider, ENDPOINT as BRAVE_ENDPOINT } from "./brave.js";
 import { createTavilyProvider, ENDPOINT as TAVILY_ENDPOINT } from "./tavily.js";
 import { createSerperProvider, ENDPOINT as SERPER_ENDPOINT } from "./serper.js";
-import { requireProviderKey } from "./live-keys.js";
+import { resolveLiveRun, type LiveProviderId } from "./live-config.js";
+import type { SearchProvider } from "../search-provider.js";
 
 /**
- * OPT-IN live compatibility smoke: only runs under vitest.live.config.ts and
- * only when the required environment keys are present. Missing keys FAIL
- * loudly (never silently skipped). Task 8 does not execute this suite.
+ * OPT-IN live compatibility smoke: only runs under vitest.live.config.ts.
+ * The selected provider set and every required key are resolved at module
+ * load — ANY missing key or invalid selection fails the whole suite BEFORE
+ * any network request or report write (never a silent skip).
  */
-function makeClient(endpoint: import("../provider-http-client.js").ProviderEndpoint): ProviderHttpClient {
-  return new ProviderHttpClient({ transport: createNodeProviderTransport(), endpoint, totalTimeoutMs: 15_000 });
-}
+const RUN = resolveLiveRun(process.env as Record<string, string | undefined>);
+
+const ENDPOINTS: Record<LiveProviderId, { origin: string; pathPrefix: string }> = {
+  brave: BRAVE_ENDPOINT,
+  tavily: TAVILY_ENDPOINT,
+  serper: SERPER_ENDPOINT,
+};
+
+const FACTORIES: Record<LiveProviderId, (client: ProviderHttpClient, token: string) => SearchProvider> = {
+  brave: (client, token) => createBraveProvider({ client, token }),
+  tavily: (client, token) => createTavilyProvider({ client, token }),
+  serper: (client, token) => createSerperProvider({ client, token }),
+};
 
 describe("provider live compatibility (opt-in)", () => {
-  it("brave: one query against the official endpoint records status and schema compatibility", async () => {
-    const provider = createBraveProvider({ client: makeClient(BRAVE_ENDPOINT), token: requireProviderKey("brave") });
-    const response = await provider.search({ query: "humanoid robot companies official website", maxResults: 5 }, new AbortController().signal);
-    expect(response.provider).toBe("brave");
-    expect(Array.isArray(response.results)).toBe(true);
-  });
-
-  it("tavily: one query against the official endpoint records status and schema compatibility", async () => {
-    const provider = createTavilyProvider({ client: makeClient(TAVILY_ENDPOINT), token: requireProviderKey("tavily") });
-    const response = await provider.search({ query: "humanoid robot actuator supplier", maxResults: 5 }, new AbortController().signal);
-    expect(response.provider).toBe("tavily");
-    expect(Array.isArray(response.results)).toBe(true);
-  });
-
-  it("serper: one query against the official endpoint records status and schema compatibility", async () => {
-    const provider = createSerperProvider({ client: makeClient(SERPER_ENDPOINT), token: requireProviderKey("serper") });
-    const response = await provider.search({ query: "humanoid robot startup company", maxResults: 5 }, new AbortController().signal);
-    expect(response.provider).toBe("serper");
-    expect(Array.isArray(response.results)).toBe(true);
-  });
+  for (const id of RUN.providers) {
+    it(`${id}: one query against the official endpoint records status and schema compatibility`, async () => {
+      const client = new ProviderHttpClient({
+        transport: createNodeProviderTransport(),
+        endpoint: ENDPOINTS[id],
+        totalTimeoutMs: 15_000,
+      });
+      const provider = FACTORIES[id](client, RUN.tokens[id]);
+      const response = await provider.search(
+        { query: "humanoid robot companies official website", maxResults: 5 },
+        new AbortController().signal,
+      );
+      expect(response.provider).toBe(id);
+      expect(Array.isArray(response.results)).toBe(true);
+    });
+  }
 });

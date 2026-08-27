@@ -152,6 +152,51 @@ describe("provider http client (focused revision)", () => {
     ).rejects.toMatchObject({ code: "cancelled" });
   });
 
+  it("never lets a single call raise the constructor hard byte cap", async () => {
+    const hardMaxClient = new ProviderHttpClient({
+      transport: scriptedTransport([() => ({
+        statusCode: 200,
+        headers: {},
+        body: Readable.from([Buffer.from("x".repeat(200))]),
+        destroy() {},
+      })]).transport,
+      endpoint: BRAVE_ENDPOINT,
+      maxResponseBytes: 100,
+    });
+    // requested 1000 > hard 100: the hard cap wins -> too large
+    await expect(
+      hardMaxClient.request({ ...REQUEST, maxResponseBytes: 1000 }),
+    ).rejects.toMatchObject({ code: "response_too_large" });
+    // requested 50 <= hard 100: the smaller request cap applies (50 ok)
+    const small = new ProviderHttpClient({
+      transport: scriptedTransport([() => ({
+        statusCode: 200,
+        headers: {},
+        body: Readable.from([Buffer.from("x".repeat(50))]),
+        destroy() {},
+      })]).transport,
+      endpoint: BRAVE_ENDPOINT,
+      maxResponseBytes: 100,
+    });
+    const smallResponse = await small.request({ ...REQUEST, maxResponseBytes: 50 });
+    expect(smallResponse.body.length).toBe(50);
+  });
+
+  it("rejects invalid per-request byte caps before the transport is called", async () => {
+    const { transport, requests } = scriptedTransport([() => rawResponse(200, "{}")]);
+    const client = clientFor(transport);
+    for (const bad of [0, -5, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(client.request({ ...REQUEST, maxResponseBytes: bad })).rejects.toThrow(/maxResponseBytes/);
+    }
+    expect(requests).toHaveLength(0);
+  });
+
+  it("exposes the bound endpoint read-only and frozen", () => {
+    const client = clientFor(scriptedTransport([]).transport);
+    expect(client.endpoint).toEqual(BRAVE_ENDPOINT);
+    expect(Object.isFrozen(client.endpoint)).toBe(true);
+  });
+
   it("never leaks authorization or keys into errors", async () => {
     const client = clientFor(scriptedTransport([() => ({
       statusCode: 500,
