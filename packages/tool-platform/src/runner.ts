@@ -12,9 +12,13 @@ import {
 import { ToolPolicy } from "./policy.js";
 import { ToolRegistry } from "./registry.js";
 import { type RetryClock } from "./retry.js";
-import type { ToolAuditFinish, ToolAuditSink } from "./audit.js";
-import { runAttempt } from "./runner-attempt.js";
-import { snapshotInput, snapshotScope, snapshotToolIdentity } from "./snapshot.js";
+import type { ToolAuditSink } from "./audit.js";
+import { finishAuditBestEffort, runAttempt } from "./runner-attempt.js";
+import {
+  snapshotExecutionInput,
+  snapshotJsonValue,
+  snapshotToolIdentity,
+} from "./snapshot.js";
 
 export interface ToolRunnerOptions {
   registry: ToolRegistry;
@@ -28,6 +32,8 @@ export interface ToolRunnerOptions {
 // snapshotted at all; the result is a safe invalid_input with a frozen
 // placeholder so no mutable caller object is ever exposed.
 const INVALID_TOOL_PLACEHOLDER: ToolIdentity = Object.freeze({ name: "invalid_tool", version: 1 });
+const INVALID_EXECUTION_ID = "invalid-execution";
+const INVALID_TRACE_ID = "invalid-trace";
 
 /**
  * Single execution pipeline shared by Pi adapters, Capabilities and direct
@@ -61,16 +67,14 @@ export class ToolRunner {
   ): Promise<ToolExecutionResult> {
     const tool = snapshotToolIdentity(call.tool);
     if (tool === undefined) {
-      return this.#invalidInputPlaceholder(call);
+      return invalidInputPlaceholder(call);
     }
     const executionId = call.executionId;
     const traceId = call.traceId;
-    let input: unknown;
-    try {
-      input = snapshotInput(call.input);
-    } catch {
-      input = undefined;
-    }
+    // Capture everything the pipeline depends on before the first emit: a
+    // listener running on `accepted` must not be able to change actor,
+    // project, trace, toolSet or confirmations for this execution.
+    const entry = snapshotExecutionInput(call, context, traceId);
     const startedAt = this.#clock.now();
     const emitter = new ToolEventEmitter(executionId, traceId, tool, () => this.#clock.now(), onEvent);
     let settled = false;
@@ -90,8 +94,7 @@ export class ToolRunner {
       result = next;
       return result;
     };
-    // Single-line result builders keep this hot-path file under the hard
-    // 300-line production limit; the pipeline reads top to bottom.
+    // Single-line result builders keep this hot-path file under 300 lines.
     const fail = (failure: ToolFailure): ToolExecutionResult => {
       emit({ type: "failed", failure });
       return settle({ executionId, traceId, tool, status: "failed", failure, attempts: failure.attempts, durationMs: this.#clock.now() - startedAt });
@@ -106,17 +109,10 @@ export class ToolRunner {
     };
 
     emit({ type: "accepted" });
-    if (input === undefined) {
+    if (entry === undefined) {
       return fail(makeToolFailure("invalid_input", 1, false));
     }
-    const scope = snapshotScope({
-      traceId: context.traceId,
-      actor: context.actor,
-      projectId: context.projectId,
-    });
-    if (scope === undefined || scope.traceId !== traceId) {
-      return fail(makeToolFailure("invalid_input", 1, false));
-    }
+    const { input, scope, policyContext } = entry;
 
     let definition: ToolDefinition<any, any>;
     try {
@@ -131,7 +127,7 @@ export class ToolRunner {
 
     const decision = this.#policy.evaluate(
       { identity: tool, effect: definition.effect, input: input as Record<string, unknown> },
-      context,
+      policyContext,
     );
     if (decision.decision === "deny") {
       return fail(makeToolFailure(decision.code, 1, false));
@@ -163,7 +159,12 @@ export class ToolRunner {
 
     if (signal.aborted) {
       this.#budget.release(token);
-      await this.#finishAuditBestEffort({ executionId, traceId, status: "cancelled", attempts: 1 });
+      await finishAuditBestEffort(this.#audit, {
+        executionId,
+        traceId,
+        status: "cancelled",
+        attempts: 1,
+      });
       return cancel(makeToolFailure("cancelled", 1, false));
     }
 
@@ -178,7 +179,6 @@ export class ToolRunner {
 
     try {
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        attempts = attempt;
         if (signal.aborted) {
           terminalFailure = makeToolFailure("cancelled", attempts, false);
           break;
@@ -187,6 +187,9 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
+        // attempts increments only when an executor attempt is really about to
+        // start, so deadline/cancel hits between attempts never inflate it.
+        attempts = attempt;
         emit({ type: "started" });
         const outcome = await runAttempt({
           definition,
@@ -210,7 +213,7 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
-        if (!outcome.failure.retryable || attempt >= maxAttempts) {
+        if (!outcome.failure.retryable || attempts >= maxAttempts) {
           terminalFailure = outcome.failure;
           break;
         }
@@ -236,9 +239,14 @@ export class ToolRunner {
     }
 
     if (terminalFailure === undefined) {
-      if (!Value.Check(definition.outputSchema, output)) {
+      const outputSnapshot = snapshotJsonValue(output);
+      if (!outputSnapshot.ok || !Value.Check(definition.outputSchema, outputSnapshot.value)) {
         terminalFailure = makeToolFailure("invalid_output", attempts, false);
       } else {
+        // The frozen snapshot is what gets validated and returned: the
+        // executor's original value can be mutated at any time afterwards
+        // without changing the result or leaking secrets.
+        output = outputSnapshot.value;
         try {
           await this.#audit.finish({
             executionId,
@@ -261,7 +269,7 @@ export class ToolRunner {
     this.#budget.release(token);
     const status: "failed" | "cancelled" =
       terminalFailure.code === "cancelled" ? "cancelled" : "failed";
-    await this.#finishAuditBestEffort({
+    await finishAuditBestEffort(this.#audit, {
       executionId,
       traceId,
       status,
@@ -271,23 +279,21 @@ export class ToolRunner {
     });
     return status === "cancelled" ? cancel(terminalFailure) : fail(terminalFailure);
   }
+}
 
-  #invalidInputPlaceholder(call: ToolCallRequest): ToolExecutionResult {
-    return {
-      executionId: typeof call.executionId === "string" ? call.executionId : "",
-      traceId: typeof call.traceId === "string" ? call.traceId : "",
-      tool: INVALID_TOOL_PLACEHOLDER,
-      status: "failed",
-      failure: makeToolFailure("invalid_input", 1, false),
-      attempts: 1,
-    };
-  }
-
-  async #finishAuditBestEffort(record: ToolAuditFinish): Promise<void> {
-    try {
-      await this.#audit.finish(record);
-    } catch {
-      // Already failing path: audit is best-effort here, never a success claim.
-    }
-  }
+function invalidInputPlaceholder(call: ToolCallRequest): ToolExecutionResult {
+  return {
+    executionId:
+      typeof call.executionId === "string" && call.executionId.length > 0
+        ? call.executionId
+        : INVALID_EXECUTION_ID,
+    traceId:
+      typeof call.traceId === "string" && call.traceId.length > 0
+        ? call.traceId
+        : INVALID_TRACE_ID,
+    tool: INVALID_TOOL_PLACEHOLDER,
+    status: "failed",
+    failure: makeToolFailure("invalid_input", 1, false),
+    attempts: 1,
+  };
 }

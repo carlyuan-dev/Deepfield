@@ -99,7 +99,7 @@ describe("ToolRunner entry snapshots and immutability (focused revision)", () =>
       events.push(event);
       if (event.type === "progress") {
         try {
-          (event.progress as Record<string, unknown>)["secret"] = "injected";
+          (event.progress as unknown as Record<string, unknown>)["secret"] = "injected";
         } catch {
           // frozen
         }

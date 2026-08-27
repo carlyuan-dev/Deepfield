@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolProgress, ToolRunContext } from "./definition.js";
 import { makeToolFailure, ToolExecutionError, type ToolFailure } from "./errors.js";
 import { isRetryableFailure, type RetryClock } from "./retry.js";
+import type { ToolAuditFinish, ToolAuditSink } from "./audit.js";
 
 export type AttemptOutcome =
   | { kind: "value"; value: unknown }
@@ -61,4 +62,15 @@ export function classifyExecutorError(error: unknown, attempts: number): ToolFai
     );
   }
   return makeToolFailure("executor_failed", attempts, false);
+}
+
+export async function finishAuditBestEffort(
+  audit: ToolAuditSink,
+  record: ToolAuditFinish,
+): Promise<void> {
+  try {
+    await audit.finish(record);
+  } catch {
+    // Already failing path: audit is best-effort here, never a success claim.
+  }
 }

@@ -286,8 +286,12 @@ describe("ToolRunner retry", () => {
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
       expect(result.failure.code).toBe("timeout");
+      // attempts reflect the actual executor invocation count, not the loop
+      // counter: only one attempt ever ran before the deadline hit.
+      expect(result.failure.attempts).toBe(1);
     }
     expect(executorCalls).toBe(1);
     expect(events.filter(isTerminal)).toHaveLength(1);
+    expect(events.filter((event) => event.type === "started")).toHaveLength(1);
   });
 });
