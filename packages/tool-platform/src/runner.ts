@@ -1,5 +1,5 @@
 import { Value } from "typebox/value";
-import type { ToolCallRequest, ToolExecutionResult, ToolIdentity } from "@deepfield/contracts";
+import type { ToolCallRequest, ToolExecutionResult } from "@deepfield/contracts";
 import type { ToolBudgetLedger, ToolBudgetToken } from "./budget.js";
 import type { ToolDefinition, ToolRunContext } from "./definition.js";
 import { makeToolFailure, type ToolFailure, type ToolFailureCode } from "./errors.js";
@@ -21,29 +21,25 @@ import {
   snapshotJsonValue,
   snapshotToolIdentity,
 } from "./snapshot.js";
+import {
+  GLOBAL_CONCURRENCY_KEY,
+  invalidInputPlaceholder,
+  type ToolRunnerOptions,
+} from "./runner-internals.js";
 
-export interface ToolRunnerOptions {
-  registry: ToolRegistry;
-  policy: ToolPolicy;
-  budget: ToolBudgetLedger;
-  audit: ToolAuditSink;
-  clock: RetryClock;
-}
-
-// Only reachable for out-of-contract calls; safe invalid_input with a frozen
-// placeholder so no mutable caller object is ever exposed.
-const INVALID_TOOL_PLACEHOLDER: ToolIdentity = Object.freeze({ name: "invalid_tool", version: 1 });
-const INVALID_EXECUTION_ID = "invalid-execution";
-const INVALID_TRACE_ID = "invalid-trace";
+export type { ToolRunnerOptions } from "./runner-internals.js";
 
 /**
  * Single execution pipeline: entry snapshot -> resolve -> validate input ->
  * policy -> budget + concurrency -> audit start -> started -> execute/retry ->
  * validate output -> required audit finish + budget finalize -> one terminal.
  */
-export class ToolRunner {  readonly #registry: ToolRegistry;
+export class ToolRunner {
+  readonly #registry: ToolRegistry;
   readonly #policy: ToolPolicy;
   readonly #budget: ToolBudgetLedger;
+  readonly #budgetForTrace: ((traceId: string) => ToolBudgetLedger) | undefined;
+  readonly #globalConcurrency: number | undefined;
   readonly #audit: ToolAuditSink;
   readonly #clock: RetryClock;
   readonly #concurrency: ToolConcurrencyLimiter;
@@ -52,6 +48,8 @@ export class ToolRunner {  readonly #registry: ToolRegistry;
     this.#registry = options.registry;
     this.#policy = options.policy;
     this.#budget = options.budget;
+    this.#budgetForTrace = options.budgetForTrace;
+    this.#globalConcurrency = options.globalConcurrency;
     this.#audit = options.audit;
     this.#clock = options.clock;
     this.#concurrency = new ToolConcurrencyLimiter();
@@ -135,16 +133,27 @@ export class ToolRunner {  readonly #registry: ToolRegistry;
     emit({ type: "policy_checked" });
 
     let token: ToolBudgetToken;
+    const ledger =
+      this.#budgetForTrace !== undefined ? this.#budgetForTrace(scope.traceId) : this.#budget;
+    const releaseGlobal =
+      this.#globalConcurrency !== undefined
+        ? this.#concurrency.acquire(GLOBAL_CONCURRENCY_KEY, this.#globalConcurrency)
+        : undefined;
+    if (this.#globalConcurrency !== undefined && releaseGlobal === undefined) {
+      return fail(makeToolFailure("budget_exceeded", 1, false));
+    }
     try {
-      token = this.#budget.reserve(tool, definition.meter.category);
+      token = ledger.reserve(tool, definition.meter.category);
     } catch {
+      releaseGlobal?.();
       return fail(makeToolFailure("budget_exceeded", 1, false));
     }
     // Per-tool-identity concurrency cap acquired atomically with the budget;
     // both are released exactly once on every terminal path below.
     const releaseConcurrency = this.#concurrency.acquire(`${tool.name}@${tool.version}`, definition.concurrency);
     if (releaseConcurrency === undefined) {
-      this.#budget.release(token);
+      ledger.release(token);
+      releaseGlobal?.();
       return fail(makeToolFailure("budget_exceeded", 1, false));
     }
     try {
@@ -157,14 +166,16 @@ export class ToolRunner {  readonly #registry: ToolRegistry;
         attempts: 0,
       });
     } catch {
-      this.#budget.release(token);
+      ledger.release(token);
       releaseConcurrency();
+      releaseGlobal?.();
       return fail(makeToolFailure("audit_failed", 1, false));
     }
 
     if (signal.aborted) {
-      this.#budget.release(token);
+      ledger.release(token);
       releaseConcurrency();
+      releaseGlobal?.();
       await finishAuditBestEffort(this.#audit, {
         executionId,
         traceId,
@@ -264,13 +275,15 @@ export class ToolRunner {  readonly #registry: ToolRegistry;
     }
 
     if (terminalFailure === undefined) {
-      this.#budget.complete(token);
+      ledger.complete(token);
       releaseConcurrency();
+      releaseGlobal?.();
       return complete(output, attempts);
     }
 
-    this.#budget.release(token);
+    ledger.release(token);
     releaseConcurrency();
+    releaseGlobal?.();
     const status: "failed" | "cancelled" =
       terminalFailure.code === "cancelled" ? "cancelled" : "failed";
     await finishAuditBestEffort(this.#audit, {
@@ -283,15 +296,4 @@ export class ToolRunner {  readonly #registry: ToolRegistry;
     });
     return status === "cancelled" ? cancel(terminalFailure) : fail(terminalFailure);
   }
-}
-
-function invalidInputPlaceholder(): ToolExecutionResult {
-  return {
-    executionId: INVALID_EXECUTION_ID,
-    traceId: INVALID_TRACE_ID,
-    tool: INVALID_TOOL_PLACEHOLDER,
-    status: "failed",
-    failure: makeToolFailure("invalid_input", 1, false),
-    attempts: 1,
-  };
 }

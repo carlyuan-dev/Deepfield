@@ -21,15 +21,38 @@ export interface PiToolAdapterOptions {
   executionIdFactory?: () => string;
 }
 
-const MAX_DETERMINISTIC_TEXT_LENGTH = 8192;
+const MAX_DETERMINISTIC_TEXT_BYTES = 8192;
+
+/** UTF-8-safe truncation that never splits a surrogate pair. */
+function truncateUtf8(text: string, maxBytes: number): string {
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (Buffer.byteLength(text.slice(0, mid), "utf8") <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  let index = low;
+  const last = text.charCodeAt(index - 1);
+  if (last >= 0xd800 && last <= 0xdbff) {
+    index -= 1; // a lone high surrogate at the boundary: cut the pair
+  }
+  return text.slice(0, index);
+}
 
 /** Deterministic, bounded JSON text used when a Definition has no formatter. */
 export function deterministicOutputText(output: unknown): string {
   const serialized = JSON.stringify(output ?? null);
-  if (serialized === undefined || serialized.length <= MAX_DETERMINISTIC_TEXT_LENGTH) {
-    return serialized ?? "null";
+  if (serialized === undefined) {
+    return "null";
   }
-  return `${serialized.slice(0, MAX_DETERMINISTIC_TEXT_LENGTH)}…(truncated)`;
+  if (Buffer.byteLength(serialized, "utf8") <= MAX_DETERMINISTIC_TEXT_BYTES) {
+    return serialized;
+  }
+  return `${truncateUtf8(serialized, MAX_DETERMINISTIC_TEXT_BYTES)}…(truncated)`;
 }
 
 export class PiToolExecutionError extends Error {

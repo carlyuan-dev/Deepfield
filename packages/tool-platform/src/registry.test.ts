@@ -225,4 +225,18 @@ describe("ToolRegistry immutability (focused revision)", () => {
       } as unknown as ToolDefinition<typeof inputSchema, typeof outputSchema>),
     ).toThrow(ToolRegistryError);
   });
+
+  it("list returns a frozen array that cannot mutate the registry view", () => {
+    const registry = new ToolRegistry();
+    registry.register(echoV1);
+    const listed = registry.list();
+    expect(listed).toHaveLength(1);
+    expect(Object.isFrozen(listed)).toBe(true);
+    expect(() => {
+      (listed as unknown[]).push({} as never);
+    }).toThrow(TypeError);
+    expect(registry.list()).toHaveLength(1);
+    registry.freeze();
+    expect(registry.list()).toHaveLength(1);
+  });
 });

@@ -56,7 +56,7 @@ function makeClient(): {
 }
 
 describe("host client", () => {
-  it("pairs concurrent requests with replies by host request id", async () => {
+  it("pairs concurrent requests with replies by host request id and method", async () => {
     const { client, posted, deliver } = makeClient();
     const first = client.request("audit.start", { executionId: "a" });
     const second = client.request("audit.finish", { executionId: "b", status: "completed", attempts: 1 });
@@ -66,12 +66,14 @@ describe("host client", () => {
     deliver({
       hostRequestId: ids[1]!,
       kind: "host.reply",
+      method: "audit.finish",
       ok: true,
       payload: { acknowledged: true },
     });
     deliver({
       hostRequestId: ids[0]!,
       kind: "host.reply",
+      method: "audit.start",
       ok: true,
       payload: { acknowledged: true },
     });
@@ -84,10 +86,16 @@ describe("host client", () => {
     const { client, posted, deliver } = makeClient();
     const request = client.request("audit.start", { executionId: "a" });
     const id = (posted[0] as { hostRequestId: string }).hostRequestId;
-    const reply = { hostRequestId: id, kind: "host.reply", ok: true, payload: { acknowledged: true } };
+    const reply = {
+      hostRequestId: id,
+      kind: "host.reply",
+      method: "audit.start",
+      ok: true,
+      payload: { acknowledged: true },
+    };
     deliver(reply);
     deliver(reply);
-    deliver({ hostRequestId: "ghost", kind: "host.reply", ok: false, code: "x" });
+    deliver({ hostRequestId: "ghost", kind: "host.reply", method: "audit.start", ok: false, code: "audit_failed" });
     await expect(request).resolves.toEqual({ acknowledged: true });
     expect(client.pendingCount()).toBe(0);
   });
@@ -96,11 +104,11 @@ describe("host client", () => {
     const { client, posted, deliver } = makeClient();
     const errorRequest = client.request("audit.start", { executionId: "a" });
     const errorId = (posted[0] as { hostRequestId: string }).hostRequestId;
-    deliver({ hostRequestId: errorId, kind: "host.reply", ok: false, code: "audit_failed" });
+    deliver({ hostRequestId: errorId, kind: "host.reply", method: "audit.start", ok: false, code: "audit_failed" });
     await expect(errorRequest).rejects.toBeInstanceOf(HostRpcError);
     const malformed = client.request("audit.start", { executionId: "b" });
     const malformedId = (posted[1] as { hostRequestId: string }).hostRequestId;
-    deliver({ hostRequestId: malformedId, kind: "host.reply", ok: true, payload: { secret: "x" } });
+    deliver({ hostRequestId: malformedId, kind: "host.reply", method: "audit.start", ok: true, payload: { secret: "x" } });
     await expect(malformed).rejects.toBeInstanceOf(HostRpcProtocolError);
     expect(client.pendingCount()).toBe(0);
   });
@@ -171,5 +179,94 @@ describe("host client", () => {
     expect((posted[0] as { payload: { provider: string } }).payload.provider).toBe("deepseek");
     void keyPromise;
     client.dispose();
+  });
+});
+
+describe("host client typed correlation (focused revision)", () => {
+  it("settles a synchronous reply delivered during postMessage", async () => {
+    let client!: HostClient;
+    client = new HostClient({
+      postMessage: (value) => {
+        client.handleReply({
+          hostRequestId: (value as { hostRequestId: string }).hostRequestId,
+          kind: "host.reply",
+          method: "audit.start",
+          ok: true,
+          payload: { acknowledged: true },
+        });
+      },
+      timeoutMs: 1000,
+    });
+    const promise = client.request("audit.start", { executionId: "a" });
+    await expect(promise).resolves.toEqual({ acknowledged: true });
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("rejects a reply whose method mismatches the request", async () => {
+    const posted: unknown[] = [];
+    const client = new HostClient({ postMessage: (v) => posted.push(v), timeoutMs: 1000 });
+    const request = client.request("audit.start", { executionId: "a" });
+    const id = (posted[0] as { hostRequestId: string }).hostRequestId;
+    client.handleReply({
+      hostRequestId: id,
+      kind: "host.reply",
+      method: "secret.getProviderKey",
+      ok: true,
+      payload: { apiKey: "sk-secret" },
+    });
+    await expect(request).rejects.toBeInstanceOf(HostRpcProtocolError);
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("never delivers a secret payload to an audit request (schema level)", async () => {
+    const posted: unknown[] = [];
+    const client = new HostClient({ postMessage: (v) => posted.push(v), timeoutMs: 1000 });
+    const request = client.request("audit.finish", { executionId: "a", status: "completed", attempts: 1 });
+    const id = (posted[0] as { hostRequestId: string }).hostRequestId;
+    client.handleReply({
+      hostRequestId: id,
+      kind: "host.reply",
+      method: "audit.finish",
+      ok: true,
+      payload: { apiKey: "sk-secret" },
+    });
+    await expect(request).rejects.toBeInstanceOf(HostRpcProtocolError);
+    let leaked = "";
+    try {
+      await client.request("audit.start", { executionId: "b" });
+    } catch (error) {
+      leaked = String(error);
+    }
+    expect(leaked).not.toContain("sk-secret");
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("cleans up atomically when postMessage throws", async () => {
+    const client = new HostClient({
+      postMessage: () => {
+        throw new Error("transport failed");
+      },
+      timeoutMs: 1000,
+    });
+    await expect(client.request("audit.start", { executionId: "a" })).rejects.toThrow(/disposed/);
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("rejects unknown error codes as protocol errors without leaking the raw value", async () => {
+    const posted: unknown[] = [];
+    const client = new HostClient({ postMessage: (v) => posted.push(v), timeoutMs: 1000 });
+    const request = client.request("audit.start", { executionId: "a" });
+    const id = (posted[0] as { hostRequestId: string }).hostRequestId;
+    client.handleReply({
+      hostRequestId: id,
+      kind: "host.reply",
+      method: "audit.start",
+      ok: false,
+      code: "sk-secret-raw-value",
+    });
+    const error = await request.catch((caught) => caught);
+    expect(error).toBeInstanceOf(HostRpcProtocolError);
+    expect(String(error)).not.toContain("sk-secret-raw-value");
+    expect(client.pendingCount()).toBe(0);
   });
 });

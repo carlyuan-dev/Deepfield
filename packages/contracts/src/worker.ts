@@ -15,11 +15,37 @@ export const ToolActorSchema = Type.Union([
 ]);
 export type ToolActor = Static<typeof ToolActorSchema>;
 
+/** Stable ToolFailureCode literals mirroring @deepfield/tool-platform codes. */
+export const ToolFailureCodeSchema = Type.Union([
+  Type.Literal("invalid_input"),
+  Type.Literal("tool_not_found"),
+  Type.Literal("tool_not_allowed"),
+  Type.Literal("permission_denied"),
+  Type.Literal("confirmation_required"),
+  Type.Literal("budget_exceeded"),
+  Type.Literal("timeout"),
+  Type.Literal("cancelled"),
+  Type.Literal("rate_limited"),
+  Type.Literal("authentication_failed"),
+  Type.Literal("network_unavailable"),
+  Type.Literal("url_blocked"),
+  Type.Literal("redirect_blocked"),
+  Type.Literal("response_too_large"),
+  Type.Literal("unsupported_content_type"),
+  Type.Literal("parse_failed"),
+  Type.Literal("invalid_output"),
+  Type.Literal("executor_failed"),
+  Type.Literal("audit_failed"),
+]);
+export type ToolFailureCodeContract = Static<typeof ToolFailureCodeSchema>;
+
 /**
  * tool.run carries the ToolCallRequest plus the safe ToolRunContext data the
  * Utility needs (trace/actor/project). It never carries executors, ToolSet,
  * secrets, database handles or functions: permissions are chosen by the
  * trusted Utility assembly, never self-reported by Main/Renderer/Agent.
+ * `requestId` is the per-call unique transport generation id; `executionId`
+ * is the logical tool execution id protected by the Utility active map.
  */
 export const ToolRunRequestSchema = Type.Object(
   {
@@ -42,6 +68,21 @@ export const UtilityWorkerRequestSchema = Type.Union([
 ]);
 export type UtilityWorkerRequest = Static<typeof UtilityWorkerRequestSchema>;
 
+/**
+ * Strict envelope for Utility->Main tool events: the transport requestId is the
+ * per-call generation, so late envelopes from an old generation can never be
+ * mistaken for a newer one with the same executionId.
+ */
+export const ToolEventEnvelopeSchema = Type.Object(
+  {
+    kind: Type.Literal("tool.event"),
+    requestId: Type.String({ minLength: 1 }),
+    event: ToolExecutionEventSchema,
+  },
+  { additionalProperties: false },
+);
+export type ToolEventEnvelope = Static<typeof ToolEventEnvelopeSchema>;
+
 export const HostAuditStartPayloadSchema = Type.Object(
   {
     executionId: Type.String({ minLength: 1 }),
@@ -55,21 +96,41 @@ export const HostAuditStartPayloadSchema = Type.Object(
 );
 export type HostAuditStartPayload = Static<typeof HostAuditStartPayloadSchema>;
 
-export const HostAuditFinishPayloadSchema = Type.Object(
-  {
-    executionId: Type.String({ minLength: 1 }),
-    traceId: Type.String({ minLength: 1 }),
-    status: Type.Union([
-      Type.Literal("completed"),
-      Type.Literal("failed"),
-      Type.Literal("cancelled"),
-    ]),
-    attempts: Type.Integer({ minimum: 0 }),
-    errorCode: Type.Optional(Type.String({ minLength: 1 })),
-    durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
-  },
-  { additionalProperties: false },
-);
+/** status ↔ errorCode consistency enforced at schema level. */
+export const HostAuditFinishPayloadSchema = Type.Union([
+  Type.Object(
+    {
+      executionId: Type.String({ minLength: 1 }),
+      traceId: Type.String({ minLength: 1 }),
+      status: Type.Literal("completed"),
+      attempts: Type.Integer({ minimum: 0 }),
+      durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      executionId: Type.String({ minLength: 1 }),
+      traceId: Type.String({ minLength: 1 }),
+      status: Type.Literal("failed"),
+      attempts: Type.Integer({ minimum: 0 }),
+      errorCode: ToolFailureCodeSchema,
+      durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      executionId: Type.String({ minLength: 1 }),
+      traceId: Type.String({ minLength: 1 }),
+      status: Type.Literal("cancelled"),
+      attempts: Type.Integer({ minimum: 0 }),
+      errorCode: Type.Optional(ToolFailureCodeSchema),
+      durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
 export type HostAuditFinishPayload = Static<typeof HostAuditFinishPayloadSchema>;
 
 export const HostSecretRequestPayloadSchema = Type.Object(
@@ -110,19 +171,34 @@ export const HostRequestSchema = Type.Union([
 ]);
 export type HostRequest = Static<typeof HostRequestSchema>;
 
+export const HostRpcMethodSchema = Type.Union([
+  Type.Literal("audit.start"),
+  Type.Literal("audit.finish"),
+  Type.Literal("secret.getProviderKey"),
+]);
+export type HostRpcMethod = Static<typeof HostRpcMethodSchema>;
+
+/** Fixed host error codes: never arbitrary strings that could carry secrets. */
+export const HostErrorCodeSchema = Type.Union([
+  Type.Literal("audit_failed"),
+  Type.Literal("secret_unavailable"),
+  Type.Literal("invalid_request"),
+  Type.Literal("host_disposed"),
+  Type.Literal("host_protocol_error"),
+]);
+
+/**
+ * Method-discriminated replies: an audit success can only carry
+ * { acknowledged: true } and a secret success can only carry { apiKey }.
+ */
 export const HostReplySchema = Type.Union([
   Type.Object(
     {
       hostRequestId: Type.String({ minLength: 1 }),
       kind: Type.Literal("host.reply"),
+      method: Type.Literal("audit.start"),
       ok: Type.Literal(true),
-      payload: Type.Union([
-        Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }),
-        Type.Object(
-          { apiKey: Type.Union([Type.String(), Type.Null()]) },
-          { additionalProperties: false },
-        ),
-      ]),
+      payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }),
     },
     { additionalProperties: false },
   ),
@@ -130,8 +206,32 @@ export const HostReplySchema = Type.Union([
     {
       hostRequestId: Type.String({ minLength: 1 }),
       kind: Type.Literal("host.reply"),
+      method: Type.Literal("audit.finish"),
+      ok: Type.Literal(true),
+      payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: Type.Literal("secret.getProviderKey"),
+      ok: Type.Literal(true),
+      payload: Type.Object(
+        { apiKey: Type.Union([Type.String(), Type.Null()]) },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: HostRpcMethodSchema,
       ok: Type.Literal(false),
-      code: Type.String({ minLength: 1 }),
+      code: HostErrorCodeSchema,
     },
     { additionalProperties: false },
   ),
@@ -140,7 +240,7 @@ export type HostReply = Static<typeof HostReplySchema>;
 
 export const UtilityWorkerEventSchema = Type.Union([
   ...AgentWorkerEventSchema.anyOf,
-  ...ToolExecutionEventSchema.anyOf,
+  ToolEventEnvelopeSchema,
   HostReplySchema,
 ]);
 export type UtilityWorkerEvent = Static<typeof UtilityWorkerEventSchema>;

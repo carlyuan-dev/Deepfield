@@ -122,9 +122,9 @@ export async function collectError(
   return { labels, error };
 }
 
-export function toolRequest(id = "exec-1", traceId = "trace-1"): ToolRunRequest {
+export function toolRequest(id = "exec-1", traceId = "trace-1", requestId = id): ToolRunRequest {
   return {
-    requestId: id,
+    requestId,
     kind: "tool.run",
     executionId: id,
     traceId,
@@ -201,4 +201,13 @@ export async function collectToolError(
     error = caught instanceof Error ? caught : new Error(String(caught));
   }
   return { labels, error };
+}
+
+export function toolEnvelope(
+  requestId: string,
+  executionId: string,
+  traceId: string,
+  type: ToolExecutionEvent["type"],
+): { kind: "tool.event"; requestId: string; event: ToolExecutionEvent } {
+  return { kind: "tool.event", requestId, event: toolEvent(executionId, traceId, type) };
 }

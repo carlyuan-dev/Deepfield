@@ -9,67 +9,25 @@ import {
   type ToolExecutionEvent,
   type ToolRunRequest,
 } from "@deepfield/contracts";
+import {
+  isHostReply,
+  safeRequestId,
+  toolEnvelope,
+  toolFailedEnvelope,
+  type ActiveExecution,
+  type ChatAgent,
+  type ToolRuntime,
+  type WorkerEndpoint,
+  type WorkerLoop,
+} from "./message-loop-types.js";
 
-export interface ChatAgent {
-  run(
-    request: AgentWorkerRequest,
-    emit: (event: AgentWorkerEvent) => void,
-    signal: AbortSignal,
-  ): Promise<void>;
-}
-
-/** Tool executions are routed to a trusted Utility-side runtime. */
-export interface ToolRuntime {
-  run(
-    request: ToolRunRequest,
-    emit: (event: ToolExecutionEvent) => void,
-    signal: AbortSignal,
-  ): Promise<void>;
-}
-
-export interface WorkerEndpoint {
-  postMessage(value: unknown): void;
-  onMessage(listener: (value: unknown) => void): () => void;
-}
-
-export interface WorkerLoop {
-  dispose(): void;
-  activeCount(): number;
-}
+export type { ActiveExecution, ChatAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
 
 export interface WorkerMessageLoopOptions {
   toolRuntime?: ToolRuntime;
   hostReplyHandler?: (reply: unknown) => void;
-}
-
-interface ActiveExecution {
-  controller: AbortController;
-  settled: boolean;
-  settle: (code: string, message: string, abortSignal: boolean) => void;
-  finalize: () => void;
-}
-
-function safeRequestId(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  const requestId = (value as { requestId?: unknown }).requestId;
-  if (typeof requestId === "string") {
-    return requestId;
-  }
-  return undefined;
-}
-
-function isHostReply(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const record = value as { hostRequestId?: unknown; kind?: unknown };
-  return (
-    typeof record.hostRequestId === "string" &&
-    record.hostRequestId.length > 0 &&
-    record.kind === "host.reply"
-  );
+  /** Called once when the loop is disposed (e.g. to dispose the HostClient). */
+  onDispose?: () => void;
 }
 
 export function createWorkerMessageLoop(
@@ -78,6 +36,7 @@ export function createWorkerMessageLoop(
   options: WorkerMessageLoopOptions = {},
 ): WorkerLoop {
   const active = new Map<string, ActiveExecution>();
+  const activeExecutions = new Map<string, ActiveExecution>();
   let disposed = false;
   const unsubscribe = endpoint.onMessage((value) => handleInbound(value));
 
@@ -109,7 +68,7 @@ export function createWorkerMessageLoop(
   }
 
   function startChat(request: AgentWorkerRequest): void {
-    const execution = begin(request.requestId);
+    const execution = begin(request.requestId, "chat");
     if (!execution) {
       return;
     }
@@ -151,26 +110,35 @@ export function createWorkerMessageLoop(
   function startTool(request: ToolRunRequest): void {
     const runtime = options.toolRuntime;
     if (!runtime) {
-      endpoint.postMessage({
-        executionId: request.executionId,
-        traceId: request.traceId,
-        tool: request.tool,
-        sequence: 0,
-        timestamp: Date.now(),
-        type: "failed",
-        failure: {
-          code: "tool_not_found",
-          message: "tool execution is not available",
-          retryable: false,
-          attempts: 1,
-        },
-      } satisfies ToolExecutionEvent);
+      postToolTerminal(
+        request.requestId,
+        request.executionId,
+        request.traceId,
+        request.tool,
+        "tool_not_found",
+        "tool execution is not available",
+      );
       return;
     }
-    const execution = begin(request.requestId);
+    if (activeExecutions.has(request.executionId)) {
+      // A second execution for an already-active logical id is refused; the
+      // first execution keeps running (its transport generation stays unique).
+      postToolTerminal(
+        request.requestId,
+        request.executionId,
+        request.traceId,
+        request.tool,
+        "duplicate_execution",
+        "tool execution id already active",
+      );
+      return;
+    }
+    const execution = begin(request.requestId, "tool", request.executionId);
     if (!execution) {
       return;
     }
+    execution.traceId = request.traceId;
+    execution.tool = request.tool;
     const emit = (event: unknown): void => {
       if (disposed || execution.settled) {
         return;
@@ -189,10 +157,10 @@ export function createWorkerMessageLoop(
         event.type === "cancelled"
       ) {
         execution.finalize();
-        endpoint.postMessage(event);
+        endpoint.postMessage(toolEnvelope(request.requestId, event));
         return;
       }
-      endpoint.postMessage(event);
+      endpoint.postMessage(toolEnvelope(request.requestId, event));
     };
 
     void Promise.resolve()
@@ -211,8 +179,28 @@ export function createWorkerMessageLoop(
       });
   }
 
-  /** Registers an active execution; returns undefined on duplicate ids. */
-  function begin(requestId: string): ActiveExecution | undefined {
+  function postToolTerminal(
+    requestId: string,
+    executionId: string,
+    traceId: string,
+    tool: { name: string; version: number },
+    code: string,
+    message: string,
+  ): void {
+    if (disposed) {
+      return;
+    }
+    endpoint.postMessage(
+      toolFailedEnvelope(requestId, executionId, traceId, tool, code, message, Date.now()),
+    );
+  }
+
+  /** Registers an active execution; returns undefined on duplicate transport ids. */
+  function begin(
+    requestId: string,
+    kind: "chat" | "tool",
+    executionId?: string,
+  ): ActiveExecution | undefined {
     const existing = active.get(requestId);
     if (existing) {
       existing.settle("duplicate_request", "a request with this id is already active", true);
@@ -220,6 +208,9 @@ export function createWorkerMessageLoop(
     }
     const controller = new AbortController();
     const execution: ActiveExecution = {
+      kind,
+      requestId,
+      ...(executionId !== undefined ? { executionId } : {}),
       controller,
       settled: false,
       settle: () => {},
@@ -231,6 +222,9 @@ export function createWorkerMessageLoop(
       }
       execution.settled = true;
       active.delete(requestId);
+      if (executionId !== undefined) {
+        activeExecutions.delete(executionId);
+      }
     };
     execution.settle = (code: string, message: string, abortSignal: boolean): void => {
       if (execution.settled) {
@@ -240,17 +234,40 @@ export function createWorkerMessageLoop(
       if (abortSignal) {
         execution.controller.abort();
       }
-      if (!disposed) {
-        endpoint.postMessage({
-          requestId,
-          type: "failed",
-          code,
-          message,
-        } satisfies AgentWorkerEvent);
+      if (disposed) {
+        return;
       }
+      if (
+        execution.kind === "tool" &&
+        execution.executionId !== undefined &&
+        execution.traceId !== undefined &&
+        execution.tool !== undefined
+      ) {
+        endpoint.postMessage(
+          toolFailedEnvelope(
+            requestId,
+            execution.executionId,
+            execution.traceId,
+            execution.tool,
+            code,
+            message,
+            Date.now(),
+          ),
+        );
+        return;
+      }
+      endpoint.postMessage({
+        requestId,
+        type: "failed",
+        code,
+        message,
+      } satisfies AgentWorkerEvent);
     };
     execution.finalize = finalize;
     active.set(requestId, execution);
+    if (executionId !== undefined) {
+      activeExecutions.set(executionId, execution);
+    }
     return execution;
   }
 
@@ -266,6 +283,8 @@ export function createWorkerMessageLoop(
         execution.controller.abort();
       }
       active.clear();
+      activeExecutions.clear();
+      options.onDispose?.();
     },
     activeCount() {
       return active.size;

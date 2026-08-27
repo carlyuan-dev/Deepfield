@@ -7,8 +7,14 @@ import {
   ToolRunner,
   ToolSet,
 } from "@deepfield/tool-platform";
-import type { RetryClock, ToolAuditSink, ToolDefinition, ToolRunner as ToolRunnerType } from "@deepfield/tool-platform";
-import type { ToolExecutionEvent, ToolRunRequest } from "@deepfield/contracts";
+import type {
+  RetryClock,
+  ToolActor,
+  ToolAuditSink,
+  ToolBudgetLimits,
+  ToolDefinition,
+} from "@deepfield/tool-platform";
+import type { ToolExecutionEvent, ToolExecutionResult, ToolRunRequest } from "@deepfield/contracts";
 import type { ToolRuntime } from "./message-loop.js";
 import { createPiAgentTools } from "./pi-tool-adapter.js";
 
@@ -48,7 +54,7 @@ const probeOutputSchema = Type.Object(
   { additionalProperties: false },
 );
 
-/** Offline probe tool: no network, used by tests and the opt-in smoke. */
+/** Offline probe tool: no network. Only dev/test/opt-in assemblies register it. */
 export function echoProbeDefinition(): ToolDefinition<typeof probeInputSchema, typeof probeOutputSchema> {
   return {
     identity: { name: "echo_probe", version: 1 },
@@ -66,49 +72,159 @@ export function echoProbeDefinition(): ToolDefinition<typeof probeInputSchema, t
   };
 }
 
-/** Trusted immutable ToolSet for the Utility runtime assembly. */
-export function createTrustedToolSet(): ToolSet {
+const PROBE_GRANTS: Record<ToolActor, boolean> = {
+  main_agent: true,
+  developer_probe: true,
+  capability: false,
+  child_agent: false,
+  direct_ui: false,
+};
+
+/** Actor-scoped trusted ToolSet: one grant per identity, never mixed actors. */
+export function createTrustedToolSet(actor: ToolActor): ToolSet {
+  if (!PROBE_GRANTS[actor]) {
+    return new ToolSet([]);
+  }
   return new ToolSet([
-    { identity: { name: "echo_probe", version: 1 }, actor: "main_agent", effect: "project.read" },
-    { identity: { name: "echo_probe", version: 1 }, actor: "developer_probe", effect: "project.read" },
+    { identity: { name: "echo_probe", version: 1 }, actor, effect: "project.read" },
   ]);
 }
 
-export interface UtilityToolRuntime {
+export interface TraceBudgetPoolOptions {
+  limits: ToolBudgetLimits;
+  maxTraces?: number;
+  clock?: () => number;
+}
+
+interface PoolEntry {
+  ledger: ToolBudgetLedger;
+  lastUsed: number;
+}
+
+/**
+ * Bounded per-trace budget pool: each trace gets an independent ledger; only
+ * inactive (no in-flight tokens) least-recently-used entries are evicted, so an
+ * active trace can never be evicted mid-execution and reset its budget.
+ */
+export class TraceBudgetPool {
+  readonly #entries = new Map<string, PoolEntry>();
+  readonly #limits: ToolBudgetLimits;
+  readonly #maxTraces: number;
+  readonly #clock: () => number;
+
+  constructor(options: TraceBudgetPoolOptions) {
+    this.#limits = options.limits;
+    this.#maxTraces = options.maxTraces ?? 64;
+    this.#clock = options.clock ?? Date.now;
+  }
+
+  ledgerFor(traceId: string): ToolBudgetLedger {
+    const entry = this.#entries.get(traceId);
+    if (entry !== undefined) {
+      entry.lastUsed = this.#clock();
+      return entry.ledger;
+    }
+    if (this.#entries.size >= this.#maxTraces) {
+      this.#evictOne();
+    }
+    const ledger = new ToolBudgetLedger(this.#limits, this.#clock);
+    this.#entries.set(traceId, { ledger, lastUsed: this.#clock() });
+    return ledger;
+  }
+
+  size(): number {
+    return this.#entries.size;
+  }
+
+  has(traceId: string): boolean {
+    return this.#entries.has(traceId);
+  }
+
+  #evictOne(): void {
+    let oldestKey: string | undefined;
+    let oldest = Infinity;
+    for (const [traceId, entry] of this.#entries) {
+      if (entry.ledger.activeCount() > 0) {
+        continue; // pin active traces
+      }
+      if (entry.lastUsed < oldest) {
+        oldest = entry.lastUsed;
+        oldestKey = traceId;
+      }
+    }
+    if (oldestKey !== undefined) {
+      this.#entries.delete(oldestKey);
+    }
+  }
+}
+
+export const TRACE_BUDGET_LIMITS: ToolBudgetLimits = {
+  maxCalls: 12,
+  categoryCalls: { search: 1, link_check: 3, fetch: 3 },
+};
+
+export interface ToolRuntimeOptions {
+  audit: ToolAuditSink;
+  registerProbe?: boolean;
+  maxTraces?: number;
+}
+
+export interface PiToolContext {
+  traceId: string;
+  actor: ToolActor;
+  projectId?: string;
+}
+
+export interface UtilityToolRuntime extends ToolRuntime {
+  registry: ToolRegistry;
+  policy: ToolPolicy;
+  runner: ToolRunner;
+  audit: ToolAuditSink;
   run(
     request: ToolRunRequest,
     emit: (event: ToolExecutionEvent) => void,
     signal: AbortSignal,
-  ): Promise<void>;
-  registry: ToolRegistry;
-  policy: ToolPolicy;
-  budget: ToolBudgetLedger;
-  runner: ToolRunnerType;
-  audit: ToolAuditSink;
-  createAgentTools(): ReturnType<typeof createPiAgentTools>;
+  ): Promise<ToolExecutionResult>;
+  createAgentTools(context: PiToolContext): ReturnType<typeof createPiAgentTools>;
+  traceLedgerCount(): number;
+  tracePool: TraceBudgetPool;
 }
 
-export function createToolRuntime(options: { audit: ToolAuditSink; registerProbe?: boolean }): UtilityToolRuntime {
+export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRuntime {
   const registry = new ToolRegistry();
-  if (options.registerProbe !== false) {
+  if (options.registerProbe === true) {
     registry.register(echoProbeDefinition());
   }
+  registry.freeze();
   const policy = new ToolPolicy();
   const clock = new RealRetryClock();
-  const budget = new ToolBudgetLedger(
-    { maxCalls: 1000, maxConcurrency: 8, maxConcurrencyPerTool: 4 },
-    () => clock.now(),
-  );
-  const runner = new ToolRunner({ registry, policy, budget, audit: options.audit, clock });
-  const toolSet = createTrustedToolSet();
+  const tracePool = new TraceBudgetPool({
+    limits: TRACE_BUDGET_LIMITS,
+    ...(options.maxTraces !== undefined ? { maxTraces: options.maxTraces } : {}),
+    clock: () => clock.now(),
+  });
+  const runner = new ToolRunner({
+    registry,
+    policy,
+    budget: new ToolBudgetLedger({}, () => clock.now()),
+    audit: options.audit,
+    clock,
+    budgetForTrace: (traceId) => tracePool.ledgerFor(traceId),
+    globalConcurrency: 4,
+  });
+  const toolSetByActor = new Map<ToolActor, ToolSet>();
+  for (const actor of ["main_agent", "capability", "child_agent", "direct_ui", "developer_probe"] as const) {
+    toolSetByActor.set(actor, createTrustedToolSet(actor));
+  }
   return {
     registry,
     policy,
-    budget,
     runner,
     audit: options.audit,
-    async run(request, emit, signal) {
-      await runner.execute(
+    tracePool,
+    traceLedgerCount: () => tracePool.size(),
+    async run(request, emit, signal): Promise<ToolExecutionResult> {
+      return runner.execute(
         {
           executionId: request.executionId,
           traceId: request.traceId,
@@ -119,20 +235,19 @@ export function createToolRuntime(options: { audit: ToolAuditSink; registerProbe
           traceId: request.traceId,
           actor: request.actor,
           ...(request.projectId !== undefined ? { projectId: request.projectId } : {}),
-          toolSet,
+          toolSet: toolSetByActor.get(request.actor) ?? createTrustedToolSet(request.actor),
         },
         signal,
         emit,
       );
     },
-    createAgentTools() {
+    createAgentTools(context) {
       return createPiAgentTools(registry, runner, {
-        traceId: `utility-${randomUUID()}`,
-        actor: "main_agent",
-        toolSet,
+        traceId: context.traceId,
+        actor: context.actor,
+        ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+        toolSet: toolSetByActor.get(context.actor) ?? createTrustedToolSet(context.actor),
       });
     },
   };
 }
-
-export type { ToolRuntime } from "./message-loop.js";

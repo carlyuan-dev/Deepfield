@@ -14,6 +14,7 @@ import {
   event,
   FakeEndpoint,
   request,
+  toolEnvelope,
   toolEvent,
   toolRequest,
 } from "./agent-worker-client-test-helpers.js";
@@ -107,15 +108,15 @@ describe("agent worker client", () => {
   });
 });
 
-describe("agent worker client tool streams", () => {
-  it("posts tool.run and delivers tool events with a single listener", async () => {
+describe("agent worker client tool streams (envelopes)", () => {
+  it("posts tool.run and delivers enveloped tool events with a single listener", async () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);
     expect(endpoint.messageListenerCount()).toBe(1);
     const req = toolRequest("exec-1");
     const stream = client.sendTool(req);
-    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
-    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "started"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "completed"));
     expect(endpoint.posted).toEqual([req]);
     expect(await collectTool(stream)).toEqual(["started", "completed"]);
     expect(client.pendingCount()).toBe(0);
@@ -127,23 +128,41 @@ describe("agent worker client tool streams", () => {
     const chat = client.send(request("req-1"));
     const tool = client.sendTool(toolRequest("exec-1"));
     endpoint.emit(event("req-1", "text_delta", "C"));
-    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
-    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "started"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "completed"));
     endpoint.emit(event("req-1", "completed", "C"));
     expect(await collectTool(tool)).toEqual(["started", "completed"]);
     expect(await collect(chat)).toEqual(["C", "completed:C"]);
   });
 
-  it("closes the tool stream on wrong executionId or traceId", async () => {
+  it("closes only the matching stream when its own envelope carries a wrong nested id", async () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);
-    const wrongExecution = client.sendTool(toolRequest("exec-1"));
-    endpoint.emit(toolEvent("wrong", "trace-1", "started"));
-    expect((await collectToolError(wrongExecution)).error).toBeInstanceOf(AgentProtocolError);
+    const first = client.sendTool(toolRequest("exec-1", "trace-shared"));
+    const second = client.sendTool(toolRequest("exec-2", "trace-shared", "exec-2"));
+    // envelope for first's transport id but wrong nested executionId -> close first only
+    endpoint.emit(toolEnvelope("exec-1", "wrong-nested", "trace-shared", "started"));
+    expect((await collectToolError(first)).error).toBeInstanceOf(AgentProtocolError);
+    expect(client.pendingCount()).toBe(1);
+    // wrong nested traceId on second's own envelope -> close second only
+    endpoint.emit(toolEnvelope("exec-2", "exec-2", "wrong-trace", "started"));
+    expect((await collectToolError(second)).error).toBeInstanceOf(AgentProtocolError);
     expect(client.pendingCount()).toBe(0);
-    const wrongTrace = client.sendTool(toolRequest("exec-2", "trace-2"));
-    endpoint.emit(toolEvent("exec-2", "wrong-trace", "started"));
-    expect((await collectToolError(wrongTrace)).error).toBeInstanceOf(AgentProtocolError);
+  });
+
+  it("ignores envelopes for unknown transport ids without touching live streams", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const first = client.sendTool(toolRequest("exec-1", "trace-shared"));
+    const second = client.sendTool(toolRequest("exec-2", "trace-shared", "exec-2"));
+    endpoint.emit(toolEnvelope("ghost", "ghost-exec", "trace-shared", "started"));
+    expect(client.pendingCount()).toBe(2);
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-shared", "started"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-shared", "completed"));
+    endpoint.emit(toolEnvelope("exec-2", "exec-2", "trace-shared", "started"));
+    endpoint.emit(toolEnvelope("exec-2", "exec-2", "trace-shared", "completed"));
+    expect(await collectTool(first)).toEqual(["started", "completed"]);
+    expect(await collectTool(second)).toEqual(["started", "completed"]);
     expect(client.pendingCount()).toBe(0);
   });
 
@@ -154,23 +173,27 @@ describe("agent worker client tool streams", () => {
     expect(() => client.sendTool(toolRequest("shared"))).toThrow(/duplicate/);
   });
 
-  it("rejects duplicate tool execution ids while pending", () => {
+  it("rejects duplicate transport ids while pending", () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);
     client.sendTool(toolRequest("exec-1"));
-    expect(() => client.sendTool(toolRequest("exec-1"))).toThrow(/duplicate/);
+    expect(() => client.sendTool(toolRequest("exec-9", "trace-9", "exec-1"))).toThrow(/duplicate/);
   });
 
-  it("cleans tool pending immediately on terminal and allows id reuse, dropping late events", async () => {
+  it("cleans pending on terminal, tombstones the transport id, and drops late old envelopes", async () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);
     const first = client.sendTool(toolRequest("exec-1"));
-    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "completed"));
     expect(client.pendingCount()).toBe(0);
-    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
-    const second = client.sendTool(toolRequest("exec-1"));
-    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
-    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    // late envelope from the old generation is dropped
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "started"));
+    // transport id is tombstoned: immediate reuse is refused
+    expect(() => client.sendTool(toolRequest("exec-1"))).toThrow(/already used/);
+    // a fresh transport id with the same executionId works
+    const second = client.sendTool(toolRequest("exec-1", "trace-1", "exec-1-v2"));
+    endpoint.emit(toolEnvelope("exec-1-v2", "exec-1", "trace-1", "started"));
+    endpoint.emit(toolEnvelope("exec-1-v2", "exec-1", "trace-1", "completed"));
     expect(await collectTool(first)).toEqual(["completed"]);
     expect(await collectTool(second)).toEqual(["started", "completed"]);
   });
@@ -180,7 +203,7 @@ describe("agent worker client tool streams", () => {
     const client = new AgentWorkerClient(endpoint);
     const stream = client.sendTool(toolRequest("exec-1"));
     for (let index = 0; index <= 1000; index += 1) {
-      endpoint.emit(toolEvent("exec-1", "trace-1", "progress"));
+      endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "progress"));
     }
     const result = await collectToolError(stream);
     expect(result.error).toBeInstanceOf(AgentWorkerQueueOverflowError);

@@ -13,7 +13,7 @@ import type { ToolDefinition, ToolRunContext } from "@deepfield/tool-platform";
 import { createPiChatAgent } from "./pi-chat-agent.js";
 import { FakePiAgent, makeRuntime, request, stubModel } from "./pi-chat-agent-test-helpers.js";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import { createPiAgentTools, type PiToolAdapterContext } from "./pi-tool-adapter.js";
+import { createPiAgentTools, deterministicOutputText, type PiToolAdapterContext } from "./pi-tool-adapter.js";
 
 const factInputSchema = Type.Object(
   { subject: Type.String() },
@@ -218,11 +218,36 @@ describe("pi tool adapter", () => {
   });
 });
 
+describe("deterministic output text (focused revision)", () => {
+  it("caps output by UTF-8 bytes without splitting surrogate pairs", () => {
+    const emoji = "😀".repeat(5000);
+    const text = deterministicOutputText({ value: emoji });
+    expect(text.endsWith("…(truncated)")).toBe(true);
+    const body = text.slice(0, -"…(truncated)".length);
+    expect(() => new TextDecoder().decode(new TextEncoder().encode(body))).not.toThrow();
+    // the body must not end with a lone surrogate (half an emoji)
+    const last = body.charCodeAt(body.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+  });
+
+  it("is deterministic and bounded", () => {
+    const output = { fact: "x".repeat(20000) };
+    const first = deterministicOutputText(output);
+    const second = deterministicOutputText(output);
+    expect(first).toBe(second);
+    expect(Buffer.byteLength(first, "utf8")).toBeLessThanOrEqual(8192 + 16);
+  });
+
+  it("passes through small JSON unchanged", () => {
+    expect(deterministicOutputText({ fact: "robot" })).toBe('{"fact":"robot"}');
+  });
+});
+
 const smoke = process.env.DEEPSEEK_API_KEY !== undefined ? describe : describe.skip;
 
 smoke("deepseek tool calling smoke (opt-in, offline echo_probe)", () => {
   it("calls echo_probe and completes after the tool result", async () => {
-    const { createToolRuntime, echoProbeDefinition, createTrustedToolSet } = await import("./tool-runtime.js");
+    const { echoProbeDefinition, createTrustedToolSet } = await import("./tool-runtime.js");
     const registry = new ToolRegistry();
     registry.register(echoProbeDefinition());
     const audit = new FakeAuditSink();
@@ -230,7 +255,7 @@ smoke("deepseek tool calling smoke (opt-in, offline echo_probe)", () => {
     const tools = createPiAgentTools(registry, runner, {
       traceId: "smoke-1",
       actor: "main_agent",
-      toolSet: createTrustedToolSet(),
+      toolSet: createTrustedToolSet("main_agent"),
     });
     const agent = createPiChatAgent(undefined, tools);
     const events: { type: string }[] = [];

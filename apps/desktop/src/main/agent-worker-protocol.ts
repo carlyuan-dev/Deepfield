@@ -1,7 +1,8 @@
-import type { AgentWorkerEvent, ToolExecutionEvent } from "@deepfield/contracts";
+import type { AgentWorkerEvent, ToolEventEnvelope, ToolExecutionEvent } from "@deepfield/contracts";
 
 export const MAX_PENDING_CHAT_EVENTS = 1000;
 export const MAX_PENDING_TOOL_EVENTS = 1000;
+export const MAX_RECENT_TRANSPORT_IDS = 256;
 
 export class AgentProtocolError extends Error {
   constructor() {
@@ -24,11 +25,19 @@ export class AgentWorkerQueueOverflowError extends Error {
   }
 }
 
+export class AgentWorkerTransportReuseError extends Error {
+  constructor() {
+    super("transport request id was already used; use a fresh id");
+    this.name = "AgentWorkerTransportReuseError";
+  }
+}
+
 export type StreamEvent = AgentWorkerEvent | ToolExecutionEvent;
 
 export interface PendingStream {
   kind: "chat" | "tool";
   id: string;
+  executionId?: string;
   traceId?: string;
   queue: StreamEvent[];
   waiters: Array<{
@@ -56,6 +65,20 @@ export function isHostRequest(value: unknown): boolean {
     typeof record.hostRequestId === "string" &&
     record.hostRequestId.length > 0 &&
     record.kind === "host.request"
+  );
+}
+
+export function isToolEventEnvelope(value: unknown): value is ToolEventEnvelope {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as { kind?: unknown; requestId?: unknown; event?: unknown };
+  return (
+    record.kind === "tool.event" &&
+    typeof record.requestId === "string" &&
+    record.requestId.length > 0 &&
+    typeof record.event === "object" &&
+    record.event !== null
   );
 }
 

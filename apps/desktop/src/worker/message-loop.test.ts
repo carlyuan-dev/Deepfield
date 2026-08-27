@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
-  ToolExecutionEventSchema,
+  ToolEventEnvelopeSchema,
   type AgentWorkerEvent,
   type ToolExecutionEvent,
 } from "@deepfield/contracts";
@@ -145,19 +145,24 @@ describe("worker message loop", () => {
   });
 });
 
-describe("worker message loop tool.run", () => {
-  it("routes tool.run to the tool runtime with a single listener and forwards events", async () => {
+describe("worker message loop tool.run (envelopes)", () => {
+  it("routes tool.run to the tool runtime and forwards enveloped events", async () => {
     const endpoint = new InMemoryEndpoint();
     const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: echoToolRuntime });
     expect(endpoint.listenerCount()).toBe(1);
     endpoint.emit(toolRunRequest("exec-1"));
     await flushPending();
-    expect(endpoint.posted.map((value) => (value as { type: string }).type)).toEqual([
-      "started",
-      "completed",
+    expect(
+      endpoint.posted.map((value) => [
+        (value as { requestId: string }).requestId,
+        (value as { event: { type: string } }).event.type,
+      ]),
+    ).toEqual([
+      ["exec-1", "started"],
+      ["exec-1", "completed"],
     ]);
     for (const value of endpoint.posted) {
-      expect(Value.Check(ToolExecutionEventSchema, value)).toBe(true);
+      expect(Value.Check(ToolEventEnvelopeSchema, value)).toBe(true);
     }
     expect(loop.activeCount()).toBe(0);
   });
@@ -172,14 +177,39 @@ describe("worker message loop tool.run", () => {
       .filter((value) => (value as { requestId?: string }).requestId === "chat-1")
       .map((value) => (value as { type: string }).type);
     expect(chatTypes).toEqual(["started", "text_delta", "completed"]);
-    const toolTypes = endpoint.posted
-      .filter((value) => (value as { executionId?: string }).executionId === "exec-1")
-      .map((value) => (value as { type: string }).type);
-    expect(toolTypes).toEqual(["started", "completed"]);
+    const toolEnvelopes = endpoint.posted.filter(
+      (value) => (value as { kind?: string }).kind === "tool.event",
+    );
+    expect(toolEnvelopes.map((value) => (value as { event: { type: string } }).event.type)).toEqual([
+      "started",
+      "completed",
+    ]);
     expect(loop.activeCount()).toBe(0);
   });
 
-  it("terminates the active flow and refuses the second execution on duplicate ids across kinds", async () => {
+  it("rejects a second tool.run with the same executionId without executing it", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let calls = 0;
+    const counting: ToolRuntime = {
+      async run(request, emit) {
+        calls += 1;
+        emit(toolEvent(request.executionId, request.traceId, "started"));
+        emit(toolEvent(request.executionId, request.traceId, "completed"));
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: counting });
+    endpoint.emit(toolRunRequest("exec-1"));
+    endpoint.emit(toolRunRequest("exec-1", "trace-1", "r2"));
+    await flushPending();
+    expect(calls).toBe(1);
+    const envelopes = endpoint.posted.filter(
+      (value) => (value as { kind?: string }).kind === "tool.event",
+    ) as Array<{ event: { failure?: { code: string } } }>;
+    expect(envelopes.map((value) => value.event.failure?.code)).toContain("duplicate_execution");
+    expect(loop.activeCount()).toBe(0);
+  });
+
+  it("terminates the active flow on duplicate transport ids across kinds", async () => {
     const endpoint = new InMemoryEndpoint();
     let release!: () => void;
     const gated: ChatAgent = {
@@ -193,7 +223,7 @@ describe("worker message loop tool.run", () => {
     const loop = createWorkerMessageLoop(endpoint, gated, { toolRuntime: echoToolRuntime });
     endpoint.emit(request("dup-1"));
     await flushPending();
-    endpoint.emit(toolRunRequest("dup-1"));
+    endpoint.emit(toolRunRequest("exec-1", "trace-1", "dup-1"));
     await flushPending();
     expect(
       endpoint.posted.some(
@@ -207,7 +237,7 @@ describe("worker message loop tool.run", () => {
     expect(loop.activeCount()).toBe(0);
   });
 
-  it("settles an invalid tool event with a single safe terminal", async () => {
+  it("settles an invalid tool event with a single safe failed envelope", async () => {
     const endpoint = new InMemoryEndpoint();
     const badRuntime: ToolRuntime = {
       async run(_request, emit) {
@@ -224,9 +254,12 @@ describe("worker message loop tool.run", () => {
     const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: badRuntime });
     endpoint.emit(toolRunRequest("exec-1"));
     await flushPending();
-    const failed = endpoint.posted.filter((value) => (value as { type?: string }).type === "failed");
-    expect(failed).toHaveLength(1);
-    expect((failed[0] as { code?: string }).code).toBe("invalid_event");
+    const envelopes = endpoint.posted.filter(
+      (value) => (value as { kind?: string }).kind === "tool.event",
+    ) as Array<{ event: { type: string; failure?: { code: string } } }>;
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]!.event.type).toBe("failed");
+    expect(envelopes[0]!.event.failure?.code).toBe("invalid_event");
     expect(loop.activeCount()).toBe(0);
   });
 

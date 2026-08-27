@@ -223,9 +223,9 @@ export class ToolRegistry {
     return definition;
   }
 
-  /** Enumerates registered definitions as frozen snapshots (registry order). */
-  list(): ToolDefinition<any, any>[] {
-    return [...this.#definitions.values()];
+  /** Enumerates registered definitions as frozen snapshots in a frozen array. */
+  list(): readonly ToolDefinition<any, any>[] {
+    return Object.freeze([...this.#definitions.values()]);
   }
 
   manifest(): readonly ToolManifestEntry[] {

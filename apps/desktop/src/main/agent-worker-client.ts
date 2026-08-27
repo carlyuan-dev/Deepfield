@@ -1,7 +1,7 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
-  ToolExecutionEventSchema,
+  ToolEventEnvelopeSchema,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
   type ToolExecutionEvent,
@@ -11,11 +11,14 @@ import {
   AgentProtocolError,
   AgentWorkerExitedError,
   AgentWorkerQueueOverflowError,
+  AgentWorkerTransportReuseError,
   isChatTerminal,
   isHostRequest,
+  isToolEventEnvelope,
   isToolTerminal,
   MAX_PENDING_CHAT_EVENTS,
   MAX_PENDING_TOOL_EVENTS,
+  MAX_RECENT_TRANSPORT_IDS,
   safeCorrelationId,
   type PendingStream,
   type StreamEvent,
@@ -25,6 +28,7 @@ export {
   AgentProtocolError,
   AgentWorkerExitedError,
   AgentWorkerQueueOverflowError,
+  AgentWorkerTransportReuseError,
   MAX_PENDING_CHAT_EVENTS,
   MAX_PENDING_TOOL_EVENTS,
 } from "./agent-worker-protocol.js";
@@ -42,6 +46,7 @@ export interface AgentWorkerClientOptions {
 
 export class AgentWorkerClient {
   private readonly pending = new Map<string, PendingStream>();
+  private readonly recentTransportIds = new Set<string>();
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeExit: () => void;
   private readonly hostHandler: ((message: unknown) => void) | undefined;
@@ -67,9 +72,16 @@ export class AgentWorkerClient {
   }
 
   sendTool(request: ToolRunRequest): AsyncIterable<ToolExecutionEvent> {
+    // The transport requestId is the per-call generation: it is never reused,
+    // so a late envelope from an old generation can never be mistaken for the
+    // new stream, even when the executionId is reused.
+    if (this.recentTransportIds.has(request.requestId)) {
+      throw new AgentWorkerTransportReuseError();
+    }
     return this.sendStream<ToolExecutionEvent>({
       kind: "tool",
-      id: request.executionId,
+      id: request.requestId,
+      executionId: request.executionId,
       traceId: request.traceId,
       request,
     });
@@ -78,6 +90,7 @@ export class AgentWorkerClient {
   private sendStream<T extends StreamEvent>(spec: {
     kind: "chat" | "tool";
     id: string;
+    executionId?: string;
     traceId?: string;
     request: unknown;
   }): AsyncIterable<T> {
@@ -93,6 +106,7 @@ export class AgentWorkerClient {
     const stream: PendingStream = {
       kind: spec.kind,
       id: spec.id,
+      ...(spec.executionId !== undefined ? { executionId: spec.executionId } : {}),
       ...(spec.traceId !== undefined ? { traceId: spec.traceId } : {}),
       queue: [],
       waiters: [],
@@ -150,8 +164,8 @@ export class AgentWorkerClient {
       this.routeChat(value);
       return;
     }
-    if (Value.Check(ToolExecutionEventSchema, value)) {
-      this.routeTool(value);
+    if (isToolEventEnvelope(value) && Value.Check(ToolEventEnvelopeSchema, value)) {
+      this.routeToolEnvelope(value);
       return;
     }
     const id = safeCorrelationId(value);
@@ -175,24 +189,20 @@ export class AgentWorkerClient {
     this.push(stream.id, stream, event);
   }
 
-  private routeTool(event: ToolExecutionEvent): void {
-    const stream = this.pending.get(event.executionId);
-    if (stream) {
-      if (stream.kind !== "tool" || stream.traceId !== event.traceId) {
-        this.close(stream.id, stream, new AgentProtocolError());
-      } else {
-        this.push(stream.id, stream, event);
-      }
+  private routeToolEnvelope(envelope: { requestId: string; event: ToolExecutionEvent }): void {
+    const stream = this.pending.get(envelope.requestId);
+    if (!stream) {
+      return; // late envelope from an old generation or a foreign call: dropped
+    }
+    if (
+      stream.kind !== "tool" ||
+      stream.executionId !== envelope.event.executionId ||
+      stream.traceId !== envelope.event.traceId
+    ) {
+      this.close(stream.id, stream, new AgentProtocolError());
       return;
     }
-    // Wrong correlation id: the event matches exactly one pending tool stream
-    // by traceId, so that stream is closed as a protocol violation.
-    const candidates = [...this.pending.values()].filter(
-      (candidate) => candidate.kind === "tool" && candidate.traceId === event.traceId,
-    );
-    if (candidates.length === 1) {
-      this.close(candidates[0]!.id, candidates[0]!, new AgentProtocolError());
-    }
+    this.push(stream.id, stream, envelope.event);
   }
 
   private push(id: string, stream: PendingStream, event: StreamEvent): void {
@@ -252,6 +262,18 @@ export class AgentWorkerClient {
   private cleanup(id: string, stream: PendingStream): void {
     if (this.pending.get(id) === stream) {
       this.pending.delete(id);
+    }
+    // Bounded tombstone for TOOL transport ids only (chat request ids remain
+    // reusable, preserving P1 semantics) so a tool transport id cannot be
+    // reused in a window where a late reply would be indistinguishable.
+    if (stream.kind === "tool") {
+      this.recentTransportIds.add(id);
+      if (this.recentTransportIds.size > MAX_RECENT_TRANSPORT_IDS) {
+        const oldest = this.recentTransportIds.values().next().value;
+        if (oldest !== undefined) {
+          this.recentTransportIds.delete(oldest);
+        }
+      }
     }
   }
 

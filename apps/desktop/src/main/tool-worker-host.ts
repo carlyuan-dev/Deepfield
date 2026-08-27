@@ -1,15 +1,13 @@
 import { Value } from "typebox/value";
 import { HostRequestSchema, type HostRequest } from "@deepfield/contracts";
-import {
-  TOOL_FAILURE_MESSAGES,
-  type ToolAuditSink,
-  type ToolFailureCode,
-} from "@deepfield/tool-platform";
+import { TOOL_FAILURE_MESSAGES, type ToolAuditSink } from "@deepfield/tool-platform";
 
 export interface ToolWorkerHostOptions {
   audit: ToolAuditSink;
   secrets: { get(name: string): string | undefined };
   postMessage(value: unknown): void;
+  /** Bounded tombstone size for completed/late-duplicate host request ids. */
+  maxCompletedIds?: number;
 }
 
 export interface ToolWorkerHost {
@@ -20,9 +18,13 @@ export interface ToolWorkerHost {
 function reply(
   postMessage: (value: unknown) => void,
   hostRequestId: string,
-  value: { ok: boolean; code?: string; payload?: unknown },
+  value: { method: string; ok: boolean; code?: string; payload?: unknown },
 ): void {
-  postMessage({ hostRequestId, kind: "host.reply", ...value });
+  try {
+    postMessage({ hostRequestId, kind: "host.reply", ...value });
+  } catch {
+    // postMessage must never produce an unhandled rejection on the caller side.
+  }
 }
 
 /**
@@ -32,10 +34,24 @@ function reply(
  */
 export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorkerHost {
   let disposed = false;
+  const active = new Set<string>();
+  const completed = new Set<string>();
+  const maxCompletedIds = options.maxCompletedIds ?? 256;
+
+  function rememberCompleted(hostRequestId: string): void {
+    completed.add(hostRequestId);
+    if (completed.size > maxCompletedIds) {
+      const oldest = completed.values().next().value;
+      if (oldest !== undefined) {
+        completed.delete(oldest);
+      }
+    }
+  }
 
   async function handleValid(request: HostRequest): Promise<void> {
-    if (request.method === "audit.start") {
-      try {
+    const { hostRequestId } = request;
+    try {
+      if (request.method === "audit.start") {
         await options.audit.start({
           executionId: request.payload.executionId,
           traceId: request.payload.traceId,
@@ -46,28 +62,36 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           tool: { name: request.payload.toolName, version: request.payload.toolVersion },
           attempts: 0,
         });
-        reply(options.postMessage, request.hostRequestId, {
-          ok: true,
-          payload: { acknowledged: true },
-        });
-      } catch {
-        reply(options.postMessage, request.hostRequestId, { ok: false, code: "audit_failed" });
+        if (!disposed) {
+          reply(options.postMessage, hostRequestId, {
+            method: "audit.start",
+            ok: true,
+            payload: { acknowledged: true },
+          });
+        }
+        return;
       }
-      return;
-    }
-    if (request.method === "audit.finish") {
-      try {
-        const code = request.payload.errorCode as ToolFailureCode | undefined;
+      if (request.method === "audit.finish") {
         await options.audit.finish({
           executionId: request.payload.executionId,
           traceId: request.payload.traceId,
           status: request.payload.status,
           attempts: request.payload.attempts,
-          ...(code !== undefined
+          ...(request.payload.status === "cancelled" && request.payload.errorCode !== undefined
             ? {
                 failure: {
-                  code,
-                  message: TOOL_FAILURE_MESSAGES[code] ?? "tool failure",
+                  code: request.payload.errorCode,
+                  message: TOOL_FAILURE_MESSAGES[request.payload.errorCode] ?? "tool failure",
+                  retryable: false,
+                  attempts: request.payload.attempts,
+                },
+              }
+            : {}),
+          ...(request.payload.status === "failed"
+            ? {
+                failure: {
+                  code: request.payload.errorCode,
+                  message: TOOL_FAILURE_MESSAGES[request.payload.errorCode] ?? "tool failure",
                   retryable: false,
                   attempts: request.payload.attempts,
                 },
@@ -77,21 +101,44 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
             ? { durationMs: request.payload.durationMs }
             : {}),
         });
-        reply(options.postMessage, request.hostRequestId, {
-          ok: true,
-          payload: { acknowledged: true },
-        });
-      } catch {
-        reply(options.postMessage, request.hostRequestId, { ok: false, code: "audit_failed" });
+        if (!disposed) {
+          reply(options.postMessage, hostRequestId, {
+            method: "audit.finish",
+            ok: true,
+            payload: { acknowledged: true },
+          });
+        }
+        return;
       }
-      return;
+      let apiKey: string | null = null;
+      try {
+        apiKey = options.secrets.get("deepseek.apiKey") ?? null;
+      } catch {
+        if (!disposed) {
+          reply(options.postMessage, hostRequestId, {
+            method: "secret.getProviderKey",
+            ok: false,
+            code: "secret_unavailable",
+          });
+        }
+        return;
+      }
+      if (!disposed) {
+        reply(options.postMessage, hostRequestId, {
+          method: "secret.getProviderKey",
+          ok: true,
+          payload: { apiKey },
+        });
+      }
+    } catch {
+      if (!disposed) {
+        reply(options.postMessage, hostRequestId, {
+          method: request.method,
+          ok: false,
+          code: "audit_failed",
+        });
+      }
     }
-    // secret.getProviderKey: schema already allowlists deepseek only.
-    const apiKey = options.secrets.get("deepseek.apiKey");
-    reply(options.postMessage, request.hostRequestId, {
-      ok: true,
-      payload: { apiKey: apiKey ?? null },
-    });
   }
 
   return {
@@ -102,7 +149,11 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
             ? (value as { hostRequestId?: unknown }).hostRequestId
             : undefined;
         if (typeof hostRequestId === "string" && hostRequestId.length > 0) {
-          reply(options.postMessage, hostRequestId, { ok: false, code: "host_disposed" });
+          reply(options.postMessage, hostRequestId, {
+            method: "host_protocol_error",
+            ok: false,
+            code: "host_disposed",
+          });
         }
         return;
       }
@@ -112,14 +163,33 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
             ? (value as { hostRequestId?: unknown }).hostRequestId
             : undefined;
         if (typeof hostRequestId === "string" && hostRequestId.length > 0) {
-          reply(options.postMessage, hostRequestId, { ok: false, code: "invalid_request" });
+          reply(options.postMessage, hostRequestId, {
+            method: "host_protocol_error",
+            ok: false,
+            code: "invalid_request",
+          });
         }
         return;
       }
-      void handleValid(value);
+      const { hostRequestId } = value;
+      if (active.has(hostRequestId) || completed.has(hostRequestId)) {
+        // duplicate active request or late duplicate of a completed one:
+        // never a second audit/secret call, never a second terminal reply.
+        return;
+      }
+      active.add(hostRequestId);
+      void handleValid(value)
+        .catch(() => {
+          // fully guarded: never an unhandled rejection
+        })
+        .finally(() => {
+          active.delete(hostRequestId);
+          rememberCompleted(hostRequestId);
+        });
     },
     dispose() {
       disposed = true;
+      active.clear();
     },
   };
 }

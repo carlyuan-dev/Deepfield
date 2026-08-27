@@ -40,6 +40,10 @@ function startAgentWorker(repositories: Repositories, secrets: SecretStore): Age
   const runtime = createAgentWorkerRuntime(child, { host });
   runtimeRef = runtime;
   child.on("exit", () => {
+    // Unexpected worker exit must also dispose the host so no reply can land
+    // on a dead transport or against a closed database.
+    toolHost?.dispose();
+    toolHost = undefined;
     if (agentRuntime === runtime) {
       agentRuntime = undefined;
     }

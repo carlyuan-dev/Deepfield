@@ -57,9 +57,13 @@ export async function flushPending(): Promise<void> {
   });
 }
 
-export function toolRunRequest(executionId = "exec-1", traceId = "trace-1"): ToolRunRequest {
+export function toolRunRequest(
+  executionId = "exec-1",
+  traceId = "trace-1",
+  requestId = executionId,
+): ToolRunRequest {
   return {
-    requestId: executionId,
+    requestId,
     kind: "tool.run",
     executionId,
     traceId,
@@ -113,3 +117,12 @@ export const echoToolRuntime: ToolRuntime = {
     emit(toolEvent(request.executionId, request.traceId, "completed"));
   },
 };
+
+export function toolEnvelope(
+  requestId: string,
+  executionId: string,
+  traceId: string,
+  type: ToolExecutionEvent["type"],
+): { kind: "tool.event"; requestId: string; event: ToolExecutionEvent } {
+  return { kind: "tool.event", requestId, event: toolEvent(executionId, traceId, type) };
+}

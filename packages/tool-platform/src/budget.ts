@@ -210,6 +210,14 @@ export class ToolBudgetLedger {
     this.#releaseConcurrency(record);
   }
 
+  /**
+   * Number of currently reserved (in-flight) tokens. Used by trace budget
+   * pools to pin active traces during eviction.
+   */
+  activeCount(): number {
+    return this.#concurrency;
+  }
+
   #requireOwnedRecord(token: ToolBudgetToken): TokenRecord {
     const record = tokenRecords.get(token);
     if (record === undefined || record.owner !== this) {

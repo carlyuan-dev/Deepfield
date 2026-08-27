@@ -3,6 +3,7 @@ import { Value } from "typebox/value";
 import {
   HostReplySchema,
   type HostReply,
+  type HostRpcMethod,
 } from "@deepfield/contracts";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
 
@@ -67,6 +68,7 @@ function defaultTimer(ms: number): HostTimer {
 }
 
 interface PendingRpc {
+  method: HostRpcMethod;
   resolve: (payload: unknown) => void;
   reject: (error: Error) => void;
   timer: HostTimer;
@@ -96,15 +98,16 @@ export class HostClient {
     this.#timer = options.timer ?? defaultTimer;
   }
 
-  request(method: "audit.start" | "audit.finish" | "secret.getProviderKey", payload: unknown): Promise<unknown> {
+  request(method: HostRpcMethod, payload: unknown): Promise<unknown> {
     if (this.#disposed) {
       return Promise.reject(new HostRpcDisposedError());
     }
     const hostRequestId = randomUUID();
-    this.#postMessage({ hostRequestId, kind: "host.request", method, payload });
+    // Timer + pending are registered BEFORE postMessage so a synchronous reply
+    // delivered during post() can never be lost.
     return new Promise((resolve, reject) => {
       const timer = this.#timer(this.#timeoutMs);
-      const pending: PendingRpc = { resolve, reject, timer };
+      const pending: PendingRpc = { method, resolve, reject, timer };
       this.#pending.set(hostRequestId, pending);
       timer.promise.then(() => {
         if (this.#pending.get(hostRequestId) === pending) {
@@ -112,6 +115,17 @@ export class HostClient {
           reject(new HostRpcTimeoutError());
         }
       });
+      try {
+        this.#postMessage({ hostRequestId, kind: "host.request", method, payload });
+      } catch (error) {
+        this.#pending.delete(hostRequestId);
+        timer.cancel();
+        reject(
+          error instanceof Error
+            ? new HostRpcDisposedError()
+            : new HostRpcProtocolError(),
+        );
+      }
     });
   }
 
@@ -134,6 +148,10 @@ export class HostClient {
       return;
     }
     const reply = value as HostReply;
+    if (reply.method !== pending.method) {
+      pending.reject(new HostRpcProtocolError());
+      return;
+    }
     if (reply.ok) {
       pending.resolve(reply.payload);
     } else {
@@ -198,6 +216,8 @@ export interface ProviderKeyClient {
 export function createHostSecretClient(client: HostClient): ProviderKeyClient {
   return {
     async getProviderKey(provider) {
+      // The reply is schema-validated by the client: only a secret method can
+      // carry an apiKey payload.
       const reply = await client.request("secret.getProviderKey", { provider });
       const payload = reply as { apiKey: string | null };
       return payload.apiKey === null ? undefined : payload.apiKey;

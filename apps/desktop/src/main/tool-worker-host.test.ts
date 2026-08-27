@@ -77,7 +77,13 @@ describe("tool worker host", () => {
     expect(starts).toHaveLength(1);
     expect(starts[0]!.executionId).toBe("exec-1");
     expect(posted).toEqual([
-      { hostRequestId: "h1", kind: "host.reply", ok: true, payload: { acknowledged: true } },
+      {
+        hostRequestId: "h1",
+        kind: "host.reply",
+        method: "audit.start",
+        ok: true,
+        payload: { acknowledged: true },
+      },
     ]);
   });
 
@@ -97,7 +103,13 @@ describe("tool worker host", () => {
       setImmediate(resolve);
     });
     expect(posted).toEqual([
-      { hostRequestId: "h2", kind: "host.reply", ok: true, payload: { acknowledged: true } },
+      {
+        hostRequestId: "h2",
+        kind: "host.reply",
+        method: "audit.finish",
+        ok: true,
+        payload: { acknowledged: true },
+      },
     ]);
   });
 
@@ -107,7 +119,13 @@ describe("tool worker host", () => {
     host.handleRequest(auditFinish);
     await Promise.resolve();
     expect(posted).toEqual([
-      { hostRequestId: "h2", kind: "host.reply", ok: false, code: "audit_failed" },
+      {
+        hostRequestId: "h2",
+        kind: "host.reply",
+        method: "audit.finish",
+        ok: false,
+        code: "audit_failed",
+      },
     ]);
     expect(JSON.stringify(posted)).not.toContain("audit finish failed");
   });
@@ -131,7 +149,13 @@ describe("tool worker host", () => {
     await Promise.resolve();
     expect(reads).toEqual(["deepseek.apiKey"]);
     expect(posted).toEqual([
-      { hostRequestId: "h3", kind: "host.reply", ok: true, payload: { apiKey: "sk-secret-value" } },
+      {
+        hostRequestId: "h3",
+        kind: "host.reply",
+        method: "secret.getProviderKey",
+        ok: true,
+        payload: { apiKey: "sk-secret-value" },
+      },
     ]);
   });
 
@@ -161,7 +185,13 @@ describe("tool worker host", () => {
     host.handleRequest(auditStart);
     await Promise.resolve();
     expect(posted).toEqual([
-      { hostRequestId: "h1", kind: "host.reply", ok: false, code: "host_disposed" },
+      {
+        hostRequestId: "h1",
+        kind: "host.reply",
+        method: "host_protocol_error",
+        ok: false,
+        code: "host_disposed",
+      },
     ]);
   });
 
@@ -190,5 +220,72 @@ describe("tool worker host", () => {
     expect(record?.errorCode).toBe("rate_limited");
     db.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("tool worker host lifecycle (focused revision)", () => {
+  it("ignores a duplicate active request without a second audit call or a second reply", async () => {
+    const { audit, starts } = fakeAudit();
+    const { host, posted } = createHost(audit);
+    host.handleRequest(auditStart);
+    host.handleRequest(auditStart);
+    await Promise.resolve();
+    expect(starts).toHaveLength(1);
+    expect(posted).toHaveLength(1);
+  });
+
+  it("never posts success after dispose, even when an in-flight audit later resolves", async () => {
+    let resolveFinish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveFinish = resolve;
+    });
+    const { audit } = fakeAudit({ finishGate: { promise: gate, resolve: resolveFinish } });
+    const { host, posted } = createHost(audit);
+    host.handleRequest(auditFinish);
+    await Promise.resolve();
+    host.dispose();
+    resolveFinish();
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(posted).toEqual([]);
+  });
+
+  it("handles postMessage throws and secret lookup throws with fixed codes", async () => {
+    const { audit } = fakeAudit();
+    const posted: unknown[] = [];
+    const host = createToolWorkerHost({
+      audit,
+      secrets: {
+        get: () => {
+          throw new Error("secret vault exploded");
+        },
+      },
+      postMessage: (value) => posted.push(value),
+    });
+    host.handleRequest({
+      hostRequestId: "h1",
+      kind: "host.request",
+      method: "secret.getProviderKey",
+      payload: { provider: "deepseek" },
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(posted).toEqual([
+      { hostRequestId: "h1", kind: "host.reply", method: "secret.getProviderKey", ok: false, code: "secret_unavailable" },
+    ]);
+    expect(JSON.stringify(posted)).not.toContain("vault exploded");
+  });
+
+  it("ignores a late duplicate of a completed request (bounded)", async () => {
+    const { audit, starts } = fakeAudit();
+    const { host, posted } = createHost(audit);
+    host.handleRequest(auditStart);
+    await Promise.resolve();
+    host.handleRequest(auditStart);
+    await Promise.resolve();
+    expect(starts).toHaveLength(1);
+    expect(posted).toHaveLength(1);
   });
 });
