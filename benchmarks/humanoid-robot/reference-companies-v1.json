@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "companies": [
+    { "id": "tesla", "name": "Tesla", "category": "overseas", "domains": ["tesla.com"] },
+    { "id": "figure-ai", "name": "Figure AI", "category": "overseas", "domains": ["figure.ai"] },
+    { "id": "agility-robotics", "name": "Agility Robotics", "category": "overseas", "domains": ["agilityrobotics.com"] },
+    { "id": "apptronik", "name": "Apptronik", "category": "overseas", "domains": ["apptronik.com"] },
+    { "id": "1x", "name": "1X", "category": "overseas", "domains": ["1x.tech"] },
+    { "id": "boston-dynamics", "name": "Boston Dynamics", "category": "overseas", "domains": ["bostondynamics.com"] },
+    { "id": "unitree", "name": "宇树科技", "category": "chinese", "domains": ["unitree.com"] },
+    { "id": "ubtech", "name": "优必选", "category": "chinese", "domains": ["ubtech.com"] },
+    { "id": "fourier", "name": "傅利叶智能", "category": "chinese", "domains": ["fft-ai.com"] },
+    { "id": "agibot", "name": "智元机器人", "category": "chinese", "domains": ["zhiyuan-robot.com"] },
+    { "id": "galbot", "name": "银河通用", "category": "chinese", "domains": ["galbot.com"] },
+    { "id": "engineai", "name": "众擎机器人", "category": "chinese", "domains": ["engine-ai.cn"] }
+  ]
+}

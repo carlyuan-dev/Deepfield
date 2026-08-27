@@ -1,0 +1,8 @@
+{
+  "web": {
+    "results": [
+      { "title": "Official Site", "url": "https://example.com", "description": "The official example site." },
+      { "title": "Second Result", "url": "https://other.example/path", "description": "Another result." }
+    ]
+  }
+}

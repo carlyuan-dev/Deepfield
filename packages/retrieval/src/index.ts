@@ -99,3 +99,70 @@ export {
   type PdfLoadingTaskLike,
   type PdfPageLike,
 } from "./pdf-lifecycle.js";
+export {
+  normalizeSearchResults,
+  SearchProviderError,
+  MAX_QUERY_LENGTH,
+  MAX_RESULTS,
+  MAX_RESULT_URL_LENGTH,
+  MAX_RESULT_TITLE_LENGTH,
+  MAX_RESULT_SNIPPET_LENGTH,
+  type NormalizedSearchResponse,
+  type NormalizedSearchResult,
+  type RawSearchResult,
+  type SearchProvider,
+  type SearchProviderErrorCode,
+  type SearchRequest,
+} from "./search-provider.js";
+export {
+  ProviderHttpClient,
+  parseRetryAfter,
+  createNodeProviderTransport,
+  type ProviderEndpoint,
+  type ProviderHttpClientDeps,
+  type ProviderHttpRequestOptions,
+  type ProviderHttpResponse,
+  type ProviderTransport,
+  type ProviderTransportRequest,
+  type ProviderTransportResponse,
+} from "./provider-http-client.js";
+export { createBraveProvider, type BraveProviderDeps } from "./providers/brave.js";
+export { createTavilyProvider, type TavilyProviderDeps } from "./providers/tavily.js";
+export { createSerperProvider, type SerperProviderDeps } from "./providers/serper.js";
+export {
+  createSearchWebDefinition,
+  SearchWebInputSchema,
+  SearchWebOutputSchema,
+  SearchWebResultSchema,
+  type SearchWebInput,
+  type SearchWebOutput,
+} from "./search-tool.js";
+export { QUERIES_V1, readQueriesV1, type BenchmarkQueryV1, type QuerySetV1 } from "./benchmark/queries.js";
+export {
+  REFERENCE_COMPANIES_V1,
+  readReferenceCompaniesV1,
+  type CompanyCategory,
+  type ReferenceCompanyV1,
+  type ReferenceSetV1,
+} from "./benchmark/reference-companies.js";
+export {
+  scoreBenchmark,
+  matchesCompanyDomain,
+  normalizeDomain,
+  percentile,
+  urlHostname,
+  WEIGHTS,
+  type BenchmarkedRun,
+  type BenchmarkScoringInput,
+  type BenchmarkScoringResult,
+  type HardGateStatus,
+  type LinkValiditySample,
+  type ProviderRawMetrics,
+  type ProviderScore,
+} from "./benchmark/scoring.js";
+export {
+  writeBenchmarkReport,
+  REPORT_FILENAME,
+  type BenchmarkReport,
+  type ProviderConfigSummary,
+} from "./benchmark/report.js";

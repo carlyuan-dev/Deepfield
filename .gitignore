@@ -8,3 +8,4 @@ playwright-report/
 *.log
 *.tsbuildinfo
 /docs/架构图/
+benchmark-results/
