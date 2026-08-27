@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
-import { AgentWorkerEventSchema, type AgentWorkerEvent } from "@deepfield/contracts";
-import { createWorkerMessageLoop, type ChatAgent } from "./message-loop.js";
+import {
+  AgentWorkerEventSchema,
+  ToolExecutionEventSchema,
+  type AgentWorkerEvent,
+  type ToolExecutionEvent,
+} from "@deepfield/contracts";
+import { createWorkerMessageLoop, type ChatAgent, type ToolRuntime } from "./message-loop.js";
 import {
   echoAgent,
+  echoToolRuntime,
   flushPending,
   InMemoryEndpoint,
   request,
+  toolEvent,
+  toolRunRequest,
 } from "./message-loop-test-helpers.js";
 
 describe("worker message loop", () => {
@@ -134,5 +142,111 @@ describe("worker message loop", () => {
     expect(endpoint.listenerCount()).toBe(0);
     endpoint.emit(request());
     expect(endpoint.posted).toEqual([]);
+  });
+});
+
+describe("worker message loop tool.run", () => {
+  it("routes tool.run to the tool runtime with a single listener and forwards events", async () => {
+    const endpoint = new InMemoryEndpoint();
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: echoToolRuntime });
+    expect(endpoint.listenerCount()).toBe(1);
+    endpoint.emit(toolRunRequest("exec-1"));
+    await flushPending();
+    expect(endpoint.posted.map((value) => (value as { type: string }).type)).toEqual([
+      "started",
+      "completed",
+    ]);
+    for (const value of endpoint.posted) {
+      expect(Value.Check(ToolExecutionEventSchema, value)).toBe(true);
+    }
+    expect(loop.activeCount()).toBe(0);
+  });
+
+  it("keeps chat and tool runs isolated with one active map", async () => {
+    const endpoint = new InMemoryEndpoint();
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: echoToolRuntime });
+    endpoint.emit(request("chat-1"));
+    endpoint.emit(toolRunRequest("exec-1"));
+    await flushPending();
+    const chatTypes = endpoint.posted
+      .filter((value) => (value as { requestId?: string }).requestId === "chat-1")
+      .map((value) => (value as { type: string }).type);
+    expect(chatTypes).toEqual(["started", "text_delta", "completed"]);
+    const toolTypes = endpoint.posted
+      .filter((value) => (value as { executionId?: string }).executionId === "exec-1")
+      .map((value) => (value as { type: string }).type);
+    expect(toolTypes).toEqual(["started", "completed"]);
+    expect(loop.activeCount()).toBe(0);
+  });
+
+  it("terminates the active flow and refuses the second execution on duplicate ids across kinds", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let release!: () => void;
+    const gated: ChatAgent = {
+      async run(workerRequest, emit) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        emit({ requestId: workerRequest.requestId, type: "completed", text: "late" });
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, gated, { toolRuntime: echoToolRuntime });
+    endpoint.emit(request("dup-1"));
+    await flushPending();
+    endpoint.emit(toolRunRequest("dup-1"));
+    await flushPending();
+    expect(
+      endpoint.posted.some(
+        (value) =>
+          (value as { type?: string }).type === "failed" &&
+          (value as { code?: string }).code === "duplicate_request",
+      ),
+    ).toBe(true);
+    release();
+    await flushPending();
+    expect(loop.activeCount()).toBe(0);
+  });
+
+  it("settles an invalid tool event with a single safe terminal", async () => {
+    const endpoint = new InMemoryEndpoint();
+    const badRuntime: ToolRuntime = {
+      async run(_request, emit) {
+        emit({
+          executionId: "wrong",
+          traceId: "trace-1",
+          tool: { name: "echo", version: 1 },
+          sequence: 0,
+          timestamp: 0,
+          type: "started",
+        } as ToolExecutionEvent);
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: badRuntime });
+    endpoint.emit(toolRunRequest("exec-1"));
+    await flushPending();
+    const failed = endpoint.posted.filter((value) => (value as { type?: string }).type === "failed");
+    expect(failed).toHaveLength(1);
+    expect((failed[0] as { code?: string }).code).toBe("invalid_event");
+    expect(loop.activeCount()).toBe(0);
+  });
+
+  it("aborts tool executions on dispose", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let aborted = false;
+    const hangingTool: ToolRuntime = {
+      async run(_request, _emit, signal) {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+        });
+        await new Promise(() => {});
+      },
+    };
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, { toolRuntime: hangingTool });
+    endpoint.emit(toolRunRequest("exec-1"));
+    await flushPending();
+    expect(loop.activeCount()).toBe(1);
+    loop.dispose();
+    expect(aborted).toBe(true);
+    expect(loop.activeCount()).toBe(0);
   });
 });

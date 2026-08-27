@@ -9,3 +9,8 @@ export interface AgentWorkerPort {
 }
 
 export type RequestIdFactory = () => string;
+
+/** Narrow provider-key reader: only the compiled allowlisted provider. */
+export interface ProviderKeyReader {
+  getProviderKey(provider: "deepseek"): string | undefined;
+}

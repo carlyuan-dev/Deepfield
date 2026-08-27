@@ -1,0 +1,194 @@
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
+import { SqliteToolAudit } from "@deepfield/application";
+import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createToolWorkerHost, type ToolWorkerHost } from "./tool-worker-host.js";
+
+interface FakeAuditOptions {
+  finishGate?: { promise: Promise<void>; resolve: () => void };
+  failFinish?: boolean;
+}
+
+function fakeAudit(options: FakeAuditOptions = {}): {
+  audit: ToolAuditSink;
+  starts: ToolAuditStart[];
+  finishes: ToolAuditFinish[];
+} {
+  const starts: ToolAuditStart[] = [];
+  const finishes: ToolAuditFinish[] = [];
+  return {
+    starts,
+    finishes,
+    audit: {
+      async start(record) {
+        starts.push(record);
+      },
+      async finish(record) {
+        if (options.failFinish) {
+          throw new Error("audit finish failed");
+        }
+        finishes.push(record);
+        if (options.finishGate) {
+          await options.finishGate.promise;
+        }
+      },
+    },
+  };
+}
+
+function createHost(
+  audit: ToolAuditSink,
+  secrets: { get(name: string): string | undefined } = { get: () => undefined },
+): { host: ToolWorkerHost; posted: unknown[] } {
+  const posted: unknown[] = [];
+  const host = createToolWorkerHost({ audit, secrets, postMessage: (value) => posted.push(value) });
+  return { host, posted };
+}
+
+const auditStart = {
+  hostRequestId: "h1",
+  kind: "host.request",
+  method: "audit.start",
+  payload: {
+    executionId: "exec-1",
+    traceId: "trace-1",
+    actor: "developer_probe",
+    toolName: "echo",
+    toolVersion: 1,
+  },
+};
+
+const auditFinish = {
+  hostRequestId: "h2",
+  kind: "host.request",
+  method: "audit.finish",
+  payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, errorCode: "rate_limited" },
+};
+
+describe("tool worker host", () => {
+  it("persists audit start and acknowledges", async () => {
+    const { audit, starts } = fakeAudit();
+    const { host, posted } = createHost(audit);
+    host.handleRequest(auditStart);
+    await Promise.resolve();
+    expect(starts).toHaveLength(1);
+    expect(starts[0]!.executionId).toBe("exec-1");
+    expect(posted).toEqual([
+      { hostRequestId: "h1", kind: "host.reply", ok: true, payload: { acknowledged: true } },
+    ]);
+  });
+
+  it("does not acknowledge audit.finish before the audit sink resolves (ack gate)", async () => {
+    let resolveFinish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveFinish = resolve;
+    });
+    const { audit, finishes } = fakeAudit({ finishGate: { promise: gate, resolve: resolveFinish } });
+    const { host, posted } = createHost(audit);
+    host.handleRequest(auditFinish);
+    await Promise.resolve();
+    expect(finishes).toHaveLength(1);
+    expect(posted).toEqual([]);
+    resolveFinish();
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(posted).toEqual([
+      { hostRequestId: "h2", kind: "host.reply", ok: true, payload: { acknowledged: true } },
+    ]);
+  });
+
+  it("replies a fixed safe code when audit finish fails and never claims success", async () => {
+    const { audit } = fakeAudit({ failFinish: true });
+    const { host, posted } = createHost(audit);
+    host.handleRequest(auditFinish);
+    await Promise.resolve();
+    expect(posted).toEqual([
+      { hostRequestId: "h2", kind: "host.reply", ok: false, code: "audit_failed" },
+    ]);
+    expect(JSON.stringify(posted)).not.toContain("audit finish failed");
+  });
+
+  it("resolves provider keys only for the allowlisted provider and never leaks", async () => {
+    const reads: string[] = [];
+    const secrets = {
+      get: (name: string) => {
+        reads.push(name);
+        return name === "deepseek.apiKey" ? "sk-secret-value" : undefined;
+      },
+    };
+    const { audit } = fakeAudit();
+    const { host, posted } = createHost(audit, secrets);
+    host.handleRequest({
+      hostRequestId: "h3",
+      kind: "host.request",
+      method: "secret.getProviderKey",
+      payload: { provider: "deepseek" },
+    });
+    await Promise.resolve();
+    expect(reads).toEqual(["deepseek.apiKey"]);
+    expect(posted).toEqual([
+      { hostRequestId: "h3", kind: "host.reply", ok: true, payload: { apiKey: "sk-secret-value" } },
+    ]);
+  });
+
+  it("rejects invalid, unknown or secret-bearing host requests without calling the audit", async () => {
+    const { audit, starts, finishes } = fakeAudit();
+    const { host, posted } = createHost(audit);
+    host.handleRequest({ ...auditStart, method: "secret.get", payload: { name: "anything" } });
+    host.handleRequest({ ...auditStart, payload: { ...auditStart.payload, apiKey: "sk-x" } });
+    host.handleRequest({ hostRequestId: "h9", kind: "host.request", method: "audit.start", payload: { sql: "DROP" } });
+    host.handleRequest({ hostRequestId: "", kind: "host.request", method: "audit.start", payload: auditStart.payload });
+    await Promise.resolve();
+    expect(starts).toHaveLength(0);
+    expect(finishes).toHaveLength(0);
+    const errors = posted.filter((value) => (value as { ok?: boolean }).ok === false);
+    expect(errors.length).toBeGreaterThan(0);
+    for (const error of errors) {
+      expect((error as { code?: string }).code).toBe("invalid_request");
+    }
+    expect(JSON.stringify(posted)).not.toContain("sk-x");
+    expect(JSON.stringify(posted)).not.toContain("DROP");
+  });
+
+  it("replies host_disposed after dispose", async () => {
+    const { audit } = fakeAudit();
+    const { host, posted } = createHost(audit);
+    host.dispose();
+    host.handleRequest(auditStart);
+    await Promise.resolve();
+    expect(posted).toEqual([
+      { hostRequestId: "h1", kind: "host.reply", ok: false, code: "host_disposed" },
+    ]);
+  });
+
+  it("integrates with SqliteToolAudit over a real database", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "df-host-"));
+    const db = openDatabase(join(dir, "t.sqlite"));
+    migrate(db);
+    const repositories = createRepositories(db);
+    const host = createToolWorkerHost({
+      audit: new SqliteToolAudit(repositories.toolExecutions),
+      secrets: { get: () => undefined },
+      postMessage: () => {},
+    });
+    host.handleRequest(auditStart);
+    host.handleRequest({
+      hostRequestId: "h2",
+      kind: "host.request",
+      method: "audit.finish",
+      payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, errorCode: "rate_limited" },
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    const record = repositories.toolExecutions.getById("exec-1");
+    expect(record?.status).toBe("failed");
+    expect(record?.errorCode).toBe("rate_limited");
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

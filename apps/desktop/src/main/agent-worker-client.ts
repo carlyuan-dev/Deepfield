@@ -1,9 +1,33 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
+  ToolExecutionEventSchema,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
+  type ToolExecutionEvent,
+  type ToolRunRequest,
 } from "@deepfield/contracts";
+import {
+  AgentProtocolError,
+  AgentWorkerExitedError,
+  AgentWorkerQueueOverflowError,
+  isChatTerminal,
+  isHostRequest,
+  isToolTerminal,
+  MAX_PENDING_CHAT_EVENTS,
+  MAX_PENDING_TOOL_EVENTS,
+  safeCorrelationId,
+  type PendingStream,
+  type StreamEvent,
+} from "./agent-worker-protocol.js";
+
+export {
+  AgentProtocolError,
+  AgentWorkerExitedError,
+  AgentWorkerQueueOverflowError,
+  MAX_PENDING_CHAT_EVENTS,
+  MAX_PENDING_TOOL_EVENTS,
+} from "./agent-worker-protocol.js";
 
 export interface MessageEndpoint {
   postMessage(value: unknown): void;
@@ -11,101 +35,87 @@ export interface MessageEndpoint {
   onExit(listener: (code: number) => void): () => void;
 }
 
-const MAX_PENDING_EVENTS = 1000;
-
-export class AgentProtocolError extends Error {
-  constructor() {
-    super("agent worker sent an invalid protocol event");
-    this.name = "AgentProtocolError";
-  }
-}
-
-export class AgentWorkerExitedError extends Error {
-  constructor(exitCode: number) {
-    super(`agent worker exited unexpectedly with code ${exitCode}`);
-    this.name = "AgentWorkerExitedError";
-  }
-}
-
-export class AgentWorkerQueueOverflowError extends Error {
-  constructor() {
-    super("agent worker event queue overflow");
-    this.name = "AgentWorkerQueueOverflowError";
-  }
-}
-
-interface PendingStream {
-  queue: AgentWorkerEvent[];
-  waiters: Array<{
-    resolve: (result: IteratorResult<AgentWorkerEvent>) => void;
-    reject: (error: Error) => void;
-  }>;
-  error: Error | undefined;
-  terminalSeen: boolean;
-}
-
-type StreamIteratorResult = IteratorResult<AgentWorkerEvent>;
-
-function isTerminal(event: AgentWorkerEvent): boolean {
-  return event.type === "completed" || event.type === "failed";
-}
-
-function safeRequestId(value: unknown): string | undefined {
-  if (typeof value === "object" && value !== null) {
-    const requestId = (value as { requestId?: unknown }).requestId;
-    if (typeof requestId === "string") {
-      return requestId;
-    }
-  }
-  return undefined;
+export interface AgentWorkerClientOptions {
+  /** Central host-request router: the single listener never competes. */
+  hostHandler?: (message: unknown) => void;
 }
 
 export class AgentWorkerClient {
   private readonly pending = new Map<string, PendingStream>();
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeExit: () => void;
+  private readonly hostHandler: ((message: unknown) => void) | undefined;
   private disposed = false;
   private exited = false;
   private exitCode = 0;
 
-  constructor(private readonly endpoint: MessageEndpoint) {
+  constructor(
+    private readonly endpoint: MessageEndpoint,
+    options: AgentWorkerClientOptions = {},
+  ) {
+    this.hostHandler = options.hostHandler;
     this.unsubscribeMessage = endpoint.onMessage((value) => this.handleMessage(value));
     this.unsubscribeExit = endpoint.onExit((code) => this.handleExit(code));
   }
 
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent> {
+    return this.sendStream<AgentWorkerEvent>({
+      kind: "chat",
+      id: request.requestId,
+      request,
+    });
+  }
+
+  sendTool(request: ToolRunRequest): AsyncIterable<ToolExecutionEvent> {
+    return this.sendStream<ToolExecutionEvent>({
+      kind: "tool",
+      id: request.executionId,
+      traceId: request.traceId,
+      request,
+    });
+  }
+
+  private sendStream<T extends StreamEvent>(spec: {
+    kind: "chat" | "tool";
+    id: string;
+    traceId?: string;
+    request: unknown;
+  }): AsyncIterable<T> {
     if (this.disposed) {
       throw new Error("agent worker client is disposed");
     }
     if (this.exited) {
       throw new AgentWorkerExitedError(this.exitCode);
     }
-    if (this.pending.has(request.requestId)) {
-      throw new Error(`duplicate request id: ${request.requestId}`);
+    if (this.pending.has(spec.id)) {
+      throw new Error(`duplicate request id: ${spec.id}`);
     }
     const stream: PendingStream = {
+      kind: spec.kind,
+      id: spec.id,
+      ...(spec.traceId !== undefined ? { traceId: spec.traceId } : {}),
       queue: [],
       waiters: [],
       error: undefined,
       terminalSeen: false,
     };
-    this.pending.set(request.requestId, stream);
+    this.pending.set(spec.id, stream);
     try {
-      this.endpoint.postMessage(request);
+      this.endpoint.postMessage(spec.request);
     } catch (error) {
-      this.pending.delete(request.requestId);
+      this.pending.delete(spec.id);
       throw error;
     }
     return {
       [Symbol.asyncIterator]: () => ({
-        next: () => this.next(stream),
+        next: () => this.next(stream) as Promise<IteratorResult<T>>,
         return: () => {
-          this.cleanup(request.requestId, stream);
-          return Promise.resolve({ value: undefined, done: true } as StreamIteratorResult);
+          this.cleanup(spec.id, stream);
+          return Promise.resolve({ value: undefined, done: true } as IteratorResult<T>);
         },
         throw: () => {
-          this.cleanup(request.requestId, stream);
-          return Promise.resolve({ value: undefined, done: true } as StreamIteratorResult);
+          this.cleanup(spec.id, stream);
+          return Promise.resolve({ value: undefined, done: true } as IteratorResult<T>);
         },
       }),
     };
@@ -123,8 +133,8 @@ export class AgentWorkerClient {
     this.unsubscribeMessage();
     this.unsubscribeExit();
     const error = new Error("agent worker client disposed");
-    for (const [requestId, stream] of [...this.pending]) {
-      this.close(requestId, stream, error);
+    for (const [id, stream] of [...this.pending]) {
+      this.close(id, stream, error);
     }
   }
 
@@ -132,53 +142,90 @@ export class AgentWorkerClient {
     if (this.disposed) {
       return;
     }
-    if (!Value.Check(AgentWorkerEventSchema, value)) {
-      const requestId = safeRequestId(value);
-      if (requestId !== undefined) {
-        const stream = this.pending.get(requestId);
-        if (stream) {
-          this.close(requestId, stream, new AgentProtocolError());
-        }
-      }
+    if (isHostRequest(value)) {
+      this.hostHandler?.(value);
       return;
     }
-    const requestId = value.requestId;
-    const stream = this.pending.get(requestId);
+    if (Value.Check(AgentWorkerEventSchema, value)) {
+      this.routeChat(value);
+      return;
+    }
+    if (Value.Check(ToolExecutionEventSchema, value)) {
+      this.routeTool(value);
+      return;
+    }
+    const id = safeCorrelationId(value);
+    if (id !== undefined) {
+      const stream = this.pending.get(id);
+      if (stream) {
+        this.close(id, stream, new AgentProtocolError());
+      }
+    }
+  }
+
+  private routeChat(event: AgentWorkerEvent): void {
+    const stream = this.pending.get(event.requestId);
     if (!stream) {
       return;
     }
-    this.push(requestId, stream, value);
+    if (stream.kind !== "chat") {
+      this.close(stream.id, stream, new AgentProtocolError());
+      return;
+    }
+    this.push(stream.id, stream, event);
   }
 
-  private push(requestId: string, stream: PendingStream, event: AgentWorkerEvent): void {
+  private routeTool(event: ToolExecutionEvent): void {
+    const stream = this.pending.get(event.executionId);
+    if (stream) {
+      if (stream.kind !== "tool" || stream.traceId !== event.traceId) {
+        this.close(stream.id, stream, new AgentProtocolError());
+      } else {
+        this.push(stream.id, stream, event);
+      }
+      return;
+    }
+    // Wrong correlation id: the event matches exactly one pending tool stream
+    // by traceId, so that stream is closed as a protocol violation.
+    const candidates = [...this.pending.values()].filter(
+      (candidate) => candidate.kind === "tool" && candidate.traceId === event.traceId,
+    );
+    if (candidates.length === 1) {
+      this.close(candidates[0]!.id, candidates[0]!, new AgentProtocolError());
+    }
+  }
+
+  private push(id: string, stream: PendingStream, event: StreamEvent): void {
     if (stream.error || stream.terminalSeen) {
       return;
     }
-    const terminal = isTerminal(event);
+    const terminal =
+      stream.kind === "chat" ? isChatTerminal(event) : isToolTerminal(event);
     const waiter = stream.waiters.shift();
     if (waiter) {
       waiter.resolve({ value: event, done: false });
       if (terminal) {
         stream.terminalSeen = true;
-        this.cleanup(requestId, stream);
+        this.cleanup(id, stream);
         for (const pendingWaiter of stream.waiters.splice(0)) {
           pendingWaiter.resolve({ value: undefined, done: true });
         }
       }
       return;
     }
-    if (stream.queue.length >= MAX_PENDING_EVENTS) {
-      this.close(requestId, stream, new AgentWorkerQueueOverflowError());
+    const max = stream.kind === "chat" ? MAX_PENDING_CHAT_EVENTS : MAX_PENDING_TOOL_EVENTS;
+    if (stream.queue.length >= max) {
+      this.close(id, stream, new AgentWorkerQueueOverflowError());
       return;
     }
     stream.queue.push(event);
     if (terminal) {
       stream.terminalSeen = true;
-      this.cleanup(requestId, stream);
+      this.cleanup(id, stream);
     }
   }
 
-  private next(stream: PendingStream): Promise<StreamIteratorResult> {
+  private next(stream: PendingStream): Promise<IteratorResult<StreamEvent>> {
     if (stream.error) {
       return Promise.reject(stream.error);
     }
@@ -193,18 +240,18 @@ export class AgentWorkerClient {
     });
   }
 
-  private close(requestId: string, stream: PendingStream, error: Error): void {
+  private close(id: string, stream: PendingStream, error: Error): void {
     stream.error = error;
     stream.queue = [];
     for (const waiter of stream.waiters.splice(0)) {
       waiter.reject(error);
     }
-    this.pending.delete(requestId);
+    this.pending.delete(id);
   }
 
-  private cleanup(requestId: string, stream: PendingStream): void {
-    if (this.pending.get(requestId) === stream) {
-      this.pending.delete(requestId);
+  private cleanup(id: string, stream: PendingStream): void {
+    if (this.pending.get(id) === stream) {
+      this.pending.delete(id);
     }
   }
 
@@ -217,8 +264,8 @@ export class AgentWorkerClient {
     this.unsubscribeMessage();
     this.unsubscribeExit();
     const error = new AgentWorkerExitedError(code);
-    for (const [requestId, stream] of [...this.pending]) {
-      this.close(requestId, stream, error);
+    for (const [id, stream] of [...this.pending]) {
+      this.close(id, stream, error);
     }
   }
 }

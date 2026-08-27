@@ -1,5 +1,10 @@
-import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
-import type { ChatAgent, WorkerEndpoint } from "./message-loop.js";
+import type {
+  AgentWorkerEvent,
+  AgentWorkerRequest,
+  ToolExecutionEvent,
+  ToolRunRequest,
+} from "@deepfield/contracts";
+import type { ChatAgent, ToolRuntime, WorkerEndpoint } from "./message-loop.js";
 
 export class InMemoryEndpoint implements WorkerEndpoint {
   posted: unknown[] = [];
@@ -51,3 +56,60 @@ export async function flushPending(): Promise<void> {
     setImmediate(resolve);
   });
 }
+
+export function toolRunRequest(executionId = "exec-1", traceId = "trace-1"): ToolRunRequest {
+  return {
+    requestId: executionId,
+    kind: "tool.run",
+    executionId,
+    traceId,
+    tool: { name: "echo", version: 1 },
+    input: { text: "hi" },
+    actor: "developer_probe",
+  };
+}
+
+let toolSequence = 0;
+
+export function toolEvent(
+  executionId: string,
+  traceId: string,
+  type: ToolExecutionEvent["type"],
+): ToolExecutionEvent {
+  const base = {
+    executionId,
+    traceId,
+    tool: { name: "echo", version: 1 },
+    sequence: toolSequence++,
+    timestamp: 0,
+  };
+  switch (type) {
+    case "started":
+      return { ...base, type: "started" };
+    case "progress":
+      return { ...base, type: "progress", progress: { kind: "progress" } };
+    case "completed":
+      return { ...base, type: "completed" };
+    case "failed":
+      return {
+        ...base,
+        type: "failed",
+        failure: { code: "executor_failed", message: "x", retryable: false, attempts: 1 },
+      };
+    case "cancelled":
+      return {
+        ...base,
+        type: "cancelled",
+        failure: { code: "cancelled", message: "x", retryable: false, attempts: 1 },
+      };
+    default:
+      throw new Error(`unexpected tool event type: ${type}`);
+  }
+}
+
+export const echoToolRuntime: ToolRuntime = {
+  async run(request, emit) {
+    emit(toolEvent(request.executionId, request.traceId, "started"));
+    emit(toolEvent(request.executionId, request.traceId, "completed"));
+  },
+};

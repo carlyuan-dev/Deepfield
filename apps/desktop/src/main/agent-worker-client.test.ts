@@ -2,15 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   AgentProtocolError,
   AgentWorkerClient,
+  AgentWorkerExitedError,
   AgentWorkerQueueOverflowError,
 } from "./agent-worker-client.js";
 import {
   collect,
   collectError,
+  collectTool,
+  collectToolError,
   collectUntilDelta,
   event,
   FakeEndpoint,
   request,
+  toolEvent,
+  toolRequest,
 } from "./agent-worker-client-test-helpers.js";
 
 describe("agent worker client", () => {
@@ -99,5 +104,98 @@ describe("agent worker client", () => {
     const again = client.send(request("req-1"));
     endpoint.emit(event("req-1", "completed", "x"));
     expect(await collect(again)).toEqual(["completed:x"]);
+  });
+});
+
+describe("agent worker client tool streams", () => {
+  it("posts tool.run and delivers tool events with a single listener", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    expect(endpoint.messageListenerCount()).toBe(1);
+    const req = toolRequest("exec-1");
+    const stream = client.sendTool(req);
+    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
+    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    expect(endpoint.posted).toEqual([req]);
+    expect(await collectTool(stream)).toEqual(["started", "completed"]);
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("keeps chat and tool streams interleaved without cross-talk", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const chat = client.send(request("req-1"));
+    const tool = client.sendTool(toolRequest("exec-1"));
+    endpoint.emit(event("req-1", "text_delta", "C"));
+    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
+    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    endpoint.emit(event("req-1", "completed", "C"));
+    expect(await collectTool(tool)).toEqual(["started", "completed"]);
+    expect(await collect(chat)).toEqual(["C", "completed:C"]);
+  });
+
+  it("closes the tool stream on wrong executionId or traceId", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const wrongExecution = client.sendTool(toolRequest("exec-1"));
+    endpoint.emit(toolEvent("wrong", "trace-1", "started"));
+    expect((await collectToolError(wrongExecution)).error).toBeInstanceOf(AgentProtocolError);
+    expect(client.pendingCount()).toBe(0);
+    const wrongTrace = client.sendTool(toolRequest("exec-2", "trace-2"));
+    endpoint.emit(toolEvent("exec-2", "wrong-trace", "started"));
+    expect((await collectToolError(wrongTrace)).error).toBeInstanceOf(AgentProtocolError);
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("rejects duplicate ids across chat and tool streams", () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    client.send(request("shared"));
+    expect(() => client.sendTool(toolRequest("shared"))).toThrow(/duplicate/);
+  });
+
+  it("rejects duplicate tool execution ids while pending", () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    client.sendTool(toolRequest("exec-1"));
+    expect(() => client.sendTool(toolRequest("exec-1"))).toThrow(/duplicate/);
+  });
+
+  it("cleans tool pending immediately on terminal and allows id reuse, dropping late events", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const first = client.sendTool(toolRequest("exec-1"));
+    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    expect(client.pendingCount()).toBe(0);
+    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
+    const second = client.sendTool(toolRequest("exec-1"));
+    endpoint.emit(toolEvent("exec-1", "trace-1", "started"));
+    endpoint.emit(toolEvent("exec-1", "trace-1", "completed"));
+    expect(await collectTool(first)).toEqual(["completed"]);
+    expect(await collectTool(second)).toEqual(["started", "completed"]);
+  });
+
+  it("closes an unconsumed tool queue on overflow", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const stream = client.sendTool(toolRequest("exec-1"));
+    for (let index = 0; index <= 1000; index += 1) {
+      endpoint.emit(toolEvent("exec-1", "trace-1", "progress"));
+    }
+    const result = await collectToolError(stream);
+    expect(result.error).toBeInstanceOf(AgentWorkerQueueOverflowError);
+    expect(client.pendingCount()).toBe(0);
+  });
+
+  it("rejects sendTool after dispose and settles tool streams on exit", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const stream = client.sendTool(toolRequest("exec-1"));
+    endpoint.emitExit(1);
+    expect((await collectToolError(stream)).error).toBeInstanceOf(AgentWorkerExitedError);
+    expect(() => client.sendTool(toolRequest("exec-2"))).toThrow();
+    const disposed = new AgentWorkerClient(new FakeEndpoint());
+    disposed.dispose();
+    expect(() => disposed.sendTool(toolRequest("exec-1"))).toThrow(/disposed/);
   });
 });

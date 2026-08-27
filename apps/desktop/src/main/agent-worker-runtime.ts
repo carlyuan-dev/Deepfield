@@ -9,12 +9,21 @@ export interface AgentWorkerChild {
   kill(): void;
 }
 
+export interface AgentWorkerRuntimeOptions {
+  /** Central host-request router; the single message listener stays on the client. */
+  host?: { handleRequest(message: unknown): void };
+}
+
 export interface AgentWorkerRuntime {
   client: AgentWorkerClient;
+  postMessage(value: unknown): void;
   dispose(): void;
 }
 
-export function createAgentWorkerRuntime(child: AgentWorkerChild): AgentWorkerRuntime {
+export function createAgentWorkerRuntime(
+  child: AgentWorkerChild,
+  options: AgentWorkerRuntimeOptions = {},
+): AgentWorkerRuntime {
   let alive = true;
   const endpoint: MessageEndpoint = {
     postMessage: (value) => child.postMessage(value),
@@ -31,12 +40,15 @@ export function createAgentWorkerRuntime(child: AgentWorkerChild): AgentWorkerRu
       };
     },
   };
-  const client = new AgentWorkerClient(endpoint);
+  const client = new AgentWorkerClient(endpoint, {
+    ...(options.host !== undefined ? { hostHandler: options.host.handleRequest } : {}),
+  });
   const unsubscribeAlive = endpoint.onExit(() => {
     alive = false;
   });
   return {
     client,
+    postMessage: (value) => child.postMessage(value),
     dispose() {
       client.dispose();
       unsubscribeAlive();

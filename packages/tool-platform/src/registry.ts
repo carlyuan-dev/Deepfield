@@ -223,6 +223,11 @@ export class ToolRegistry {
     return definition;
   }
 
+  /** Enumerates registered definitions as frozen snapshots (registry order). */
+  list(): ToolDefinition<any, any>[] {
+    return [...this.#definitions.values()];
+  }
+
   manifest(): readonly ToolManifestEntry[] {
     const entries: ToolManifestEntry[] = [];
     for (const definition of this.#definitions.values()) {

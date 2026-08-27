@@ -1,9 +1,12 @@
 import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from "electron";
 import { join } from "node:path";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import type { Repositories } from "@deepfield/persistence";
+import { SqliteToolAudit } from "@deepfield/application";
 import { createAppPaths, resolveUserDataRoot } from "./paths.js";
 import { SecretStore } from "./secret-store.js";
 import { createAgentWorkerRuntime, type AgentWorkerRuntime } from "./agent-worker-runtime.js";
+import { createToolWorkerHost, type ToolWorkerHost } from "./tool-worker-host.js";
 import {
   createApplicationRuntime,
   type ApplicationRuntime,
@@ -13,6 +16,7 @@ import { createWindow } from "./window.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
+let toolHost: ToolWorkerHost | undefined;
 let appRuntime: ApplicationRuntime | undefined;
 let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
@@ -22,11 +26,19 @@ const ipcMainAdapter: IpcMainLike = {
   removeHandler: (channel) => ipcMain.removeHandler(channel),
 };
 
-function startAgentWorker(): AgentWorkerRuntime {
+function startAgentWorker(repositories: Repositories, secrets: SecretStore): AgentWorkerRuntime {
   const child = utilityProcess.fork(join(__dirname, "agent-worker.js"), [], {
     serviceName: "Deepfield Agent",
   });
-  const runtime = createAgentWorkerRuntime(child);
+  let runtimeRef!: AgentWorkerRuntime;
+  const host = createToolWorkerHost({
+    audit: new SqliteToolAudit(repositories.toolExecutions),
+    secrets: { get: (name) => secrets.get(name) },
+    postMessage: (value) => runtimeRef.postMessage(value),
+  });
+  toolHost = host;
+  const runtime = createAgentWorkerRuntime(child, { host });
+  runtimeRef = runtime;
   child.on("exit", () => {
     if (agentRuntime === runtime) {
       agentRuntime = undefined;
@@ -53,7 +65,7 @@ void app.whenReady().then(() => {
     decrypt: (value) => safeStorage.decryptString(value),
   });
 
-  agentRuntime = startAgentWorker();
+  agentRuntime = startAgentWorker(repositories, secrets);
   appRuntime = createApplicationRuntime({
     repositories,
     secrets,
@@ -92,6 +104,9 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   ipcDispose?.();
   ipcDispose = undefined;
+  // Order: reject/clean host RPC first, then kill the worker, then close the DB.
+  toolHost?.dispose();
+  toolHost = undefined;
   agentRuntime?.dispose();
   agentRuntime = undefined;
   appRuntime = undefined;

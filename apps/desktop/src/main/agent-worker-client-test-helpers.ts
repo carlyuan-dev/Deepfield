@@ -1,4 +1,4 @@
-import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
+import type { AgentWorkerEvent, AgentWorkerRequest, ToolExecutionEvent, ToolRunRequest } from "@deepfield/contracts";
 import type { MessageEndpoint } from "./agent-worker-client.js";
 
 export class FakeEndpoint implements MessageEndpoint {
@@ -115,6 +115,87 @@ export async function collectError(
   try {
     for await (const item of stream) {
       labels.push(label(item));
+    }
+  } catch (caught) {
+    error = caught instanceof Error ? caught : new Error(String(caught));
+  }
+  return { labels, error };
+}
+
+export function toolRequest(id = "exec-1", traceId = "trace-1"): ToolRunRequest {
+  return {
+    requestId: id,
+    kind: "tool.run",
+    executionId: id,
+    traceId,
+    tool: { name: "echo", version: 1 },
+    input: { text: "hi" },
+    actor: "developer_probe",
+  };
+}
+
+let toolSequence = 0;
+
+export function toolEvent(
+  executionId: string,
+  traceId: string,
+  type: ToolExecutionEvent["type"],
+): ToolExecutionEvent {
+  const base = {
+    executionId,
+    traceId,
+    tool: { name: "echo", version: 1 },
+    sequence: toolSequence++,
+    timestamp: 0,
+  };
+  switch (type) {
+    case "started":
+      return { ...base, type: "started" };
+    case "progress":
+      return { ...base, type: "progress", progress: { kind: "progress" } };
+    case "retry_scheduled":
+      return { ...base, type: "retry_scheduled", retryDelayMs: 0 };
+    case "completed":
+      return { ...base, type: "completed" };
+    case "failed":
+      return {
+        ...base,
+        type: "failed",
+        failure: { code: "executor_failed", message: "x", retryable: false, attempts: 1 },
+      };
+    case "cancelled":
+      return {
+        ...base,
+        type: "cancelled",
+        failure: { code: "cancelled", message: "x", retryable: false, attempts: 1 },
+      };
+    default:
+      throw new Error(`unexpected tool event type: ${type}`);
+  }
+}
+
+export function toolLabel(item: ToolExecutionEvent): string {
+  return item.type;
+}
+
+export async function collectTool(
+  stream: AsyncIterable<ToolExecutionEvent>,
+): Promise<string[]> {
+  const labels: string[] = [];
+  for await (const item of stream) {
+    labels.push(toolLabel(item));
+  }
+  return labels;
+}
+
+export async function collectToolError(
+  stream: AsyncIterable<ToolExecutionEvent>,
+): Promise<{ labels: string[]; error: Error | undefined }> {
+  const labels: string[] = [];
+  let error: Error | undefined;
+  try {
+    for await (const item of stream) {
+      labels.push(toolLabel(item));
     }
   } catch (caught) {
     error = caught instanceof Error ? caught : new Error(String(caught));

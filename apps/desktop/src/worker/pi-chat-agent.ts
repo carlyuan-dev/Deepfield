@@ -1,5 +1,5 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, AgentOptions, StreamFn } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentOptions, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
@@ -72,7 +72,10 @@ function hasProviderFailure(messages: unknown[]): boolean {
   return false;
 }
 
-export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): ChatAgent {
+export function createPiChatAgent(
+  runtime: PiRuntime = defaultPiRuntime(),
+  tools: AgentTool<any>[] = [],
+): ChatAgent {
   return {
     async run(
       request: AgentWorkerRequest,
@@ -103,7 +106,7 @@ export function createPiChatAgent(runtime: PiRuntime = defaultPiRuntime()): Chat
           systemPrompt: request.context.systemPrompt,
           model: session.model,
           messages: mapHistoryMessages(request.context.messages, session.model),
-          tools: [],
+          tools,
           thinkingLevel: "off",
         },
         streamFn: session.streamFn,
