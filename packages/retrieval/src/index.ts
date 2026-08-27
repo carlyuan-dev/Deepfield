@@ -52,7 +52,6 @@ export {
 } from "./link-tool.js";
 export {
   createParseHtmlDefinition,
-  extractHtml,
   ParseHtmlInputSchema,
   ParseHtmlOutputSchema,
   HtmlLinkSchema,
@@ -64,13 +63,30 @@ export {
   type ParseHtmlOutput,
 } from "./html-tool.js";
 export {
+  decodeHtml,
+  normalizeWhitespace,
+  safeResolveUrl,
+  MAX_HREF,
+  MAX_LINK_TEXT,
+  MAX_LOCATORS,
+  MAX_LOCATOR_PATH,
+  MAX_LOCATOR_TEXT,
+  MAX_TITLE,
+} from "./html-extraction.js";
+export {
   createParsePdfDefinition,
   joinPageText,
+  joinPageTextBounded,
   ParsePdfInputSchema,
   ParsePdfOutputSchema,
   PdfPageTextSchema,
   type ParsePdfDeps,
   type ParsePdfInput,
   type ParsePdfOutput,
+  type PdfDocumentLike,
+  type PdfLoader,
+  type PdfLoadingTaskLike,
+  type PdfPageLike,
   type PdfPageText,
+  type TextItem,
 } from "./pdf-tool.js";

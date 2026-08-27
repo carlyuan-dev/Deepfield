@@ -1,12 +1,20 @@
 import { Type, type Static } from "typebox";
-import * as cheerio from "cheerio";
 import {
   ToolExecutionError,
   type ToolDefinition,
-  type ToolRunContext,
 } from "@deepfield/tool-platform";
-import { ResourceStore, zeroFillBuffer } from "./resource-store.js";
+import { ResourceStore, safeZeroFill } from "./resource-store.js";
 import { scopeFromContext } from "./fetch-tools.js";
+import {
+  decodeHtml,
+  extractHtml,
+  MAX_HREF,
+  MAX_LINK_TEXT,
+  MAX_LOCATORS,
+  MAX_LOCATOR_PATH,
+  MAX_LOCATOR_TEXT,
+  MAX_TITLE,
+} from "./html-extraction.js";
 
 export const ParseHtmlInputSchema = Type.Object(
   { resourceId: Type.String({ minLength: 1 }) },
@@ -17,8 +25,8 @@ export type ParseHtmlInput = Static<typeof ParseHtmlInputSchema>;
 export const HtmlLocatorSchema = Type.Object(
   {
     tag: Type.String({ minLength: 1 }),
-    text: Type.String(),
-    path: Type.String({ minLength: 1 }),
+    text: Type.String({ maxLength: MAX_LOCATOR_TEXT }),
+    path: Type.String({ minLength: 1, maxLength: MAX_LOCATOR_PATH }),
   },
   { additionalProperties: false },
 );
@@ -26,8 +34,8 @@ export type HtmlLocator = Static<typeof HtmlLocatorSchema>;
 
 export const HtmlLinkSchema = Type.Object(
   {
-    href: Type.String({ minLength: 1 }),
-    text: Type.String(),
+    href: Type.String({ minLength: 1, maxLength: MAX_HREF }),
+    text: Type.String({ maxLength: MAX_LINK_TEXT }),
   },
   { additionalProperties: false },
 );
@@ -35,11 +43,11 @@ export type HtmlLink = Static<typeof HtmlLinkSchema>;
 
 export const ParseHtmlOutputSchema = Type.Object(
   {
-    title: Type.String(),
+    title: Type.String({ maxLength: MAX_TITLE }),
     canonicalUrl: Type.String({ minLength: 1 }),
     text: Type.String(),
-    locators: Type.Array(HtmlLocatorSchema),
-    links: Type.Array(HtmlLinkSchema),
+    locators: Type.Array(HtmlLocatorSchema, { maxItems: MAX_LOCATORS }),
+    links: Type.Array(HtmlLinkSchema, { maxItems: 500 }),
     truncated: Type.Boolean(),
     characterCount: Type.Integer({ minimum: 0 }),
   },
@@ -54,156 +62,17 @@ export interface ParseHtmlDeps {
 }
 
 const DEFAULT_MAX_CHARS = 200_000;
+const HARD_MAX_CHARS = 200_000;
 const DEFAULT_MAX_LINKS = 500;
-const CONTENT_TAGS = new Set([
-  "h1", "h2", "h3", "h4", "h5", "h6",
-  "p", "li", "td", "th", "dt", "dd", "caption", "blockquote", "pre", "figcaption", "summary",
-]);
-const HIDDEN_STYLE_RE = /\b(display\s*:\s*none|visibility\s*:\s*hidden)\b/i;
+const HARD_MAX_LINKS = 500;
 
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/** Deterministic UTF-8 decode: BOM-aware, invalid sequences become U+FFFD. */
-function decodeHtml(buffer: Buffer): string {
-  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
-    return buffer.subarray(3).toString("utf8");
+function assertConfig(value: number | undefined, name: "maxChars" | "maxLinks", hardMax: number): void {
+  if (value === undefined) {
+    return;
   }
-  return buffer.toString("utf8");
-}
-
-function safeResolveUrl(href: string, baseUrl: string): string | undefined {
-  try {
-    const url = new URL(href, baseUrl);
-    if (url.protocol === "http:" || url.protocol === "https:") {
-      return url.href;
-    }
-  } catch {
-    // malformed href: skip
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0 || value > hardMax) {
+    throw new TypeError(`invalid ${name}: must be a positive integer up to ${hardMax}`);
   }
-  return undefined;
-}
-
-interface ExtractionResult {
-  title: string;
-  canonicalUrl: string;
-  text: string;
-  locators: HtmlLocator[];
-  links: HtmlLink[];
-  truncated: boolean;
-  characterCount: number;
-}
-
-/**
- * Deterministic HTML extraction. Cheerio is used purely as a parser: no
- * scripts execute and no subresources load. Unsafe/noise nodes are removed
- * before walking headings, paragraphs, list items, table cells and anchors in
- * document order. Caps apply DURING construction so a huge page never builds
- * an unbounded intermediate string.
- */
-export function extractHtml(html: string, baseUrl: string, maxChars: number, maxLinks: number): ExtractionResult {
-  const dom = cheerio.load(html);
-  const title = normalizeWhitespace(dom("title").first().text());
-  const canonical = dom('link[rel="canonical"]').first().attr("href");
-  const resolvedCanonical = canonical !== undefined ? safeResolveUrl(canonical, baseUrl) : undefined;
-  const canonicalUrl = resolvedCanonical ?? baseUrl;
-  // Remove unsafe and hidden noise before any text walk.
-  dom("script, style, template, noscript, head").remove();
-  dom("[hidden], [aria-hidden='true']").remove();
-  dom("[style]").each((_index, element) => {
-    if (HIDDEN_STYLE_RE.test(dom(element).attr("style") ?? "")) {
-      dom(element).remove();
-    }
-  });
-
-  const segments: string[] = [];
-  const locators: HtmlLocator[] = [];
-  const links: HtmlLink[] = [];
-  let characterCount = 0;
-  let textTruncated = false;
-  let linksCapped = false;
-
-  const appendText = (text: string): void => {
-    if (textTruncated || text.length === 0) {
-      return;
-    }
-    const leading = segments.length > 0 ? " " : "";
-    const cost = leading.length + text.length;
-    if (characterCount + cost > maxChars) {
-      const remaining = maxChars - characterCount - leading.length;
-      if (remaining > 0) {
-        segments.push(leading + text.slice(0, remaining));
-        characterCount = maxChars;
-      }
-      textTruncated = true;
-      return;
-    }
-    segments.push(leading + text);
-    characterCount += cost;
-  };
-
-  interface WalkNode {
-    type?: string;
-    name?: string;
-    parent?: unknown;
-  }
-
-  const walk = (element: WalkNode, path: string[]): void => {
-    if (textTruncated) {
-      return;
-    }
-    if (element.type === "tag") {
-      const tag = (element.name ?? "").toLowerCase();
-      const siblings = dom(element.parent as never).children(tag);
-      const index = siblings.toArray().indexOf(element as never) + 1;
-      const nextPath = [...path, `${tag}[${index}]`];
-      if (CONTENT_TAGS.has(tag)) {
-        const text = normalizeWhitespace(dom(element as never).text());
-        if (text.length > 0) {
-          appendText(text);
-          locators.push({ tag, text: text.slice(0, 200), path: nextPath.join(">") });
-        }
-        return; // content element is collected as a whole; no double descent
-      }
-      for (const child of dom(element as never).children().toArray()) {
-        walk(child as WalkNode, nextPath);
-      }
-    }
-  };
-  for (const child of dom("body").children().toArray()) {
-    walk(child as WalkNode, []);
-  }
-
-  // Links are capped during traversal (document order, safe schemes only).
-  const anchorElements = dom("a[href]").toArray();
-  for (const anchor of anchorElements) {
-    if (linksCapped) {
-      break;
-    }
-    const href = dom(anchor).attr("href");
-    if (href === undefined) {
-      continue;
-    }
-    const resolved = safeResolveUrl(href, baseUrl);
-    if (resolved === undefined) {
-      continue; // javascript:/data:/file:/malformed are never exposed
-    }
-    links.push({ href: resolved, text: normalizeWhitespace(dom(anchor).text()).slice(0, 200) });
-    if (links.length >= maxLinks) {
-      linksCapped = true;
-    }
-  }
-
-  return {
-    title,
-    canonicalUrl,
-    text: segments.join(""),
-    locators,
-    links,
-    truncated: textTruncated || linksCapped,
-    characterCount,
-  };
 }
 
 export function createParseHtmlDefinition(
@@ -211,6 +80,8 @@ export function createParseHtmlDefinition(
 ): ToolDefinition<typeof ParseHtmlInputSchema, typeof ParseHtmlOutputSchema> {
   const maxChars = deps.maxChars ?? DEFAULT_MAX_CHARS;
   const maxLinks = deps.maxLinks ?? DEFAULT_MAX_LINKS;
+  assertConfig(maxChars, "maxChars", HARD_MAX_CHARS);
+  assertConfig(maxLinks, "maxLinks", HARD_MAX_LINKS);
   return {
     identity: { name: "parse_html", version: 1 },
     label: "Parse HTML",
@@ -254,10 +125,8 @@ export function createParseHtmlDefinition(
         // never leak parser exceptions or raw content
         throw new ToolExecutionError("invalid_input");
       } finally {
-        zeroFillBuffer(buffer); // the consumed copy is wiped best-effort
+        safeZeroFill(buffer); // best-effort: a failing zero-fill never changes the result
       }
     },
   };
 }
-
-export type { ToolRunContext };

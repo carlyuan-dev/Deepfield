@@ -47,12 +47,17 @@ export function zeroFillBuffer(buffer: Buffer): void {
   buffer.fill(0);
 }
 
-function releaseBody(body: Buffer): void {
+/** Best-effort zero-fill that never throws: release paths must not change results. */
+export function safeZeroFill(buffer: Buffer): void {
   try {
-    zeroFillBuffer(body);
+    zeroFillBuffer(buffer);
   } catch {
-    // best-effort: never fail a release because zeroing failed
+    // best-effort: a failing zero-fill must not override the main result/error
   }
+}
+
+function releaseBody(body: Buffer): void {
+  safeZeroFill(body);
 }
 
 function assertPositiveInteger(value: number | undefined, name: string): void {

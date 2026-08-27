@@ -177,3 +177,118 @@ describe("parse_html definition", () => {
     expect(String(missing)).not.toContain("MARKER_LEAK");
   });
 });
+
+describe("parse_html link cap boundary (focused revision)", () => {
+  function linksHtml(count: number, unsafeAtEnd = false): string {
+    const safe = Array.from({ length: count }, (_, index) => `<a href="https://x.example/${index}">l${index}</a>`).join("");
+    const tail = unsafeAtEnd ? '<a href="javascript:alert(1)">bad</a>' : "";
+    return `<html><body>${safe}${tail}</body></html>`;
+  }
+
+  async function runLinks(html: string, maxLinks?: number): Promise<ParseHtmlOutput> {
+    const store = new ResourceStore({ idFactory: () => "res-links" });
+    const { id } = store.put(scope("t1"), Buffer.from(html), metadata());
+    const definition = createParseHtmlDefinition({ store, ...(maxLinks !== undefined ? { maxLinks } : {}) });
+    return definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
+  }
+
+  it("does not mark truncated at exactly the link cap", async () => {
+    const at499 = await runLinks(linksHtml(499));
+    expect(at499.links).toHaveLength(499);
+    expect(at499.truncated).toBe(false);
+    const at500 = await runLinks(linksHtml(500));
+    expect(at500.links).toHaveLength(500);
+    expect(at500.truncated).toBe(false);
+  });
+
+  it("marks truncated only when a 501st outputtable safe link is dropped", async () => {
+    const at501 = await runLinks(linksHtml(501));
+    expect(at501.links).toHaveLength(500);
+    expect(at501.truncated).toBe(true);
+  });
+
+  it("does not report truncation when the 501st anchor is unsafe and nothing else is droppable", async () => {
+    const output = await runLinks(linksHtml(500, true)); // 500 safe + 1 javascript: anchor
+    expect(output.links).toHaveLength(500);
+    expect(output.truncated).toBe(false);
+  });
+
+  it("fails closed on invalid maxLinks configuration", () => {
+    const store = new ResourceStore();
+    expect(() => createParseHtmlDefinition({ store, maxLinks: 0 })).toThrow(/maxLinks/);
+    expect(() => createParseHtmlDefinition({ store, maxLinks: -1 })).toThrow(/maxLinks/);
+    expect(() => createParseHtmlDefinition({ store, maxLinks: 1.5 })).toThrow(/maxLinks/);
+    expect(() => createParseHtmlDefinition({ store, maxLinks: 501 })).toThrow(/maxLinks/);
+  });
+
+  it("fails closed on invalid maxChars configuration", () => {
+    const store = new ResourceStore();
+    expect(() => createParseHtmlDefinition({ store, maxChars: 0 })).toThrow(/maxChars/);
+    expect(() => createParseHtmlDefinition({ store, maxChars: -5 })).toThrow(/maxChars/);
+    expect(() => createParseHtmlDefinition({ store, maxChars: 1.5 })).toThrow(/maxChars/);
+    expect(() => createParseHtmlDefinition({ store, maxChars: 200_001 })).toThrow(/maxChars/);
+  });
+});
+
+describe("parse_html auxiliary field bounds (focused revision)", () => {
+  it("caps the title and marks truncated", async () => {
+    const store = new ResourceStore({ idFactory: () => "res-title" });
+    const { id } = store.put(scope("t1"), Buffer.from(`<html><head><title>${"T".repeat(300_000)}</title></head><body><p>x</p></body></html>`), metadata());
+    const definition = createParseHtmlDefinition({ store });
+    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
+    expect(output.title.length).toBeLessThanOrEqual(500);
+    expect(output.truncated).toBe(true);
+  });
+
+  it("caps the locator count and per-locator text/path, marking truncated", async () => {
+    const many = `<html><body>${"<p>短</p>".repeat(3000)}</body></html>`;
+    const store = new ResourceStore({ idFactory: () => "res-loc" });
+    const { id } = store.put(scope("t1"), Buffer.from(many), metadata());
+    const definition = createParseHtmlDefinition({ store });
+    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
+    expect(output.locators.length).toBeLessThanOrEqual(2000);
+    expect(output.truncated).toBe(true);
+
+    const deep = `<html><body>${"<div>".repeat(1000)}<p>深</p>${"</div>".repeat(1000)}</body></html>`;
+    const store2 = new ResourceStore({ idFactory: () => "res-path" });
+    const { id: id2 } = store2.put(scope("t1"), Buffer.from(deep), metadata());
+    const definition2 = createParseHtmlDefinition({ store: store2 });
+    const output2 = await definition2.execute({ resourceId: id2 }, context(), new AbortController().signal, () => {});
+    expect(output2.locators.length).toBeGreaterThan(0);
+    expect(output2.locators[0]!.path.length).toBeLessThanOrEqual(500);
+  });
+
+  it("caps href and link text, marking truncated", async () => {
+    const href = `https://x.example/${"p".repeat(10_000)}`;
+    const store = new ResourceStore({ idFactory: () => "res-href" });
+    const { id } = store.put(scope("t1"), Buffer.from(`<html><body><a href="${href}">${"link text ".repeat(1000)}</a></body></html>`), metadata());
+    const definition = createParseHtmlDefinition({ store });
+    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
+    expect(output.links).toHaveLength(1);
+    expect(output.links[0]!.href.length).toBeLessThanOrEqual(2048);
+    expect(output.links[0]!.text.length).toBeLessThanOrEqual(200);
+    expect(output.truncated).toBe(true);
+  });
+
+  it("keeps the success result when the best-effort zero-fill itself throws", async () => {
+    const body = {
+      length: 27,
+      toString: () => "<html><body><p>zero fill ok</p></body></html>",
+      subarray: (start: number) => ({ toString: () => "" }),
+      fill() {
+        throw new Error("zero-fill failed");
+      },
+    } as unknown as Buffer;
+    const fakeStore = {
+      consume: () => ({ body, metadata: metadata() }),
+      get: () => undefined,
+      size: () => 0,
+      releaseTrace: () => 0,
+      dispose: () => {},
+    } as unknown as ResourceStore;
+    const definition = createParseHtmlDefinition({ store: fakeStore });
+    const output = await definition.execute({ resourceId: "r1" }, context(), new AbortController().signal, () => {});
+    expect(output.text).toContain("zero fill ok");
+    expect(output.truncated).toBe(false);
+  });
+});
