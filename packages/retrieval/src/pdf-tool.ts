@@ -5,6 +5,9 @@ import {
   type ToolDefinition,
 } from "@deepfield/tool-platform";
 import { ResourceStore, safeZeroFill } from "./resource-store.js";
+import { MAX_PDF_CHARS, MAX_PDF_PAGES, MAX_PDF_METADATA_LENGTH, joinPageTextBounded, type TextItem } from "./pdf-text.js";
+import { createAbortGuard, createMemoizedDestroy, type PdfDocumentLike, type PdfLoader, type PdfLoadingTaskLike, type PdfPageLike } from "./pdf-lifecycle.js";
+
 import { scopeFromContext } from "./fetch-tools.js";
 
 export const ParsePdfInputSchema = Type.Object(
@@ -25,7 +28,7 @@ export type PdfPageText = Static<typeof PdfPageTextSchema>;
 export const ParsePdfOutputSchema = Type.Object(
   {
     title: Type.String({ maxLength: 500 }),
-    pages: Type.Integer({ minimum: 0 }),
+    pages: Type.Integer({ minimum: 0, maximum: 200 }),
     metadata: Type.Object(
       {
         producer: Type.String({ maxLength: 500 }),
@@ -36,7 +39,7 @@ export const ParsePdfOutputSchema = Type.Object(
     ),
     text: Type.Array(PdfPageTextSchema, { maxItems: 200 }),
     truncated: Type.Boolean(),
-    characterCount: Type.Integer({ minimum: 0 }),
+    characterCount: Type.Integer({ minimum: 0, maximum: 400_000 }),
   },
   { additionalProperties: false },
 );
@@ -50,39 +53,14 @@ export interface ParsePdfDeps {
   loader?: PdfLoader;
 }
 
-const DEFAULT_MAX_CHARS = 400_000;
-const HARD_MAX_CHARS = 400_000;
-const DEFAULT_MAX_PAGES = 200;
-const HARD_MAX_PAGES = 200;
-const MAX_METADATA_LENGTH = 500;
+const DEFAULT_MAX_CHARS = MAX_PDF_CHARS;
+const HARD_MAX_CHARS = MAX_PDF_CHARS;
+const DEFAULT_MAX_PAGES = MAX_PDF_PAGES;
+const HARD_MAX_PAGES = MAX_PDF_PAGES;
+const MAX_METADATA_LENGTH = MAX_PDF_METADATA_LENGTH;
 // Self-contained data URI so the standard-font data factory never touches the
 // network; text extraction does not need real font glyphs.
 const STANDARD_FONT_DATA_URL = "data:application/octet-stream;base64,";
-
-export interface TextItem {
-  str: string;
-  transform: number[];
-}
-
-export interface PdfPageLike {
-  getTextContent(): Promise<{ items: readonly TextItem[] }>;
-  cleanup(): void;
-}
-
-export interface PdfDocumentLike {
-  numPages: number;
-  getMetadata(): Promise<{ info: Record<string, unknown> }>;
-  getPage(pageNumber: number): Promise<PdfPageLike>;
-  destroy(): Promise<void>;
-}
-
-/** Narrow loader contract: a pdfjs-like loading task with a destroyable promise. */
-export interface PdfLoadingTaskLike {
-  promise: Promise<PdfDocumentLike>;
-  destroy(): void;
-}
-
-export type PdfLoader = (data: Uint8Array) => PdfLoadingTaskLike;
 
 function defaultLoader(data: Uint8Array): PdfLoadingTaskLike {
   // pdfjs's loading task matches the narrow contract; the rich document
@@ -104,48 +82,6 @@ function boundedMeta(value: string, truncated: { value: boolean }): string {
     return value.slice(0, MAX_METADATA_LENGTH);
   }
   return value;
-}
-
-/**
- * Stable reading order (larger y first, then smaller x) with a hard character
- * budget applied DURING construction: items are appended one at a time with
- * the separator counted, and string building stops the moment the budget is
- * exhausted — an oversized page never materializes as a full string first.
- */
-export function joinPageTextBounded(
-  items: readonly TextItem[],
-  maxChars: number,
-): { text: string; truncated: boolean } {
-  const sorted = [...items].sort((a, b) => {
-    const yOrder = b.transform[5]! - a.transform[5]!;
-    if (yOrder !== 0) {
-      return yOrder;
-    }
-    return a.transform[4]! - b.transform[4]!;
-  });
-  const parts: string[] = [];
-  let used = 0;
-  for (const item of sorted) {
-    const str = item.str; // read each item's string exactly once
-    const separator = parts.length > 0 ? 1 : 0;
-    const cost = separator + str.length;
-    if (used + cost > maxChars) {
-      const remaining = maxChars - used - separator;
-      if (remaining > 0) {
-        parts.push(str.slice(0, remaining));
-        used = maxChars;
-      }
-      return { text: parts.join(" "), truncated: true };
-    }
-    parts.push(str);
-    used += cost;
-  }
-  return { text: parts.join(" "), truncated: false };
-}
-
-/** Unbounded convenience join (used by tests/exporters; the tool itself is bounded). */
-export function joinPageText(items: readonly TextItem[]): string {
-  return joinPageTextBounded(items, Number.MAX_SAFE_INTEGER).text;
 }
 
 function assertConfig(value: number | undefined, name: "maxChars" | "maxPages", hardMax: number): void {
@@ -191,26 +127,37 @@ export function createParsePdfDefinition(
         safeZeroFill(buffer);
         throw new ToolExecutionError("unsupported_content_type");
       }
-      const task = loader(new Uint8Array(buffer));
-      let destroyed = false;
-      const destroyTask = (): void => {
-        if (!destroyed) {
-          destroyed = true;
-          task.destroy();
-        }
-      };
-      const onAbort = (): void => destroyTask();
-      signal.addEventListener("abort", onAbort, { once: true });
-      let pdf: PdfDocumentLike | undefined;
+      // The data copy and the loader creation live INSIDE the safety boundary:
+      // a synchronous loader throw maps to a stable code and both copies are
+      // zero-filled on every path.
+      let dataView: Uint8Array | undefined;
+      let task: PdfLoadingTaskLike | undefined;
+      const startDestroy = createMemoizedDestroy(() => task);
+      const guard = createAbortGuard(signal);
+      const removeAbort = guard.addAbortListener(() => {
+        void startDestroy(); // rejection observed inside the memoized cleanup
+      });
       try {
         if (signal.aborted) {
           throw new ToolExecutionError("cancelled");
         }
-        pdf = await task.promise;
+        dataView = new Uint8Array(buffer);
+        try {
+          task = loader(dataView);
+        } catch {
+          if (signal.aborted) {
+            throw new ToolExecutionError("cancelled");
+          }
+          throw new ToolExecutionError("invalid_input");
+        }
         if (signal.aborted) {
           throw new ToolExecutionError("cancelled");
         }
-        const info = (await pdf.getMetadata().then((meta) => meta.info, () => ({}))) as Record<string, unknown>;
+        const pdf = await guard.race(task.promise);
+        if (signal.aborted) {
+          throw new ToolExecutionError("cancelled");
+        }
+        const info = (await guard.race(pdf.getMetadata()).then((meta) => meta.info, () => ({}))) as Record<string, unknown>;
         if (signal.aborted) {
           throw new ToolExecutionError("cancelled");
         }
@@ -226,12 +173,12 @@ export function createParsePdfDefinition(
           if (signal.aborted) {
             throw new ToolExecutionError("cancelled");
           }
-          const page = await pdf.getPage(pageNumber);
+          const page = await guard.race(pdf.getPage(pageNumber));
           try {
             if (signal.aborted) {
               throw new ToolExecutionError("cancelled");
             }
-            const content = await page.getTextContent();
+            const content = await guard.race(page.getTextContent());
             if (signal.aborted) {
               throw new ToolExecutionError("cancelled");
             }
@@ -269,12 +216,18 @@ export function createParsePdfDefinition(
         // never the PDF bytes or the parser's raw cause.
         throw new ToolExecutionError("invalid_input");
       } finally {
-        signal.removeEventListener("abort", onAbort);
-        if (pdf !== undefined) {
-          await pdf.destroy().catch(() => {});
+        removeAbort();
+        if (signal.aborted) {
+          // cancel must settle promptly even if a hostile destroy never settles
+          void startDestroy();
+        } else {
+          // trusted path: wait for the same memoized cleanup
+          await startDestroy();
         }
-        destroyTask(); // idempotent: no-op when the abort listener already destroyed
-        safeZeroFill(buffer); // best-effort: a failing zero-fill never changes the result
+        safeZeroFill(buffer);
+        if (dataView !== undefined) {
+          safeZeroFill(dataView as unknown as Buffer);
+        }
       }
     },
   };

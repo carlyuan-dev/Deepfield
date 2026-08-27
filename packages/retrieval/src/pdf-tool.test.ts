@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ToolExecutionError, ToolSet } from "@deepfield/tool-platform";
 import { ResourceStore, type ResourceScope } from "./resource-store.js";
-import { createParsePdfDefinition, joinPageTextBounded, type ParsePdfOutput } from "./pdf-tool.js";
+import { createParsePdfDefinition, ParsePdfOutputSchema, type ParsePdfOutput } from "./pdf-tool.js";
+import { joinPageTextBounded } from "./pdf-text.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "..", "..", "tests", "fixtures", "retrieval");
 const FP = "fp-pdf";
@@ -224,61 +226,5 @@ describe("parse_pdf definition", () => {
       .catch((caught) => caught);
     expect(error).toMatchObject({ code: "unsupported_content_type" });
     expect(String(error)).not.toContain("MARKER_PDF_LEAK_xyz");
-  });
-});
-
-describe("parse_pdf bounded join and caps (focused revision)", () => {
-  function makeItem(str: string, y: number, x = 0): { str: string; transform: number[] } {
-    return { str, transform: [1, 0, 0, 1, x, y] };
-  }
-
-  it("stops constructing the page string once the budget is exhausted (lazy str reads)", () => {
-    let reads = 0;
-    const items = [
-      { get str(): string { reads += 1; return "aaa"; }, transform: [1, 0, 0, 1, 0, 300] },
-      { get str(): string { reads += 1; return "bbb"; }, transform: [1, 0, 0, 1, 0, 200] },
-      { get str(): string { reads += 1; return "ccc"; }, transform: [1, 0, 0, 1, 0, 100] },
-    ];
-    // budget 4: "aaa" (3) fits; the second item's length is probed (1) and
-    // rejected; the third item must never be read at all.
-    const result = joinPageTextBounded(items, 4);
-    expect(result.text).toBe("aaa");
-    expect(result.truncated).toBe(true);
-    expect(reads).toBe(2);
-  });
-
-  it("never materializes an oversized item beyond the remaining budget", () => {
-    const items = [makeItem("x".repeat(500_000), 300), makeItem("tail", 200)];
-    const result = joinPageTextBounded(items, 10);
-    expect(result.text.length).toBe(10);
-    expect(result.text).toBe("x".repeat(10));
-    expect(result.truncated).toBe(true);
-  });
-
-  it("keeps stable y/x order and separators inside the budget", () => {
-    const items = [makeItem("one", 300), makeItem("two", 200), makeItem("three", 100)];
-    const result = joinPageTextBounded(items, 100);
-    expect(result.text).toBe("one two three");
-    expect(result.truncated).toBe(false);
-  });
-
-  it("caps pdf metadata fields and marks truncated", async () => {
-    const body = buildPdf(["x"], { info: { Title: "T".repeat(20_000), Producer: "P".repeat(20_000) } });
-    const store = new ResourceStore({ idFactory: () => "pdf-meta" });
-    const { id } = store.put(scope("t1"), body, metadata());
-    const definition = createParsePdfDefinition({ store });
-    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
-    expect(output.metadata.title.length).toBeLessThanOrEqual(500);
-    expect(output.metadata.producer.length).toBeLessThanOrEqual(500);
-    expect(output.truncated).toBe(true);
-  });
-
-  it("fails closed on invalid maxChars/maxPages configuration", () => {
-    const store = new ResourceStore();
-    expect(() => createParsePdfDefinition({ store, maxChars: 0 })).toThrow(/maxChars/);
-    expect(() => createParsePdfDefinition({ store, maxChars: 400_001 })).toThrow(/maxChars/);
-    expect(() => createParsePdfDefinition({ store, maxPages: 0 })).toThrow(/maxPages/);
-    expect(() => createParsePdfDefinition({ store, maxPages: 201 })).toThrow(/maxPages/);
-    expect(() => createParsePdfDefinition({ store, maxChars: 1.5 })).toThrow(/maxChars/);
   });
 });

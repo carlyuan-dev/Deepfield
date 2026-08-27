@@ -74,19 +74,28 @@ export {
   MAX_TITLE,
 } from "./html-extraction.js";
 export {
-  createParsePdfDefinition,
   joinPageText,
   joinPageTextBounded,
+  MAX_PDF_CHARS,
+  MAX_PDF_PAGES,
+  MAX_PDF_METADATA_LENGTH,
+  type TextItem,
+} from "./pdf-text.js";
+export {
+  createParsePdfDefinition,
   ParsePdfInputSchema,
   ParsePdfOutputSchema,
   PdfPageTextSchema,
   type ParsePdfDeps,
   type ParsePdfInput,
   type ParsePdfOutput,
+  type PdfPageText,
+} from "./pdf-tool.js";
+export {
+  createAbortGuard,
+  createMemoizedDestroy,
   type PdfDocumentLike,
   type PdfLoader,
   type PdfLoadingTaskLike,
   type PdfPageLike,
-  type PdfPageText,
-  type TextItem,
-} from "./pdf-tool.js";
+} from "./pdf-lifecycle.js";

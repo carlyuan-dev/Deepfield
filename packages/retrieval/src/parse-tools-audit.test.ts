@@ -57,8 +57,13 @@ function seed(store: ResourceStore, body: Buffer, contentType: string): string {
   return id;
 }
 
+/** Lifecycle events that never carry the executor output (the terminal completed event does). */
+function nonTerminalEvents(events: ToolExecutionEvent[]): ToolExecutionEvent[] {
+  return events.filter((event) => event.type !== "completed");
+}
+
 describe("parse tools runner/audit leak boundary (focused revision)", () => {
-  it("html success: result carries bounded text but audit and events never contain source markers", async () => {
+  it("html success: the result carries the visible marker but audit and lifecycle events never do", async () => {
     const store = new ResourceStore({ idFactory: () => "html-audit" });
     const id = seed(store, readFileSync(join(FIXTURES, "article-zh.html")), "text/html");
     const { runner, context, events, audit } = setup(store);
@@ -69,31 +74,38 @@ describe("parse tools runner/audit leak boundary (focused revision)", () => {
       (event) => events.push(event),
     );
     expect(result.status).toBe("completed");
-    // the bounded parsed text is legitimate agent output
-    const serialized = JSON.stringify({ result, events, audit: audit.records });
-    expect(serialized).not.toContain("window.__STATE__");
-    expect(serialized).not.toContain("MARKER_SCRIPT_BODY");
-    expect(serialized).not.toContain("MARKER_SCRIPT_9c1b");
-    expect(serialized).not.toContain("MARKER_TEMPLATE");
+    // the bounded parsed text is legitimate agent output and MUST contain the marker
+    const resultJson = JSON.stringify(result);
+    expect(resultJson).toContain("MARKER_HTML_BODY_7f3a");
+    // the audit records and non-output lifecycle events must be clean
+    expect(JSON.stringify(audit.records)).not.toContain("MARKER_HTML_BODY_7f3a");
+    expect(JSON.stringify(audit.records)).not.toContain("window.__STATE__");
+    expect(JSON.stringify(nonTerminalEvents(events))).not.toContain("MARKER_HTML_BODY_7f3a");
+    expect(JSON.stringify(nonTerminalEvents(events))).not.toContain("window.__STATE__");
     expect(store.get(id, scope())).toBeUndefined(); // consumed
   });
 
-  it("html failure: result, events and audit carry no source marker or raw detail", async () => {
+  it("html failure with a real marker-carrying resource: no marker/URL/raw cause anywhere", async () => {
     const store = new ResourceStore({ idFactory: () => "html-fail" });
+    // a real seeded resource whose MIME is wrong for parse_html
+    const body = Buffer.from("<html><body>MARKER_HTML_BODY_7f3a 失败资源</body></html>");
+    const id = seed(store, body, "application/pdf");
     const { runner, context, events, audit } = setup(store);
     const result = await runner.execute(
-      { executionId: "e2", traceId: "audit-trace", tool: { name: "parse_html", version: 1 }, input: { resourceId: "missing" } },
+      { executionId: "e2", traceId: "audit-trace", tool: { name: "parse_html", version: 1 }, input: { resourceId: id } },
       context,
       new AbortController().signal,
       (event) => events.push(event),
     );
     expect(result.status).toBe("failed");
-    const serialized = JSON.stringify({ result, events, audit: audit.records });
-    expect(serialized).not.toContain("MARKER_HTML_BODY_7f3a");
-    expect(serialized).not.toContain("<html");
+    const all = JSON.stringify({ result, events, audit: audit.records });
+    expect(all).not.toContain("MARKER_HTML_BODY_7f3a");
+    expect(all).not.toContain("失败资源");
+    expect(all).not.toContain("<html");
+    expect(store.get(id, scope())).toBeUndefined(); // consumed even on failure
   });
 
-  it("pdf success: audit and events never contain the source PDF bytes or parsed full text", async () => {
+  it("pdf success: audit and lifecycle events never contain source bytes or parsed text", async () => {
     const store = new ResourceStore({ idFactory: () => "pdf-audit" });
     const id = seed(store, readFileSync(join(FIXTURES, "report-two-pages.pdf")), "application/pdf");
     const { runner, context, events, audit } = setup(store);
@@ -104,10 +116,15 @@ describe("parse tools runner/audit leak boundary (focused revision)", () => {
       (event) => events.push(event),
     );
     expect(result.status).toBe("completed");
-    const serialized = JSON.stringify({ result, events, audit: audit.records });
-    // the audit/events boundary: no raw PDF stream markers, no full source bytes
-    expect(serialized).not.toContain("4EBA5F62");
-    expect(serialized).not.toContain("startxref");
+    // the completed result legitimately contains the bounded parsed text
+    const resultJson = JSON.stringify(result);
+    expect(resultJson).toContain("Report: Page One");
+    // audit and non-output events never do
+    expect(JSON.stringify(audit.records)).not.toContain("Report: Page One");
+    expect(JSON.stringify(audit.records)).not.toContain("4EBA5F62");
+    expect(JSON.stringify(audit.records)).not.toContain("startxref");
+    expect(JSON.stringify(nonTerminalEvents(events))).not.toContain("Report: Page One");
+    expect(JSON.stringify(nonTerminalEvents(events))).not.toContain("startxref");
     expect(store.get(id, scope())).toBeUndefined(); // consumed
   });
 
@@ -122,10 +139,10 @@ describe("parse tools runner/audit leak boundary (focused revision)", () => {
       (event) => events.push(event),
     );
     expect(result.status).toBe("failed");
-    const serialized = JSON.stringify({ result, events, audit: audit.records });
-    expect(serialized).not.toContain("%PDF");
-    expect(serialized).not.toContain("InvalidPDFException");
-    expect(serialized).not.toContain("startxref");
+    const all = JSON.stringify({ result, events, audit: audit.records });
+    expect(all).not.toContain("%PDF");
+    expect(all).not.toContain("InvalidPDFException");
+    expect(all).not.toContain("startxref");
     expect(store.get(id, scope())).toBeUndefined(); // consumed even on failure
   });
 });

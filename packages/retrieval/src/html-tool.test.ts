@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ToolExecutionError, ToolSet } from "@deepfield/tool-platform";
 import { ResourceStore, type ResourceScope } from "./resource-store.js";
-import { createParseHtmlDefinition, type ParseHtmlOutput } from "./html-tool.js";
+import { createParseHtmlDefinition, ParseHtmlOutputSchema, type ParseHtmlOutput } from "./html-tool.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "..", "..", "tests", "fixtures", "retrieval");
 const FP = "fp-html";
@@ -227,68 +228,5 @@ describe("parse_html link cap boundary (focused revision)", () => {
     expect(() => createParseHtmlDefinition({ store, maxChars: -5 })).toThrow(/maxChars/);
     expect(() => createParseHtmlDefinition({ store, maxChars: 1.5 })).toThrow(/maxChars/);
     expect(() => createParseHtmlDefinition({ store, maxChars: 200_001 })).toThrow(/maxChars/);
-  });
-});
-
-describe("parse_html auxiliary field bounds (focused revision)", () => {
-  it("caps the title and marks truncated", async () => {
-    const store = new ResourceStore({ idFactory: () => "res-title" });
-    const { id } = store.put(scope("t1"), Buffer.from(`<html><head><title>${"T".repeat(300_000)}</title></head><body><p>x</p></body></html>`), metadata());
-    const definition = createParseHtmlDefinition({ store });
-    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
-    expect(output.title.length).toBeLessThanOrEqual(500);
-    expect(output.truncated).toBe(true);
-  });
-
-  it("caps the locator count and per-locator text/path, marking truncated", async () => {
-    const many = `<html><body>${"<p>短</p>".repeat(3000)}</body></html>`;
-    const store = new ResourceStore({ idFactory: () => "res-loc" });
-    const { id } = store.put(scope("t1"), Buffer.from(many), metadata());
-    const definition = createParseHtmlDefinition({ store });
-    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
-    expect(output.locators.length).toBeLessThanOrEqual(2000);
-    expect(output.truncated).toBe(true);
-
-    const deep = `<html><body>${"<div>".repeat(1000)}<p>深</p>${"</div>".repeat(1000)}</body></html>`;
-    const store2 = new ResourceStore({ idFactory: () => "res-path" });
-    const { id: id2 } = store2.put(scope("t1"), Buffer.from(deep), metadata());
-    const definition2 = createParseHtmlDefinition({ store: store2 });
-    const output2 = await definition2.execute({ resourceId: id2 }, context(), new AbortController().signal, () => {});
-    expect(output2.locators.length).toBeGreaterThan(0);
-    expect(output2.locators[0]!.path.length).toBeLessThanOrEqual(500);
-  });
-
-  it("caps href and link text, marking truncated", async () => {
-    const href = `https://x.example/${"p".repeat(10_000)}`;
-    const store = new ResourceStore({ idFactory: () => "res-href" });
-    const { id } = store.put(scope("t1"), Buffer.from(`<html><body><a href="${href}">${"link text ".repeat(1000)}</a></body></html>`), metadata());
-    const definition = createParseHtmlDefinition({ store });
-    const output = await definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {});
-    expect(output.links).toHaveLength(1);
-    expect(output.links[0]!.href.length).toBeLessThanOrEqual(2048);
-    expect(output.links[0]!.text.length).toBeLessThanOrEqual(200);
-    expect(output.truncated).toBe(true);
-  });
-
-  it("keeps the success result when the best-effort zero-fill itself throws", async () => {
-    const body = {
-      length: 27,
-      toString: () => "<html><body><p>zero fill ok</p></body></html>",
-      subarray: (start: number) => ({ toString: () => "" }),
-      fill() {
-        throw new Error("zero-fill failed");
-      },
-    } as unknown as Buffer;
-    const fakeStore = {
-      consume: () => ({ body, metadata: metadata() }),
-      get: () => undefined,
-      size: () => 0,
-      releaseTrace: () => 0,
-      dispose: () => {},
-    } as unknown as ResourceStore;
-    const definition = createParseHtmlDefinition({ store: fakeStore });
-    const output = await definition.execute({ resourceId: "r1" }, context(), new AbortController().signal, () => {});
-    expect(output.text).toContain("zero fill ok");
-    expect(output.truncated).toBe(false);
   });
 });

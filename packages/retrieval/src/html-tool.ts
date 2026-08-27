@@ -8,6 +8,8 @@ import { scopeFromContext } from "./fetch-tools.js";
 import {
   decodeHtml,
   extractHtml,
+  validateResourceBaseUrl,
+  MAX_CANONICAL,
   MAX_HREF,
   MAX_LINK_TEXT,
   MAX_LOCATORS,
@@ -44,12 +46,12 @@ export type HtmlLink = Static<typeof HtmlLinkSchema>;
 export const ParseHtmlOutputSchema = Type.Object(
   {
     title: Type.String({ maxLength: MAX_TITLE }),
-    canonicalUrl: Type.String({ minLength: 1 }),
-    text: Type.String(),
+    canonicalUrl: Type.String({ minLength: 1, maxLength: MAX_CANONICAL }),
+    text: Type.String({ maxLength: 200_000 }),
     locators: Type.Array(HtmlLocatorSchema, { maxItems: MAX_LOCATORS }),
     links: Type.Array(HtmlLinkSchema, { maxItems: 500 }),
     truncated: Type.Boolean(),
-    characterCount: Type.Integer({ minimum: 0 }),
+    characterCount: Type.Integer({ minimum: 0, maximum: 200_000 }),
   },
   { additionalProperties: false },
 );
@@ -108,7 +110,8 @@ export function createParseHtmlDefinition(
           throw new ToolExecutionError("unsupported_content_type");
         }
         const html = decodeHtml(buffer);
-        const result = extractHtml(html, view.metadata.finalUrl, maxChars, maxLinks);
+        const baseUrl = validateResourceBaseUrl(view.metadata.finalUrl);
+        const result = extractHtml(html, baseUrl, maxChars, maxLinks);
         return {
           title: result.title,
           canonicalUrl: result.canonicalUrl,
