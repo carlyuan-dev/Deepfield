@@ -24,9 +24,11 @@ Detailed plan: `docs/superpowers/plans/2026-08-25-deepfield-foundation-agent-she
 
 ### Plan 2: Tool Platform and Retrieval Benchmark
 
-Deliver the versioned Tool Registry and Policy Runner with schema validation, permissions, budgets, retry, cancellation, audit events and test doubles. Implement safe HTTP/HTTPS fetching, HTML/PDF parsing and link checks. Run the fixed humanoid-robot query benchmark against candidate search providers and select the first adapter from measured Chinese official-site coverage, core-company recall, link validity, noise and cost.
+Deliver Pi-native `AgentTool` adapters backed by a shared versioned Tool Registry and Policy Runner with schema validation, permissions, budgets, retry, cancellation, audit events and test doubles. Direct backend callers and Pi Agents use the same definitions and executors. Implement safe HTTP/HTTPS fetching, ephemeral resource storage, HTML/PDF parsing and link checks. Then run the fixed humanoid-robot query benchmark through a unified SearchProvider contract and select the first `search_web` adapter from measured Chinese official-site coverage, core-company recall, link validity, noise and cost.
 
 Exit criterion: the app can run a bounded retrieval probe through Tools, display its trace in developer mode and persist no full web page.
+
+Detailed design: `docs/superpowers/specs/2026-08-27-deepfield-tool-platform-design.md`
 
 ### Plan 3: Capability Runtime and Agent Supervisor
 

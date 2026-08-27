@@ -185,13 +185,19 @@ Job 输入快照 → Agent 执行 → 结构化输出 → 数据库 → ProjectA
 
 ## 8. Tool Platform
 
+Plan 2 的详细边界见
+`docs/superpowers/specs/2026-08-27-deepfield-tool-platform-design.md`。Agent 面向模型的
+一层使用 Pi 原生 `AgentTool`；Deepfield Tool Registry、Policy、Budget、Audit 和
+Runner 位于其下，并同时供 Capability 和确定性后端代码直接调用。两条入口共用同一
+份 Tool Definition 和 Executor，不 fork Pi，也不维护两套 Tool。
+
 ### 8.1 Tool 原则
 
 Tool 是可复用、可审计的执行边界。Capability 不直接写死搜索、抓取、解析或导出实现，而是统一经过 Tool Runner。
 
 每个 Tool 包含：名称和版本、输入输出 Schema、权限、超时、重试、并发限制、进度事件、错误类型和执行器。
 
-首版 Tools：
+首版设计中的 Tools 按计划归属分批交付。Plan 2 交付：
 
 - `search_web`
 - `fetch_url`
@@ -199,6 +205,9 @@ Tool 是可复用、可审计的执行边界。Capability 不直接写死搜索�
 - `parse_html`
 - `parse_pdf`
 - `check_link_accessibility`
+
+后续计划交付：
+
 - `read_imported_file`
 - `get_project`
 - `get_company_report`
@@ -509,9 +518,9 @@ Capability 主工作区显示阶段导航：
 ## 19. 实施顺序
 
 1. 验证 Pi Core 嵌入 Electron utility process、DeepSeek Tool Calling、事件流、SQLite 和恢复。
-2. 使用人形机器人基准比较搜索 Provider，并将胜出实现接入统一接口。
-3. 实现本地数据、迁移、钥匙串、项目资料库和 Agent-native 外壳。
-4. 实现 Tool Registry、Runner、权限、网络安全和测试夹具。
+2. 实现本地数据、迁移、钥匙串、项目资料库和 Agent-native 外壳。
+3. 实现 Tool Contract、Registry、Runner、权限、预算、审计、网络安全和测试夹具。
+4. 使用统一 SearchProvider 合同运行人形机器人基准，并将胜出实现注册为 `search_web`。
 5. 实现 Capability Definition、Agent Supervisor、Job、事件流、确认网关和 Artifact 页面。
 6. 实现项目创建、Discovery Agent、公司筛选和字段模板，形成第一个纵向版本。
 7. 实现 Company Research Agent、证据链、引用和待核实区。
