@@ -221,4 +221,30 @@ describe("agent worker client tool streams (envelopes)", () => {
     disposed.dispose();
     expect(() => disposed.sendTool(toolRequest("exec-1"))).toThrow(/disposed/);
   });
+
+  it("tombstones the transport id on protocol-error close and queue overflow, keeping live streams safe", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    // wrong nested id closes the stream with a protocol error
+    const closed = client.sendTool(toolRequest("exec-1"));
+    endpoint.emit(toolEnvelope("exec-1", "wrong-nested", "trace-1", "started"));
+    expect((await collectToolError(closed)).error).toBeInstanceOf(AgentProtocolError);
+    expect(() => client.sendTool(toolRequest("exec-1"))).toThrow(/already used/);
+    // queue overflow closes the stream; its transport id is also tombstoned
+    const overflow = client.sendTool(toolRequest("exec-2", "trace-2", "exec-2"));
+    for (let index = 0; index <= 1000; index += 1) {
+      endpoint.emit(toolEnvelope("exec-2", "exec-2", "trace-2", "progress"));
+    }
+    expect((await collectToolError(overflow)).error).toBeInstanceOf(AgentWorkerQueueOverflowError);
+    expect(() => client.sendTool(toolRequest("exec-9", "trace-9", "exec-2"))).toThrow(
+      /already used/,
+    );
+    // a late envelope from a closed generation never affects a live stream
+    const live = client.sendTool(toolRequest("exec-3", "trace-3", "exec-3"));
+    endpoint.emit(toolEnvelope("exec-1", "exec-1", "trace-1", "started"));
+    endpoint.emit(toolEnvelope("exec-3", "exec-3", "trace-3", "started"));
+    endpoint.emit(toolEnvelope("exec-3", "exec-3", "trace-3", "completed"));
+    expect(await collectTool(live)).toEqual(["started", "completed"]);
+    expect(client.pendingCount()).toBe(0);
+  });
 });

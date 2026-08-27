@@ -205,6 +205,24 @@ describe("utility worker protocol", () => {
     expect(literalValues).not.toContain("__proto__");
   });
 
+  it("accepts the host.protocol failure variant for malformed/disposed cases", () => {
+    const protocol = { hostRequestId: "h1", kind: "host.reply", method: "host.protocol", ok: false, code: "host_disposed" };
+    expect(Value.Check(HostReplySchema, protocol)).toBe(true);
+    expect(Value.Check(HostReplySchema, { ...protocol, code: "invalid_request" })).toBe(true);
+    expect(Value.Check(HostReplySchema, { ...protocol, code: "host_protocol_error" })).toBe(true);
+    expect(Value.Check(HostReplySchema, { ...protocol, code: "sk-secret-raw" })).toBe(false);
+    expect(Value.Check(HostReplySchema, { ...protocol, ok: true, payload: { acknowledged: true } })).toBe(false);
+    expect(
+      Value.Check(HostReplySchema, {
+        hostRequestId: "h1",
+        kind: "host.reply",
+        method: "audit.start",
+        ok: false,
+        code: "host_disposed",
+      }),
+    ).toBe(true);
+  });
+
   it("validates host requests strictly and rejects secrets, SQL and unknown providers", () => {
     expect(
       Value.Check(HostRequestSchema, {

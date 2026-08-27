@@ -18,8 +18,8 @@ import {
   isToolTerminal,
   MAX_PENDING_CHAT_EVENTS,
   MAX_PENDING_TOOL_EVENTS,
-  MAX_RECENT_TRANSPORT_IDS,
   safeCorrelationId,
+  ToolTransportTombstones,
   type PendingStream,
   type StreamEvent,
 } from "./agent-worker-protocol.js";
@@ -46,7 +46,7 @@ export interface AgentWorkerClientOptions {
 
 export class AgentWorkerClient {
   private readonly pending = new Map<string, PendingStream>();
-  private readonly recentTransportIds = new Set<string>();
+  private readonly tombstones = new ToolTransportTombstones();
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeExit: () => void;
   private readonly hostHandler: ((message: unknown) => void) | undefined;
@@ -75,7 +75,7 @@ export class AgentWorkerClient {
     // The transport requestId is the per-call generation: it is never reused,
     // so a late envelope from an old generation can never be mistaken for the
     // new stream, even when the executionId is reused.
-    if (this.recentTransportIds.has(request.requestId)) {
+    if (this.tombstones.has(request.requestId)) {
       throw new AgentWorkerTransportReuseError();
     }
     return this.sendStream<ToolExecutionEvent>({
@@ -118,6 +118,13 @@ export class AgentWorkerClient {
       this.endpoint.postMessage(spec.request);
     } catch (error) {
       this.pending.delete(spec.id);
+      // The message may or may not have been delivered before the transport
+      // threw. Safe semantics: treat a tool transport id as possibly-sent and
+      // tombstone it so a late envelope can never be mistaken for a newer
+      // stream (chat ids stay reusable, preserving P1 semantics).
+      if (spec.kind === "tool") {
+        this.tombstones.record(spec.id);
+      }
       throw error;
     }
     return {
@@ -188,14 +195,12 @@ export class AgentWorkerClient {
     }
     this.push(stream.id, stream, event);
   }
-
   private routeToolEnvelope(envelope: { requestId: string; event: ToolExecutionEvent }): void {
     const stream = this.pending.get(envelope.requestId);
     if (!stream) {
       return; // late envelope from an old generation or a foreign call: dropped
     }
-    if (
-      stream.kind !== "tool" ||
+    if (stream.kind !== "tool" ||
       stream.executionId !== envelope.event.executionId ||
       stream.traceId !== envelope.event.traceId
     ) {
@@ -257,6 +262,16 @@ export class AgentWorkerClient {
       waiter.reject(error);
     }
     this.pending.delete(id);
+    // Protocol errors and queue overflows terminate a tool stream just like a
+    // terminal event: the transport id must be tombstoned so a late envelope
+    // from this generation cannot poison a reused id.
+    this.recordToolTombstoneFor(stream);
+  }
+
+  private recordToolTombstoneFor(stream: PendingStream): void {
+    if (stream.kind === "tool") {
+      this.tombstones.record(stream.id);
+    }
   }
 
   private cleanup(id: string, stream: PendingStream): void {
@@ -266,15 +281,7 @@ export class AgentWorkerClient {
     // Bounded tombstone for TOOL transport ids only (chat request ids remain
     // reusable, preserving P1 semantics) so a tool transport id cannot be
     // reused in a window where a late reply would be indistinguishable.
-    if (stream.kind === "tool") {
-      this.recentTransportIds.add(id);
-      if (this.recentTransportIds.size > MAX_RECENT_TRANSPORT_IDS) {
-        const oldest = this.recentTransportIds.values().next().value;
-        if (oldest !== undefined) {
-          this.recentTransportIds.delete(oldest);
-        }
-      }
-    }
+    this.recordToolTombstoneFor(stream);
   }
 
   private handleExit(code: number): void {

@@ -1,7 +1,6 @@
 import { Value } from "typebox/value";
 import type { ToolCallRequest, ToolExecutionResult } from "@deepfield/contracts";
-import type { ToolBudgetLedger, ToolBudgetToken } from "./budget.js";
-import type { ToolDefinition, ToolRunContext } from "./definition.js";
+import type { ToolBudgetLedger, ToolBudgetToken } from "./budget.js";import type { ToolDefinition, ToolRunContext } from "./definition.js";
 import { makeToolFailure, type ToolFailure, type ToolFailureCode } from "./errors.js";
 import {
   ToolEventEmitter,
@@ -22,6 +21,7 @@ import {
   snapshotToolIdentity,
 } from "./snapshot.js";
 import {
+  acquireExecutionSlots,
   GLOBAL_CONCURRENCY_KEY,
   invalidInputPlaceholder,
   type ToolRunnerOptions,
@@ -40,6 +40,7 @@ export class ToolRunner {
   readonly #budget: ToolBudgetLedger;
   readonly #budgetForTrace: ((traceId: string) => ToolBudgetLedger) | undefined;
   readonly #globalConcurrency: number | undefined;
+  readonly #networkToolConcurrency: number | undefined;
   readonly #audit: ToolAuditSink;
   readonly #clock: RetryClock;
   readonly #concurrency: ToolConcurrencyLimiter;
@@ -50,6 +51,7 @@ export class ToolRunner {
     this.#budget = options.budget;
     this.#budgetForTrace = options.budgetForTrace;
     this.#globalConcurrency = options.globalConcurrency;
+    this.#networkToolConcurrency = options.networkToolConcurrency;
     this.#audit = options.audit;
     this.#clock = options.clock;
     this.#concurrency = new ToolConcurrencyLimiter();
@@ -132,30 +134,31 @@ export class ToolRunner {
     }
     emit({ type: "policy_checked" });
 
-    let token: ToolBudgetToken;
-    const ledger =
-      this.#budgetForTrace !== undefined ? this.#budgetForTrace(scope.traceId) : this.#budget;
-    const releaseGlobal =
-      this.#globalConcurrency !== undefined
-        ? this.#concurrency.acquire(GLOBAL_CONCURRENCY_KEY, this.#globalConcurrency)
-        : undefined;
-    if (this.#globalConcurrency !== undefined && releaseGlobal === undefined) {
-      return fail(makeToolFailure("budget_exceeded", 1, false));
-    }
+    let ledger: ToolBudgetLedger;
     try {
-      token = ledger.reserve(tool, definition.meter.category);
+      ledger =
+        this.#budgetForTrace !== undefined ? this.#budgetForTrace(scope.traceId) : this.#budget;
     } catch {
-      releaseGlobal?.();
+      // A budget resolver failure (e.g. trace pool at capacity) is a safe
+      // budget_exceeded, never an unhandled rejection or a generic tool_error.
       return fail(makeToolFailure("budget_exceeded", 1, false));
     }
-    // Per-tool-identity concurrency cap acquired atomically with the budget;
-    // both are released exactly once on every terminal path below.
-    const releaseConcurrency = this.#concurrency.acquire(`${tool.name}@${tool.version}`, definition.concurrency);
-    if (releaseConcurrency === undefined) {
-      ledger.release(token);
-      releaseGlobal?.();
+    const slots = acquireExecutionSlots(this.#concurrency, {
+      ...(this.#globalConcurrency !== undefined
+        ? { globalConcurrency: this.#globalConcurrency }
+        : {}),
+      ...(this.#networkToolConcurrency !== undefined
+        ? { networkToolConcurrency: this.#networkToolConcurrency }
+        : {}),
+      ledger,
+      tool,
+      category: definition.meter.category,
+      definitionConcurrency: definition.concurrency,
+    });
+    if (slots === undefined) {
       return fail(makeToolFailure("budget_exceeded", 1, false));
     }
+    const { token, releaseGlobal, releaseTool: releaseConcurrency } = slots;
     try {
       await this.#audit.start({
         executionId,
@@ -168,14 +171,14 @@ export class ToolRunner {
     } catch {
       ledger.release(token);
       releaseConcurrency();
-      releaseGlobal?.();
+      releaseGlobal();
       return fail(makeToolFailure("audit_failed", 1, false));
     }
 
     if (signal.aborted) {
       ledger.release(token);
       releaseConcurrency();
-      releaseGlobal?.();
+      releaseGlobal();
       await finishAuditBestEffort(this.#audit, {
         executionId,
         traceId,
@@ -277,13 +280,13 @@ export class ToolRunner {
     if (terminalFailure === undefined) {
       ledger.complete(token);
       releaseConcurrency();
-      releaseGlobal?.();
+      releaseGlobal();
       return complete(output, attempts);
     }
 
     ledger.release(token);
     releaseConcurrency();
-    releaseGlobal?.();
+    releaseGlobal();
     const status: "failed" | "cancelled" =
       terminalFailure.code === "cancelled" ? "cancelled" : "failed";
     await finishAuditBestEffort(this.#audit, {

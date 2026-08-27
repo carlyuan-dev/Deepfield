@@ -32,6 +32,25 @@ export class AgentWorkerTransportReuseError extends Error {
   }
 }
 
+/** Bounded tombstone registry for tool transport ids (exactly-once per close). */
+export class ToolTransportTombstones {
+  readonly #recent = new Set<string>();
+
+  record(id: string): void {
+    this.#recent.add(id);
+    if (this.#recent.size > MAX_RECENT_TRANSPORT_IDS) {
+      const oldest = this.#recent.values().next().value;
+      if (oldest !== undefined) {
+        this.#recent.delete(oldest);
+      }
+    }
+  }
+
+  has(id: string): boolean {
+    return this.#recent.has(id);
+  }
+}
+
 export type StreamEvent = AgentWorkerEvent | ToolExecutionEvent;
 
 export interface PendingStream {

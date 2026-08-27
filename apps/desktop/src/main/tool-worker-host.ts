@@ -1,5 +1,10 @@
 import { Value } from "typebox/value";
-import { HostRequestSchema, type HostRequest } from "@deepfield/contracts";
+import {
+  HostRequestSchema,
+  type HostReply,
+  type HostRequest,
+  type HostRpcMethod,
+} from "@deepfield/contracts";
 import { TOOL_FAILURE_MESSAGES, type ToolAuditSink } from "@deepfield/tool-platform";
 
 export interface ToolWorkerHostOptions {
@@ -15,22 +20,47 @@ export interface ToolWorkerHost {
   dispose(): void;
 }
 
-function reply(
-  postMessage: (value: unknown) => void,
-  hostRequestId: string,
-  value: { method: string; ok: boolean; code?: string; payload?: unknown },
-): void {
+const HOST_RPC_METHODS = new Set<HostRpcMethod>([
+  "audit.start",
+  "audit.finish",
+  "secret.getProviderKey",
+]);
+
+function isRpcMethod(value: unknown): value is HostRpcMethod {
+  return typeof value === "string" && HOST_RPC_METHODS.has(value as HostRpcMethod);
+}
+
+function reply(postMessage: (value: unknown) => void, value: HostReply): void {
   try {
-    postMessage({ hostRequestId, kind: "host.reply", ...value });
+    postMessage(value);
   } catch {
     // postMessage must never produce an unhandled rejection on the caller side.
   }
 }
 
+function safeHostRequestId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const record = value as { hostRequestId?: unknown };
+  if (typeof record.hostRequestId === "string" && record.hostRequestId.length > 0) {
+    return record.hostRequestId;
+  }
+  return undefined;
+}
+
+function safeMethod(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  return (value as { method?: unknown }).method;
+}
+
 /**
  * Main-side narrow host RPC. Only three compile-time methods exist:
  * audit.start, audit.finish and secret.getProviderKey (deepseek only).
- * No generic secret names, SQL, repository methods, URLs or Renderer senders.
+ * Every reply is schema-valid: valid pending methods receive same-method
+ * replies; malformed/unknown-method inputs receive the host.protocol variant.
  */
 export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorkerHost {
   let disposed = false;
@@ -49,9 +79,9 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
   }
 
   async function handleValid(request: HostRequest): Promise<void> {
-    const { hostRequestId } = request;
+    const { hostRequestId, method } = request;
     try {
-      if (request.method === "audit.start") {
+      if (method === "audit.start") {
         await options.audit.start({
           executionId: request.payload.executionId,
           traceId: request.payload.traceId,
@@ -63,7 +93,9 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           attempts: 0,
         });
         if (!disposed) {
-          reply(options.postMessage, hostRequestId, {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
             method: "audit.start",
             ok: true,
             payload: { acknowledged: true },
@@ -71,7 +103,7 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
         }
         return;
       }
-      if (request.method === "audit.finish") {
+      if (method === "audit.finish") {
         await options.audit.finish({
           executionId: request.payload.executionId,
           traceId: request.payload.traceId,
@@ -102,7 +134,9 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
             : {}),
         });
         if (!disposed) {
-          reply(options.postMessage, hostRequestId, {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
             method: "audit.finish",
             ok: true,
             payload: { acknowledged: true },
@@ -115,7 +149,9 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
         apiKey = options.secrets.get("deepseek.apiKey") ?? null;
       } catch {
         if (!disposed) {
-          reply(options.postMessage, hostRequestId, {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
             method: "secret.getProviderKey",
             ok: false,
             code: "secret_unavailable",
@@ -124,7 +160,9 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
         return;
       }
       if (!disposed) {
-        reply(options.postMessage, hostRequestId, {
+        reply(options.postMessage, {
+          hostRequestId,
+          kind: "host.reply",
           method: "secret.getProviderKey",
           ok: true,
           payload: { apiKey },
@@ -132,8 +170,10 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
       }
     } catch {
       if (!disposed) {
-        reply(options.postMessage, hostRequestId, {
-          method: request.method,
+        reply(options.postMessage, {
+          hostRequestId,
+          kind: "host.reply",
+          method,
           ok: false,
           code: "audit_failed",
         });
@@ -143,14 +183,25 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
 
   return {
     handleRequest(value: unknown): void {
+      const hostRequestId = safeHostRequestId(value);
       if (disposed) {
-        const hostRequestId =
-          typeof value === "object" && value !== null
-            ? (value as { hostRequestId?: unknown }).hostRequestId
-            : undefined;
-        if (typeof hostRequestId === "string" && hostRequestId.length > 0) {
-          reply(options.postMessage, hostRequestId, {
-            method: "host_protocol_error",
+        if (hostRequestId === undefined) {
+          return;
+        }
+        const method = safeMethod(value);
+        if (isRpcMethod(method)) {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method,
+            ok: false,
+            code: "host_disposed",
+          });
+        } else {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method: "host.protocol",
             ok: false,
             code: "host_disposed",
           });
@@ -158,20 +209,32 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
         return;
       }
       if (!Value.Check(HostRequestSchema, value)) {
-        const hostRequestId =
-          typeof value === "object" && value !== null
-            ? (value as { hostRequestId?: unknown }).hostRequestId
-            : undefined;
-        if (typeof hostRequestId === "string" && hostRequestId.length > 0) {
-          reply(options.postMessage, hostRequestId, {
-            method: "host_protocol_error",
+        if (hostRequestId === undefined) {
+          return;
+        }
+        const method = safeMethod(value);
+        if (isRpcMethod(method)) {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method,
+            ok: false,
+            code: "invalid_request",
+          });
+        } else {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method: "host.protocol",
             ok: false,
             code: "invalid_request",
           });
         }
         return;
       }
-      const { hostRequestId } = value;
+      if (hostRequestId === undefined) {
+        return;
+      }
       if (active.has(hostRequestId) || completed.has(hostRequestId)) {
         // duplicate active request or late duplicate of a completed one:
         // never a second audit/secret call, never a second terminal reply.

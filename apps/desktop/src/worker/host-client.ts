@@ -148,6 +148,10 @@ export class HostClient {
       return;
     }
     const reply = value as HostReply;
+    if (reply.method === "host.protocol") {
+      pending.reject(new HostRpcProtocolError());
+      return;
+    }
     if (reply.method !== pending.method) {
       pending.reject(new HostRpcProtocolError());
       return;

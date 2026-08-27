@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import {
+  ToolBudgetError,
   ToolBudgetLedger,
   ToolPolicy,
   ToolRegistry,
@@ -96,18 +97,16 @@ export interface TraceBudgetPoolOptions {
   clock?: () => number;
 }
 
-interface PoolEntry {
-  ledger: ToolBudgetLedger;
-  lastUsed: number;
-}
-
 /**
- * Bounded per-trace budget pool: each trace gets an independent ledger; only
- * inactive (no in-flight tokens) least-recently-used entries are evicted, so an
- * active trace can never be evicted mid-execution and reset its budget.
+ * Strictly bounded per-trace budget pool with an explicit lifecycle. A trace
+ * ledger is only ever removed by releaseTrace() (and only when it has no
+ * in-flight tokens); idle-but-unreleased traces are never evicted or reset, so
+ * a serial research trace cannot bypass maxCalls by getting LRU-evicted. When
+ * at capacity, ledgerFor() refuses new traces (the Runner maps the thrown
+ * budget error to a safe budget_exceeded result).
  */
 export class TraceBudgetPool {
-  readonly #entries = new Map<string, PoolEntry>();
+  readonly #entries = new Map<string, ToolBudgetLedger>();
   readonly #limits: ToolBudgetLimits;
   readonly #maxTraces: number;
   readonly #clock: () => number;
@@ -119,17 +118,33 @@ export class TraceBudgetPool {
   }
 
   ledgerFor(traceId: string): ToolBudgetLedger {
-    const entry = this.#entries.get(traceId);
-    if (entry !== undefined) {
-      entry.lastUsed = this.#clock();
-      return entry.ledger;
+    const existing = this.#entries.get(traceId);
+    if (existing !== undefined) {
+      return existing;
     }
     if (this.#entries.size >= this.#maxTraces) {
-      this.#evictOne();
+      throw new ToolBudgetError("tool budget exceeded: max traces");
     }
     const ledger = new ToolBudgetLedger(this.#limits, this.#clock);
-    this.#entries.set(traceId, { ledger, lastUsed: this.#clock() });
+    this.#entries.set(traceId, ledger);
     return ledger;
+  }
+
+  /**
+   * Explicit end-of-trace: removes the ledger only when no token is in flight.
+   * Returns false (and keeps the ledger) while the trace is active so a budget
+   * is never silently reset under an in-flight execution.
+   */
+  releaseTrace(traceId: string): boolean {
+    const ledger = this.#entries.get(traceId);
+    if (ledger === undefined) {
+      return true;
+    }
+    if (ledger.activeCount() > 0) {
+      return false;
+    }
+    this.#entries.delete(traceId);
+    return true;
   }
 
   size(): number {
@@ -138,23 +153,6 @@ export class TraceBudgetPool {
 
   has(traceId: string): boolean {
     return this.#entries.has(traceId);
-  }
-
-  #evictOne(): void {
-    let oldestKey: string | undefined;
-    let oldest = Infinity;
-    for (const [traceId, entry] of this.#entries) {
-      if (entry.ledger.activeCount() > 0) {
-        continue; // pin active traces
-      }
-      if (entry.lastUsed < oldest) {
-        oldest = entry.lastUsed;
-        oldestKey = traceId;
-      }
-    }
-    if (oldestKey !== undefined) {
-      this.#entries.delete(oldestKey);
-    }
   }
 }
 
@@ -188,6 +186,8 @@ export interface UtilityToolRuntime extends ToolRuntime {
   createAgentTools(context: PiToolContext): ReturnType<typeof createPiAgentTools>;
   traceLedgerCount(): number;
   tracePool: TraceBudgetPool;
+  /** Explicit end-of-trace; false while the trace has in-flight tokens. */
+  releaseTrace(traceId: string): boolean;
 }
 
 export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRuntime {
@@ -211,6 +211,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
     clock,
     budgetForTrace: (traceId) => tracePool.ledgerFor(traceId),
     globalConcurrency: 4,
+    networkToolConcurrency: 2,
   });
   const toolSetByActor = new Map<ToolActor, ToolSet>();
   for (const actor of ["main_agent", "capability", "child_agent", "direct_ui", "developer_probe"] as const) {
@@ -223,6 +224,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
     audit: options.audit,
     tracePool,
     traceLedgerCount: () => tracePool.size(),
+    releaseTrace: (traceId) => tracePool.releaseTrace(traceId),
     async run(request, emit, signal): Promise<ToolExecutionResult> {
       return runner.execute(
         {

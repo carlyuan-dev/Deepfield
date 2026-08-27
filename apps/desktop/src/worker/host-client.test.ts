@@ -269,4 +269,21 @@ describe("host client typed correlation (focused revision)", () => {
     expect(String(error)).not.toContain("sk-secret-raw-value");
     expect(client.pendingCount()).toBe(0);
   });
+
+  it("maps the host.protocol reply variant to a fixed protocol error", async () => {
+    const posted: unknown[] = [];
+    const client = new HostClient({ postMessage: (v) => posted.push(v), timeoutMs: 1000 });
+    const request = client.request("audit.start", { executionId: "a" });
+    const id = (posted[0] as { hostRequestId: string }).hostRequestId;
+    client.handleReply({
+      hostRequestId: id,
+      kind: "host.reply",
+      method: "host.protocol",
+      ok: false,
+      code: "host_disposed",
+    });
+    const error = await request.catch((caught) => caught);
+    expect(error).toBeInstanceOf(HostRpcProtocolError);
+    expect(client.pendingCount()).toBe(0);
+  });
 });

@@ -188,7 +188,7 @@ describe("tool worker host", () => {
       {
         hostRequestId: "h1",
         kind: "host.reply",
-        method: "host_protocol_error",
+        method: "audit.start",
         ok: false,
         code: "host_disposed",
       },

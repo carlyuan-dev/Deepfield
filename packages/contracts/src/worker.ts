@@ -235,6 +235,22 @@ export const HostReplySchema = Type.Union([
     },
     { additionalProperties: false },
   ),
+  // Schema-valid protocol failure variant for malformed/unknown-method or
+  // host-disposed cases where no business method can be echoed back.
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: Type.Literal("host.protocol"),
+      ok: Type.Literal(false),
+      code: Type.Union([
+        Type.Literal("host_disposed"),
+        Type.Literal("invalid_request"),
+        Type.Literal("host_protocol_error"),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
 ]);
 export type HostReply = Static<typeof HostReplySchema>;
 

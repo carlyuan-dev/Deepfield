@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeAuditSink, FakeRetryClock, ToolRunner, ToolSet } from "@deepfield/tool-platform";
 import { ToolBudgetLedger } from "@deepfield/tool-platform";
-import { createToolRuntime } from "./tool-runtime.js";
+import { createToolRuntime, TraceBudgetPool } from "./tool-runtime.js";
 
 function makeRuntime(registerProbe = true) {
   return createToolRuntime({ audit: new FakeAuditSink(), registerProbe });
@@ -69,85 +69,41 @@ describe("utility tool runtime assembly (focused revision)", () => {
   });
 });
 
-describe("trace budget pool (focused revision)", () => {
-  it("caps each trace at 12 calls while other traces keep full budgets", async () => {
-    const clock = new FakeRetryClock();
-    const runner = new ToolRunner({
-      registry: makeRuntime(true).registry,
-      policy: makeRuntime(true).policy,
-      budget: new ToolBudgetLedger({}, () => clock.now()),
-      audit: new FakeAuditSink(),
-      clock,
-    });
-    // Integration of per-trace budgets is exercised through the runtime.
-    const runtime = makeRuntime(true);
-    for (let index = 0; index < 12; index += 1) {
-      const result = await runtime.run(
-        {
-          requestId: `a-${index}`,
-          kind: "tool.run",
-          executionId: `a-${index}`,
-          traceId: "trace-a",
-          tool: { name: "echo_probe", version: 1 },
-          input: { text: "hi" },
-          actor: "developer_probe",
-        },
-        () => {},
-        new AbortController().signal,
-      );
-      expect(result.status).toBe("completed");
-    }
-    const thirteenth = await runtime.run(
-      {
-        requestId: "a-13",
-        kind: "tool.run",
-        executionId: "a-13",
-        traceId: "trace-a",
-        tool: { name: "echo_probe", version: 1 },
-        input: { text: "hi" },
-        actor: "developer_probe",
-      },
-      () => {},
-      new AbortController().signal,
-    );
-    expect(thirteenth.status).toBe("failed");
-    if (thirteenth.status === "failed") {
-      expect(thirteenth.failure.code).toBe("budget_exceeded");
-    }
-    const other = await runtime.run(
-      {
-        requestId: "b-1",
-        kind: "tool.run",
-        executionId: "b-1",
-        traceId: "trace-b",
-        tool: { name: "echo_probe", version: 1 },
-        input: { text: "hi" },
-        actor: "developer_probe",
-      },
-      () => {},
-      new AbortController().signal,
-    );
-    expect(other.status).toBe("completed");
-    void runner;
+describe("trace budget pool lifecycle (focused revision)", () => {
+  it("refuses a new trace when at capacity with no releasable entry", () => {
+    const pool = new TraceBudgetPool({ limits: { maxCalls: 12 }, maxTraces: 1, clock: () => 0 });
+    const first = pool.ledgerFor("a");
+    first.reserve({ name: "echo", version: 1 }, "none");
+    expect(pool.size()).toBe(1);
+    expect(() => pool.ledgerFor("b")).toThrow(/max traces/);
+    expect(pool.size()).toBe(1);
+    expect(pool.has("a")).toBe(true);
   });
 
-  it("bounds the ledger pool and never evicts active ledgers", async () => {
-    const runtime = makeRuntime(true);
-    const firstTrace = "active-trace";
-    const result = await runtime.run(
-      {
-        requestId: "a-1",
-        kind: "tool.run",
-        executionId: "a-1",
-        traceId: firstTrace,
-        tool: { name: "echo_probe", version: 1 },
-        input: { text: "hi" },
-        actor: "developer_probe",
-      },
-      () => {},
-      new AbortController().signal,
-    );
-    expect(result.status).toBe("completed");
-    expect(runtime.traceLedgerCount()).toBe(1);
+  it("keeps unreleased traces capped and only resets after releaseTrace", () => {
+    const pool = new TraceBudgetPool({ limits: { maxCalls: 2 }, maxTraces: 64, clock: () => 0 });
+    const identity = { name: "echo", version: 1 };
+    const a = pool.ledgerFor("a");
+    const firstToken = a.reserve(identity, "none");
+    const secondToken = a.reserve(identity, "none");
+    a.complete(firstToken);
+    a.complete(secondToken);
+    expect(() => a.reserve(identity, "none")).toThrow(/max calls/);
+    pool.ledgerFor("b");
+    pool.ledgerFor("c");
+    expect(pool.has("a")).toBe(true);
+    expect(() => pool.ledgerFor("a").reserve(identity, "none")).toThrow(/max calls/);
+    expect(pool.releaseTrace("a")).toBe(true);
+    expect(pool.has("a")).toBe(false);
+    expect(() => pool.ledgerFor("a").reserve(identity, "none")).not.toThrow();
+  });
+
+  it("refuses releaseTrace while the trace has in-flight tokens", () => {
+    const pool = new TraceBudgetPool({ limits: {}, maxTraces: 4, clock: () => 0 });
+    const a = pool.ledgerFor("a");
+    a.reserve({ name: "echo", version: 1 }, "none");
+    expect(pool.releaseTrace("a")).toBe(false);
+    expect(pool.has("a")).toBe(true);
+    expect(pool.size()).toBeLessThanOrEqual(4);
   });
 });
