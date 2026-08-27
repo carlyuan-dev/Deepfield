@@ -109,7 +109,10 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
 
   const currentEvidence = (provider: string): readonly LinkEvidence[] => {
     const urls = [...new Set(runs.filter((run) => run.provider === provider).flatMap((run) => run.results.map((result) => result.url)))];
-    return urls.map((url) => ({ url, accessible: linkCache.get(url) ?? false }));
+    // ONLY real cached outcomes: an unchecked URL is never fabricated as
+    // accessible=false. Another provider may later check it and the global
+    // cache then projects the genuine outcome.
+    return urls.filter((url) => linkCache.has(url)).map((url) => ({ url, accessible: linkCache.get(url)! }));
   };
 
   const buildReport = (benchmarkComplete: boolean): BenchmarkReport => {

@@ -163,6 +163,43 @@ describe("benchmark harness state machine (focused revision)", () => {
     expect(report.failures.some((failure) => failure.includes("link_check_failed"))).toBe(true);
   });
 
+  it("never fabricates accessible=false for an unchecked URL after an infra error", async () => {
+    const url = "https://unchecked.example/";
+    const checkpoints: Array<{ linkEvidence: Record<string, unknown>; linkCheckFailures: string[] }> = [];
+    const report = await runBenchmark(harnessDeps({
+      providers: [
+        fakeProvider("brave", { urls: () => [url] }),
+        fakeProvider("tavily"),
+      ],
+      linkChecker: new FakeLinkChecker(new Map(), new Set([url])), // infra error on this url
+      writer: (entry) => {
+        checkpoints.push({ linkEvidence: entry.linkEvidence, linkCheckFailures: entry.linkCheckFailures });
+      },
+    }));
+    // the url NEVER got a checker outcome: no fabricated {accessible:false} evidence
+    for (const checkpoint of checkpoints) {
+      const braveEvidence = checkpoint.linkEvidence["brave"] as Array<{ url: string; accessible: boolean }>;
+      expect(braveEvidence.every((entry) => entry.url !== url)).toBe(true);
+    }
+    // the provider is marked with the stable infra failure instead
+    expect(report.linkCheckFailures).toContain("brave");
+    expect(report.failures.some((failure) => failure.includes("link_check_failed"))).toBe(true);
+    // a DIFFERENT provider successfully checking the same url later projects the real outcome
+    const shared = "https://shared.example/";
+    const checkpoints2: Array<Record<string, unknown>> = [];
+    await runBenchmark(harnessDeps({
+      providers: [
+        fakeProvider("brave", { urls: () => [shared] }),
+        fakeProvider("tavily", { urls: () => [shared] }),
+      ],
+      linkChecker: new FakeLinkChecker(new Map([[shared, true]])),
+      writer: (entry) => checkpoints2.push(entry.linkEvidence),
+    }));
+    const lastCheckpoint = checkpoints2[checkpoints2.length - 1]!;
+    const tavilyEvidence = lastCheckpoint["tavily"] as Array<{ url: string; accessible: boolean }>;
+    expect(tavilyEvidence.some((entry) => entry.url === shared && entry.accessible === true)).toBe(true);
+  });
+
   it("reports a provider with zero successful runs as incomplete (does not vanish)", async () => {
     const report = await runBenchmark(harnessDeps({
       providers: [

@@ -99,7 +99,7 @@ describe("benchmark scoring (focused revision)", () => {
     expect(scored.eligibility.find((entry) => entry.provider === "a")!.reasons).toContain("link validity below 0.95");
     expect(scored.hardGates.fewerThanTwoCompleted).toBe(true);
     // missing evidence for a provider with runs -> fail closed (never imputed)
-    expect(() => scoreBenchmark(input({ runs, linkEvidence: {} }))).toThrow(/link evidence/);
+    expect(() => scoreBenchmark(input({ runs, linkEvidence: {} }))).toThrow(/link ?[eE]vidence/);
   });
 
   it("computes noise and duplicate rates", () => {

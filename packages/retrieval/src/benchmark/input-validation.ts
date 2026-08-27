@@ -15,11 +15,14 @@ export function linkValidityFromEvidence(evidence: readonly LinkEvidence[]): { v
 /**
  * Strict fail-closed input validation. The provider universe comes from
  * expectedProviders (never inferred from runs); every run must belong to it;
- * link evidence must match the deduplicated result URL set EXACTLY per
- * provider (no missing/duplicate/unknown urls, valid accessible booleans)
- * unless the provider is listed in linkCheckFailures. Any illegal measurement
- * rejects the WHOLE benchmark before scoring — never clamped, interpolated or
- * rewarded.
+ * linkEvidence keys must EXACTLY match expectedProviders; linkCheckFailures
+ * must be a unique subset of expectedProviders; and per-provider evidence must
+ * only contain URLs from that provider's expected result set (no unknown,
+ * duplicate or forged urls). WITHOUT an infra failure the evidence set must
+ * equal the expected set exactly; WITH one it may be a real subset. A zero-run
+ * provider has an empty expected set, so its evidence must be empty. Any
+ * illegal measurement rejects the WHOLE benchmark before scoring — never
+ * clamped, interpolated or rewarded.
  */
 export function assertValidScoringInput(input: BenchmarkScoringInput): void {
   if (!Number.isInteger(input.runsPerQuery) || input.runsPerQuery <= 0) {
@@ -59,26 +62,58 @@ export function assertValidScoringInput(input: BenchmarkScoringInput): void {
       throw new BenchmarkInputError(`invalid results for ${run.queryId}`);
     }
   }
-  const infraFailures = new Set(input.linkCheckFailures ?? []);
-  const providersWithRuns = new Set(input.runs.map((run) => run.provider));
+
+  // linkCheckFailures: unique subset of expectedProviders, string entries only
+  const infraFailures = new Set<string>();
+  if (input.linkCheckFailures !== undefined) {
+    if (!Array.isArray(input.linkCheckFailures)) {
+      throw new BenchmarkInputError("invalid linkCheckFailures: must be an array");
+    }
+    for (const provider of input.linkCheckFailures) {
+      if (typeof provider !== "string" || !expectedSet.has(provider)) {
+        throw new BenchmarkInputError(`invalid linkCheckFailures entry: not an expected provider`);
+      }
+      if (infraFailures.has(provider)) {
+        throw new BenchmarkInputError(`duplicate linkCheckFailures entry "${provider}"`);
+      }
+      infraFailures.add(provider);
+    }
+  }
+
+  // linkEvidence keys must EXACTLY match expectedProviders
+  if (typeof input.linkEvidence !== "object" || input.linkEvidence === null || Array.isArray(input.linkEvidence)) {
+    throw new BenchmarkInputError("invalid linkEvidence");
+  }
+  const evidenceKeys = Object.keys(input.linkEvidence);
+  if (evidenceKeys.length !== expectedSet.size || evidenceKeys.some((key) => !expectedSet.has(key))) {
+    throw new BenchmarkInputError("linkEvidence keys must exactly match expectedProviders");
+  }
+
   for (const provider of expectedSet) {
-    if (!providersWithRuns.has(provider)) {
-      continue; // zero-run providers have empty evidence; they surface as incomplete
-    }
-    if (infraFailures.has(provider)) {
-      continue; // infrastructure failure: evidence may be incomplete (ineligible)
-    }
     const expectedUrls = uniqueResultUrls(input.runs, provider);
+    const expectedUrlSet = new Set(expectedUrls);
     const evidence = input.linkEvidence[provider];
     if (!Array.isArray(evidence)) {
       throw new BenchmarkInputError(`missing link evidence for ${provider}`);
     }
-    const evidenceSet = new Set(evidence.map((entry) => entry.url));
-    if (evidence.length !== expectedUrls.length || expectedUrls.some((url) => !evidenceSet.has(url))) {
-      throw new BenchmarkInputError(`link evidence mismatch for ${provider}: expected ${expectedUrls.length} unique urls`);
+    const seen = new Set<string>();
+    for (const entry of evidence) {
+      if (typeof entry !== "object" || entry === null || typeof entry.url !== "string" || typeof entry.accessible !== "boolean") {
+        throw new BenchmarkInputError(`invalid link evidence entry for ${provider}`);
+      }
+      if (seen.has(entry.url)) {
+        throw new BenchmarkInputError(`duplicate link evidence url for ${provider}`);
+      }
+      seen.add(entry.url);
+      if (!expectedUrlSet.has(entry.url)) {
+        throw new BenchmarkInputError(`link evidence url outside expected set for ${provider}`);
+      }
     }
-    if (evidence.some((entry) => typeof entry.url !== "string" || typeof entry.accessible !== "boolean")) {
-      throw new BenchmarkInputError(`invalid link evidence entry for ${provider}`);
+    if (!infraFailures.has(provider)) {
+      if (seen.size !== expectedUrls.length) {
+        throw new BenchmarkInputError(`link evidence mismatch for ${provider}: expected ${expectedUrls.length} unique urls`);
+      }
     }
+    // infra failure: a strict subset (real completed checks) is allowed; unknown/duplicate/forged already rejected above
   }
 }

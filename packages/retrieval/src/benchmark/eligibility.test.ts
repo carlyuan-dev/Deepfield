@@ -145,13 +145,13 @@ describe("benchmark completion and eligibility (focused revision)", () => {
     expect(() => scoreBenchmark(input({
       runs,
       linkEvidence: { a: [{ url: "https://unitree.com/", accessible: true }] },
-    }))).toThrow(/link evidence/);
+    }))).toThrow(/link ?[eE]vidence/);
 
     // unknown provider evidence is rejected
     expect(() => scoreBenchmark(input({
       runs,
       linkEvidence: { nope: [{ url: "https://unitree.com/", accessible: true }] },
-    }))).toThrow(/link evidence/);
+    }))).toThrow(/link ?[eE]vidence/);
 
     // duplicate evidence urls are rejected
     expect(() => scoreBenchmark(input({
@@ -162,11 +162,79 @@ describe("benchmark completion and eligibility (focused revision)", () => {
           { url: "https://unitree.com/", accessible: true },
         ],
       },
-    }))).toThrow(/link evidence/);
+    }))).toThrow(/link ?[eE]vidence/);
 
     // exact evidence passes and derives valid/total (2/2)
     const scored = scoreBenchmark(input({ runs, linkEvidence: evidenceFor(runs, ["a"]) }));
     expect(scored.raw[0]!.linkValidity).toBe(1);
+  });
+
+  it("rejects any evidence for a zero-run provider (expected set is empty)", () => {
+    // the main-window repro: zero runs but fabricated evidence for provider a
+    expect(() => scoreBenchmark(input({
+      runs: [],
+      expectedProviders: ["a"],
+      linkEvidence: { a: [{ url: "https://unchecked.example/", accessible: true }] },
+    }))).toThrow(/link ?[eE]vidence/);
+    // empty evidence for a zero-run provider is legal
+    const scored = scoreBenchmark(input({ runs: [], expectedProviders: ["a"], linkEvidence: { a: [] } }));
+    expect(scored.completions[0]!.completed).toBe(false);
+  });
+
+  it("requires linkEvidence keys to EXACTLY match expectedProviders", () => {
+    // extra unknown key alongside a legal one
+    expect(() => scoreBenchmark(input({
+      runs: [],
+      expectedProviders: ["a"],
+      linkEvidence: { a: [], attacker: [{ url: "https://attacker.example/", accessible: true }] },
+    }))).toThrow(/link ?[eE]vidence/);
+    // missing key for an expected provider
+    expect(() => scoreBenchmark(input({
+      runs: [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0)],
+      expectedProviders: ["a", "b"],
+      linkEvidence: { a: [{ url: "https://unitree.com/", accessible: true }] },
+    }))).toThrow(/link ?[eE]vidence/);
+  });
+
+  it("rejects linkCheckFailures outside expectedProviders, with duplicates or illegal values", () => {
+    const runs = completeRuns("a", () => ["https://unitree.com/", "https://tesla.com/"]);
+    expect(() => scoreBenchmark(input({
+      runs,
+      expectedProviders: ["a", "b"],
+      linkEvidence: evidenceFor(runs, ["a"]),
+      linkCheckFailures: ["attacker"],
+    }))).toThrow(/linkCheckFailures/);
+    expect(() => scoreBenchmark(input({
+      runs,
+      expectedProviders: ["a", "b"],
+      linkEvidence: evidenceFor(runs, ["a"]),
+      linkCheckFailures: ["a", "a"],
+    }))).toThrow(/linkCheckFailures/);
+    expect(() => scoreBenchmark(input({
+      runs,
+      expectedProviders: ["a", "b"],
+      linkEvidence: evidenceFor(runs, ["a"]),
+      linkCheckFailures: [42 as never],
+    }))).toThrow(/linkCheckFailures/);
+  });
+
+  it("allows partial evidence ONLY as a real subset of the expected set under infra failure", () => {
+    const runs = [run("a", "q1", "人形机器人 公司", ["https://unitree.com/", "https://tesla.com/"], 10, 0, 0)];
+    // infra failure + real partial evidence (unitree checked, tesla not yet) is legal
+    const scored = scoreBenchmark(input({
+      runs,
+      expectedProviders: ["a"],
+      linkEvidence: { a: [{ url: "https://unitree.com/", accessible: true }] },
+      linkCheckFailures: ["a"],
+    }));
+    expect(scored.eligibility.find((entry) => entry.provider === "a")!.reasons).toContain("link check infrastructure failure");
+    // infra failure does NOT excuse unknown/forged urls in the partial evidence
+    expect(() => scoreBenchmark(input({
+      runs,
+      expectedProviders: ["a"],
+      linkEvidence: { a: [{ url: "https://forged.example/", accessible: true }] },
+      linkCheckFailures: ["a"],
+    }))).toThrow(/link ?[eE]vidence/);
   });
 
   it("reports expected providers with zero successful runs as incomplete (do not vanish)", () => {
