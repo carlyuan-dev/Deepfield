@@ -146,6 +146,8 @@ export {
   type ReferenceSetV1,
 } from "./benchmark/reference-companies.js";
 export {
+  assertValidScoringInput,
+  linkValidityFromEvidence,
   scoreBenchmark,
   matchesCompanyDomain,
   normalizeDomain,
@@ -156,7 +158,7 @@ export {
   type BenchmarkScoringInput,
   type BenchmarkScoringResult,
   type HardGateStatus,
-  type LinkValiditySample,
+  type LinkEvidence,
   type ProviderRawMetrics,
   type ProviderScore,
 } from "./benchmark/scoring.js";

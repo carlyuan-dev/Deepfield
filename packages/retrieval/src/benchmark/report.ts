@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
-import type { BenchmarkedRun, HardGateStatus, ProviderCompletion, ProviderEligibility, ProviderScore } from "./scoring.js";
+import type { BenchmarkedRun, HardGateStatus, LinkEvidence, ProviderCompletion, ProviderEligibility, ProviderRawMetrics, ProviderScore } from "./scoring.js";
 
 export const REPORT_FILENAME = "search-benchmark.json";
 
@@ -29,8 +29,13 @@ export interface BenchmarkReport {
   /** Non-secret per-request USD pricing (Task-9-confirmed; never contains keys). */
   pricingUsd: Record<string, number>;
   pricingNote: string;
+  /** Per-provider per-URL accessibility evidence at this checkpoint. */
+  linkEvidence: Record<string, readonly LinkEvidence[]>;
+  linkCheckFailures: string[];
   completions: ProviderCompletion[];
   eligibility: ProviderEligibility[];
+  /** All expected providers' raw metrics (incomplete providers marked). */
+  raw: ProviderRawMetrics[];
   scores: ProviderScore[];
   hardGatePassed: boolean;
   hardGates: HardGateStatus;

@@ -4,6 +4,7 @@ import {
   scoreBenchmark,
   type BenchmarkedRun,
   type BenchmarkScoringInput,
+  type LinkEvidence,
 } from "./scoring.js";
 import { QUERIES_V1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1 } from "./reference-companies.js";
@@ -27,14 +28,26 @@ function run(provider: string, queryId: string, query: string, urls: string[], l
 }
 
 function input(overrides: Partial<BenchmarkScoringInput> = {}): BenchmarkScoringInput {
+  const providers = [...new Set(overrides.runs?.map((run) => run.provider) ?? [])];
   return {
     runs: [],
+    expectedProviders: providers.length > 0 ? providers : ["a", "b"],
     runsPerQuery: 2,
-    linkValidity: {},
+    linkEvidence: {},
     queries: { version: "v1", queries: QUERIES_V1 },
     reference: { version: "v1", companies: REFERENCE_COMPANIES_V1 },
     ...overrides,
   };
+}
+
+/** Builds exact per-provider link evidence from the runs' deduplicated URLs. */
+function evidenceFor(runs: readonly Run[], providers: readonly string[] = [], accessible = true): Record<string, readonly LinkEvidence[]> {
+  const evidence: Record<string, readonly LinkEvidence[]> = {};
+  for (const provider of providers.length > 0 ? providers : [...new Set(runs.map((run) => run.provider))]) {
+    const urls = [...new Set(runs.filter((run) => run.provider === provider).flatMap((run) => run.results.map((result) => result.url)))];
+    evidence[provider] = urls.map((url) => ({ url, accessible }));
+  }
+  return evidence;
 }
 
 function completeRuns(provider: string, urls: (queryId: string) => string[]): Run[] {
@@ -46,69 +59,56 @@ function completeRuns(provider: string, urls: (queryId: string) => string[]): Ru
 describe("benchmark completion and eligibility (focused revision)", () => {
   it("requires every query to complete exactly runsPerQuery times (round identity)", () => {
     const allQueries = QUERIES_V1.flatMap((query) => [0, 1].map((round) => run("a", query.id, query.query, ["https://unitree.com/", "https://tesla.com/"], 10, 0, round)));
-    const scored = scoreBenchmark(input({ runs: allQueries, linkValidity: { a: { valid: 20, total: 20 } } }));
+    const scored = scoreBenchmark(input({ runs: allQueries, linkEvidence: evidenceFor(allQueries, ["a"]) }));
     expect(scored.completions.find((completion) => completion.provider === "a")!.completed).toBe(true);
     expect(scored.providers).toHaveLength(1);
     expect(scored.providers[0]!.runsCompleted).toBe(20);
 
     // two providers with one run each are NOT complete
-    const partial = scoreBenchmark(input({
-      runs: [
-        run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
-        run("b", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
-      ],
-      linkValidity: { a: { valid: 1, total: 1 }, b: { valid: 1, total: 1 } },
-    }));
+    const partialRuns = [
+      run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
+      run("b", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
+    ];
+    const partial = scoreBenchmark(input({ runs: partialRuns, linkEvidence: evidenceFor(partialRuns, ["a", "b"]) }));
     expect(partial.completions.every((completion) => completion.completed)).toBe(false);
     expect(partial.hardGates.fewerThanTwoCompleted).toBe(true);
-    expect(partial.providers).toHaveLength(0); // nothing eligible for scoring
-    expect(partial.raw).toHaveLength(2); // partial data stays in raw
+    expect(partial.providers).toHaveLength(0);
+    expect(partial.raw).toHaveLength(2);
 
     // 20 duplicate q1 runs are not completion
-    const duplicates = input({
-      runs: Array.from({ length: 20 }, () => run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0)),
-      linkValidity: { a: { valid: 20, total: 20 } },
-    });
+    const duplicatesRuns = Array.from({ length: 20 }, () => run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0));
+    const duplicates = input({ runs: duplicatesRuns, linkEvidence: evidenceFor(duplicatesRuns, ["a"]) });
     expect(scoreBenchmark(duplicates).completions[0]!.completed).toBe(false);
 
     // missing one query
-    const missingOne = input({
-      runs: QUERIES_V1.slice(0, 9).flatMap((query) => [0, 1].map((round) => run("a", query.id, query.query, ["https://unitree.com/"], 10, 0, round))),
-      linkValidity: { a: { valid: 18, total: 18 } },
-    });
+    const missingRuns = QUERIES_V1.slice(0, 9).flatMap((query) => [0, 1].map((round) => run("a", query.id, query.query, ["https://unitree.com/"], 10, 0, round)));
+    const missingOne = input({ runs: missingRuns, linkEvidence: evidenceFor(missingRuns, ["a"]) });
     const missingResult = scoreBenchmark(missingOne);
     expect(missingResult.completions[0]!.completed).toBe(false);
     expect(missingResult.completions[0]!.missing).toEqual(["q10"]);
 
     // duplicate rounds
-    const dupRounds = input({
-      runs: [
-        run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
-        run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
-      ],
-      linkValidity: { a: { valid: 2, total: 2 } },
-    });
+    const dupRuns = [
+      run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
+      run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 0),
+    ];
+    const dupRounds = input({ runs: dupRuns, linkEvidence: evidenceFor(dupRuns, ["a"]) });
     expect(scoreBenchmark(dupRounds).completions[0]!.duplicateRounds).toEqual(["q1:0"]);
 
     // unknown query ids fail closed
-    const unknown = input({
+    expect(() => scoreBenchmark(input({
       runs: [run("a", "q99", "nope", ["https://unitree.com/"], 10, 0, 0)],
-      linkValidity: { a: { valid: 1, total: 1 } },
-    });
-    expect(() => scoreBenchmark(unknown)).toThrow(BenchmarkInputError);
+      linkEvidence: evidenceFor([run("a", "q99", "nope", ["https://unitree.com/"], 10, 0, 0)], ["a"]),
+    }))).toThrow(BenchmarkInputError);
   });
 
   it("reports per-provider eligibility without poisoning other providers", () => {
     const allQueries = (provider: string) =>
       QUERIES_V1.flatMap((query) => [0, 1].map((round) => run(provider, query.id, query.query, ["https://unitree.com/", "https://tesla.com/"], 10, 0, round)));
-    // provider "a" contains a dangerous URL; b and c are clean
     const runs = [...allQueries("a"), ...allQueries("b"), ...allQueries("c")];
     const dangerousRunIndex = runs.findIndex((entry) => entry.provider === "a");
     runs[dangerousRunIndex] = { ...runs[dangerousRunIndex]!, results: [{ ...runs[dangerousRunIndex]!.results[0]!, url: "javascript:bad" }] };
-    const scored = scoreBenchmark(input({
-      runs,
-      linkValidity: { a: { valid: 20, total: 20 }, b: { valid: 20, total: 20 }, c: { valid: 20, total: 20 } },
-    }));
+    const scored = scoreBenchmark(input({ runs, linkEvidence: evidenceFor(runs, ["a", "b", "c"]) }));
     const eligibilityA = scored.eligibility.find((entry) => entry.provider === "a")!;
     expect(eligibilityA.eligible).toBe(false);
     expect(eligibilityA.reasons).toContain("dangerous url");
@@ -120,48 +120,81 @@ describe("benchmark completion and eligibility (focused revision)", () => {
   });
 
   it("rejects illegal measurements fail-closed (no clamping, no interpolation)", () => {
-    const invalidLatency = input({
-      runs: [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], Number.NaN)],
-      linkValidity: { a: { valid: 10, total: 10 } },
-    });
-    expect(() => scoreBenchmark(invalidLatency)).toThrow(/latencyMs/);
+    const badLatency = [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], Number.NaN)];
+    expect(() => scoreBenchmark(input({ runs: badLatency, linkEvidence: evidenceFor(badLatency, ["a"]) }))).toThrow(/latencyMs/);
 
-    expect(() => scoreBenchmark(input({
-      runs: [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], -5)],
-      linkValidity: { a: { valid: 1, total: 1 } },
-    }))).toThrow(/latencyMs/);
+    const negLatency = [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], -5)];
+    expect(() => scoreBenchmark(input({ runs: negLatency, linkEvidence: evidenceFor(negLatency, ["a"]) }))).toThrow(/latencyMs/);
 
-    // negative cost is NEVER silently zeroed (would reward bad data)
-    expect(() => scoreBenchmark(input({
-      runs: [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, -1)],
-      linkValidity: { a: { valid: 1, total: 1 } },
-    }))).toThrow(/costUsd/);
-
-    // illegal denominator (valid > total)
-    expect(() => scoreBenchmark(input({
-      runs: [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10)],
-      linkValidity: { a: { valid: 10, total: 5 } },
-    }))).toThrow(/link validity/);
+    const negCost = [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, -1)];
+    expect(() => scoreBenchmark(input({ runs: negCost, linkEvidence: evidenceFor(negCost, ["a"]) }))).toThrow(/costUsd/);
 
     // wrong round identity and unknown query ids
+    const badRound = [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 5)];
+    expect(() => scoreBenchmark(input({ runs: badRound, linkEvidence: evidenceFor(badRound, ["a"]) }))).toThrow(/round/);
+    const unknownRun = [run("a", "q99", "nope", ["https://unitree.com/"], 10)];
+    expect(() => scoreBenchmark(input({ runs: unknownRun, linkEvidence: evidenceFor(unknownRun, ["a"]) }))).toThrow(/unknown query/);
+  });
+
+  it("validates the link denominator itself from per-URL evidence (public boundary)", () => {
+    const runs = [
+      run("a", "q1", "人形机器人 公司", ["https://unitree.com/", "https://tesla.com/"], 10, 0, 0),
+      run("a", "q1", "人形机器人 公司", ["https://unitree.com/", "https://tesla.com/"], 10, 0, 1),
+    ];
+    // 2 unique result URLs but a 1-entry evidence set: MUST fail closed
     expect(() => scoreBenchmark(input({
-      runs: [run("a", "q1", "人形机器人 公司", ["https://unitree.com/"], 10, 0, 5)],
-      linkValidity: { a: { valid: 1, total: 1 } },
-    }))).toThrow(/round/);
+      runs,
+      linkEvidence: { a: [{ url: "https://unitree.com/", accessible: true }] },
+    }))).toThrow(/link evidence/);
+
+    // unknown provider evidence is rejected
     expect(() => scoreBenchmark(input({
-      runs: [run("a", "q99", "nope", ["https://unitree.com/"], 10)],
-      linkValidity: { a: { valid: 1, total: 1 } },
-    }))).toThrow(/unknown query/);
+      runs,
+      linkEvidence: { nope: [{ url: "https://unitree.com/", accessible: true }] },
+    }))).toThrow(/link evidence/);
+
+    // duplicate evidence urls are rejected
+    expect(() => scoreBenchmark(input({
+      runs,
+      linkEvidence: {
+        a: [
+          { url: "https://unitree.com/", accessible: true },
+          { url: "https://unitree.com/", accessible: true },
+        ],
+      },
+    }))).toThrow(/link evidence/);
+
+    // exact evidence passes and derives valid/total (2/2)
+    const scored = scoreBenchmark(input({ runs, linkEvidence: evidenceFor(runs, ["a"]) }));
+    expect(scored.raw[0]!.linkValidity).toBe(1);
+  });
+
+  it("reports expected providers with zero successful runs as incomplete (do not vanish)", () => {
+    const runs = completeRuns("tavily", () => ["https://unitree.com/", "https://tesla.com/"]);
+    const scored = scoreBenchmark(input({
+      runs,
+      expectedProviders: ["brave", "tavily"],
+      linkEvidence: evidenceFor(runs, ["brave", "tavily"]),
+    }));
+    const braveCompletion = scored.completions.find((completion) => completion.provider === "brave")!;
+    expect(braveCompletion).toBeDefined();
+    expect(braveCompletion.completed).toBe(false);
+    expect(braveCompletion.runCount).toBe(0);
+    expect(braveCompletion.expectedCount).toBe(20);
+    expect(braveCompletion.missing).toEqual(QUERIES_V1.map((query) => query.id));
+    const braveEligibility = scored.eligibility.find((entry) => entry.provider === "brave")!;
+    expect(braveEligibility.eligible).toBe(false);
+    const braveRaw = scored.raw.find((entry) => entry.provider === "brave")!;
+    expect(braveRaw.completed).toBe(false);
+    expect(braveRaw.runsCompleted).toBe(0);
+    expect(scored.completions.find((completion) => completion.provider === "tavily")!.completed).toBe(true);
+    expect(scored.hardGates.fewerThanTwoCompleted).toBe(true);
   });
 
   it("requires EVERY fixed Chinese query to have results (q1 alone is not enough)", () => {
-    // q1 has results; q2-q7 are empty for provider "a"
     const runs = completeRuns("a", (queryId) => (queryId === "q1" ? ["https://unitree.com/"] : []));
     const goodB = completeRuns("b", () => ["https://unitree.com/", "https://tesla.com/"]);
-    const scored = scoreBenchmark(input({
-      runs: [...runs, ...goodB],
-      linkValidity: { a: { valid: 40, total: 40 }, b: { valid: 40, total: 40 } },
-    }));
+    const scored = scoreBenchmark(input({ runs: [...runs, ...goodB], linkEvidence: evidenceFor([...runs, ...goodB], ["a", "b"]) }));
     const eligibilityA = scored.eligibility.find((entry) => entry.provider === "a")!;
     expect(eligibilityA.eligible).toBe(false);
     expect(eligibilityA.reasons.some((reason) => /chinese query empty: q[2-7]/.test(reason))).toBe(true);
@@ -171,12 +204,8 @@ describe("benchmark completion and eligibility (focused revision)", () => {
 
   it("requires the run query text to match the frozen query set (fail closed)", () => {
     const runs = completeRuns("a", () => ["https://unitree.com/", "https://tesla.com/"]);
-    // forge a correct qid with the wrong text -> whole benchmark rejected
     const target = runs.find((entry) => entry.queryId === "q1")!;
     target.query = "篡改的查询文本";
-    expect(() => scoreBenchmark(input({
-      runs,
-      linkValidity: { a: { valid: 40, total: 40 } },
-    }))).toThrow(/query text mismatch/);
+    expect(() => scoreBenchmark(input({ runs, linkEvidence: evidenceFor(runs, ["a"]) }))).toThrow(/query text mismatch/);
   });
 });

@@ -6,13 +6,15 @@ import {
   computeEligibility,
   isValidDangerousUrl,
   type BenchmarkedRun,
-  type LinkValiditySample,
   type ProviderCompletion,
   type ProviderEligibility,
 } from "./eligibility.js";
+import { assertValidScoringInput, linkValidityFromEvidence } from "./input-validation.js";
+
+export { assertValidScoringInput, linkValidityFromEvidence };
 
 export { computeCompletions, computeEligibility, isValidDangerousUrl };
-export type { BenchmarkedRun, LinkValiditySample, ProviderCompletion, ProviderEligibility };
+export type { BenchmarkedRun, ProviderCompletion, ProviderEligibility };
 
 /** Fail-closed input validation: illegal measurements reject the whole benchmark. */
 export class BenchmarkInputError extends Error {
@@ -20,6 +22,11 @@ export class BenchmarkInputError extends Error {
     super(message);
     this.name = "BenchmarkInputError";
   }
+}
+
+export interface LinkEvidence {
+  url: string;
+  accessible: boolean;
 }
 
 export const WEIGHTS = {
@@ -33,10 +40,14 @@ export const WEIGHTS = {
 
 export interface BenchmarkScoringInput {
   runs: readonly BenchmarkedRun[];
+  /** The fixed provider universe from the live selection (never inferred from runs). */
+  expectedProviders: readonly string[];
   /** Expected runs per query (the plan fixes this at 2). */
   runsPerQuery: number;
-  /** Per-provider link validity samples (valid/total denominator). */
-  linkValidity: Readonly<Record<string, LinkValiditySample>>;
+  /** Per-provider per-URL accessibility evidence; scoring derives valid/total itself. */
+  linkEvidence: Readonly<Record<string, readonly LinkEvidence[]>>;
+  /** Providers whose link evidence is incomplete due to infrastructure failures. */
+  linkCheckFailures?: readonly string[];
   queries: QuerySetV1;
   reference: ReferenceSetV1;
 }
@@ -74,7 +85,7 @@ export interface BenchmarkScoringResult {
   providers: ProviderScore[];
   completions: ProviderCompletion[];
   eligibility: ProviderEligibility[];
-  /** All providers' raw measurements (partial data kept, marked incomplete). */
+  /** All expected providers' raw measurements (partial data kept, marked incomplete). */
   raw: ProviderRawMetrics[];
   hardGates: HardGateStatus;
   hardGatePassed: boolean;
@@ -107,62 +118,6 @@ export function percentile(values: readonly number[], p: number): number {
   return sorted[index]!;
 }
 
-function requireFiniteNonNegative(value: number, name: string): number {
-  if (!Number.isFinite(value) || value < 0) {
-    return 0; // invalid measurements never produce NaN/Infinity/negative scores
-  }
-  return value;
-}
-
-/**
- * Strict fail-closed input validation: any illegal measurement (non-finite,
- * negative, wrong integer type, mismatched query text, illegal link sample)
- * rejects the WHOLE benchmark before scoring — never clamped, interpolated or
- * rewarded.
- */
-export function assertValidScoringInput(input: BenchmarkScoringInput): void {
-  if (!Number.isInteger(input.runsPerQuery) || input.runsPerQuery <= 0) {
-    throw new BenchmarkInputError("invalid runsPerQuery");
-  }
-  const queryById = new Map(input.queries.queries.map((query) => [query.id, query]));
-  for (const run of input.runs) {
-    if (typeof run.provider !== "string" || run.provider.length === 0 || run.provider.length > 64) {
-      throw new BenchmarkInputError(`invalid provider in run ${run.queryId}`);
-    }
-    if (typeof run.queryId !== "string" || !queryById.has(run.queryId)) {
-      throw new BenchmarkInputError(`unknown query id "${run.queryId}"`);
-    }
-    if (typeof run.query !== "string" || run.query !== queryById.get(run.queryId)!.query) {
-      throw new BenchmarkInputError(`query text mismatch for ${run.queryId}`);
-    }
-    if (!Number.isInteger(run.round) || run.round < 0 || run.round >= input.runsPerQuery) {
-      throw new BenchmarkInputError(`invalid round ${run.round} for ${run.queryId}`);
-    }
-    if (!Number.isFinite(run.latencyMs) || run.latencyMs < 0) {
-      throw new BenchmarkInputError(`invalid latencyMs for ${run.queryId}`);
-    }
-    if (!Number.isFinite(run.costUsd) || run.costUsd < 0) {
-      throw new BenchmarkInputError(`invalid costUsd for ${run.queryId}`);
-    }
-    if (!Array.isArray(run.results)) {
-      throw new BenchmarkInputError(`invalid results for ${run.queryId}`);
-    }
-  }
-  for (const [provider, sample] of Object.entries(input.linkValidity)) {
-    if (
-      typeof sample !== "object" ||
-      sample === null ||
-      !Number.isInteger(sample.total) ||
-      sample.total < 0 ||
-      !Number.isInteger(sample.valid) ||
-      sample.valid < 0 ||
-      sample.valid > sample.total
-    ) {
-      throw new BenchmarkInputError(`invalid link validity sample for ${provider}`);
-    }
-  }
-}
-
 /**
  * Deterministic offline scoring. Raw measured values are kept separate from
  * normalized scores; a missing/partial provider run is never silently
@@ -178,9 +133,22 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
       .filter((query) => /[\u4e00-\u9fff]/.test(query.query))
       .map((query) => query.id),
   );
-  const providers = [...new Set(input.runs.map((run) => run.provider))];
-  const completions = computeCompletions({ ...input, runs: input.runs });
-  const eligibility = computeEligibility({ ...input, runs: input.runs });
+  const completions = computeCompletions({
+    runs: input.runs,
+    expectedProviders: input.expectedProviders,
+    runsPerQuery: input.runsPerQuery,
+    queries: input.queries,
+    reference: input.reference,
+  });
+  const eligibility = computeEligibility({
+    runs: input.runs,
+    expectedProviders: input.expectedProviders,
+    runsPerQuery: input.runsPerQuery,
+    linkEvidence: input.linkEvidence,
+    linkCheckFailures: input.linkCheckFailures ?? [],
+    queries: input.queries,
+    reference: input.reference,
+  });
   const completedProviders = new Set(completions.filter((completion) => completion.completed).map((completion) => completion.provider));
   const gate: HardGateStatus = {
     fewerThanTwoCompleted: completedProviders.size < 2,
@@ -188,7 +156,7 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
   };
 
   const raw: ProviderRawMetrics[] = [];
-  for (const provider of providers) {
+  for (const provider of input.expectedProviders) {
     const completion = completions.find((entry) => entry.provider === provider)!;
     const runs = input.runs.filter((run) => run.provider === provider);
     const allResults = runs.flatMap((run) => [...run.results]);
@@ -212,17 +180,8 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
     }
     const chineseOfficialCoverage = chineseCompanies.length === 0 ? 0 : chineseMatched / chineseCompanies.length;
 
-    const validity = input.linkValidity[provider];
-    let linkValidity = 0;
-    if (validity !== undefined) {
-      const total = requireFiniteNonNegative(validity.total, "linkValidity.total");
-      const valid = requireFiniteNonNegative(validity.valid, "linkValidity.valid");
-      if (valid > total) {
-        linkValidity = 0;
-      } else {
-        linkValidity = total === 0 ? 0 : valid / total;
-      }
-    }
+    const { valid, total } = linkValidityFromEvidence(input.linkEvidence[provider] ?? []);
+    const linkValidity = total === 0 ? 0 : valid / total;
 
     const urls = allResults.map((result) => result.url);
     const uniqueUrls = new Set(urls);
@@ -232,10 +191,10 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
         ? 0
         : allResults.filter((result) => result.title.length === 0 && result.snippet.length === 0).length / allResults.length;
 
-    const latencies = runs.map((run) => requireFiniteNonNegative(run.latencyMs, "latencyMs"));
+    const latencies = runs.map((run) => (Number.isFinite(run.latencyMs) && run.latencyMs >= 0 ? run.latencyMs : 0));
     const latencyP50Ms = percentile(latencies, 50);
     const latencyP95Ms = percentile(latencies, 95);
-    const totalCostUsd = runs.reduce((sum, run) => sum + requireFiniteNonNegative(run.costUsd, "costUsd"), 0);
+    const totalCostUsd = runs.reduce((sum, run) => sum + (Number.isFinite(run.costUsd) && run.costUsd >= 0 ? run.costUsd : 0), 0);
 
     raw.push({
       provider,

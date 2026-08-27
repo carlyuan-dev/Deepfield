@@ -1,14 +1,15 @@
 import type { NormalizedSearchResponse } from "../search-provider.js";
+import { SearchProviderError } from "../search-provider.js";
 import type { LiveProviderId } from "../providers/live-config.js";
 import { QUERIES_V1, type QuerySetV1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1, type ReferenceSetV1 } from "./reference-companies.js";
-import { scoreBenchmark, type BenchmarkedRun, type LinkValiditySample } from "./scoring.js";
+import { scoreBenchmark, type BenchmarkedRun, type LinkEvidence } from "./scoring.js";
 import type { BenchmarkReport } from "./report.js";
 
-/** Narrow link-accessibility dependency; the live assembly reuses the accepted URL chain. */
+/** Narrow per-URL accessibility dependency; the live assembly reuses the accepted core. */
 export interface LinkChecker {
-  /** Checks the EXACT deduplicated URL set; total must equal the set size. */
-  check(urls: readonly string[]): Promise<LinkValiditySample>;
+  /** Per-URL evidence; MUST honor the caller's AbortSignal. */
+  check(url: string, signal: AbortSignal): Promise<{ url: string; accessible: boolean }>;
 }
 
 export interface HarnessProvider {
@@ -47,38 +48,26 @@ function requireProviderPrice(price: unknown, provider: string): number {
   return price;
 }
 
-async function updateLinkValidity(
-  provider: string,
-  runs: readonly BenchmarkedRun[],
-  checker: LinkChecker,
-  linkValidity: Record<string, LinkValiditySample>,
-  failures: string[],
-): Promise<void> {
-  const urls = [...new Set(runs.filter((run) => run.provider === provider).flatMap((run) => run.results.map((result) => result.url)))];
-  if (urls.length === 0) {
-    return;
-  }
-  const sample = await checker.check(urls);
-  const legal =
-    typeof sample === "object" &&
-    sample !== null &&
-    Number.isInteger(sample.total) &&
-    sample.total >= 0 &&
-    sample.total === urls.length &&
-    Number.isInteger(sample.valid) &&
-    sample.valid >= 0 &&
-    sample.valid <= sample.total;
-  if (!legal) {
-    failures.push(`${provider}: link check sample invalid (expected total=${urls.length}, got total=${(sample as LinkValiditySample | undefined)?.total ?? "none"})`);
-    linkValidity[provider] = { valid: 0, total: 0 }; // never eligible via a mismatched denominator
-    return;
-  }
-  linkValidity[provider] = sample;
-}
+const PROVIDER_FAILURE_CODES: Partial<Record<string, string>> = {
+  unauthorized: "provider_unauthorized",
+  rate_limited: "provider_rate_limited",
+  provider_unavailable: "provider_unavailable",
+  timeout: "provider_timeout",
+  cancelled: "provider_cancelled",
+  response_too_large: "provider_response_too_large",
+  malformed_response: "provider_malformed_response",
+  redirect_blocked: "provider_redirect_blocked",
+  network_unavailable: "provider_network_failure",
+  dangerous_url: "provider_dangerous_url",
+  invalid_request: "provider_invalid_request",
+};
 
-function sanitizeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message;
+/** Stable sanitized failure label: never raw provider messages, queries, urls or keys. */
+function failureLabel(error: unknown): string {
+  if (error instanceof SearchProviderError) {
+    return PROVIDER_FAILURE_CODES[error.code] ?? "provider_failed";
+  }
+  return "provider_failed";
 }
 
 /**
@@ -86,9 +75,10 @@ function sanitizeError(error: unknown): string {
  * machine the live benchmark runs, with injectable providers, link checker and
  * writer. expectedMeasurements is FIXED before any request; attempted
  * increments on success AND failure; a checkpoint is written after every
- * measurement so an interrupt keeps everything recorded (benchmarkComplete
- * stays false). Provider completion/eligibility only ever uses successful
- * complete runs.
+ * measurement. Each unique normalized URL is checked exactly ONCE per
+ * benchmark (global cache); per-provider link evidence is projected from the
+ * cache. Provider completion/eligibility only ever uses successful complete
+ * runs and every expected provider (even with zero runs) stays visible.
  */
 export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<BenchmarkReport> {
   const queries = deps.queries ?? { version: "v1", queries: QUERIES_V1 };
@@ -106,17 +96,36 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
   for (const provider of deps.providers) {
     pricingUsd[provider.id] = requireProviderPrice(deps.pricingUsd[provider.id], provider.id);
   }
+  const expectedProviders = deps.providers.map((provider) => provider.id);
 
   // FIXED before any request: never grows with progress
   const expectedMeasurements = deps.providers.length * queries.queries.length * deps.runsPerQuery;
   const failures: string[] = [];
   const runs: BenchmarkedRun[] = [];
-  const linkValidity: Record<string, LinkValiditySample> = {};
+  const linkCache = new Map<string, boolean>(); // global: outcome is provider-independent
+  const linkCheckFailures = new Set<string>(); // providers with infra link-check errors
   let attempted = 0;
   let interrupted = false;
 
+  const currentEvidence = (provider: string): readonly LinkEvidence[] => {
+    const urls = [...new Set(runs.filter((run) => run.provider === provider).flatMap((run) => run.results.map((result) => result.url)))];
+    return urls.map((url) => ({ url, accessible: linkCache.get(url) ?? false }));
+  };
+
   const buildReport = (benchmarkComplete: boolean): BenchmarkReport => {
-    const scored = scoreBenchmark({ runs, runsPerQuery: deps.runsPerQuery, linkValidity, queries, reference });
+    const linkEvidence: Record<string, readonly LinkEvidence[]> = {};
+    for (const provider of expectedProviders) {
+      linkEvidence[provider] = currentEvidence(provider);
+    }
+    const scored = scoreBenchmark({
+      runs,
+      expectedProviders,
+      runsPerQuery: deps.runsPerQuery,
+      linkEvidence,
+      linkCheckFailures: [...linkCheckFailures],
+      queries,
+      reference,
+    });
     return {
       querySetVersion: queries.version,
       referenceSetVersion: reference.version,
@@ -135,12 +144,40 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
       benchmarkComplete,
       pricingUsd: { ...pricingUsd },
       pricingNote: deps.pricingNote,
+      linkEvidence,
+      linkCheckFailures: [...linkCheckFailures],
       completions: scored.completions,
       eligibility: scored.eligibility,
+      raw: scored.raw,
       scores: scored.providers,
       hardGatePassed: benchmarkComplete && scored.hardGatePassed,
       hardGates: scored.hardGates,
     };
+  };
+
+  const checkNewUrls = async (provider: string, urls: readonly string[]): Promise<void> => {
+    for (const url of urls) {
+      if (deps.signal?.aborted) {
+        return; // abort stops remaining link checks; the outer loop marks incomplete
+      }
+      if (linkCache.has(url)) {
+        continue; // already checked (possibly by another provider): reuse the outcome
+      }
+      try {
+        const outcome = await deps.linkChecker.check(url, deps.signal ?? new AbortController().signal);
+        if (outcome.url !== url) {
+          throw new Error("link checker url mismatch");
+        }
+        linkCache.set(url, outcome.accessible);
+      } catch (error) {
+        if (deps.signal?.aborted || (error instanceof SearchProviderError && error.code === "cancelled")) {
+          return; // cancellation: stop silently; benchmarkComplete stays false
+        }
+        failures.push(`${provider}: link_check_failed`); // stable sanitized
+        linkCheckFailures.add(provider);
+        return; // do not continue checking remaining urls for this provider
+      }
+    }
   };
 
   outer: for (const provider of deps.providers) {
@@ -162,11 +199,15 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
             latencyMs: performance.now() - startedAt,
             costUsd: pricingUsd[provider.id]!,
           });
+          await checkNewUrls(provider.id, response.results.map((result) => result.url));
         } catch (error) {
-          failures.push(`${provider.id}/${query.id}/run${round}: ${sanitizeError(error)}`);
+          if (deps.signal?.aborted) {
+            interrupted = true;
+            break outer;
+          }
+          failures.push(`${provider.id}/${query.id}/run${round}: ${failureLabel(error)}`);
         }
         attempted += 1;
-        await updateLinkValidity(provider.id, runs, deps.linkChecker, linkValidity, failures);
         deps.writer(buildReport(false));
       }
     }

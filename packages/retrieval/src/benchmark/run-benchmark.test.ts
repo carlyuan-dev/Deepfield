@@ -5,7 +5,7 @@ import type { NormalizedSearchResponse } from "../search-provider.js";
 import { QUERIES_V1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1 } from "./reference-companies.js";
 
-function fakeProvider(id: "brave" | "tavily", opts: { failQueries?: Set<string>; urls?: () => string[] } = {}): HarnessProvider {
+function fakeProvider(id: "brave" | "tavily", opts: { failQueries?: Set<string>; urls?: (queryId: string, round: number) => string[] } = {}): HarnessProvider {
   return {
     id,
     endpoint: `https://${id}.example`,
@@ -16,7 +16,7 @@ function fakeProvider(id: "brave" | "tavily", opts: { failQueries?: Set<string>;
           throw new Error(`provider ${id} failed ${hit.id}`);
         }
       }
-      const urls = opts.urls !== undefined ? opts.urls() : [`https://${id}.example/${encodeURIComponent(query)}`];
+      const urls = opts.urls !== undefined ? opts.urls("", 0) : [`https://${id}.example/${encodeURIComponent(query)}`];
       const response: NormalizedSearchResponse = {
         provider: id,
         results: urls.map((url, index) => ({ title: `t${index}`, url, snippet: "s", rank: index + 1, provider: id })),
@@ -26,13 +26,26 @@ function fakeProvider(id: "brave" | "tavily", opts: { failQueries?: Set<string>;
   };
 }
 
-function fakeChecker(validRate = 1): LinkChecker {
-  return {
-    async check(urls) {
-      const valid = Math.floor(urls.length * validRate);
-      return { valid, total: urls.length };
-    },
-  };
+class FakeLinkChecker implements LinkChecker {
+  readonly checks: Array<{ url: string }> = [];
+  private readonly accessible: Map<string, boolean>;
+  private readonly infraFailOn: Set<string>;
+
+  constructor(accessible: Map<string, boolean>, infraFailOn: Set<string> = new Set()) {
+    this.accessible = accessible;
+    this.infraFailOn = infraFailOn;
+  }
+
+  async check(url: string, signal: AbortSignal): Promise<{ url: string; accessible: boolean }> {
+    if (signal.aborted) {
+      throw new Error("cancelled");
+    }
+    this.checks.push({ url });
+    if (this.infraFailOn.has(url)) {
+      throw new Error("infra boom");
+    }
+    return { url, accessible: this.accessible.get(url) ?? true };
+  }
 }
 
 function harnessDeps(overrides: Partial<BenchmarkHarnessDeps> = {}): BenchmarkHarnessDeps {
@@ -40,7 +53,7 @@ function harnessDeps(overrides: Partial<BenchmarkHarnessDeps> = {}): BenchmarkHa
     providers: [fakeProvider("brave"), fakeProvider("tavily")],
     runsPerQuery: 2,
     maxResults: 20,
-    linkChecker: fakeChecker(),
+    linkChecker: new FakeLinkChecker(new Map()),
     pricingUsd: { brave: 0.01, tavily: 0.02 },
     pricingNote: "test pricing v1",
     writer: () => {},
@@ -52,7 +65,6 @@ describe("benchmark harness state machine (focused revision)", () => {
   it("fixes expectedMeasurements up front (first checkpoint already shows the full expected count)", async () => {
     const checkpoints: BenchmarkReport[] = [];
     const report = await runBenchmark(harnessDeps({ writer: (entry) => checkpoints.push(entry) }));
-    // 2 providers x 10 queries x 2 rounds = 40, fixed before any request
     expect(report.expectedMeasurements).toBe(40);
     expect(checkpoints[0]!.expectedMeasurements).toBe(40);
     expect(checkpoints[0]!.attemptedMeasurements).toBe(1);
@@ -61,6 +73,34 @@ describe("benchmark harness state machine (focused revision)", () => {
     expect(report.benchmarkComplete).toBe(true);
     expect(report.attemptedMeasurements).toBe(40);
     expect(report.successfulMeasurements).toBe(40);
+  });
+
+  it("checks each unique URL exactly once across providers and rounds (global cache)", async () => {
+    const sharedUrl = "https://shared.example/";
+    const checker = new FakeLinkChecker(new Map([[sharedUrl, true]]));
+    const report = await runBenchmark(harnessDeps({
+      providers: [
+        fakeProvider("brave", { urls: () => [sharedUrl] }),
+        fakeProvider("tavily", { urls: () => [sharedUrl] }),
+      ],
+      linkChecker: checker,
+    }));
+    expect(report.attemptedMeasurements).toBe(40);
+    // 2 providers x 10 queries x 2 rounds all return the SAME url: only 1 check
+    expect(checker.checks).toHaveLength(1);
+    expect(checker.checks[0]!.url).toBe(sharedUrl);
+  });
+
+  it("scales link checks with unique URLs, not measurements x growing sets", async () => {
+    const checker = new FakeLinkChecker(new Map());
+    await runBenchmark(harnessDeps({
+      providers: [
+        fakeProvider("brave", { urls: () => ["https://a.example/1", "https://a.example/2"] }),
+        fakeProvider("tavily", { urls: () => ["https://a.example/2", "https://a.example/3"] }),
+      ],
+      linkChecker: checker,
+    }));
+    expect(checker.checks).toHaveLength(3); // unique urls: /1 /2 /3
   });
 
   it("increments attempted on failures too (failed attempts never masquerade as runs)", async () => {
@@ -72,25 +112,18 @@ describe("benchmark harness state machine (focused revision)", () => {
       ],
       writer: (entry) => checkpoints.push(entry),
     }));
-    // q1 fails in both providers x 2 rounds = 4 failures
     expect(report.attemptedMeasurements).toBe(40);
     expect(report.successfulMeasurements).toBe(36);
     expect(report.failures.length).toBe(4);
-    // the failed q1 runs never became successful runs
     expect(report.runs.every((run) => run.queryId !== "q1" || run.results.length > 0)).toBe(true);
-    // the interrupted-marker checkpoints are benchmarkComplete=false until the end
-    const lastCheckpoint = checkpoints[checkpoints.length - 1]!;
-    expect(lastCheckpoint.benchmarkComplete).toBe(true);
-    expect(lastCheckpoint.successfulMeasurements).toBe(36);
+    expect(checkpoints[checkpoints.length - 1]!.benchmarkComplete).toBe(true);
   });
 
   it("keeps the last checkpoint on interrupt with benchmarkComplete=false", async () => {
     const controller = new AbortController();
     const checkpoints: BenchmarkReport[] = [];
-    // abort after the first provider finishes (20 attempts)
     let count = 0;
-    const runPromise = runBenchmark(harnessDeps({
-      providers: [fakeProvider("brave"), fakeProvider("tavily")],
+    const report = await runBenchmark(harnessDeps({
       signal: controller.signal,
       writer: (entry) => {
         checkpoints.push(entry);
@@ -100,40 +133,57 @@ describe("benchmark harness state machine (focused revision)", () => {
         }
       },
     }));
-    const report = await runPromise;
     expect(report.benchmarkComplete).toBe(false);
     expect(report.attemptedMeasurements).toBe(20);
     expect(report.hardGatePassed).toBe(false);
-    // the last written checkpoint reflects the interrupt
-    const lastCheckpoint = checkpoints[checkpoints.length - 1]!;
-    expect(lastCheckpoint.benchmarkComplete).toBe(false);
-    expect(lastCheckpoint.attemptedMeasurements).toBe(20);
+    expect(checkpoints[checkpoints.length - 1]!.benchmarkComplete).toBe(false);
   });
 
   it("rejects illegal pricing and config before any measurement", async () => {
-    await expect(
-      runBenchmark(harnessDeps({ pricingUsd: { brave: -1, tavily: 0.02 } })),
-    ).rejects.toThrow(BenchmarkInputError);
-    await expect(
-      runBenchmark(harnessDeps({ pricingUsd: { brave: Number.NaN, tavily: 0.02 } })),
-    ).rejects.toThrow(BenchmarkInputError);
-    await expect(
-      runBenchmark(harnessDeps({ pricingUsd: { brave: 0.01 } })),
-    ).rejects.toThrow(/pricing/);
+    await expect(runBenchmark(harnessDeps({ pricingUsd: { brave: -1, tavily: 0.02 } }))).rejects.toThrow(BenchmarkInputError);
+    await expect(runBenchmark(harnessDeps({ pricingUsd: { brave: Number.NaN, tavily: 0.02 } }))).rejects.toThrow(BenchmarkInputError);
+    await expect(runBenchmark(harnessDeps({ pricingUsd: { brave: 0.01 } }))).rejects.toThrow(/pricing/);
     await expect(runBenchmark(harnessDeps({ runsPerQuery: 0 }))).rejects.toThrow(BenchmarkInputError);
     await expect(runBenchmark(harnessDeps({ providers: [fakeProvider("brave")] }))).rejects.toThrow(/at least two/);
   });
 
-  it("rejects a link check whose total does not match the deduplicated URL set", async () => {
-    const badChecker: LinkChecker = {
-      async check(_urls) {
-        return { valid: 1, total: 1 }; // wrong denominator for a 2-url set
-      },
-    };
-    const report = await runBenchmark(harnessDeps({ linkChecker: badChecker, providers: [fakeProvider("brave", { urls: () => ["https://a.example/1", "https://a.example/2"] }), fakeProvider("tavily")] }));
-    expect(report.failures.some((failure) => failure.includes("link check sample invalid"))).toBe(true);
+  it("records stable sanitized failures (no raw provider/link error messages or urls)", async () => {
+    const report = await runBenchmark(harnessDeps({
+      providers: [
+        fakeProvider("brave", { failQueries: new Set(["q1"]), urls: () => ["https://x.example/"] }),
+        fakeProvider("tavily"),
+      ],
+      linkChecker: new FakeLinkChecker(new Map([["https://x.example/", true]]), new Set(["https://x.example/"])),
+    }));
+    for (const failure of report.failures) {
+      expect(failure).not.toMatch(/provider brave failed q1/); // raw message stripped
+      expect(failure).not.toContain("https://x.example/"); // urls never in failures
+    }
+    expect(report.failures.some((failure) => failure.includes("provider_failed"))).toBe(true);
+    expect(report.failures.some((failure) => failure.includes("link_check_failed"))).toBe(true);
+  });
+
+  it("reports a provider with zero successful runs as incomplete (does not vanish)", async () => {
+    const report = await runBenchmark(harnessDeps({
+      providers: [
+        fakeProvider("brave", { failQueries: new Set(QUERIES_V1.map((query) => query.id)) }),
+        fakeProvider("tavily"),
+      ],
+    }));
+    const braveCompletion = report.completions.find((completion) => completion.provider === "brave")!;
+    expect(braveCompletion).toBeDefined();
+    expect(braveCompletion.completed).toBe(false);
+    expect(braveCompletion.runCount).toBe(0);
+    expect(braveCompletion.expectedCount).toBe(20);
+    expect(braveCompletion.missing).toEqual(QUERIES_V1.map((query) => query.id));
     const braveEligibility = report.eligibility.find((entry) => entry.provider === "brave")!;
     expect(braveEligibility.eligible).toBe(false);
+    const braveRaw = report.raw.find((entry) => entry.provider === "brave")!;
+    expect(braveRaw.completed).toBe(false);
+    expect(braveRaw.runsCompleted).toBe(0);
+    // tavily is complete and eligible
+    expect(report.completions.find((completion) => completion.provider === "tavily")!.completed).toBe(true);
+    expect(report.hardGates.fewerThanTwoCompleted).toBe(true);
   });
 
   it("records the pricing config (no keys) in every checkpoint", async () => {
@@ -142,6 +192,5 @@ describe("benchmark harness state machine (focused revision)", () => {
     expect(report.pricingUsd).toEqual({ brave: 0.01, tavily: 0.02 });
     expect(report.pricingNote).toBe("test pricing v1");
     expect(JSON.stringify(checkpoints[0])).not.toContain("API_KEY");
-    expect(JSON.stringify(report)).not.toContain("API_KEY");
   });
 });

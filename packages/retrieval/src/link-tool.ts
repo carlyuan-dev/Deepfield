@@ -31,8 +31,68 @@ export interface LinkToolDeps {
   transport: Pick<SafeHttpTransport, "fetch">;
 }
 
+export interface LinkAccessibilityOutcome {
+  accessible: boolean;
+  statusCode: number;
+  finalUrl: string;
+  contentType: string;
+}
+
 function isAccessible(statusCode: number): boolean {
   return statusCode >= 200 && statusCode < 400;
+}
+
+/**
+ * Shared HEAD-first accessibility core (also used by the benchmark live link
+ * checker). Only explicit "HEAD not supported" statuses (405/501) trigger a
+ * bounded GET fallback; the fallback body is never buffered into the
+ * ResourceStore and is zero-filled before returning.
+ */
+export async function checkLinkAccessible(
+  deps: LinkToolDeps,
+  url: string,
+  signal: AbortSignal,
+): Promise<LinkAccessibilityOutcome> {
+  if (signal.aborted) {
+    throw new TransportError("cancelled");
+  }
+  try {
+    const checkedAt = Date.now();
+    const head = await deps.transport.fetch(url, {
+      method: "HEAD",
+      signal,
+      maxBodyBytes: 0,
+    });
+    if (head.statusCode === 405 || head.statusCode === 501) {
+      const fallback = await deps.transport.fetch(url, {
+        method: "GET",
+        signal,
+        maxBodyBytes: MAX_LINK_FALLBACK_BYTES,
+      });
+      try {
+        return {
+          accessible: isAccessible(fallback.statusCode),
+          statusCode: fallback.statusCode,
+          finalUrl: fallback.finalUrl,
+          contentType: fallback.contentType,
+        };
+      } finally {
+        // the fallback body is never stored or surfaced: zero it
+        zeroFillBuffer(fallback.body);
+      }
+    }
+    return {
+      accessible: isAccessible(head.statusCode),
+      statusCode: head.statusCode,
+      finalUrl: head.finalUrl,
+      contentType: head.contentType,
+    };
+  } catch (error) {
+    if (error instanceof TransportError) {
+      throw error;
+    }
+    throw new TransportError("network_unavailable");
+  }
 }
 
 /**
@@ -60,37 +120,13 @@ export function createCheckLinkAccessibilityDefinition(
       }
       try {
         const checkedAt = Date.now();
-        const head = await deps.transport.fetch(input.url, {
-          method: "HEAD",
-          signal,
-          maxBodyBytes: 0,
-        });
-        if (head.statusCode === 405 || head.statusCode === 501) {
-          const fallback = await deps.transport.fetch(input.url, {
-            method: "GET",
-            signal,
-            maxBodyBytes: MAX_LINK_FALLBACK_BYTES,
-          });
-          try {
-            return {
-              url: input.url,
-              statusCode: fallback.statusCode,
-              accessible: isAccessible(fallback.statusCode),
-              finalUrl: fallback.finalUrl,
-              contentType: fallback.contentType,
-              checkedAt,
-            };
-          } finally {
-            // the fallback body is never stored or surfaced: zero it
-            zeroFillBuffer(fallback.body);
-          }
-        }
+        const outcome = await checkLinkAccessible(deps, input.url, signal);
         return {
           url: input.url,
-          statusCode: head.statusCode,
-          accessible: isAccessible(head.statusCode),
-          finalUrl: head.finalUrl,
-          contentType: head.contentType,
+          statusCode: outcome.statusCode,
+          accessible: outcome.accessible,
+          finalUrl: outcome.finalUrl,
+          contentType: outcome.contentType,
           checkedAt,
         };
       } catch (error) {
