@@ -44,7 +44,12 @@ class BudgetToken implements ToolBudgetToken {
   constructor(
     readonly identity: ToolIdentity,
     readonly category: ToolMeterCategory,
-  ) {}
+  ) {
+    // Freeze before the token is handed out (and before it is registered in
+    // tokenRecords): TypeScript readonly is compile-time only, so the token
+    // object itself must be runtime-immutable too.
+    Object.freeze(this);
+  }
 }
 
 function assertValidLimits(limits: ToolBudgetLimits): void {

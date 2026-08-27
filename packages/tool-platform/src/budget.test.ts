@@ -216,4 +216,20 @@ describe("ToolBudgetLedger token boundaries (focused revision)", () => {
     expect(message).not.toContain("fetch_url");
     expect(message).not.toContain("secret");
   });
+
+  it("freezes the token object itself and its captured identity (final revision)", () => {
+    const { ledger } = makeLedger({});
+    const token = ledger.reserve(fetchV1, "fetch");
+    expect(Object.isFrozen(token)).toBe(true);
+    expect(Object.isFrozen(token.identity)).toBe(true);
+    expect(() => {
+      (token as unknown as { identity: ToolIdentity }).identity = { name: "forged", version: 9 };
+    }).toThrow(TypeError);
+    expect(() => {
+      (token as unknown as { category: string }).category = "search";
+    }).toThrow(TypeError);
+    expect(() => {
+      token.identity.name = "hacked";
+    }).toThrow(TypeError);
+  });
 });
