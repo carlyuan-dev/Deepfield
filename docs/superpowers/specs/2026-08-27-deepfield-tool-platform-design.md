@@ -2,7 +2,7 @@
 
 日期：2026-08-27
 
-状态：草案已通过对话评审，等待书面规格复核
+状态：已批准，等待实施
 
 ## 1. 目标
 
@@ -93,6 +93,14 @@ Plan 2。
 中转、双重取消和额外恢复状态。Runner 接口不得依赖当前进程形态，以便未来按负载
 或稳定性需要独立拆分。
 
+Utility Process 不直接打开 SQLite，也不直接读取系统加密密钥。它通过现有父子进程
+通道上的窄化、带关联 ID 的 Host RPC 请求 Main：审计请求只携带白名单化元数据，
+Main 使用 `SqliteToolAudit` 写入并返回确认；Provider 密钥请求只允许已注册且获授权的
+Provider ID，Main 从 `SecretStore` 读取后只把密钥交给发起请求的 Utility Process。
+Tool Runner 必须等待必需审计的确认后才能发出 `completed`。Host RPC 的请求、事件、
+日志和错误不得包含网页正文、认证头或密钥；Main/Utility 任一侧退出或协议失配都必须
+安全失败并释放 pending 请求。
+
 ## 5. 模块边界
 
 ### 5.1 `packages/contracts`
@@ -157,6 +165,10 @@ HTML/PDF 解析库必须在实施时做 Node 24、Electron 43、ESM 和打包兼
 不得保存网页全文、PDF 二进制、完整解析文本、API Key、Cookie、认证头或底层原始
 异常。实时 progress 不逐条持久化；只保存最终记录和少量有审计意义的生命周期
 节点。
+
+`SqliteToolAudit` 只在 Main Process 装配；Utility Process 使用实现同一
+`ToolAuditSink` 接口的 `RemoteToolAuditSink`，通过上文 Host RPC 等待 Main 的
+start/finish 落库回执。这条协议是内部宿主边界，不向 Renderer 暴露通用数据库能力。
 
 ### 5.5 Application、Main、Preload、Renderer
 

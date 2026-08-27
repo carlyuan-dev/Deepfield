@@ -7,3 +7,4 @@ test-results/
 playwright-report/
 *.log
 *.tsbuildinfo
+/docs/架构图/
