@@ -14,7 +14,9 @@ import { ToolRegistry } from "./registry.js";
 import { type RetryClock } from "./retry.js";
 import type { ToolAuditSink } from "./audit.js";
 import { finishAuditBestEffort, runAttempt } from "./runner-attempt.js";
+import { ToolConcurrencyLimiter } from "./limiter.js";
 import {
+  snapshotCorrelation,
   snapshotExecutionInput,
   snapshotJsonValue,
   snapshotToolIdentity,
@@ -28,28 +30,23 @@ export interface ToolRunnerOptions {
   clock: RetryClock;
 }
 
-// Only reachable for out-of-contract calls whose tool identity cannot be
-// snapshotted at all; the result is a safe invalid_input with a frozen
+// Only reachable for out-of-contract calls; safe invalid_input with a frozen
 // placeholder so no mutable caller object is ever exposed.
 const INVALID_TOOL_PLACEHOLDER: ToolIdentity = Object.freeze({ name: "invalid_tool", version: 1 });
 const INVALID_EXECUTION_ID = "invalid-execution";
 const INVALID_TRACE_ID = "invalid-trace";
 
 /**
- * Single execution pipeline shared by Pi adapters, Capabilities and direct
- * callers: entry snapshot -> resolve -> validate input -> policy -> budget ->
- * audit start -> started -> execute/retry -> validate output -> required audit
- * finish + budget finalize -> exactly one terminal event. The caller's call
- * and context are snapshotted before the first emit/await, so listeners,
- * policy, audit and later caller mutation cannot change what the pipeline
- * sees.
+ * Single execution pipeline: entry snapshot -> resolve -> validate input ->
+ * policy -> budget + concurrency -> audit start -> started -> execute/retry ->
+ * validate output -> required audit finish + budget finalize -> one terminal.
  */
-export class ToolRunner {
-  readonly #registry: ToolRegistry;
+export class ToolRunner {  readonly #registry: ToolRegistry;
   readonly #policy: ToolPolicy;
   readonly #budget: ToolBudgetLedger;
   readonly #audit: ToolAuditSink;
   readonly #clock: RetryClock;
+  readonly #concurrency: ToolConcurrencyLimiter;
 
   constructor(options: ToolRunnerOptions) {
     this.#registry = options.registry;
@@ -57,6 +54,7 @@ export class ToolRunner {
     this.#budget = options.budget;
     this.#audit = options.audit;
     this.#clock = options.clock;
+    this.#concurrency = new ToolConcurrencyLimiter();
   }
 
   async execute(
@@ -66,14 +64,13 @@ export class ToolRunner {
     onEvent: ToolEventSink,
   ): Promise<ToolExecutionResult> {
     const tool = snapshotToolIdentity(call.tool);
-    if (tool === undefined) {
-      return invalidInputPlaceholder(call);
+    const correlation = snapshotCorrelation(call);
+    if (tool === undefined || correlation === undefined) {
+      return invalidInputPlaceholder();
     }
-    const executionId = call.executionId;
-    const traceId = call.traceId;
-    // Capture everything the pipeline depends on before the first emit: a
-    // listener running on `accepted` must not be able to change actor,
-    // project, trace, toolSet or confirmations for this execution.
+    const { executionId, traceId } = correlation;
+    // Capture everything before the first emit (accepted listeners must not
+    // change actor, project, trace, toolSet or confirmations).
     const entry = snapshotExecutionInput(call, context, traceId);
     const startedAt = this.#clock.now();
     const emitter = new ToolEventEmitter(executionId, traceId, tool, () => this.#clock.now(), onEvent);
@@ -143,6 +140,13 @@ export class ToolRunner {
     } catch {
       return fail(makeToolFailure("budget_exceeded", 1, false));
     }
+    // Per-tool-identity concurrency cap acquired atomically with the budget;
+    // both are released exactly once on every terminal path below.
+    const releaseConcurrency = this.#concurrency.acquire(`${tool.name}@${tool.version}`, definition.concurrency);
+    if (releaseConcurrency === undefined) {
+      this.#budget.release(token);
+      return fail(makeToolFailure("budget_exceeded", 1, false));
+    }
     try {
       await this.#audit.start({
         executionId,
@@ -154,11 +158,13 @@ export class ToolRunner {
       });
     } catch {
       this.#budget.release(token);
+      releaseConcurrency();
       return fail(makeToolFailure("audit_failed", 1, false));
     }
 
     if (signal.aborted) {
       this.#budget.release(token);
+      releaseConcurrency();
       await finishAuditBestEffort(this.#audit, {
         executionId,
         traceId,
@@ -187,12 +193,10 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
-        // attempts increments only when an executor attempt is really about to
-        // start, so deadline/cancel hits between attempts never inflate it.
+        // attempts increments only when an attempt is really about to start.
         attempts = attempt;
         emit({ type: "started" });
-        const outcome = await runAttempt({
-          definition,
+        const outcome = await runAttempt({          definition,
           input,
           context: scope,
           controller: internal,
@@ -222,8 +226,7 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
-        // Backoff is capped by the remaining total deadline: the deadline
-        // always bounds executor time plus every backoff, never beyond.
+        // Backoff is capped by the remaining total deadline.
         const delayMs = Math.min(definition.retry.backoffMs, remaining);
         emit({ type: "retry_scheduled", retryDelayMs: delayMs });
         try {
@@ -243,9 +246,8 @@ export class ToolRunner {
       if (!outputSnapshot.ok || !Value.Check(definition.outputSchema, outputSnapshot.value)) {
         terminalFailure = makeToolFailure("invalid_output", attempts, false);
       } else {
-        // The frozen snapshot is what gets validated and returned: the
-        // executor's original value can be mutated at any time afterwards
-        // without changing the result or leaking secrets.
+        // The frozen snapshot is validated and returned; later mutation of the
+        // executor's original value cannot change the result or leak secrets.
         output = outputSnapshot.value;
         try {
           await this.#audit.finish({
@@ -263,10 +265,12 @@ export class ToolRunner {
 
     if (terminalFailure === undefined) {
       this.#budget.complete(token);
+      releaseConcurrency();
       return complete(output, attempts);
     }
 
     this.#budget.release(token);
+    releaseConcurrency();
     const status: "failed" | "cancelled" =
       terminalFailure.code === "cancelled" ? "cancelled" : "failed";
     await finishAuditBestEffort(this.#audit, {
@@ -281,16 +285,10 @@ export class ToolRunner {
   }
 }
 
-function invalidInputPlaceholder(call: ToolCallRequest): ToolExecutionResult {
+function invalidInputPlaceholder(): ToolExecutionResult {
   return {
-    executionId:
-      typeof call.executionId === "string" && call.executionId.length > 0
-        ? call.executionId
-        : INVALID_EXECUTION_ID,
-    traceId:
-      typeof call.traceId === "string" && call.traceId.length > 0
-        ? call.traceId
-        : INVALID_TRACE_ID,
+    executionId: INVALID_EXECUTION_ID,
+    traceId: INVALID_TRACE_ID,
     tool: INVALID_TOOL_PLACEHOLDER,
     status: "failed",
     failure: makeToolFailure("invalid_input", 1, false),

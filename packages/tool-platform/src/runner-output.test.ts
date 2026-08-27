@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { ToolExecutionResultSchema } from "@deepfield/contracts";
+import { ToolExecutionEventSchema, ToolExecutionResultSchema } from "@deepfield/contracts";
 import type { ToolCallRequest, ToolExecutionEvent } from "@deepfield/contracts";
 import type { ToolDefinition, ToolRunContext } from "./definition.js";
 import { ToolBudgetLedger } from "./budget.js";
@@ -143,5 +143,60 @@ describe("ToolRunner output snapshot (second revision)", () => {
     expect(Value.Check(ToolExecutionResultSchema, result)).toBe(true);
     expect(result.executionId.length).toBeGreaterThan(0);
     expect(result.traceId.length).toBeGreaterThan(0);
+  });
+});
+
+describe("ToolRunner correlation validation (third revision)", () => {
+  const scenarios: { name: string; executionId?: unknown; traceId?: unknown }[] = [
+    { name: "empty executionId", executionId: "" },
+    { name: "non-string executionId", executionId: 123 },
+    { name: "empty traceId", traceId: "" },
+    { name: "non-string traceId", traceId: null },
+  ];
+
+  for (const scenario of scenarios) {
+    it(`rejects ${scenario.name} with a contract-valid invalid_input and no events`, async () => {
+      let executorCalls = 0;
+      const { runner, context, signal, events } = setup(
+        echoDefinition({
+          execute: async () => {
+            executorCalls += 1;
+            return { text: "x" };
+          },
+        }),
+      );
+      const call = {
+        executionId: scenario.executionId !== undefined ? scenario.executionId : "exec-1",
+        traceId: scenario.traceId !== undefined ? scenario.traceId : "trace-1",
+        tool: { name: "echo", version: 1 },
+        input: { text: "hi" },
+      } as unknown as ToolCallRequest;
+      const result = await runner.execute(call, context, signal, (event) => events.push(event));
+      expect(result.status).toBe("failed");
+      if (result.status === "failed") {
+        expect(result.failure.code).toBe("invalid_input");
+      }
+      expect(Value.Check(ToolExecutionResultSchema, result)).toBe(true);
+      expect(result.executionId.length).toBeGreaterThan(0);
+      expect(result.traceId.length).toBeGreaterThan(0);
+      expect(events).toHaveLength(0);
+      expect(executorCalls).toBe(0);
+    });
+  }
+
+  it("keeps legal correlation event sequences unchanged and contract-valid", async () => {
+    const { runner, call, context, signal, events } = setup();
+    const result = await runner.execute(call, context, signal, (event) => events.push(event));
+    expect(result.status).toBe("completed");
+    expect(events.map((event) => event.type)).toEqual([
+      "accepted",
+      "validated",
+      "policy_checked",
+      "started",
+      "completed",
+    ]);
+    for (const event of events) {
+      expect(Value.Check(ToolExecutionEventSchema, event)).toBe(true);
+    }
   });
 });

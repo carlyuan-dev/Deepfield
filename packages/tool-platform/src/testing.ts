@@ -73,17 +73,20 @@ export class FakeAuditSink implements ToolAuditSink {
   #finishGate: { resolve: () => void; promise: Promise<void> } | undefined;
   #startSeen: { resolve: () => void; promise: Promise<void> } | undefined;
   #finishSeen: { resolve: () => void; promise: Promise<void> } | undefined;
+  #failFinishOnce: boolean;
 
   constructor(
     options: {
       failStart?: boolean;
       failFinish?: boolean;
+      failFinishOnce?: boolean;
       deferStart?: boolean;
       deferFinish?: boolean;
     } = {},
   ) {
     this.#failStart = options.failStart ?? false;
     this.#failFinish = options.failFinish ?? false;
+    this.#failFinishOnce = options.failFinishOnce === true;
     if (options.deferStart === true) {
       this.#startGate = deferred();
       this.#startSeen = deferred();
@@ -108,6 +111,10 @@ export class FakeAuditSink implements ToolAuditSink {
   async finish(record: ToolAuditFinish): Promise<void> {
     if (this.#failFinish) {
       throw new Error("audit finish failed");
+    }
+    if (this.#failFinishOnce) {
+      this.#failFinishOnce = false;
+      throw new Error("audit finish failed once");
     }
     this.records.push({ kind: "finish", record });
     this.#finishSeen?.resolve();

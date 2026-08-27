@@ -24,6 +24,29 @@ export interface PolicyContextSnapshot {
 
 export type JsonSnapshotResult<T = unknown> = { ok: true; value: T } | { ok: false };
 
+export interface CorrelationSnapshot {
+  executionId: string;
+  traceId: string;
+}
+
+/**
+ * Validates the correlation IDs of a call. Only non-empty strings are usable:
+ * out-of-contract values are never echoed back and produce a fixed safe
+ * placeholder result instead.
+ */
+export function snapshotCorrelation(call: {
+  executionId: unknown;
+  traceId: unknown;
+}): CorrelationSnapshot | undefined {
+  if (typeof call.executionId !== "string" || call.executionId.length === 0) {
+    return undefined;
+  }
+  if (typeof call.traceId !== "string" || call.traceId.length === 0) {
+    return undefined;
+  }
+  return { executionId: call.executionId, traceId: call.traceId };
+}
+
 const TOOL_ACTORS = new Set([
   "main_agent",
   "capability",
