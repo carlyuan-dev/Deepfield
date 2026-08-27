@@ -5,6 +5,8 @@ import {
 } from "@deepfield/tool-platform";
 import {
   SearchProviderError,
+  assertValidSearchRequest,
+  isValidDateString,
   MAX_QUERY_LENGTH,
   MAX_RESULTS,
   type SearchProvider,
@@ -97,6 +99,24 @@ export function createSearchWebDefinition(
     meter: { category: "search", countsBytes: false, countsTime: true },
     async execute(input, _context, signal) {
       try {
+        // the schema enforces shapes; this enforces real dates and from <= to
+        // so an illegal range never reaches a remote provider
+        if (
+          input.timeRange !== undefined &&
+          (!isValidDateString(input.timeRange.from) ||
+            !isValidDateString(input.timeRange.to) ||
+            input.timeRange.from > input.timeRange.to)
+        ) {
+          throw new ToolExecutionError("invalid_input");
+        }
+        if (input.timeRange !== undefined && !provider.capabilities.timeRange) {
+          throw new ToolExecutionError("invalid_input");
+        }
+        assertValidSearchRequest({
+          query: input.query,
+          maxResults: input.maxResults,
+          ...(input.timeRange !== undefined ? { timeRange: input.timeRange } : {}),
+        });
         const response = await provider.search(
           {
             query: input.query,

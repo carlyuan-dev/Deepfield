@@ -1,20 +1,66 @@
 import { Readable } from "node:stream";
-import http from "node:http";
-import https from "node:https";
 import { SearchProviderError } from "./search-provider.js";
 import { readBoundedBody, normalizeContentEncoding } from "./bounded-reader.js";
 import type { HostTimer } from "./http-transport.js";
 
 export interface ProviderEndpoint {
-  /** Compiled-in fixed origin, e.g. "https://api.search.brave.com". */
+  /** Fixed https origin (scheme://host[:port]). */
   origin: string;
-  /** Compiled-in path prefix, e.g. "/res/v1/web/search". */
+  /** Fixed path prefix every request path must belong to. */
   pathPrefix: string;
+}
+
+/** Validates + normalizes a provider endpoint at client construction time. */
+export function validateEndpoint(endpoint: ProviderEndpoint): ProviderEndpoint {
+  if (typeof endpoint !== "object" || endpoint === null) {
+    throw new Error("invalid provider endpoint");
+  }
+  if (typeof endpoint.origin !== "string" || endpoint.origin.length === 0) {
+    throw new Error("invalid provider endpoint");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint.origin);
+  } catch {
+    throw new Error("invalid provider endpoint");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("invalid provider endpoint: https only");
+  }
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    throw new Error("invalid provider endpoint: credentials forbidden");
+  }
+  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+    throw new Error("invalid provider endpoint: query/hash forbidden");
+  }
+  if (parsed.pathname !== "/") {
+    throw new Error("invalid provider endpoint: path must be empty");
+  }
+  const prefix = endpoint.pathPrefix;
+  if (typeof prefix !== "string" || !prefix.startsWith("/") || prefix === "/") {
+    throw new Error("invalid provider pathPrefix");
+  }
+  if (prefix.includes("..") || /[\u0000-\u001f\u007f]/.test(prefix)) {
+    throw new Error("invalid provider pathPrefix");
+  }
+  return { origin: parsed.origin, pathPrefix: prefix };
+}
+
+/** Every request path must belong to the bound prefix; no absolute/scheme-relative URLs. */
+export function validateRequestPath(prefix: string, path: unknown): string {
+  if (typeof path !== "string") {
+    throw new Error("invalid provider path");
+  }
+  const belongs = path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`);
+  if (!belongs || path.includes("://") || path.startsWith("//") || path.includes("..") || /[\u0000-\u001f\u007f]/.test(path)) {
+    throw new Error("invalid provider path");
+  }
+  return path;
 }
 
 export interface ProviderHttpRequestOptions {
   method: "GET" | "POST";
-  /** Full request path (prefix + query/body routing); appended to the fixed origin. */
+  /** Request path belonging to the bound endpoint prefix. */
   path: string;
   headers?: Record<string, string>;
   body?: string;
@@ -26,8 +72,6 @@ export interface ProviderHttpResponse {
   statusCode: number;
   headers: Record<string, string | string[] | undefined>;
   body: Buffer;
-  /** Parsed Retry-After in milliseconds (only for valid integer seconds). */
-  retryAfterMs?: number;
 }
 
 export interface ProviderTransportRequest {
@@ -46,15 +90,17 @@ export interface ProviderTransportResponse {
 }
 
 export interface ProviderTransport {
+  /** Receives ONLY the client's bound (validated) endpoint. */
   request(endpoint: ProviderEndpoint, request: ProviderTransportRequest): Promise<ProviderTransportResponse>;
 }
 
 export interface ProviderHttpClientDeps {
   transport: ProviderTransport;
+  /** The fixed endpoint is bound AND validated at construction time. */
+  endpoint: ProviderEndpoint;
   timer?: (ms: number) => HostTimer;
   maxResponseBytes?: number;
   totalTimeoutMs?: number;
-  connectTimeoutMs?: number;
 }
 
 function defaultHostTimer(ms: number): HostTimer {
@@ -66,6 +112,14 @@ function defaultHostTimer(ms: number): HostTimer {
     }
   });
   return { promise, cancel: () => (timeout !== undefined ? clearTimeout(timeout) : undefined) };
+}
+
+function requirePositiveInt(value: number | undefined, name: string, fallback: number): number {
+  const resolved = value ?? fallback;
+  if (!Number.isInteger(resolved) || resolved <= 0) {
+    throw new Error(`invalid ${name}: must be a positive integer`);
+  }
+  return resolved;
 }
 
 /** Parses Retry-After: valid non-negative integer seconds bounded to one hour. */
@@ -85,31 +139,30 @@ export function parseRetryAfter(value: string | string[] | undefined): number | 
 }
 
 /**
- * Fixed-origin provider HTTP client. The origin is compiled into adapters —
- * callers never pass arbitrary origins. Redirects are rejected, response
- * bodies are bounded during streaming (decompressed size), and the total
- * deadline/abort races the whole request so a stuck socket can never block
- * the return. Authorization headers never appear in errors or diagnostics.
+ * Fixed-origin provider HTTP client. The endpoint is bound and validated at
+ * CONSTRUCTION; request() never accepts an origin or path prefix, so no caller
+ * can redirect traffic. Redirects are rejected, response bodies are bounded
+ * during streaming (decompressed size), and the total deadline/abort races the
+ * whole request so a stuck socket can never block the return. Authorization
+ * headers never appear in errors or diagnostics.
  */
 export class ProviderHttpClient {
+  readonly #endpoint: ProviderEndpoint;
   readonly #transport: ProviderTransport;
   readonly #timer: (ms: number) => HostTimer;
   readonly #maxResponseBytes: number;
   readonly #totalTimeoutMs: number;
-  readonly #connectTimeoutMs: number;
 
   constructor(deps: ProviderHttpClientDeps) {
+    this.#endpoint = validateEndpoint(deps.endpoint);
     this.#transport = deps.transport;
     this.#timer = deps.timer ?? defaultHostTimer;
-    this.#maxResponseBytes = deps.maxResponseBytes ?? 2 * 1024 * 1024;
-    this.#totalTimeoutMs = deps.totalTimeoutMs ?? 30_000;
-    this.#connectTimeoutMs = deps.connectTimeoutMs ?? 10_000;
+    this.#maxResponseBytes = requirePositiveInt(deps.maxResponseBytes, "maxResponseBytes", 2 * 1024 * 1024);
+    this.#totalTimeoutMs = requirePositiveInt(deps.totalTimeoutMs, "totalTimeoutMs", 30_000);
   }
 
-  async request(
-    endpoint: ProviderEndpoint,
-    options: ProviderHttpRequestOptions,
-  ): Promise<ProviderHttpResponse> {
+  async request(options: ProviderHttpRequestOptions): Promise<ProviderHttpResponse> {
+    const path = validateRequestPath(this.#endpoint.pathPrefix, options.path);
     const { signal } = options;
     if (signal.aborted) {
       throw new SearchProviderError("cancelled");
@@ -135,7 +188,7 @@ export class ProviderHttpClient {
     });
     try {
       return await Promise.race([
-        this.#perform(endpoint, options, controller),
+        this.#perform(path, options, controller),
         deadlinePromise,
         abortDeferred,
       ]);
@@ -159,13 +212,13 @@ export class ProviderHttpClient {
   }
 
   async #perform(
-    endpoint: ProviderEndpoint,
+    path: string,
     options: ProviderHttpRequestOptions,
     controller: AbortController,
   ): Promise<ProviderHttpResponse> {
-    const response = await this.#transport.request(endpoint, {
+    const response = await this.#transport.request(this.#endpoint, {
       method: options.method,
-      path: options.path,
+      path,
       headers: { ...(options.headers ?? {}) },
       ...(options.body !== undefined ? { body: options.body } : {}),
       signal: controller.signal,
@@ -203,7 +256,8 @@ export class ProviderHttpClient {
     if (response.statusCode === 429) {
       throw new SearchProviderError("rate_limited", parseRetryAfter(response.headers["retry-after"]));
     }
-    if (response.statusCode >= 500) {
+    if (response.statusCode >= 400) {
+      // non-special 4xx (400/404/422/...) and 5xx: never treated as success JSON
       throw new SearchProviderError("provider_unavailable");
     }
     return {
@@ -212,40 +266,4 @@ export class ProviderHttpClient {
       body,
     };
   }
-}
-
-/** Default transport: node:http/https against the compiled-in endpoint. */
-export function createNodeProviderTransport(): ProviderTransport {
-  return {
-    async request(endpoint, request) {
-      const mod = endpoint.origin.startsWith("https:") ? https : http;
-      return new Promise<ProviderTransportResponse>((resolve, reject) => {
-        const outgoing = mod.request(
-          endpoint.origin + request.path,
-          {
-            method: request.method,
-            headers: request.headers,
-            signal: request.signal,
-          },
-          (response) => {
-            const headers: Record<string, string | string[] | undefined> = {};
-            for (const [name, value] of Object.entries(response.headers)) {
-              headers[name] = value as string | string[] | undefined;
-            }
-            resolve({
-              statusCode: response.statusCode ?? 0,
-              headers,
-              body: response,
-              destroy: () => response.destroy(),
-            });
-          },
-        );
-        outgoing.on("error", () => reject(new SearchProviderError("network_unavailable")));
-        if (request.body !== undefined) {
-          outgoing.write(request.body);
-        }
-        outgoing.end();
-      });
-    },
-  };
 }

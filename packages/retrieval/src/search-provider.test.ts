@@ -5,6 +5,7 @@ import {
   MAX_RESULT_URL_LENGTH,
   MAX_RESULTS,
   SearchProviderError,
+  assertValidSearchRequest,
   normalizeSearchResults,
   type NormalizedSearchResponse,
   type RawSearchResult,
@@ -51,6 +52,29 @@ describe("search provider normalized contract (focused revision)", () => {
     expect(withDate.results[0]!.date).toBe("2026-08-27");
     expectCode(() => normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "not-a-date" }], 20), "malformed_response");
     expectCode(() => normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "2026-13-99" }], 20), "malformed_response");
+    // real calendar validation: 2026-02-30 and 2023-02-29 must be rejected
+    expectCode(() => normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "2026-02-30" }], 20), "malformed_response");
+    expectCode(() => normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "2023-02-29" }], 20), "malformed_response");
+    // leap years and month ends are accepted
+    expect(normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "2024-02-29" }], 20).results[0]!.date).toBe("2024-02-29");
+    expect(normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "2026-04-30" }], 20).results[0]!.date).toBe("2026-04-30");
+    expectCode(() => normalizeSearchResults("fake", [{ title: "D", url: "https://d.example", snippet: "s", date: "2026-04-31" }], 20), "malformed_response");
+  });
+
+  it("normalizes URLs and rejects percent-encoded expansion beyond the bound", () => {
+    // raw string fits but the normalized href exceeds the bound
+    const emojiPath = "\u{1F600}".repeat(300); // raw ≈ 618, normalized ≈ 3600
+    expect(emojiPath.length).toBeLessThan(MAX_RESULT_URL_LENGTH);
+    expectCode(() => normalizeSearchResults("fake", [{ title: "A", url: `https://x.example/${emojiPath}`, snippet: "s" }], 20), "dangerous_url");
+    // the normalized output uses the full normalized href (never a truncated one)
+    const ok = normalizeSearchResults("fake", [{ title: "A", url: "https://EXAMPLE.com/a%20b", snippet: "s" }], 20);
+    expect(ok.results[0]!.url).toBe("https://EXAMPLE.com/a%20b");
+  });
+
+  it("validates provider ids: non-empty and bounded", () => {
+    expectCode(() => normalizeSearchResults("", RAW_OK, 20), "invalid_request");
+    expectCode(() => normalizeSearchResults("p".repeat(65), RAW_OK, 20), "invalid_request");
+    expect(normalizeSearchResults("brave", RAW_OK, 20).provider).toBe("brave");
   });
 
   it("rejects duplicate and invalid ranks", () => {
@@ -60,6 +84,19 @@ describe("search provider normalized contract (focused revision)", () => {
       ], 20), "malformed_response");
     expectCode(() => normalizeSearchResults("fake", [{ title: "A", url: "https://a.example", snippet: "s", rank: 0 }], 20), "malformed_response");
     expectCode(() => normalizeSearchResults("fake", [{ title: "A", url: "https://a.example", snippet: "s", rank: 1.5 }], 20), "malformed_response");
+  });
+
+  it("rejects mixed implicit/explicit rank duplicates in both orders", () => {
+    // implicit (index+1 = 1) then explicit 1
+    expectCode(() => normalizeSearchResults("fake", [
+        { title: "A", url: "https://a.example", snippet: "s" },
+        { title: "B", url: "https://b.example", snippet: "s", rank: 1 },
+      ], 20), "malformed_response");
+    // explicit 2 then implicit (index+1 = 2)
+    expectCode(() => normalizeSearchResults("fake", [
+        { title: "A", url: "https://a.example", snippet: "s", rank: 2 },
+        { title: "B", url: "https://b.example", snippet: "s" },
+      ], 20), "malformed_response");
   });
 
   it("rejects dangerous and malformed URLs", () => {
@@ -104,5 +141,17 @@ describe("search provider normalized contract (focused revision)", () => {
       expect(String(error)).not.toContain("javascript:bad");
       expect(String(error)).not.toContain("secret-in-snippet");
     }
+  });
+
+  it("validates timeRange with real calendar dates and from<=to", () => {
+    expectCode(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "2026-02-30", to: "2026-03-01" } }), "invalid_request");
+    expectCode(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-02-01" } }), "invalid_request");
+    expectCode(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "2026-13-01", to: "2026-03-01" } }), "invalid_request");
+    expectCode(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "not-a-date", to: "2026-03-01" } }), "invalid_request");
+    // from == to is a legal single-day range
+    expect(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-03-01" } })).not.toThrow();
+    // leap boundaries
+    expect(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "2024-02-29", to: "2026-04-30" } })).not.toThrow();
+    expectCode(() => assertValidSearchRequest({ query: "x", maxResults: 5, timeRange: { from: "2023-02-29", to: "2026-04-30" } }), "invalid_request");
   });
 });

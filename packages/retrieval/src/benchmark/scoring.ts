@@ -1,6 +1,18 @@
 import type { NormalizedSearchResult } from "../search-provider.js";
 import type { QuerySetV1 } from "./queries.js";
 import type { ReferenceSetV1 } from "./reference-companies.js";
+import {
+  computeCompletions,
+  computeEligibility,
+  isValidDangerousUrl,
+  type BenchmarkedRun,
+  type LinkValiditySample,
+  type ProviderCompletion,
+  type ProviderEligibility,
+} from "./eligibility.js";
+
+export { computeCompletions, computeEligibility, isValidDangerousUrl };
+export type { BenchmarkedRun, LinkValiditySample, ProviderCompletion, ProviderEligibility };
 
 export const WEIGHTS = {
   companyRecall: 0.35,
@@ -11,22 +23,10 @@ export const WEIGHTS = {
   latency: 0.05,
 } as const;
 
-export interface BenchmarkedRun {
-  provider: string;
-  queryId: string;
-  query: string;
-  results: readonly NormalizedSearchResult[];
-  latencyMs: number;
-  costUsd: number;
-}
-
-export interface LinkValiditySample {
-  valid: number;
-  total: number;
-}
-
 export interface BenchmarkScoringInput {
   runs: readonly BenchmarkedRun[];
+  /** Expected runs per query (the plan fixes this at 2). */
+  runsPerQuery: number;
   /** Per-provider link validity samples (valid/total denominator). */
   linkValidity: Readonly<Record<string, LinkValiditySample>>;
   queries: QuerySetV1;
@@ -35,6 +35,7 @@ export interface BenchmarkScoringInput {
 
 export interface ProviderRawMetrics {
   provider: string;
+  completed: boolean;
   runsCompleted: number;
   companyRecall: number;
   chineseOfficialCoverage: number;
@@ -46,7 +47,7 @@ export interface ProviderRawMetrics {
   totalCostUsd: number;
 }
 
-export interface ProviderScore extends ProviderRawMetrics {
+export interface ProviderScore extends Omit<ProviderRawMetrics, "completed"> {
   noiseAndDuplicatesScore: number;
   costScore: number;
   latencyScore: number;
@@ -54,15 +55,18 @@ export interface ProviderScore extends ProviderRawMetrics {
 }
 
 export interface HardGateStatus {
-  fewerThanTwoProviders: boolean;
-  linkValidityBelow95: boolean;
-  chineseEmpty: boolean;
-  dangerousUrl: boolean;
-  categoryMissing: boolean;
+  /** Benchmark-level gate: fewer than two providers COMPLETED the full set. */
+  fewerThanTwoCompleted: boolean;
+  /** No completed provider is eligible. */
+  noEligibleProvider: boolean;
 }
 
 export interface BenchmarkScoringResult {
+  /** Completed AND eligible providers with normalized scores. */
   providers: ProviderScore[];
+  completions: ProviderCompletion[];
+  eligibility: ProviderEligibility[];
+  /** All providers' raw measurements (partial data kept, marked incomplete). */
   raw: ProviderRawMetrics[];
   hardGates: HardGateStatus;
   hardGatePassed: boolean;
@@ -95,44 +99,42 @@ export function percentile(values: readonly number[], p: number): number {
   return sorted[index]!;
 }
 
+function requireFiniteNonNegative(value: number, name: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0; // invalid measurements never produce NaN/Infinity/negative scores
+  }
+  return value;
+}
+
 /**
  * Deterministic offline scoring. Raw measured values are kept separate from
- * normalized scores; a missing provider run is never silently imputed.
+ * normalized scores; a missing/partial provider run is never silently
+ * imputed. Only providers that COMPLETE every query exactly runsPerQuery
+ * times (with unique rounds, no unknown queries) can be eligible; per-provider
+ * hard gates (link validity, Chinese emptiness, dangerous URLs, category
+ * coverage) decide eligibility without poisoning other providers.
  */
 export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringResult {
-  const providers = [...new Set(input.runs.map((run) => run.provider))];
   const chineseQueryIds = new Set(
     input.queries.queries
       .filter((query) => /[\u4e00-\u9fff]/.test(query.query))
       .map((query) => query.id),
   );
+  const providers = [...new Set(input.runs.map((run) => run.provider))];
+  const completions = computeCompletions({ ...input, runs: input.runs });
+  const eligibility = computeEligibility({ ...input, runs: input.runs });
+  const completedProviders = new Set(completions.filter((completion) => completion.completed).map((completion) => completion.provider));
   const gate: HardGateStatus = {
-    fewerThanTwoProviders: providers.length < 2,
-    linkValidityBelow95: false,
-    chineseEmpty: false,
-    dangerousUrl: false,
-    categoryMissing: false,
+    fewerThanTwoCompleted: completedProviders.size < 2,
+    noEligibleProvider: false,
   };
 
-  const scores: ProviderScore[] = [];
+  const raw: ProviderRawMetrics[] = [];
   for (const provider of providers) {
+    const completion = completions.find((entry) => entry.provider === provider)!;
     const runs = input.runs.filter((run) => run.provider === provider);
     const allResults = runs.flatMap((run) => [...run.results]);
 
-    // dangerous URL hard gate (raw data can contain one even though the
-    // normalization layer would reject it)
-    if (allResults.some((result) => {
-      try {
-        const url = new URL(result.url);
-        return url.protocol !== "http:" && url.protocol !== "https:";
-      } catch {
-        return true;
-      }
-    })) {
-      gate.dangerousUrl = true;
-    }
-
-    // company recall: fraction of reference companies with a domain match
     const matched = new Set<string>();
     for (const company of input.reference.companies) {
       if (allResults.some((result) => matchesCompanyDomain(result.url, company.domains))) {
@@ -141,7 +143,6 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
     }
     const companyRecall = input.reference.companies.length === 0 ? 0 : matched.size / input.reference.companies.length;
 
-    // Chinese official-site coverage: Chinese companies matched in Chinese queries
     const chineseCompanies = input.reference.companies.filter((company) => company.category === "chinese");
     const chineseRuns = runs.filter((run) => chineseQueryIds.has(run.queryId));
     const chineseResults = chineseRuns.flatMap((run) => [...run.results]);
@@ -153,19 +154,18 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
     }
     const chineseOfficialCoverage = chineseCompanies.length === 0 ? 0 : chineseMatched / chineseCompanies.length;
 
-    // Chinese queries must return valid results
-    if (chineseRuns.length > 0 && chineseRuns.every((run) => run.results.length === 0)) {
-      gate.chineseEmpty = true;
-    }
-
-    // link validity with the explicit denominator; missing sample -> 0 (never imputed)
     const validity = input.linkValidity[provider];
-    const linkValidity = validity === undefined || validity.total === 0 ? 0 : validity.valid / validity.total;
-    if (linkValidity < 0.95) {
-      gate.linkValidityBelow95 = true;
+    let linkValidity = 0;
+    if (validity !== undefined) {
+      const total = requireFiniteNonNegative(validity.total, "linkValidity.total");
+      const valid = requireFiniteNonNegative(validity.valid, "linkValidity.valid");
+      if (valid > total) {
+        linkValidity = 0;
+      } else {
+        linkValidity = total === 0 ? 0 : valid / total;
+      }
     }
 
-    // noise + duplicates: duplicate URL rate and empty-snippet noise rate
     const urls = allResults.map((result) => result.url);
     const uniqueUrls = new Set(urls);
     const duplicateRate = urls.length === 0 ? 0 : 1 - uniqueUrls.size / urls.length;
@@ -173,16 +173,15 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
       allResults.length === 0
         ? 0
         : allResults.filter((result) => result.title.length === 0 && result.snippet.length === 0).length / allResults.length;
-    const noiseAndDuplicatesScore = 1 - 0.5 * duplicateRate - 0.5 * noiseRate;
 
-    // latency p50/p95 from raw run latencies
-    const latencies = runs.map((run) => run.latencyMs);
+    const latencies = runs.map((run) => requireFiniteNonNegative(run.latencyMs, "latencyMs"));
     const latencyP50Ms = percentile(latencies, 50);
     const latencyP95Ms = percentile(latencies, 95);
+    const totalCostUsd = runs.reduce((sum, run) => sum + requireFiniteNonNegative(run.costUsd, "costUsd"), 0);
 
-    // raw metrics separated from scores
-    const raw: ProviderRawMetrics = {
+    raw.push({
       provider,
+      completed: completion.completed,
       runsCompleted: runs.length,
       companyRecall,
       chineseOfficialCoverage,
@@ -191,27 +190,32 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
       noiseRate,
       latencyP50Ms,
       latencyP95Ms,
-      totalCostUsd: runs.reduce((sum, run) => sum + run.costUsd, 0),
-    };
+      totalCostUsd,
+    });
+  }
+
+  const eligibleProviders = eligibility.filter((entry) => entry.eligible).map((entry) => entry.provider);
+  gate.noEligibleProvider = eligibleProviders.length === 0;
+
+  const scores: ProviderScore[] = [];
+  for (const provider of eligibleProviders) {
+    const metrics = raw.find((entry) => entry.provider === provider)!;
     scores.push({
-      ...raw,
-      noiseAndDuplicatesScore,
-      costScore: 0, // filled after normalization across providers
+      ...metrics,
+      noiseAndDuplicatesScore: 1 - 0.5 * metrics.duplicateRate - 0.5 * metrics.noiseRate,
+      costScore: 0,
       latencyScore: 0,
       weightedTotal: 0,
     });
   }
-
-  // cost/latency scores normalized across the COMPLETED providers
-  const totalCosts = scores.map((score) => score.totalCostUsd).filter((cost) => cost >= 0);
+  const totalCosts = scores.map((score) => score.totalCostUsd);
   const minCost = totalCosts.length === 0 ? 0 : Math.min(...totalCosts);
   const maxCost = totalCosts.length === 0 ? 0 : Math.max(...totalCosts);
-  const p50s = scores.map((score) => score.latencyP50Ms).filter((v) => v > 0);
+  const p50s = scores.map((score) => score.latencyP50Ms).filter((value) => value > 0);
   const minP50 = p50s.length === 0 ? 0 : Math.min(...p50s);
-
   for (const score of scores) {
     score.costScore = maxCost === 0 ? 1 : minCost === maxCost ? 1 : 1 - (score.totalCostUsd - minCost) / (maxCost - minCost);
-    score.latencyScore = minP50 === 0 || score.latencyP50Ms === 0 ? 0 : minP50 / score.latencyP50Ms;
+    score.latencyScore = minP50 === 0 || score.latencyP50Ms === 0 ? 0 : Math.min(1, minP50 / score.latencyP50Ms);
     score.weightedTotal =
       WEIGHTS.companyRecall * score.companyRecall +
       WEIGHTS.chineseOfficialCoverage * score.chineseOfficialCoverage +
@@ -221,23 +225,6 @@ export function scoreBenchmark(input: BenchmarkScoringInput): BenchmarkScoringRe
       WEIGHTS.latency * score.latencyScore;
   }
 
-  // systematic category missing: a provider matches NO company of a category
-  for (const score of scores) {
-    const providerRuns = input.runs.filter((run) => run.provider === score.provider);
-    const providerResults = providerRuns.flatMap((run) => [...run.results]);
-    for (const category of ["chinese", "overseas"] as const) {
-      const companies = input.reference.companies.filter((company) => company.category === category);
-      const anyMatched = companies.some((company) =>
-        providerResults.some((result) => matchesCompanyDomain(result.url, company.domains)),
-      );
-      if (companies.length > 0 && !anyMatched) {
-        gate.categoryMissing = true;
-      }
-    }
-  }
-
-  const hardGatePassed = !Object.values(gate).some(Boolean);
-  return { providers: scores, raw: scores.map(({ provider, runsCompleted, companyRecall, chineseOfficialCoverage, linkValidity, duplicateRate, noiseRate, latencyP50Ms, latencyP95Ms, totalCostUsd }) => ({
-    provider, runsCompleted, companyRecall, chineseOfficialCoverage, linkValidity, duplicateRate, noiseRate, latencyP50Ms, latencyP95Ms, totalCostUsd,
-  })), hardGates: gate, hardGatePassed };
+  const hardGatePassed = !gate.fewerThanTwoCompleted && !gate.noEligibleProvider;
+  return { providers: scores, completions, eligibility, raw, hardGates: gate, hardGatePassed };
 }

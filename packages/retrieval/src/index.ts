@@ -117,7 +117,6 @@ export {
 export {
   ProviderHttpClient,
   parseRetryAfter,
-  createNodeProviderTransport,
   type ProviderEndpoint,
   type ProviderHttpClientDeps,
   type ProviderHttpRequestOptions,
@@ -126,6 +125,7 @@ export {
   type ProviderTransportRequest,
   type ProviderTransportResponse,
 } from "./provider-http-client.js";
+export { createNodeProviderTransport } from "./provider-node-transport.js";
 export { createBraveProvider, type BraveProviderDeps } from "./providers/brave.js";
 export { createTavilyProvider, type TavilyProviderDeps } from "./providers/tavily.js";
 export { createSerperProvider, type SerperProviderDeps } from "./providers/serper.js";

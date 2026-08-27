@@ -1,6 +1,7 @@
 import { ProviderHttpClient, type ProviderEndpoint } from "../provider-http-client.js";
 import {
   SearchProviderError,
+  assertValidSearchRequest,
   normalizeSearchResults,
   type NormalizedSearchResponse,
   type SearchProvider,
@@ -8,7 +9,7 @@ import {
 } from "../search-provider.js";
 
 /** Tavily Search API: POST /search with api_key in the JSON body. */
-const ENDPOINT: ProviderEndpoint = {
+export const ENDPOINT: ProviderEndpoint = {
   origin: "https://api.tavily.com",
   pathPrefix: "/search",
 };
@@ -31,17 +32,20 @@ export function createTavilyProvider(deps: TavilyProviderDeps): SearchProvider {
   const { client, token } = deps;
   return {
     id: "tavily",
+    capabilities: { timeRange: true },
     async search(request: SearchRequest, signal): Promise<NormalizedSearchResponse> {
+      assertValidSearchRequest(request);
       const body: Record<string, unknown> = {
         api_key: token,
         query: request.query,
         max_results: request.maxResults,
       };
       if (request.timeRange !== undefined) {
+        // Tavily supports start_date/end_date (YYYY-MM-DD)
         body.start_date = request.timeRange.from;
         body.end_date = request.timeRange.to;
       }
-      const response = await client.request(ENDPOINT, {
+      const response = await client.request({
         method: "POST",
         path: ENDPOINT.pathPrefix,
         headers: { "content-type": "application/json", accept: "application/json" },

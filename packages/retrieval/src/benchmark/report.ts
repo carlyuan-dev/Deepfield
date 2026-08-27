@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
-import type { BenchmarkedRun, HardGateStatus, ProviderScore } from "./scoring.js";
+import type { BenchmarkedRun, HardGateStatus, ProviderCompletion, ProviderEligibility, ProviderScore } from "./scoring.js";
 
 export const REPORT_FILENAME = "search-benchmark.json";
 
@@ -18,6 +18,12 @@ export interface BenchmarkReport {
   providerConfig: ProviderConfigSummary[];
   failures: string[];
   runs: BenchmarkedRun[];
+  /** Expected total measurements = providers x queries x runsPerQuery. */
+  expectedMeasurements: number;
+  /** Measurements recorded so far (checkpointed incrementally). */
+  completedMeasurements: number;
+  completions: ProviderCompletion[];
+  eligibility: ProviderEligibility[];
   scores: ProviderScore[];
   hardGatePassed: boolean;
   hardGates: HardGateStatus;

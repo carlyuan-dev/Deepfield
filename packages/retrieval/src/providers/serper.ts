@@ -1,6 +1,7 @@
 import { ProviderHttpClient, type ProviderEndpoint } from "../provider-http-client.js";
 import {
   SearchProviderError,
+  assertValidSearchRequest,
   normalizeSearchResults,
   type NormalizedSearchResponse,
   type SearchProvider,
@@ -8,7 +9,7 @@ import {
 } from "../search-provider.js";
 
 /** Serper.dev Google Search API: POST /search with X-API-KEY header. */
-const ENDPOINT: ProviderEndpoint = {
+export const ENDPOINT: ProviderEndpoint = {
   origin: "https://google.serper.dev",
   pathPrefix: "/search",
 };
@@ -31,8 +32,16 @@ export function createSerperProvider(deps: SerperProviderDeps): SearchProvider {
   const { client, token } = deps;
   return {
     id: "serper",
+    // Serper's Google Search API (official openapi) exposes no date-range
+    // parameter: the capability is declared false and timeRange is REJECTED
+    // up front rather than silently ignored.
+    capabilities: { timeRange: false },
     async search(request: SearchRequest, signal): Promise<NormalizedSearchResponse> {
-      const response = await client.request(ENDPOINT, {
+      assertValidSearchRequest(request);
+      if (request.timeRange !== undefined) {
+        throw new SearchProviderError("invalid_request");
+      }
+      const response = await client.request({
         method: "POST",
         path: ENDPOINT.pathPrefix,
         headers: {

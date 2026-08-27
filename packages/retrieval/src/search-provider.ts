@@ -3,13 +3,14 @@ export const MAX_RESULTS = 20;
 export const MAX_RESULT_URL_LENGTH = 2048;
 export const MAX_RESULT_TITLE_LENGTH = 2000;
 export const MAX_RESULT_SNIPPET_LENGTH = 8000;
-export const MAX_RESULT_DATE_LENGTH = 40;
+export const MAX_RESULT_DATE_LENGTH = 10;
+export const MAX_PROVIDER_ID_LENGTH = 64;
 
 export interface SearchRequest {
   query: string;
   /** 1..20 — enforced by the contract and the tool schema. */
   maxResults: number;
-  /** Optional ISO-8601 time range (from/to inclusive). */
+  /** Optional YYYY-MM-DD time range (from <= to, inclusive). */
   timeRange?: { from: string; to: string };
 }
 
@@ -63,7 +64,7 @@ export interface NormalizedSearchResult {
   /** One-based, unique across the response. */
   rank: number;
   provider: string;
-  /** Optional ISO-8601 date. */
+  /** Optional YYYY-MM-DD date. */
   date?: string;
 }
 
@@ -75,6 +76,8 @@ export interface NormalizedSearchResponse {
 /** A provider adapter: fixed endpoint, normalized output, sanitized errors. */
 export interface SearchProvider {
   readonly id: string;
+  /** Explicit capability declaration; a provider that lacks it rejects timeRange. */
+  readonly capabilities: { timeRange: boolean };
   search(request: SearchRequest, signal: AbortSignal): Promise<NormalizedSearchResponse>;
 }
 
@@ -92,7 +95,57 @@ export interface RawSearchResult {
   [key: string]: unknown;
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/;
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Real calendar validation for YYYY-MM-DD (leap years, month ends). */
+export function isValidDateString(value: string): boolean {
+  const match = DATE_RE.exec(value);
+  if (match === null) {
+    return false;
+  }
+  const year = Number(match[1]!);
+  const month = Number(match[2]!);
+  const day = Number(match[3]!);
+  if (month < 1 || month > 12) {
+    return false;
+  }
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day >= 1 && day <= daysInMonth;
+}
+
+/**
+ * Validates a normalized request at the contract boundary. The tool and every
+ * adapter call this before touching the network so an illegal time range or
+ * query never reaches a remote provider.
+ */
+export function assertValidSearchRequest(request: SearchRequest): void {
+  if (
+    typeof request.query !== "string" ||
+    request.query.length === 0 ||
+    request.query.length > MAX_QUERY_LENGTH
+  ) {
+    throw new SearchProviderError("invalid_request");
+  }
+  if (
+    !Number.isInteger(request.maxResults) ||
+    request.maxResults < 1 ||
+    request.maxResults > MAX_RESULTS
+  ) {
+    throw new SearchProviderError("invalid_request");
+  }
+  if (request.timeRange !== undefined) {
+    const { from, to } = request.timeRange;
+    if (
+      typeof from !== "string" ||
+      typeof to !== "string" ||
+      !isValidDateString(from) ||
+      !isValidDateString(to) ||
+      from > to // YYYY-MM-DD compares lexicographically
+    ) {
+      throw new SearchProviderError("invalid_request");
+    }
+  }
+}
 
 function requireString(value: unknown, name: string, maxLength: number): string {
   if (typeof value !== "string" || value.length > maxLength) {
@@ -114,23 +167,17 @@ function requireSafeUrl(value: unknown): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new SearchProviderError("dangerous_url");
   }
-  return value;
-}
-
-function requireRank(value: unknown, seen: Set<number>, maxResults: number): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > maxResults) {
-    throw new SearchProviderError("malformed_response");
+  // percent-encoding can expand non-ASCII input beyond the bound: re-check the
+  // NORMALIZED href; the output stays the complete (never truncated) URL
+  if (parsed.href.length > MAX_RESULT_URL_LENGTH) {
+    throw new SearchProviderError("dangerous_url");
   }
-  if (seen.has(value)) {
-    throw new SearchProviderError("malformed_response");
-  }
-  seen.add(value);
   return value;
 }
 
 function requireDate(value: unknown): string {
   const date = requireString(value, "date", MAX_RESULT_DATE_LENGTH);
-  if (!DATE_RE.test(date) || Number.isNaN(Date.parse(date))) {
+  if (!isValidDateString(date)) {
     throw new SearchProviderError("malformed_response");
   }
   return date;
@@ -138,15 +185,18 @@ function requireDate(value: unknown): string {
 
 /**
  * Normalizes a provider's raw result array into the contract shape. Strict:
- * missing/oversized fields, dangerous URLs, duplicate ranks and malformed
- * dates all fail with stable sanitized errors — never a lenient fallback that
- * could mask provider API drift.
+ * missing/oversized fields, dangerous URLs, duplicate ranks (implicit or
+ * explicit) and malformed dates all fail with stable sanitized errors — never
+ * a lenient fallback that could mask provider API drift.
  */
 export function normalizeSearchResults(
   provider: string,
   rawResults: readonly RawSearchResult[],
   maxResults: number,
 ): NormalizedSearchResponse {
+  if (typeof provider !== "string" || provider.length === 0 || provider.length > MAX_PROVIDER_ID_LENGTH) {
+    throw new SearchProviderError("invalid_request");
+  }
   if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) {
     throw new SearchProviderError("invalid_request");
   }
@@ -164,7 +214,22 @@ export function normalizeSearchResults(
     const title = requireString(raw.title, "title", MAX_RESULT_TITLE_LENGTH);
     const url = requireSafeUrl(raw.url);
     const snippet = requireString(raw.snippet, "snippet", MAX_RESULT_SNIPPET_LENGTH);
-    const rank = raw.rank === undefined ? index + 1 : requireRank(raw.rank, seenRanks, maxResults);
+    // EVERY rank — implicit (index+1) or explicit — goes through the same
+    // uniqueness check, so mixed implicit/explicit duplicates are rejected.
+    const explicitRank = raw.rank;
+    const rank =
+      explicitRank === undefined
+        ? index + 1
+        : (() => {
+            if (typeof explicitRank !== "number" || !Number.isInteger(explicitRank) || explicitRank < 1 || explicitRank > maxResults) {
+              throw new SearchProviderError("malformed_response");
+            }
+            return explicitRank;
+          })();
+    if (seenRanks.has(rank)) {
+      throw new SearchProviderError("malformed_response");
+    }
+    seenRanks.add(rank);
     const date = raw.date === undefined ? undefined : requireDate(raw.date);
     results.push({
       title,

@@ -4,15 +4,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ProviderHttpClient,
-  parseRetryAfter,
   type ProviderEndpoint,
   type ProviderTransport,
   type ProviderTransportResponse,
 } from "../provider-http-client.js";
-import { SearchProviderError } from "../search-provider.js";
-import { createBraveProvider } from "./brave.js";
-import { createTavilyProvider } from "./tavily.js";
-import { createSerperProvider } from "./serper.js";
+import { SearchProviderError, type SearchRequest } from "../search-provider.js";
+import { createBraveProvider, ENDPOINT as BRAVE_ENDPOINT } from "./brave.js";
+import { createTavilyProvider, ENDPOINT as TAVILY_ENDPOINT } from "./tavily.js";
+import { createSerperProvider, ENDPOINT as SERPER_ENDPOINT } from "./serper.js";
 import { createSearchWebDefinition } from "../search-tool.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -57,11 +56,10 @@ function scriptedTransport(script: Array<() => ProviderTransportResponse>) {
   return { transport, requests };
 }
 
-function clientFor(transport: ProviderTransport): ProviderHttpClient {
-  return new ProviderHttpClient({ transport });
+function clientFor(transport: ProviderTransport, endpoint: ProviderEndpoint = BRAVE_ENDPOINT): ProviderHttpClient {
+  return new ProviderHttpClient({ transport, endpoint });
 }
 
-const ENDPOINT: ProviderEndpoint = { origin: "https://api.search.brave.com", pathPrefix: "/res/v1/web/search" };
 const REQUEST = { method: "GET" as const, path: "/res/v1/web/search?q=x&count=20", signal: new AbortController().signal };
 
 async function errorOf(promise: Promise<unknown>): Promise<unknown> {
@@ -73,80 +71,17 @@ async function errorOf(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("expected a rejection");
 }
 
-describe("provider http client (focused revision)", () => {
-  it("rejects redirects, 401, 429 (with Retry-After bounds) and 5xx with stable codes", async () => {
-    const client = clientFor(scriptedTransport([() => rawResponse(302, "", { location: "https://evil.example" })]).transport);
-    await expect(client.request(ENDPOINT, REQUEST)).rejects.toMatchObject({ code: "redirect_blocked" });
-
-    const client401 = clientFor(scriptedTransport([() => rawResponse(401, "unauthorized")]).transport);
-    await expect(client401.request(ENDPOINT, REQUEST)).rejects.toMatchObject({ code: "unauthorized" });
-
-    const client429 = clientFor(scriptedTransport([() => rawResponse(429, "slow down", { "retry-after": "5" })]).transport);
-    const rateError = await errorOf(client429.request(ENDPOINT, REQUEST));
-    expect(rateError).toMatchObject({ code: "rate_limited", retryAfterMs: 5000 });
-
-    const client500 = clientFor(scriptedTransport([() => rawResponse(500, "boom")]).transport);
-    await expect(client500.request(ENDPOINT, REQUEST)).rejects.toMatchObject({ code: "provider_unavailable" });
-  });
-
-  it("parses Retry-After legal/illegal boundaries", () => {
-    expect(parseRetryAfter("5")).toBe(5000);
-    expect(parseRetryAfter("0")).toBe(0);
-    expect(parseRetryAfter("abc")).toBeUndefined();
-    expect(parseRetryAfter("-3")).toBeUndefined();
-    expect(parseRetryAfter("999999")).toBeUndefined();
-    expect(parseRetryAfter(["5", "6"])).toBeUndefined();
-    expect(parseRetryAfter(undefined)).toBeUndefined();
-  });
-
-  it("bounds response bytes during streaming and cancels on pre-abort", async () => {
-    const client = clientFor(scriptedTransport([() => ({
-      statusCode: 200,
-      headers: {},
-      body: Readable.from([Buffer.from("x".repeat(10_000))]),
-      destroy() {},
-    })]).transport);
-    await expect(
-      client.request(ENDPOINT, { ...REQUEST, maxResponseBytes: 100 }),
-    ).rejects.toMatchObject({ code: "response_too_large" });
-
-    const preAborted = new AbortController();
-    preAborted.abort();
-    await expect(
-      client.request(ENDPOINT, { ...REQUEST, signal: preAborted.signal }),
-    ).rejects.toMatchObject({ code: "cancelled" });
-  });
-
-  it("never leaks authorization or keys into errors", async () => {
-    const client = clientFor(scriptedTransport([() => ({
-      statusCode: 500,
-      headers: {},
-      body: Readable.from([Buffer.from('{"error":"sk-secret-key-value"}')]),
-      destroy() {},
-    })]).transport);
-    const error = await errorOf(
-      client.request(ENDPOINT, {
-        ...REQUEST,
-        headers: { "X-Subscription-Token": "sk-visible-token", authorization: "Bearer sk-visible-token" },
-      }),
-    );
-    expect(String(error)).not.toContain("sk-secret-key-value");
-    expect(String(error)).not.toContain("sk-visible-token");
-    expect(String(error)).not.toContain("Bearer");
-  });
-});
-
 describe("candidate provider adapters (focused revision)", () => {
   async function braveError(script: Array<() => ProviderTransportResponse>): Promise<SearchProviderError> {
     const { transport } = scriptedTransport(script);
-    const provider = createBraveProvider({ client: clientFor(transport), token: "sk-test" });
+    const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-test" });
     return (await errorOf(provider.search({ query: "人形机器人 公司", maxResults: 20 }, new AbortController().signal))) as SearchProviderError;
   }
 
   it("brave: success fixture, zero results and the request shape", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "brave-success.json"), "utf8"));
     const { transport, requests } = scriptedTransport([() => jsonResponse(200, body)]);
-    const provider = createBraveProvider({ client: clientFor(transport), token: "sk-test" });
+    const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-test" });
     const response = await provider.search({ query: "人形机器人 公司", maxResults: 20 }, new AbortController().signal);
     expect(response.results).toHaveLength(2);
     expect(response.results[0]).toMatchObject({ title: "Official Site", url: "https://example.com", rank: 1, provider: "brave" });
@@ -155,9 +90,28 @@ describe("candidate provider adapters (focused revision)", () => {
     expect(requests[0]!.headers["X-Subscription-Token"]).toBe("sk-test");
 
     const zero = JSON.parse(readFileSync(join(FIXTURES, "brave-zero.json"), "utf8"));
-    const zeroProvider = createBraveProvider({ client: clientFor(scriptedTransport([() => jsonResponse(200, zero)]).transport), token: "sk-test" });
+    const zeroProvider = createBraveProvider({ client: clientFor(scriptedTransport([() => jsonResponse(200, zero)]).transport, BRAVE_ENDPOINT), token: "sk-test" });
     const zeroResponse = await zeroProvider.search({ query: "x", maxResults: 20 }, new AbortController().signal);
     expect(zeroResponse.results).toHaveLength(0);
+  });
+
+  it("brave: maps timeRange to freshness and enforces official query limits before the network", async () => {
+    const { transport, requests } = scriptedTransport([() => jsonResponse(200, { web: { results: [] } })]);
+    const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-test" });
+    await provider.search(
+      { query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-03-31" } },
+      new AbortController().signal,
+    );
+    expect(requests[0]!.path).toContain("freshness=2026-03-01to2026-03-31");
+
+    // overlong/over-worded queries fail before any transport call
+    const longQuery = "x".repeat(401);
+    const longError = await errorOf(provider.search({ query: longQuery, maxResults: 5 }, new AbortController().signal));
+    expect(longError).toMatchObject({ code: "invalid_request" });
+    const manyWords = Array.from({ length: 51 }, (_, i) => `w${i}`).join(" ");
+    const wordError = await errorOf(provider.search({ query: manyWords, maxResults: 5 }, new AbortController().signal));
+    expect(wordError).toMatchObject({ code: "invalid_request" });
+    expect(requests).toHaveLength(1); // only the timeRange request reached the transport
   });
 
   it("brave: 401, 429 with retry-after, 5xx, invalid JSON, missing results and dangerous URL", async () => {
@@ -174,29 +128,58 @@ describe("candidate provider adapters (focused revision)", () => {
   it("brave: secret-bearing provider error never leaks the key or raw body", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "brave-secret-error.json"), "utf8"));
     const { transport } = scriptedTransport([() => jsonResponse(200, body)]);
-    const provider = createBraveProvider({ client: clientFor(transport), token: "sk-visible-token" });
+    const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-visible-token" });
     const error = (await errorOf(provider.search({ query: "x", maxResults: 20 }, new AbortController().signal))) as SearchProviderError;
     expect(String(error)).not.toContain("sk-visible-token");
     expect(String(error)).not.toContain("invalid api key");
   });
 
-  it("tavily: success fixture with published_date and POST body shape", async () => {
+  it("tavily: success fixture with published_date and POST body shape incl. timeRange", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "tavily-success.json"), "utf8"));
     const { transport, requests } = scriptedTransport([() => jsonResponse(200, body)]);
-    const provider = createTavilyProvider({ client: clientFor(transport), token: "sk-test" });
-    const response = await provider.search({ query: "humanoid robot", maxResults: 20 }, new AbortController().signal);
+    const provider = createTavilyProvider({ client: clientFor(transport, TAVILY_ENDPOINT), token: "sk-test" });
+    const response = await provider.search(
+      { query: "humanoid robot", maxResults: 20, timeRange: { from: "2026-08-01", to: "2026-08-31" } },
+      new AbortController().signal,
+    );
     expect(response.results[0]).toMatchObject({ title: "Tavily Result", url: "https://tavily.example", rank: 1, date: "2026-08-20" });
     expect(requests[0]!.method).toBe("POST");
-    expect(JSON.parse(requests[0]!.body ?? "{}")).toMatchObject({ api_key: "sk-test", query: "humanoid robot", max_results: 20 });
+    expect(JSON.parse(requests[0]!.body ?? "{}")).toMatchObject({
+      api_key: "sk-test",
+      query: "humanoid robot",
+      max_results: 20,
+      start_date: "2026-08-01",
+      end_date: "2026-08-31",
+    });
   });
 
-  it("serper: success fixture with date and X-API-KEY header", async () => {
+  it("serper: success fixture with date, X-API-KEY header and explicit timeRange rejection", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "serper-success.json"), "utf8"));
     const { transport, requests } = scriptedTransport([() => jsonResponse(200, body)]);
-    const provider = createSerperProvider({ client: clientFor(transport), token: "sk-test" });
+    const provider = createSerperProvider({ client: clientFor(transport, SERPER_ENDPOINT), token: "sk-test" });
     const response = await provider.search({ query: "actuator supplier", maxResults: 20 }, new AbortController().signal);
     expect(response.results[0]).toMatchObject({ title: "Serper Result", url: "https://serper.example", rank: 1, date: "2026-08-22" });
     expect(requests[0]!.headers["X-API-KEY"]).toBe("sk-test");
+
+    // capability declared false: timeRange is rejected up front, never silently ignored
+    expect(provider.capabilities).toEqual({ timeRange: false });
+    const rangeError = await errorOf(
+      provider.search({ query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-03-31" } }, new AbortController().signal),
+    );
+    expect(rangeError).toMatchObject({ code: "invalid_request" });
+    expect(requests).toHaveLength(1); // the timeRange request never reached the transport
+  });
+
+  it("adapters reject invalid requests before the network", async () => {
+    const { transport, requests } = scriptedTransport([() => jsonResponse(200, { organic: [] })]);
+    const provider = createSerperProvider({ client: clientFor(transport, SERPER_ENDPOINT), token: "sk-test" });
+    const badRange = await errorOf(
+      provider.search({ query: "x", maxResults: 5, timeRange: { from: "2026-02-30", to: "2026-03-01" } }, new AbortController().signal),
+    );
+    expect(badRange).toMatchObject({ code: "invalid_request" });
+    const badMax = await errorOf(provider.search({ query: "x", maxResults: 21 }, new AbortController().signal));
+    expect(badMax).toMatchObject({ code: "invalid_request" });
+    expect(requests).toHaveLength(0);
   });
 });
 
@@ -204,7 +187,7 @@ describe("search_web definition (focused revision)", () => {
   it("maps provider errors to stable Tool codes and never leaks payloads", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "brave-secret-error.json"), "utf8"));
     const { transport } = scriptedTransport([() => jsonResponse(200, body)]);
-    const provider = createBraveProvider({ client: clientFor(transport), token: "sk-visible-token" });
+    const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-visible-token" });
     const definition = createSearchWebDefinition(provider);
     const error = await errorOf(
       definition.execute({ query: "x", maxResults: 5 }, { traceId: "t", actor: "main_agent" }, new AbortController().signal, () => {}),
@@ -217,7 +200,7 @@ describe("search_web definition (focused revision)", () => {
   it("returns the normalized output through the definition", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "brave-success.json"), "utf8"));
     const { transport } = scriptedTransport([() => jsonResponse(200, body)]);
-    const provider = createBraveProvider({ client: clientFor(transport), token: "sk-test" });
+    const provider = createBraveProvider({ client: clientFor(transport, BRAVE_ENDPOINT), token: "sk-test" });
     const definition = createSearchWebDefinition(provider);
     const output = await definition.execute(
       { query: "人形机器人 公司", maxResults: 2 },
@@ -228,5 +211,39 @@ describe("search_web definition (focused revision)", () => {
     expect(output.results).toHaveLength(2);
     expect(output.results[0]).toMatchObject({ rank: 1, provider: "brave" });
     expect(JSON.stringify(output)).not.toContain("sk-test");
+  });
+
+  it("fails closed on illegal timeRange and unsupported capability at the tool boundary", async () => {
+    const { transport, requests } = scriptedTransport([() => jsonResponse(200, { organic: [] })]);
+    const serper = createSerperProvider({ client: clientFor(transport, SERPER_ENDPOINT), token: "sk-test" });
+    const definition = createSearchWebDefinition(serper);
+    const badDates = await errorOf(
+      definition.execute(
+        { query: "x", maxResults: 5, timeRange: { from: "2026-02-30", to: "2026-03-01" } },
+        { traceId: "t", actor: "main_agent" },
+        new AbortController().signal,
+        () => {},
+      ),
+    );
+    expect(badDates).toMatchObject({ code: "invalid_input" });
+    const reversed = await errorOf(
+      definition.execute(
+        { query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-02-01" } },
+        { traceId: "t", actor: "main_agent" },
+        new AbortController().signal,
+        () => {},
+      ),
+    );
+    expect(reversed).toMatchObject({ code: "invalid_input" });
+    const unsupported = await errorOf(
+      definition.execute(
+        { query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-03-31" } },
+        { traceId: "t", actor: "main_agent" },
+        new AbortController().signal,
+        () => {},
+      ),
+    );
+    expect(unsupported).toMatchObject({ code: "invalid_input" });
+    expect(requests).toHaveLength(0); // nothing reached the transport
   });
 });

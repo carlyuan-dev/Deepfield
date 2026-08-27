@@ -1,6 +1,7 @@
 import { ProviderHttpClient, type ProviderEndpoint } from "../provider-http-client.js";
 import {
   SearchProviderError,
+  assertValidSearchRequest,
   normalizeSearchResults,
   type NormalizedSearchResponse,
   type SearchProvider,
@@ -8,10 +9,14 @@ import {
 } from "../search-provider.js";
 
 /** Brave Search API (web search): GET /res/v1/web/search with X-Subscription-Token. */
-const ENDPOINT: ProviderEndpoint = {
+export const ENDPOINT: ProviderEndpoint = {
   origin: "https://api.search.brave.com",
   pathPrefix: "/res/v1/web/search",
 };
+
+// Brave's official hard query limits: 400 characters and 50 words.
+const BRAVE_MAX_QUERY_CHARS = 400;
+const BRAVE_MAX_QUERY_WORDS = 50;
 
 export interface BraveProviderDeps {
   client: ProviderHttpClient;
@@ -31,9 +36,20 @@ export function createBraveProvider(deps: BraveProviderDeps): SearchProvider {
   const { client, token } = deps;
   return {
     id: "brave",
+    capabilities: { timeRange: true },
     async search(request: SearchRequest, signal): Promise<NormalizedSearchResponse> {
-      const params = new URLSearchParams({ q: request.query, count: String(request.maxResults) });
-      const response = await client.request(ENDPOINT, {
+      assertValidSearchRequest(request);
+      const query = request.query;
+      const wordCount = query.trim().split(/\s+/).filter((word) => word.length > 0).length;
+      if (query.length > BRAVE_MAX_QUERY_CHARS || wordCount > BRAVE_MAX_QUERY_WORDS) {
+        throw new SearchProviderError("invalid_request");
+      }
+      const params = new URLSearchParams({ q: query, count: String(request.maxResults) });
+      if (request.timeRange !== undefined) {
+        // Brave web search supports freshness=YYYY-MM-DDtoYYYY-MM-DD
+        params.set("freshness", `${request.timeRange.from}to${request.timeRange.to}`);
+      }
+      const response = await client.request({
         method: "GET",
         path: `${ENDPOINT.pathPrefix}?${params.toString()}`,
         headers: {
