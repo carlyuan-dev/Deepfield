@@ -143,4 +143,17 @@ describe("url policy", () => {
       expect(result.target.addresses).toEqual([PUBLIC_V4]);
     }
   });
+
+  it("returns a frozen defensive copy of the validated addresses", async () => {
+    const mutable: DnsAnswer[] = [{ address: "93.184.216.34", family: 4 }];
+    const policy = new UrlPolicy({ lookup: async () => mutable });
+    const result = await policy.check("http://example.com/");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(Object.isFrozen(result.target.addresses)).toBe(true);
+      expect(Object.isFrozen(result.target.addresses[0])).toBe(true);
+      mutable[0] = { address: "10.0.0.1", family: 4 }; // mutate the source
+      expect(result.target.addresses[0]!.address).toBe("93.184.216.34");
+    }
+  });
 });

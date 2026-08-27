@@ -128,6 +128,11 @@ export class UrlPolicy {
         return { ok: false, code: "url_blocked" };
       }
     }
+    // Defensive copy + freeze: callers (and later lookup owners) cannot mutate
+    // the validated snapshot that the transport pins its sockets to.
+    const frozenAddresses: readonly DnsAnswer[] = Object.freeze(
+      addresses.map((answer) => Object.freeze({ address: answer.address, family: answer.family })),
+    );
     return {
       ok: true,
       target: {
@@ -136,7 +141,7 @@ export class UrlPolicy {
         hostname,
         port,
         path: url.pathname + url.search,
-        addresses,
+        addresses: frozenAddresses,
       },
     };
   }

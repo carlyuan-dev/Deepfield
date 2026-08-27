@@ -209,4 +209,22 @@ describe("ToolRunner entry snapshots and immutability (focused revision)", () =>
     expect(events.filter(isTerminal)).toHaveLength(1);
     expect(budget.reserve({ name: "echo", version: 1 }, "none")).toBeDefined();
   });
+
+  it("computes the executor toolSetFingerprint only from the trusted ToolSet, never from a self-reported value", async () => {
+    const trusted = new ToolSet([echoGrant]);
+    let seen: string | undefined;
+    const definition = echoDefinition({
+      execute: async (_input, context) => {
+        seen = context.toolSetFingerprint;
+        return { text: "ok" };
+      },
+    });
+    const { runner, call, context, signal, events } = setup(definition);
+    // The caller forges a fingerprint; the runner must ignore it.
+    const forged: ToolRunContext = { ...context, toolSetFingerprint: "forged-fingerprint" };
+    const result = await runner.execute(call, forged, signal, (event) => events.push(event));
+    expect(result.status).toBe("completed");
+    expect(seen).toBe(trusted.fingerprint());
+    expect(seen).not.toBe("forged-fingerprint");
+  });
 });

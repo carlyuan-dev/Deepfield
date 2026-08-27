@@ -4,6 +4,7 @@ import {
   type ToolDefinition,
 } from "@deepfield/tool-platform";
 import { TransportError, type SafeHttpTransport } from "./http-transport.js";
+import { zeroFillBuffer } from "./resource-store.js";
 
 export const MAX_LINK_FALLBACK_BYTES = 1024 * 1024;
 
@@ -27,7 +28,7 @@ export const LinkOutputSchema = Type.Object(
 export type LinkOutput = Static<typeof LinkOutputSchema>;
 
 export interface LinkToolDeps {
-  transport: SafeHttpTransport;
+  transport: Pick<SafeHttpTransport, "fetch">;
 }
 
 function isAccessible(statusCode: number): boolean {
@@ -70,14 +71,19 @@ export function createCheckLinkAccessibilityDefinition(
             signal,
             maxBodyBytes: MAX_LINK_FALLBACK_BYTES,
           });
-          return {
-            url: input.url,
-            statusCode: fallback.statusCode,
-            accessible: isAccessible(fallback.statusCode),
-            finalUrl: fallback.finalUrl,
-            contentType: fallback.contentType,
-            checkedAt,
-          };
+          try {
+            return {
+              url: input.url,
+              statusCode: fallback.statusCode,
+              accessible: isAccessible(fallback.statusCode),
+              finalUrl: fallback.finalUrl,
+              contentType: fallback.contentType,
+              checkedAt,
+            };
+          } finally {
+            // the fallback body is never stored or surfaced: zero it
+            zeroFillBuffer(fallback.body);
+          }
         }
         return {
           url: input.url,

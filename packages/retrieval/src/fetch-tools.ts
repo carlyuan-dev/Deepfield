@@ -5,7 +5,7 @@ import {
   type ToolRunContext,
 } from "@deepfield/tool-platform";
 import { TransportError, type SafeHttpTransport } from "./http-transport.js";
-import { ResourceStore, type ResourceScope } from "./resource-store.js";
+import { ResourceStore, zeroFillBuffer, type ResourceScope } from "./resource-store.js";
 
 export const MAX_HTML_BYTES = 8 * 1024 * 1024;
 export const MAX_PDF_BYTES = 32 * 1024 * 1024;
@@ -29,17 +29,28 @@ export const FetchOutputSchema = Type.Object(
 export type FetchOutput = Static<typeof FetchOutputSchema>;
 
 export interface FetchToolDeps {
-  transport: SafeHttpTransport;
+  transport: Pick<SafeHttpTransport, "fetch">;
   store: ResourceStore;
 }
 
+/**
+ * Fail-closed scope binding: prefer the trusted ToolSet object itself (direct
+ * trusted calls), then the runner-provided snapshot fingerprint. A self-reported
+ * fingerprint alone is never accepted, and a missing trusted fingerprint throws
+ * instead of falling back to a shared empty authorization domain.
+ */
 export function scopeFromContext(context: ToolRunContext): ResourceScope {
+  const fingerprint =
+    context.toolSet !== undefined
+      ? context.toolSet.fingerprint()
+      : context.toolSetFingerprint;
+  if (typeof fingerprint !== "string" || fingerprint.length === 0) {
+    throw new ToolExecutionError("executor_failed");
+  }
   return {
     traceId: context.traceId,
     ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
-    // The runner provides the trusted ToolSet fingerprint in the snapshot
-    // scope; direct (test) calls fall back to the ToolSet itself.
-    toolSetFingerprint: context.toolSetFingerprint ?? context.toolSet?.fingerprint() ?? "",
+    toolSetFingerprint: fingerprint,
   };
 }
 
@@ -75,9 +86,25 @@ function makeFetchDefinition(
       if (signal.aborted) {
         throw new ToolExecutionError("cancelled");
       }
+      let result: Awaited<ReturnType<SafeHttpTransport["fetch"]>> | undefined;
+      let scope: ResourceScope | undefined;
+      let resourceId: string | undefined;
+      // Abort after a successful put must consume the fresh resource so no
+      // orphan survives the cancelled execution.
+      const onAbort = (): void => {
+        if (resourceId !== undefined && scope !== undefined) {
+          try {
+            deps.store.consume(resourceId, scope);
+          } catch {
+            // consume is idempotent; a second abort listener run is a no-op
+          }
+          resourceId = undefined;
+        }
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
       try {
         onProgress?.({ kind: "fetching" });
-        const result = await deps.transport.fetch(input.url, {
+        result = await deps.transport.fetch(input.url, {
           signal,
           maxBodyBytes: options.maxBytes,
         });
@@ -86,36 +113,44 @@ function makeFetchDefinition(
           throw new ToolExecutionError("unsupported_content_type");
         }
         if (signal.aborted) {
-          // never leave a resource when the caller cancelled before the put
           throw new ToolExecutionError("cancelled");
         }
-        const scope = scopeFromContext(context);
-        let resourceId: string | undefined;
-        try {
-          const { id } = deps.store.put(scope, result.body, {
-            finalUrl: result.finalUrl,
-            contentType: mime,
-            size: result.decompressedBytes,
-            sha256: result.sha256,
-          });
-          resourceId = id;
-          return {
-            resourceId: id,
-            finalUrl: result.finalUrl,
-            contentType: mime,
-            size: result.decompressedBytes,
-            sha256: result.sha256,
-          };
-        } catch (error) {
-          // If the resource was created but output construction failed, clean
-          // it up so no orphan survives this call.
-          if (resourceId !== undefined) {
-            deps.store.consume(resourceId, scope);
-          }
-          toToolFailure(error);
+        scope = scopeFromContext(context);
+        const { id } = deps.store.put(scope, result.body, {
+          finalUrl: result.finalUrl,
+          contentType: mime,
+          size: result.decompressedBytes,
+          sha256: result.sha256,
+        });
+        resourceId = id;
+        if (signal.aborted) {
+          // abort raced the put: the fresh resource is consumed immediately
+          deps.store.consume(id, scope);
+          resourceId = undefined;
+          throw new ToolExecutionError("cancelled");
         }
+        return {
+          resourceId: id,
+          finalUrl: result.finalUrl,
+          contentType: mime,
+          size: result.decompressedBytes,
+          sha256: result.sha256,
+        };
       } catch (error) {
+        if (resourceId !== undefined && scope !== undefined) {
+          try {
+            deps.store.consume(resourceId, scope);
+          } catch {
+            // already consumed by the abort listener
+          }
+          resourceId = undefined;
+        }
         toToolFailure(error);
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        if (result !== undefined) {
+          zeroFillBuffer(result.body); // best-effort: the copy is in the store
+        }
       }
     },
   };

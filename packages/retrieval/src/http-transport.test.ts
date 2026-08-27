@@ -7,59 +7,17 @@ import {
   type TransportAdapter,
   type TransportResponse,
 } from "./http-transport.js";
-import { UrlPolicy, type DnsAnswer, type DnsLookup } from "./url-policy.js";
-
-const PUBLIC_V4: DnsAnswer = { address: "93.184.216.34", family: 4 };
-const lookup: DnsLookup = async () => [PUBLIC_V4];
-
-function policy(): UrlPolicy {
-  return new UrlPolicy({ lookup });
-}
-
-function fetchOptions(): { signal: AbortSignal } {
-  return { signal: new AbortController().signal };
-}
-
-function adapterFor(script: Array<(request: { path: string; headers: Record<string, string> }) => TransportResponse>): TransportAdapter & { requests: Array<{ path: string; headers: Record<string, string>; addresses: readonly DnsAnswer[]; method: string }> } {
-  const requests: Array<{ path: string; headers: Record<string, string>; addresses: readonly DnsAnswer[]; method: string }> = [];
-  let index = 0;
-  return {
-    requests,
-    async request(target, options, addresses) {
-      const entry = { path: target.path, headers: options.headers, addresses, method: target.method };
-      requests.push(entry);
-      const next = script[index];
-      index += 1;
-      if (next === undefined) {
-        throw new TransportError("network_unavailable");
-      }
-      return next(entry);
-    },
-  };
-}
-
-function htmlResponse(body: string | Buffer, extraHeaders: Record<string, string | string[]> = {}): TransportResponse {
-  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8");
-  return {
-    statusCode: 200,
-    headers: { "content-type": "text/html; charset=utf-8", ...extraHeaders },
-    body: Readable.from([buffer]),
-    destroy() {},
-  };
-}
-
-function redirectResponse(location: string, statusCode = 302): TransportResponse {
-  return {
-    statusCode,
-    headers: { location },
-    body: Readable.from([]),
-    destroy() {},
-  };
-}
+import {
+  adapterFor,
+  fetchOptions,
+  htmlResponse,
+  policy,
+  redirectResponse,
+} from "./transport-test-helpers.js";
 
 describe("safe http transport", () => {
   it("issues GET with only transport-generated allowlisted headers", async () => {
-    const adapter = adapterFor([(entry) => htmlResponse("<html>ok</html>")]);
+    const adapter = adapterFor([() => htmlResponse("<html>ok</html>")]);
     const transport = createSafeHttpTransport({ policy: policy(), adapter, maxBodyBytes: 1024 });
     const result = await transport.fetch("http://example.com/page", fetchOptions());
     expect(result.statusCode).toBe(200);
@@ -67,7 +25,7 @@ describe("safe http transport", () => {
     const headers = adapter.requests[0]!.headers;
     expect(Object.keys(headers)).toEqual(["user-agent", "accept", "accept-encoding"]);
     expect(JSON.stringify(headers)).not.toMatch(/cookie|authorization|proxy-authorization/i);
-    expect(adapter.requests[0]!.addresses).toEqual([PUBLIC_V4]);
+    expect(adapter.requests[0]!.addresses[0]!.address).toBe("93.184.216.34");
   });
 
   it("supports HEAD and rejects other methods", async () => {
@@ -133,9 +91,8 @@ describe("safe http transport", () => {
   it("counts decompressed bytes and destroys immediately on overrun (gzip/deflate/identity)", async () => {
     const bomb = gzipSync(Buffer.from("x".repeat(1000), "utf8"));
     let destroyed = false;
-    const gzAdapter = {
-      requests: [] as never[],
-      async request(): Promise<TransportResponse> {
+    const gzAdapter: TransportAdapter = {
+      async request() {
         return {
           statusCode: 200,
           headers: { "content-encoding": "gzip" },
@@ -151,9 +108,8 @@ describe("safe http transport", () => {
     expect(destroyed).toBe(true);
 
     const deflateBomb = deflateSync(Buffer.from("y".repeat(1000), "utf8"));
-    const deflateAdapter = {
-      requests: [] as never[],
-      async request(): Promise<TransportResponse> {
+    const deflateAdapter: TransportAdapter = {
+      async request() {
         return {
           statusCode: 200,
           headers: { "content-encoding": "deflate" },
@@ -167,9 +123,11 @@ describe("safe http transport", () => {
   });
 
   it("fails safely on unsupported or malformed content-encoding", async () => {
-    const adapter = adapterFor([
-      () => ({ statusCode: 200, headers: { "content-encoding": "br" }, body: Readable.from([]), destroy() {} }),
-    ]);
+    const adapter: TransportAdapter = {
+      async request() {
+        return { statusCode: 200, headers: { "content-encoding": "br" }, body: Readable.from([]), destroy() {} };
+      },
+    };
     const transport = createSafeHttpTransport({ policy: policy(), adapter, maxBodyBytes: 1024 });
     await expect(transport.fetch("http://example.com/", fetchOptions())).rejects.toThrow(/unsupported/i);
   });
@@ -179,20 +137,12 @@ describe("safe http transport", () => {
     const gate = new Promise<void>((resolve) => {
       gateResolve = resolve;
     });
-    const hangingAdapter = {
-      requests: [] as never[],
-      async request(
-        _target: never,
-        options: { signal: AbortSignal },
-      ): Promise<TransportResponse> {
+    const hangingAdapter: TransportAdapter = {
+      async request(_target, options) {
         await Promise.race([
           gate,
           new Promise<void>((_, reject) => {
-            options.signal.addEventListener(
-              "abort",
-              () => reject(new Error("aborted")),
-              { once: true },
-            );
+            options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
           }),
         ]);
         return { statusCode: 200, headers: {}, body: Readable.from([]), destroy() {} };
@@ -224,9 +174,8 @@ describe("safe http transport", () => {
         // never ends until destroyed
       },
     });
-    const midAdapter = {
-      requests: [] as never[],
-      async request(): Promise<TransportResponse> {
+    const midAdapter: TransportAdapter = {
+      async request() {
         return {
           statusCode: 200,
           headers: {},
@@ -248,9 +197,8 @@ describe("safe http transport", () => {
   });
 
   it("never leaks the URL, body or raw exception into error messages", async () => {
-    const adapter = {
-      requests: [] as never[],
-      async request(): Promise<TransportResponse> {
+    const adapter: TransportAdapter = {
+      async request() {
         throw new Error("ECONNREFUSED 10.9.9.9 body-marker-secret");
       },
     };

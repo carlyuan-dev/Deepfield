@@ -12,6 +12,15 @@ export function makePolicy(): UrlPolicy {
   return new UrlPolicy({ lookup: publicLookup() });
 }
 
+/** Alias kept for transport tests. */
+export function policy(): UrlPolicy {
+  return makePolicy();
+}
+
+export function fetchOptions(): { signal: AbortSignal } {
+  return { signal: new AbortController().signal };
+}
+
 export interface RecordedRequest {
   method: string;
   path: string;
@@ -75,4 +84,39 @@ export function makeTransport(
     adapter,
     maxBodyBytes: options.maxBodyBytes ?? 1024 * 1024,
   });
+}
+
+export interface RecordedRequest {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  addresses: readonly DnsAnswer[];
+}
+
+export function adapterFor(
+  script: Array<() => TransportResponse>,
+): TransportAdapter & { requests: RecordedRequest[] } {
+  const requests: RecordedRequest[] = [];
+  let index = 0;
+  return {
+    requests,
+    async request(target, options, addresses) {
+      requests.push({ method: target.method, path: target.path, headers: options.headers, addresses });
+      const next = script[index];
+      index += 1;
+      if (next === undefined) {
+        throw new Error("no more scripted responses");
+      }
+      return next();
+    },
+  };
+}
+
+export function redirectResponse(location: string, statusCode = 302): TransportResponse {
+  return {
+    statusCode,
+    headers: { location },
+    body: Readable.from([]),
+    destroy() {},
+  };
 }

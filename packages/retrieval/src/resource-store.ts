@@ -21,6 +21,12 @@ export interface ResourceMetadata {
   sha256: string;
 }
 
+/** Read-only snapshot handed to get/consume: body is a fresh copy each time. */
+export interface ResourceView {
+  body: Buffer;
+  metadata: Readonly<ResourceMetadata>;
+}
+
 interface StoredResource {
   id: string;
   scope: ResourceScope;
@@ -41,7 +47,6 @@ export function zeroFillBuffer(buffer: Buffer): void {
   buffer.fill(0);
 }
 
-/** Zero-fills a buffer before it is dropped, best-effort body hygiene. */
 function releaseBody(body: Buffer): void {
   try {
     zeroFillBuffer(body);
@@ -50,12 +55,32 @@ function releaseBody(body: Buffer): void {
   }
 }
 
+function assertPositiveInteger(value: number | undefined, name: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new ResourceStoreError(`invalid ${name}`);
+  }
+}
+
+function assertNonNegativeInteger(value: number | undefined, name: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new ResourceStoreError(`invalid ${name}`);
+  }
+}
+
+const MAX_ID_ATTEMPTS = 8;
+
 /**
- * Trace-scoped in-memory resource store. Resources bind exactly to
- * traceId + projectId + ToolSet authorization fingerprint; bodies are copied on
- * put and returned as copies, so caller mutation can never change stored data.
- * There is no list/enumerate API and no LRU eviction: per-trace caps reject new
- * puts and expired resources are unreadable and safely released.
+ * Trace-scoped in-memory resource store. Per-trace item/byte caps aggregate by
+ * traceId only (never split across project/fingerprint scopes); authorization
+ * for reads still binds exactly to traceId + projectId + ToolSet fingerprint.
+ * Bodies are copied on put and returned as fresh copies; ids are opaque and
+ * colliding/empty factory output retries bounded instead of overwriting.
  */
 export class ResourceStore {
   readonly #resources = new Map<string, StoredResource>();
@@ -71,6 +96,9 @@ export class ResourceStore {
     this.#maxItemsPerTrace = options.maxItemsPerTrace ?? 4;
     this.#maxBytesPerTrace = options.maxBytesPerTrace ?? 40 * 1024 * 1024;
     this.#ttlMs = options.ttlMs ?? 10 * 60 * 1000;
+    assertPositiveInteger(this.#maxItemsPerTrace, "maxItemsPerTrace");
+    assertNonNegativeInteger(this.#maxBytesPerTrace, "maxBytesPerTrace");
+    assertPositiveInteger(this.#ttlMs, "ttlMs");
   }
 
   put(
@@ -78,12 +106,13 @@ export class ResourceStore {
     body: Buffer,
     metadata: ResourceMetadata,
   ): { id: string } {
+    this.#assertValidScope(scope);
     const now = this.#clock();
     this.#sweepExpired(now);
     let traceBytes = 0;
     let traceItems = 0;
     for (const resource of this.#resources.values()) {
-      if (this.#sameScope(resource.scope, scope)) {
+      if (resource.scope.traceId === scope.traceId) {
         traceItems += 1;
         traceBytes += resource.body.length;
       }
@@ -94,23 +123,34 @@ export class ResourceStore {
     if (traceBytes + body.length > this.#maxBytesPerTrace) {
       throw new ResourceStoreError("per-trace byte limit reached");
     }
-    const id = this.#idFactory();
-    this.#resources.set(id, {
-      id,
+    const entry: StoredResource = {
+      id: "",
       scope: { ...scope },
       body: Buffer.from(body), // defensive copy: caller mutation cannot leak in
       metadata: { ...metadata },
       expiresAtMs: now + this.#ttlMs,
-    });
-    return { id };
+    };
+    for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
+      const candidate = this.#idFactory();
+      if (typeof candidate !== "string" || candidate.length === 0) {
+        continue; // empty ids are never used
+      }
+      if (this.#resources.has(candidate)) {
+        continue; // collision: retry bounded, never overwrite an existing entry
+      }
+      entry.id = candidate;
+      this.#resources.set(candidate, entry);
+      return { id: candidate };
+    }
+    throw new ResourceStoreError("resource id generation failed");
   }
 
-  get(id: string, scope: ResourceScope): Buffer | undefined {
+  get(id: string, scope: ResourceScope): ResourceView | undefined {
     return this.#read(id, scope, false);
   }
 
   /** Atomically removes the resource after authorization succeeds. */
-  consume(id: string, scope: ResourceScope): Buffer | undefined {
+  consume(id: string, scope: ResourceScope): ResourceView | undefined {
     return this.#read(id, scope, true);
   }
 
@@ -135,7 +175,8 @@ export class ResourceStore {
     return this.#resources.size;
   }
 
-  #read(id: string, scope: ResourceScope, deleteAfter: boolean): Buffer | undefined {
+  #read(id: string, scope: ResourceScope, deleteAfter: boolean): ResourceView | undefined {
+    this.#assertValidScope(scope);
     const resource = this.#resources.get(id);
     if (resource === undefined) {
       return undefined;
@@ -147,16 +188,28 @@ export class ResourceStore {
       this.#delete(id, resource);
       return undefined;
     }
-    const copy = Buffer.from(resource.body);
+    const view: ResourceView = {
+      body: Buffer.from(resource.body),
+      metadata: Object.freeze({ ...resource.metadata }),
+    };
     if (deleteAfter) {
       this.#delete(id, resource);
     }
-    return copy;
+    return view;
   }
 
   #delete(id: string, resource: StoredResource): void {
     this.#resources.delete(id);
     releaseBody(resource.body);
+  }
+
+  #assertValidScope(scope: ResourceScope): void {
+    if (typeof scope.traceId !== "string" || scope.traceId.length === 0) {
+      throw new ResourceStoreError("traceId must be a non-empty string");
+    }
+    if (typeof scope.toolSetFingerprint !== "string" || scope.toolSetFingerprint.length === 0) {
+      throw new ResourceStoreError("toolSetFingerprint must be a non-empty string");
+    }
   }
 
   #sameScope(a: ResourceScope, b: ResourceScope): boolean {

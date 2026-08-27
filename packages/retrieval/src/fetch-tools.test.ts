@@ -69,7 +69,7 @@ describe("fetch_url definition", () => {
       traceId: "trace-1",
       toolSetFingerprint: toolSet.fingerprint(),
     });
-    expect(body?.toString()).toContain(BODY_MARKER);
+    expect(body?.body.toString()).toContain(BODY_MARKER);
     expect(
       store.get(result.resourceId, {
         traceId: "trace-2",
@@ -193,5 +193,93 @@ describe("fetch_pdf definition", () => {
       definition2.execute({ url: "https://example.com/f.html" }, makeContext(), new AbortController().signal, () => {}),
     ).rejects.toMatchObject({ code: "unsupported_content_type" });
     expect(store.size()).toBe(1);
+  });
+});
+
+describe("fetch cancellation and body zeroing (focused revision)", () => {
+  it("consumes the fresh resource when the abort races the put", async () => {
+    const store = new ResourceStore();
+    const controller = new AbortController();
+    let putAborted = false;
+    const abortedPutStore = {
+      put: (scope: never, body: Buffer, metadata: never) => {
+        controller.abort(); // deterministic abort/put race inside put
+        putAborted = true;
+        return store.put(scope as never, body, metadata as never);
+      },
+      consume: (id: string, resourceScope: never) => store.consume(id, resourceScope as never),
+    } as unknown as ResourceStore;
+    const adapter = scriptedAdapter([() => htmlResponse(`<html>${BODY_MARKER}</html>`)]);
+    const transport = makeTransport(adapter);
+    const definition = createFetchUrlDefinition({ transport, store: abortedPutStore });
+    await expect(
+      definition.execute({ url: "https://example.com/" }, makeContext(), controller.signal, () => {}),
+    ).rejects.toMatchObject({ code: "cancelled" });
+    expect(putAborted).toBe(true);
+    expect(store.size()).toBe(0); // the raced resource was consumed, no orphan
+  });
+
+  it("zero-fills the transport body buffer after a successful put", async () => {
+    const held = Buffer.from(`<html>${BODY_MARKER}</html>`, "utf8");
+    const fakeTransport = {
+      async fetch() {
+        return {
+          statusCode: 200,
+          finalUrl: "https://example.com/",
+          contentType: "text/html",
+          body: held,
+          decompressedBytes: held.length,
+          sha256: "abc",
+        };
+      },
+    };
+    const definition = createFetchUrlDefinition({ transport: fakeTransport, store: new ResourceStore() });
+    const result = await definition.execute(
+      { url: "https://example.com/" },
+      makeContext(),
+      new AbortController().signal,
+      () => {},
+    );
+    expect(result.resourceId.length).toBeGreaterThan(0);
+    expect(held.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("zero-fills the body buffer on a MIME mismatch", async () => {
+    const held = Buffer.from(`<html>${BODY_MARKER}</html>`, "utf8");
+    const fakeTransport = {
+      async fetch() {
+        return {
+          statusCode: 200,
+          finalUrl: "https://example.com/",
+          contentType: "application/pdf",
+          body: held,
+          decompressedBytes: held.length,
+          sha256: "abc",
+        };
+      },
+    };
+    const definition = createFetchUrlDefinition({ transport: fakeTransport, store: new ResourceStore() });
+    await expect(
+      definition.execute({ url: "https://example.com/" }, makeContext(), new AbortController().signal, () => {}),
+    ).rejects.toMatchObject({ code: "unsupported_content_type" });
+    expect(held.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("fails closed when no trusted fingerprint is available", async () => {
+    const fakeTransport = {
+      async fetch() {
+        throw new Error("unreachable");
+      },
+    };
+    const definition = createFetchUrlDefinition({ transport: fakeTransport, store: new ResourceStore() });
+    // no toolSet and no snapshot fingerprint: scope binding must fail closed
+    await expect(
+      definition.execute(
+        { url: "https://example.com/" },
+        { traceId: "t", actor: "main_agent" },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).rejects.toMatchObject({ code: "executor_failed" });
   });
 });

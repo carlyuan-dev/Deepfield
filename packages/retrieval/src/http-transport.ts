@@ -1,11 +1,6 @@
 import { Readable } from "node:stream";
-import { createHash } from "node:crypto";
-import { UrlPolicy, type CheckedTarget, type DnsAnswer } from "./url-policy.js";
-import {
-  normalizeContentEncoding,
-  normalizeMediaType,
-  readBoundedBody,
-} from "./bounded-reader.js";
+import { UrlPolicy, type CheckedTarget, type DnsAnswer, type UrlCheckResult } from "./url-policy.js";
+import { performFetch } from "./transport-loop.js";
 
 export type TransportFailureCode =
   | "url_blocked"
@@ -101,10 +96,8 @@ const ALLOWED_HEADERS: Record<string, string> = {
   accept: "*/*",
   "accept-encoding": "gzip, deflate, identity",
 };
-const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
-const MAX_LOCATION_LENGTH = 2048;
 
-function defaultTimer(ms: number): HostTimer {
+export function defaultHostTimer(ms: number): HostTimer {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const promise = new Promise<void>((resolve) => {
     timeout = setTimeout(resolve, ms);
@@ -122,10 +115,19 @@ function defaultTimer(ms: number): HostTimer {
   };
 }
 
+function assertFinitePositiveInteger(value: number | undefined, name: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new TypeError(`invalid ${name}`);
+  }
+}
+
 export class SafeHttpTransport {
   readonly #policy: UrlPolicy;
   readonly #adapter: TransportAdapter;
-  readonly #maxBodyBytes: number;
+  readonly #hardMaxBodyBytes: number;
   readonly #connectTimeoutMs: number;
   readonly #totalTimeoutMs: number;
   readonly #maxRedirects: number;
@@ -134,11 +136,23 @@ export class SafeHttpTransport {
   constructor(options: SafeHttpTransportOptions) {
     this.#policy = options.policy;
     this.#adapter = options.adapter;
-    this.#maxBodyBytes = options.maxBodyBytes;
+    this.#hardMaxBodyBytes = options.maxBodyBytes;
     this.#connectTimeoutMs = options.connectTimeoutMs ?? 10_000;
     this.#totalTimeoutMs = options.totalTimeoutMs ?? 30_000;
     this.#maxRedirects = options.maxRedirects ?? 5;
-    this.#timer = options.timer ?? defaultTimer;
+    this.#timer = options.timer ?? defaultHostTimer;
+    assertFinitePositiveInteger(this.#hardMaxBodyBytes, "maxBodyBytes");
+    assertFinitePositiveInteger(this.#connectTimeoutMs, "connectTimeoutMs");
+    assertFinitePositiveInteger(this.#totalTimeoutMs, "totalTimeoutMs");
+    if (options.maxRedirects !== undefined) {
+      if (
+        !Number.isFinite(options.maxRedirects) ||
+        !Number.isInteger(options.maxRedirects) ||
+        options.maxRedirects < 0
+      ) {
+        throw new TypeError("invalid maxRedirects");
+      }
+    }
   }
 
   async fetch(urlString: string, fetchOptions: FetchOptions): Promise<FetchResult> {
@@ -150,82 +164,50 @@ export class SafeHttpTransport {
     if (signal.aborted) {
       throw new TransportError("cancelled");
     }
-    const maxBodyBytes = fetchOptions.maxBodyBytes ?? this.#maxBodyBytes;
-    // The total deadline starts before DNS and is never reset per redirect.
+    const maxBodyBytes = this.#effectiveMaxBytes(
+      fetchOptions.maxBodyBytes ?? this.#hardMaxBodyBytes,
+    );
+    // The total deadline is created once, before DNS, and crosses every
+    // redirect; it is never reset per hop.
     const deadline = this.#timer(this.#totalTimeoutMs);
     let timedOut = false;
+    const controller = new AbortController();
     deadline.promise.then(() => {
       timedOut = true;
       controller.abort();
     });
-    const controller = new AbortController();
     const onCallerAbort = (): void => controller.abort();
     signal.addEventListener("abort", onCallerAbort, { once: true });
-    let current: CheckedTarget | undefined;
+    // Both the deadline and the caller abort RACE the whole operation so a
+    // stuck DNS/adapter (that ignores the signal) can never block the return.
+    const deadlinePromise = deadline.promise.then(() => {
+      throw new TransportError("timeout");
+    });
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (signal.aborted) {
+        reject(new TransportError("cancelled"));
+        return;
+      }
+      signal.addEventListener("abort", () => reject(new TransportError("cancelled")), {
+        once: true,
+      });
+    });
     try {
-      const first = await this.#policy.check(urlString);
-      if (!first.ok) {
-        throw new TransportError(first.code);
-      }
-      current = first.target;
-      for (let hop = 0; hop <= this.#maxRedirects; hop += 1) {
-        if (controller.signal.aborted) {
-          break;
-        }
-        const response = await this.#adapter.request(
-          {
-            protocol: current.protocol,
-            hostname: current.hostname,
-            port: current.port,
-            path: current.path,
-            method,
-          },
-          {
-            headers: { ...ALLOWED_HEADERS },
-            signal: controller.signal,
-            connectTimeoutMs: this.#connectTimeoutMs,
-          },
-          current.addresses,
-        );
-        const location = this.#redirectLocation(response);
-        if (location !== undefined) {
-          const next = await this.#policy.check(new URL(location, current.href).href);
-          if (!next.ok) {
-            throw new TransportError(next.code);
-          }
-          current = next.target;
-          continue;
-        }
-        const encoding = normalizeContentEncoding(response.headers);
-        const { buffer, decompressedBytes } = await readBoundedBody(
-          response,
-          encoding,
-          maxBodyBytes,
-          method,
-          controller.signal,
-        );
-        return {
-          statusCode: response.statusCode,
-          finalUrl: current.href,
-          contentType: normalizeMediaType(response.headers["content-type"]),
-          body: buffer,
-          decompressedBytes,
-          sha256: createHash("sha256").update(buffer).digest("hex"),
-        };
-      }
-      throw new TransportError("redirect_blocked");
+      return await Promise.race([
+        this.#run(urlString, method, maxBodyBytes, controller),
+        deadlinePromise,
+        abortPromise,
+      ]);
     } catch (error) {
       if (signal.aborted) {
-        throw new TransportError("cancelled");
+        throw new TransportError("cancelled"); // cancel wins over timeout
       }
-      if (timedOut || controller.signal.aborted) {
+      if (timedOut) {
         throw new TransportError("timeout");
       }
       if (error instanceof TransportError) {
         throw error;
       }
-      // Any adapter/decoder exception maps to a fixed safe failure; never
-      // carry URL/IP/body/raw cause.
       throw new TransportError("network_unavailable");
     } finally {
       deadline.cancel();
@@ -234,23 +216,31 @@ export class SafeHttpTransport {
     }
   }
 
-  #redirectLocation(response: TransportResponse): string | undefined {
-    if (REDIRECT_CODES.has(response.statusCode)) {
-      const location = response.headers["location"];
-      if (
-        typeof location !== "string" ||
-        location.length === 0 ||
-        location.length > MAX_LOCATION_LENGTH
-      ) {
-        throw new TransportError("redirect_blocked");
-      }
-      return location;
+  async #run(
+    urlString: string,
+    method: "GET" | "HEAD",
+    maxBodyBytes: number,
+    controller: AbortController,
+  ): Promise<FetchResult> {
+    return performFetch(
+      this.#policy,
+      this.#adapter,
+      urlString,
+      method,
+      maxBodyBytes,
+      this.#maxRedirects,
+      this.#connectTimeoutMs,
+      controller,
+      { ...ALLOWED_HEADERS },
+    );
+  }
+
+  #effectiveMaxBytes(requested: number): number {
+    if (!Number.isFinite(requested) || !Number.isInteger(requested) || requested < 0) {
+      // invalid per-call config fails closed; 0 is legal (HEAD)
+      throw new TransportError("url_blocked");
     }
-    if (response.statusCode >= 300 && response.statusCode < 400) {
-      // 3xx statuses outside the GET/HEAD redirect allowlist are rejected.
-      throw new TransportError("redirect_blocked");
-    }
-    return undefined;
+    return Math.min(requested, this.#hardMaxBodyBytes);
   }
 }
 

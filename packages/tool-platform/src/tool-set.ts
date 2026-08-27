@@ -126,26 +126,34 @@ export class ToolSet {
 
   /**
    * Deterministic immutable snapshot fingerprint (grants are frozen at
-   * construction, so this is stable for the lifetime of the set). Used by
-   * scope-bound stores to bind resources to the exact authorization snapshot
-   * instead of trusting self-reported actors.
+   * construction, so this is stable for the lifetime of the set). Canonical
+   * serialization: grants sorted by identity, fixed field order, null for
+   * missing fields — no hand-rolled delimiters that could collide across
+   * fields. Used by scope-bound stores to bind resources to the exact
+   * authorization snapshot instead of trusting self-reported actors.
    */
   fingerprint(): string {
-    const entries: string[] = [];
-    for (const [key, grant] of this.#grants) {
-      entries.push(
-        [
-          key,
-          grant.actor,
-          grant.effect,
-          grant.projectId ?? "-",
-          grant.hostPatterns?.join(",") ?? "-",
-          grant.maxResults ?? "-",
-          grant.maxBytes ?? "-",
-          grant.confirmationKind ?? "-",
-        ].join(":"),
-      );
+    const serialized: unknown[] = [];
+    for (const grant of this.#grants.values()) {
+      serialized.push({
+        identity: { name: grant.identity.name, version: grant.identity.version },
+        actor: grant.actor,
+        effect: grant.effect,
+        projectId: grant.projectId ?? null,
+        hostPatterns: grant.hostPatterns ?? null,
+        maxResults: grant.maxResults ?? null,
+        maxBytes: grant.maxBytes ?? null,
+        confirmationKind: grant.confirmationKind ?? null,
+      });
     }
-    return entries.sort().join("|");
+    serialized.sort((a, b) => {
+      const left = a as { identity: { name: string; version: number } };
+      const right = b as { identity: { name: string; version: number } };
+      return (
+        left.identity.name.localeCompare(right.identity.name) ||
+        left.identity.version - right.identity.version
+      );
+    });
+    return JSON.stringify(serialized);
   }
 }

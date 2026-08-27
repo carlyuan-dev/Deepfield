@@ -53,9 +53,17 @@ export async function readBoundedBody(
     return { buffer: Buffer.alloc(0), decompressedBytes: 0 };
   }
   const declared = response.headers["content-length"];
-  if (typeof declared === "string" && Number(declared) > maxBytes) {
-    response.destroy();
-    throw new TransportError("response_too_large");
+  if (declared !== undefined) {
+    if (Array.isArray(declared) || typeof declared !== "string" || !/^[0-9]+$/.test(declared.trim())) {
+      // array/duplicate, non-decimal, negative, NaN/Infinity: safe reject
+      response.destroy();
+      throw new TransportError("unsupported_content_type");
+    }
+    const declaredBytes = Number(declared.trim());
+    if (Number.isSafeInteger(declaredBytes) && declaredBytes > maxBytes) {
+      response.destroy();
+      throw new TransportError("response_too_large");
+    }
   }
   let stream: Readable = response.body;
   if (encoding === "gzip") {

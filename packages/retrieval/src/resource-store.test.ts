@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ResourceStore, zeroFillBuffer, type ResourceScope } from "./resource-store.js";
+import { ResourceStore, ResourceStoreError, zeroFillBuffer, type ResourceScope } from "./resource-store.js";
 
 function scope(traceId: string, projectId?: string, fingerprint = "fp-A"): ResourceScope {
   return { traceId, ...(projectId !== undefined ? { projectId } : {}), toolSetFingerprint: fingerprint };
 }
 
-function makeStore(options: { clock?: () => number; maxItemsPerTrace?: number; maxBytesPerTrace?: number; ttlMs?: number } = {}) {
+function makeStore(options: { maxItemsPerTrace?: number; maxBytesPerTrace?: number; ttlMs?: number } = {}) {
   let now = 0;
   return {
-    clock: () => now,
     now: () => now,
     advance: (ms: number) => {
       now += ms;
@@ -35,7 +34,7 @@ describe("resource store", () => {
   it("binds resources exactly to traceId, projectId and ToolSet fingerprint", () => {
     const { store } = makeStore();
     const { id } = store.put(scope("trace-a", "p1", "fp-A"), Buffer.from("AAAA"), metadata());
-    expect(store.get(id, scope("trace-a", "p1", "fp-A"))?.toString()).toBe("AAAA");
+    expect(store.get(id, scope("trace-a", "p1", "fp-A"))?.body.toString()).toBe("AAAA");
     expect(store.get(id, scope("trace-b", "p1", "fp-A"))).toBeUndefined();
     expect(store.get(id, scope("trace-a", undefined, "fp-A"))).toBeUndefined();
     expect(store.get(id, scope("trace-a", "p1", "fp-B"))).toBeUndefined();
@@ -53,14 +52,37 @@ describe("resource store", () => {
     expect(second.id).not.toContain("b.example");
   });
 
-  it("enforces per-trace item and byte caps without LRU eviction", () => {
+  it("enforces per-trace caps by traceId across project/fingerprint scopes", () => {
     const { store } = makeStore({ maxItemsPerTrace: 2, maxBytesPerTrace: 10 });
-    store.put(scope("t"), Buffer.from("12345"), metadata({ size: 5 }));
-    store.put(scope("t"), Buffer.from("abcde"), metadata({ size: 5 }));
-    expect(() => store.put(scope("t"), Buffer.from("x"), metadata())).toThrow(/limit/);
+    store.put(scope("t", "p1", "fp-A"), Buffer.from("12345"), metadata({ size: 5 }));
+    store.put(scope("t", "p2", "fp-B"), Buffer.from("abcde"), metadata({ size: 5 }));
+    // same traceId, a third scope: still capped (caps aggregate by traceId)
+    expect(() => store.put(scope("t", "p3", "fp-C"), Buffer.from("x"), metadata())).toThrow(/limit/);
+    // a different trace has its own budget
+    store.put(scope("t2"), Buffer.from("xy"), metadata({ size: 2 }));
+    expect(store.size()).toBe(3);
     store.releaseTrace("t");
-    expect(() => store.put(scope("t"), Buffer.from("12345678901"), metadata({ size: 11 }))).toThrow(/limit/);
-    expect(store.size()).toBe(0);
+    expect(() => store.put(scope("t", "p1", "fp-A"), Buffer.from("12345678901"), metadata({ size: 11 }))).toThrow(/limit/);
+  });
+
+  it("returns ResourceViews with defensive body and metadata copies", () => {
+    const { store } = makeStore();
+    const input = Buffer.from("original");
+    const { id } = store.put(scope("t"), input, metadata({ finalUrl: "https://a.example/" }));
+    input.fill(0);
+    const view = store.get(id, scope("t"))!;
+    expect(view.body.toString()).toBe("original");
+    expect(view.metadata.finalUrl).toBe("https://a.example/");
+    view.body.fill(88);
+    expect(() => {
+      (view.metadata as { finalUrl: string }).finalUrl = "https://mutated.example/";
+    }).toThrow(TypeError); // metadata is read-only
+    const again = store.get(id, scope("t"))!;
+    expect(again.body.toString()).toBe("original");
+    expect(again.metadata.finalUrl).toBe("https://a.example/");
+    const consumed = store.consume(id, scope("t"))!;
+    expect(consumed.body.toString()).toBe("original");
+    expect(store.get(id, scope("t"))).toBeUndefined();
   });
 
   it("expires resources after the TTL and releases them safely", () => {
@@ -72,26 +94,12 @@ describe("resource store", () => {
     expect(store.size()).toBe(0);
   });
 
-  it("copies bodies on put and returns copies on get/consume", () => {
-    const { store } = makeStore();
-    const input = Buffer.from("original");
-    const { id } = store.put(scope("t"), input, metadata());
-    input.fill(0); // caller mutation must not reach the store
-    expect(store.get(id, scope("t"))?.toString()).toBe("original");
-    const read = store.get(id, scope("t"))!;
-    read.fill(88); // mutating the returned copy must not change the resource
-    expect(store.get(id, scope("t"))?.toString()).toBe("original");
-    const consumed = store.consume(id, scope("t"))!;
-    expect(consumed.toString()).toBe("original");
-    expect(store.get(id, scope("t"))).toBeUndefined();
-  });
-
   it("consumes atomically only after authorization succeeds", () => {
     const { store } = makeStore();
     const { id } = store.put(scope("t", "p1"), Buffer.from("AAAA"), metadata());
     expect(store.consume(id, scope("t", "p2"))).toBeUndefined();
-    expect(store.size()).toBe(1); // auth failure did not delete
-    expect(store.consume(id, scope("t", "p1"))?.toString()).toBe("AAAA");
+    expect(store.size()).toBe(1);
+    expect(store.consume(id, scope("t", "p1"))?.body.toString()).toBe("AAAA");
     expect(store.size()).toBe(0);
     expect(store.consume(id, scope("t", "p1"))).toBeUndefined(); // idempotent
   });
@@ -101,7 +109,7 @@ describe("resource store", () => {
     store.put(scope("t1"), Buffer.from("A"), metadata());
     store.put(scope("t2"), Buffer.from("B"), metadata());
     expect(store.releaseTrace("t1")).toBe(1);
-    expect(store.releaseTrace("t1")).toBe(0); // idempotent
+    expect(store.releaseTrace("t1")).toBe(0);
     expect(store.size()).toBe(1);
     store.dispose();
     expect(store.size()).toBe(0);
@@ -112,5 +120,43 @@ describe("resource store", () => {
     const buffer = Buffer.from("secret-body-marker-xyz");
     zeroFillBuffer(buffer);
     expect(buffer.every((byte) => byte === 0)).toBe(true);
+  });
+});
+
+describe("resource store id collision and validation (focused revision)", () => {
+  it("retries bounded on duplicate ids and never overwrites or loses the old resource", () => {
+    const ids = ["dup", "dup", "fresh"];
+    let index = 0;
+    const store = new ResourceStore({
+      idFactory: () => ids[Math.min(index++, ids.length - 1)]!,
+    });
+    const first = store.put(scope("t"), Buffer.from("old-body"), metadata({ finalUrl: "https://a/" }));
+    expect(first.id).toBe("dup");
+    const second = store.put(scope("t"), Buffer.from("new-body"), metadata({ finalUrl: "https://b/" }));
+    expect(second.id).toBe("fresh");
+    expect(store.get("dup", scope("t"))?.body.toString()).toBe("old-body");
+    expect(store.get("fresh", scope("t"))?.body.toString()).toBe("new-body");
+    expect(store.size()).toBe(2);
+  });
+
+  it("fails safely when the id factory keeps returning empty or duplicate ids", () => {
+    const store = new ResourceStore({ idFactory: () => "dup" });
+    store.put(scope("t"), Buffer.from("x"), metadata());
+    expect(() => store.put(scope("t"), Buffer.from("y"), metadata())).toThrow(/id generation/i);
+    expect(store.size()).toBe(1);
+    const empty = new ResourceStore({ idFactory: () => "" });
+    expect(() => empty.put(scope("t"), Buffer.from("x"), metadata())).toThrow(/id generation/i);
+    expect(empty.size()).toBe(0);
+  });
+
+  it("rejects invalid scope and invalid constructor configuration fail closed", () => {
+    const store = makeStore().store;
+    expect(() => store.put(scope(""), Buffer.from("x"), metadata())).toThrow(ResourceStoreError);
+    expect(() => store.put({ traceId: "t", toolSetFingerprint: "" }, Buffer.from("x"), metadata())).toThrow(ResourceStoreError);
+    expect(() => new ResourceStore({ maxItemsPerTrace: 0 })).toThrow(/maxItems/i);
+    expect(() => new ResourceStore({ maxItemsPerTrace: -1 })).toThrow(/maxItems/i);
+    expect(() => new ResourceStore({ maxBytesPerTrace: -1 })).toThrow(/maxBytes/i);
+    expect(() => new ResourceStore({ ttlMs: 0 })).toThrow(/ttl/i);
+    expect(() => new ResourceStore({ maxItemsPerTrace: 1.5 })).toThrow(/maxItems/i);
   });
 });
