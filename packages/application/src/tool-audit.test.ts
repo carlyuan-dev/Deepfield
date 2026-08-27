@@ -167,6 +167,51 @@ describe("SqliteToolAudit", () => {
     await expect(audit.finish(finish)).rejects.toBeInstanceOf(SqliteToolAuditError);
   });
 
+  it("rejects unknown failure codes without persisting them", async () => {
+    const { db, audit } = openAuditDb();
+    await audit.start(startRecord);
+    await expect(
+      audit.finish({
+        executionId: "exec-1",
+        traceId: "trace-1",
+        status: "failed",
+        attempts: 1,
+        failure: { code: "sk-secret-provider-value", message: "x", retryable: false, attempts: 1 },
+      } as unknown as ToolAuditFinish),
+    ).rejects.toBeInstanceOf(SqliteToolAuditError);
+    const row = db.db
+      .prepare("SELECT status, error_code FROM tool_executions WHERE id='exec-1'")
+      .get() as { status: string; error_code: string | null };
+    expect(row.status).toBe("running");
+    expect(row.error_code).toBeNull();
+    const all = db.db.prepare("SELECT * FROM tool_executions").all();
+    expect(JSON.stringify(all)).not.toContain("sk-secret-provider-value");
+  });
+
+  it("never forwards an out-of-contract failure code to the repository", async () => {
+    let captured: unknown;
+    const capturing: ToolExecutionRepository = {
+      start: () => {},
+      finish: (record) => {
+        captured = record;
+      },
+      getById: () => undefined,
+      listRecent: () => [],
+    };
+    const audit = new SqliteToolAudit(capturing);
+    await audit.start(startRecord);
+    await expect(
+      audit.finish({
+        executionId: "exec-1",
+        traceId: "trace-1",
+        status: "failed",
+        attempts: 1,
+        failure: { code: "sk-secret-provider-value", message: "x", retryable: false, attempts: 1 },
+      } as unknown as ToolAuditFinish),
+    ).rejects.toBeInstanceOf(SqliteToolAuditError);
+    expect(captured).toBeUndefined();
+  });
+
   it("runner never reports completed when final audit persistence fails", async () => {
     const failingRepository: ToolExecutionRepository = {
       start: () => {},

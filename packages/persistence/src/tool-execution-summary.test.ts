@@ -110,3 +110,41 @@ describe("tool execution summary sanitization", () => {
     cleanup();
   });
 });
+
+describe("summary UTF-8 byte limits (focused revision)", () => {
+  it("rejects strings whose UTF-8 size exceeds the budget even when code units are small", () => {
+    const { db, repos, cleanup } = openTemp();
+    start(repos, "cjk", {
+      inputSummary: { values: Array.from({ length: 4 }, () => "汉".repeat(2000)) },
+    });
+    start(repos, "emoji", { inputSummary: { value: "😀".repeat(2000) } });
+    start(repos, "ascii-over", { inputSummary: { value: "a".repeat(4097) } });
+    start(repos, "ascii-at-limit", { inputSummary: { value: "a".repeat(4096) } });
+    const rows = db
+      .prepare("SELECT id, input_summary_json FROM tool_executions")
+      .all() as { id: string; input_summary_json: string | null }[];
+    const byId = new Map(rows.map((row) => [row.id, row.input_summary_json]));
+    expect(byId.get("cjk")).toBeNull();
+    expect(byId.get("emoji")).toBeNull();
+    expect(byId.get("ascii-over")).toBeNull();
+    expect(byId.get("ascii-at-limit")).not.toBeNull();
+    cleanup();
+  });
+
+  it("rejects serialized output above the UTF-8 byte budget", () => {
+    const { db, repos, cleanup } = openTemp();
+    start(repos, "over", {
+      inputSummary: { values: Array.from({ length: 6 }, () => "汉".repeat(1000)) },
+    });
+    start(repos, "under", {
+      inputSummary: { values: Array.from({ length: 5 }, () => "汉".repeat(1000)) },
+    });
+    const rows = db
+      .prepare("SELECT id, input_summary_json FROM tool_executions")
+      .all() as { id: string; input_summary_json: string | null }[];
+    const byId = new Map(rows.map((row) => [row.id, row.input_summary_json]));
+    expect(byId.get("over")).toBeNull();
+    expect(byId.get("under")).not.toBeNull();
+    cleanup();
+  });
+});

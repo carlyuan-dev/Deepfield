@@ -1,7 +1,8 @@
-import type {
-  ToolAuditFinish,
-  ToolAuditSink,
-  ToolAuditStart,
+import {
+  TOOL_FAILURE_MESSAGES,
+  type ToolAuditFinish,
+  type ToolAuditSink,
+  type ToolAuditStart,
 } from "@deepfield/tool-platform";
 import type { ToolExecutionRepository } from "@deepfield/persistence";
 
@@ -11,6 +12,10 @@ export class SqliteToolAuditError extends Error {
     this.name = "SqliteToolAuditError";
   }
 }
+
+// Stable public failure codes only; a Set avoids prototype-key hazards
+// (__proto__/constructor can never be treated as a valid code).
+const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set(Object.keys(TOOL_FAILURE_MESSAGES));
 
 /**
  * Main-process ToolAuditSink backed by ToolExecutionRepository. Only the
@@ -44,10 +49,20 @@ export class SqliteToolAudit implements ToolAuditSink {
 
   async finish(record: ToolAuditFinish): Promise<void> {
     try {
+      let errorCode: string | undefined;
+      if (record.failure !== undefined) {
+        if (
+          typeof record.failure.code !== "string" ||
+          !KNOWN_FAILURE_CODES.has(record.failure.code)
+        ) {
+          throw new SqliteToolAuditError("invalid tool failure code");
+        }
+        errorCode = record.failure.code;
+      }
       this.#repos.finish({
         id: record.executionId,
         status: record.status,
-        ...(record.failure !== undefined ? { errorCode: record.failure.code } : {}),
+        ...(errorCode !== undefined ? { errorCode } : {}),
         attempts: record.attempts,
         retries: Math.max(record.attempts - 1, 0),
         bytesReceived: 0,
@@ -55,7 +70,10 @@ export class SqliteToolAudit implements ToolAuditSink {
         finishedAt: new Date().toISOString(),
         ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof SqliteToolAuditError) {
+        throw error;
+      }
       throw new SqliteToolAuditError("failed to persist tool audit finish");
     }
   }
