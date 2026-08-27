@@ -1,5 +1,6 @@
 import type { Static, TSchema } from "typebox";
 import type { ToolIdentity } from "@deepfield/contracts";
+import type { ToolSet } from "./tool-set.js";
 
 export type ToolActor =
   | "main_agent"
@@ -12,6 +13,8 @@ export interface ToolRunContext {
   traceId: string;
   actor: ToolActor;
   projectId?: string;
+  toolSet?: ToolSet;
+  confirmations?: ReadonlySet<string>;
 }
 
 export type ToolEffect =

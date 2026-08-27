@@ -1,0 +1,152 @@
+import { describe, expect, it } from "vitest";
+import { ToolBudgetError, ToolBudgetLedger, type ToolBudgetLimits } from "./budget.js";
+import type { ToolIdentity } from "@deepfield/contracts";
+
+const searchV1: ToolIdentity = { name: "search_web", version: 1 };
+const fetchV1: ToolIdentity = { name: "fetch_url", version: 1 };
+const checkV1: ToolIdentity = { name: "check_link_accessibility", version: 1 };
+
+function makeLedger(limits: ToolBudgetLimits, start = 0) {
+  let now = start;
+  return {
+    ledger: new ToolBudgetLedger(limits, () => now),
+    advance(ms: number): void {
+      now += ms;
+    },
+  };
+}
+
+function expectBudgetExceeded(fn: () => unknown): void {
+  expect(fn).toThrow(ToolBudgetError);
+}
+
+describe("ToolBudgetLedger", () => {
+  it("enforces the total call limit", () => {
+    const { ledger } = makeLedger({ maxCalls: 2 });
+    ledger.reserve(searchV1, "search");
+    ledger.reserve(fetchV1, "fetch");
+    expectBudgetExceeded(() => ledger.reserve(checkV1, "link_check"));
+  });
+
+  it("enforces the per-tool call limit by name", () => {
+    const { ledger } = makeLedger({ maxCallsPerTool: 1 });
+    ledger.reserve(fetchV1, "fetch");
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "fetch"));
+    ledger.reserve(searchV1, "search");
+  });
+
+  it("enforces category call limits for search, fetch and link checks", () => {
+    const { ledger } = makeLedger({ categoryCalls: { search: 1, fetch: 2, link_check: 1 } });
+    ledger.reserve(searchV1, "search");
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "search"));
+    ledger.reserve(fetchV1, "fetch");
+    ledger.reserve(checkV1, "fetch");
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "fetch"));
+    ledger.reserve(checkV1, "link_check");
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "link_check"));
+  });
+
+  it("enforces the byte budget through recordBytes", () => {
+    const { ledger } = makeLedger({ maxBytes: 100 });
+    ledger.recordBytes(60);
+    ledger.recordBytes(40);
+    expectBudgetExceeded(() => ledger.recordBytes(1));
+  });
+
+  it("reconciles actual bytes through complete", () => {
+    const { ledger } = makeLedger({ maxBytes: 100 });
+    const token = ledger.reserve(fetchV1, "fetch");
+    ledger.complete(token, 100);
+    expectBudgetExceeded(() => ledger.recordBytes(1));
+  });
+
+  it("enforces the elapsed deadline with an injected clock", () => {
+    const { ledger, advance } = makeLedger({ deadlineMs: 1000 });
+    ledger.reserve(searchV1, "search");
+    advance(1000);
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "fetch"));
+  });
+
+  it("enforces global concurrency", () => {
+    const { ledger } = makeLedger({ maxConcurrency: 1 });
+    const first = ledger.reserve(fetchV1, "fetch");
+    expectBudgetExceeded(() => ledger.reserve(searchV1, "search"));
+    ledger.complete(first);
+    ledger.reserve(searchV1, "search");
+  });
+
+  it("enforces per-tool concurrency", () => {
+    const { ledger } = makeLedger({ maxConcurrencyPerTool: 1 });
+    const first = ledger.reserve(fetchV1, "fetch");
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "fetch"));
+    ledger.reserve(searchV1, "search");
+    ledger.release(first);
+    ledger.reserve(fetchV1, "fetch");
+  });
+
+  it("atomically grants only one reservation against the last remaining call", async () => {
+    const { ledger } = makeLedger({ maxCalls: 1 });
+    // reserve() is synchronous by design (Step 5), so concurrent attempts are
+    // deferred to microtasks; exactly one may take the last remaining slot.
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => ledger.reserve(searchV1, "search")),
+      Promise.resolve().then(() => ledger.reserve(fetchV1, "fetch")),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+  });
+
+  it("keeps tokens single-use: repeat complete cannot corrupt counts", () => {
+    const { ledger } = makeLedger({ maxBytes: 100, maxConcurrency: 1 });
+    const token = ledger.reserve(fetchV1, "fetch");
+    ledger.complete(token, 50);
+    ledger.complete(token, 50);
+    ledger.recordBytes(49);
+    expectBudgetExceeded(() => ledger.recordBytes(2));
+    ledger.reserve(searchV1, "search");
+  });
+
+  it("release after complete and double release are no-ops that cannot corrupt counts", () => {
+    const { ledger } = makeLedger({ maxConcurrency: 1 });
+    const token = ledger.reserve(fetchV1, "fetch");
+    ledger.complete(token);
+    ledger.release(token);
+    ledger.reserve(searchV1, "search");
+  });
+
+  it("release frees concurrency but keeps the consumed attempt", () => {
+    const { ledger } = makeLedger({ maxCalls: 1, maxConcurrency: 1 });
+    const token = ledger.reserve(fetchV1, "fetch");
+    ledger.release(token);
+    expectBudgetExceeded(() => ledger.reserve(searchV1, "search"));
+  });
+
+  it("defensively copies limits so callers cannot expand their own budget", () => {
+    const limits: ToolBudgetLimits = { maxCalls: 1 };
+    const { ledger } = makeLedger(limits);
+    limits.maxCalls = 999;
+    ledger.reserve(searchV1, "search");
+    expectBudgetExceeded(() => ledger.reserve(fetchV1, "fetch"));
+  });
+
+  it("rejects invalid tool identities safely", () => {
+    const { ledger } = makeLedger({});
+    expectBudgetExceeded(() => ledger.reserve({ name: "", version: 1 }, "search"));
+    expectBudgetExceeded(() => ledger.reserve({ name: "x", version: 0 }, "search"));
+  });
+
+  it("fails with stable safe errors that do not leak inputs", () => {
+    const { ledger } = makeLedger({ maxCalls: 1 });
+    ledger.reserve(searchV1, "search");
+    let message = "";
+    try {
+      ledger.reserve(fetchV1, "fetch");
+    } catch (error) {
+      message = (error as ToolBudgetError).message;
+    }
+    expect(message).toContain("budget");
+    expect(message).not.toContain("search_web");
+    expect(message).not.toContain("fetch_url");
+    expect(message).not.toContain("secret");
+  });
+});
