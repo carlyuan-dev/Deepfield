@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 import {
+  JsonObjectSchema,
+  JsonValueSchema,
   ToolCallRequestSchema,
   ToolExecutionEventSchema,
   ToolExecutionResultSchema,
@@ -196,6 +198,124 @@ describe("ToolManifestEntrySchema", () => {
   it("rejects invalid retry limits", () => {
     expect(
       Value.Check(ToolManifestEntrySchema, { ...manifestEntry, retry: { maxRetries: 3, backoffMs: 250 } }),
+    ).toBe(false);
+  });
+});
+
+describe("JsonValueSchema", () => {
+  it("accepts JSON-safe primitives, arrays and objects", () => {
+    const values = [
+      null,
+      true,
+      false,
+      0,
+      -1.5,
+      42,
+      "text",
+      [],
+      [1, "a", null, { b: true }],
+      { a: 1, b: { c: [1, "x", null] } },
+    ];
+    for (const value of values) {
+      expect(Value.Check(JsonValueSchema, value)).toBe(true);
+    }
+  });
+
+  it("rejects non-JSON values at the top level", () => {
+    expect(Value.Check(JsonValueSchema, undefined)).toBe(false);
+    expect(Value.Check(JsonValueSchema, () => 1)).toBe(false);
+    expect(Value.Check(JsonValueSchema, Symbol("x"))).toBe(false);
+    expect(Value.Check(JsonValueSchema, 1n)).toBe(false);
+    expect(Value.Check(JsonValueSchema, NaN)).toBe(false);
+    expect(Value.Check(JsonValueSchema, Infinity)).toBe(false);
+    expect(Value.Check(JsonValueSchema, -Infinity)).toBe(false);
+  });
+
+  it("rejects non-JSON values nested at any depth", () => {
+    expect(Value.Check(JsonValueSchema, { a: { b: [1, undefined] } })).toBe(false);
+    expect(Value.Check(JsonValueSchema, { a: { b: () => 1 } })).toBe(false);
+    expect(Value.Check(JsonValueSchema, [1, { a: NaN }])).toBe(false);
+    expect(Value.Check(JsonValueSchema, { a: 1n })).toBe(false);
+    expect(Value.Check(JsonValueSchema, { a: Symbol("x") })).toBe(false);
+    expect(Value.Check(JsonValueSchema, { u: undefined })).toBe(false);
+  });
+});
+
+describe("JsonObjectSchema", () => {
+  it("accepts plain JSON objects with nested JSON values", () => {
+    expect(Value.Check(JsonObjectSchema, {})).toBe(true);
+    expect(
+      Value.Check(JsonObjectSchema, {
+        url: "https://example.com",
+        meta: { n: 1, ok: true },
+        tags: ["a", null],
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects top-level arrays and scalars", () => {
+    expect(Value.Check(JsonObjectSchema, [1, 2])).toBe(false);
+    expect(Value.Check(JsonObjectSchema, "text")).toBe(false);
+    expect(Value.Check(JsonObjectSchema, 42)).toBe(false);
+    expect(Value.Check(JsonObjectSchema, null)).toBe(false);
+  });
+
+  it("rejects non-JSON values at any depth", () => {
+    expect(Value.Check(JsonObjectSchema, { fn() {} })).toBe(false);
+    expect(Value.Check(JsonObjectSchema, { b: 1n })).toBe(false);
+    expect(Value.Check(JsonObjectSchema, { u: undefined })).toBe(false);
+    expect(Value.Check(JsonObjectSchema, { n: NaN })).toBe(false);
+  });
+});
+
+describe("main-window repro guards", () => {
+  it("rejects functions, bigint and undefined inside ToolCallRequest input (repro #1)", () => {
+    expect(Value.Check(ToolCallRequestSchema, { ...validCall, input: { fn() {} } })).toBe(false);
+    expect(Value.Check(ToolCallRequestSchema, { ...validCall, input: { bigint: 1n } })).toBe(false);
+    expect(
+      Value.Check(ToolCallRequestSchema, { ...validCall, input: { missing: undefined } }),
+    ).toBe(false);
+  });
+
+  it("rejects function output in completed results (repro #2)", () => {
+    expect(Value.Check(ToolExecutionResultSchema, { ...completedResult, output: () => 1 })).toBe(false);
+  });
+
+  it("rejects BigInt progress in events (repro #3)", () => {
+    expect(
+      Value.Check(ToolExecutionEventSchema, { ...baseEvent, type: "progress", progress: 1n }),
+    ).toBe(false);
+    expect(
+      Value.Check(ToolExecutionEventSchema, {
+        ...baseEvent,
+        type: "progress",
+        progress: { bytes: 1n },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects empty execution id, trace id, failure code and failure message", () => {
+    expect(Value.Check(ToolCallRequestSchema, { ...validCall, executionId: "" })).toBe(false);
+    expect(Value.Check(ToolCallRequestSchema, { ...validCall, traceId: "" })).toBe(false);
+    expect(
+      Value.Check(ToolExecutionResultSchema, {
+        ...completedResult,
+        status: "failed",
+        failure: { code: "", message: "blocked", retryable: false, attempts: 1 },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(ToolExecutionResultSchema, {
+        ...completedResult,
+        status: "failed",
+        failure: { code: "url_blocked", message: "", retryable: false, attempts: 1 },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects whitespace-only tool names", () => {
+    expect(
+      Value.Check(ToolCallRequestSchema, { ...validCall, tool: { name: " ", version: 1 } }),
     ).toBe(false);
   });
 });

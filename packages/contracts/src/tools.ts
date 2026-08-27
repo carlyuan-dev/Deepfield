@@ -1,20 +1,48 @@
 import { Type, type Static } from "typebox";
+import { Format } from "typebox/format";
+
+// Registered once per process. TypeBox's plain Number schema cannot reject
+// NaN/Infinity, so the JSON-safe contracts pair Number with this finite check.
+Format.Set(
+  "json-finite-number",
+  (value: unknown) => typeof value === "number" && Number.isFinite(value),
+);
 
 export const ToolIdentitySchema = Type.Object(
   {
-    name: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1, pattern: "\\S" }),
     version: Type.Integer({ minimum: 1 }),
   },
   { additionalProperties: false },
 );
 export type ToolIdentity = Static<typeof ToolIdentitySchema>;
 
+/** Recursive JSON value: null | boolean | finite number | string | array | object. */
+export const JsonValueSchema = Type.Cyclic(
+  {
+    JsonValue: Type.Union([
+      Type.Null(),
+      Type.Boolean(),
+      Type.Number({ format: "json-finite-number" }),
+      Type.String(),
+      Type.Array(Type.Ref("JsonValue")),
+      Type.Record(Type.String(), Type.Ref("JsonValue")),
+    ]),
+  },
+  "JsonValue",
+);
+export type JsonValue = Static<typeof JsonValueSchema>;
+
+/** JSON object: an object whose own values are JSON values. */
+export const JsonObjectSchema = Type.Object({}, { additionalProperties: JsonValueSchema });
+export type JsonObject = Static<typeof JsonObjectSchema>;
+
 export const ToolCallRequestSchema = Type.Object(
   {
-    executionId: Type.String(),
-    traceId: Type.String(),
+    executionId: Type.String({ minLength: 1 }),
+    traceId: Type.String({ minLength: 1 }),
     tool: ToolIdentitySchema,
-    input: Type.Object({}, { additionalProperties: true }),
+    input: JsonObjectSchema,
   },
   { additionalProperties: false },
 );
@@ -22,19 +50,19 @@ export type ToolCallRequest = Static<typeof ToolCallRequestSchema>;
 
 export const ToolFailureSchema = Type.Object(
   {
-    code: Type.String(),
-    message: Type.String(),
+    code: Type.String({ minLength: 1 }),
+    message: Type.String({ minLength: 1 }),
     retryable: Type.Boolean(),
     attempts: Type.Integer({ minimum: 1 }),
-    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    metadata: Type.Optional(JsonObjectSchema),
   },
   { additionalProperties: false },
 );
 export type ToolFailure = Static<typeof ToolFailureSchema>;
 
 const resultFields = {
-  executionId: Type.String(),
-  traceId: Type.String(),
+  executionId: Type.String({ minLength: 1 }),
+  traceId: Type.String({ minLength: 1 }),
   tool: ToolIdentitySchema,
   attempts: Type.Integer({ minimum: 1 }),
   durationMs: Type.Optional(Type.Number({ minimum: 0 })),
@@ -42,7 +70,7 @@ const resultFields = {
 
 export const ToolExecutionResultSchema = Type.Union([
   Type.Object(
-    { ...resultFields, status: Type.Literal("completed"), output: Type.Unknown() },
+    { ...resultFields, status: Type.Literal("completed"), output: JsonValueSchema },
     { additionalProperties: false },
   ),
   Type.Object(
@@ -57,8 +85,8 @@ export const ToolExecutionResultSchema = Type.Union([
 export type ToolExecutionResult = Static<typeof ToolExecutionResultSchema>;
 
 const eventFields = {
-  executionId: Type.String(),
-  traceId: Type.String(),
+  executionId: Type.String({ minLength: 1 }),
+  traceId: Type.String({ minLength: 1 }),
   tool: ToolIdentitySchema,
   sequence: Type.Integer({ minimum: 0 }),
   timestamp: Type.Number(),
@@ -73,7 +101,7 @@ export const ToolExecutionEventSchema = Type.Union([
   ),
   Type.Object({ ...eventFields, type: Type.Literal("started") }, { additionalProperties: false }),
   Type.Object(
-    { ...eventFields, type: Type.Literal("progress"), progress: Type.Unknown() },
+    { ...eventFields, type: Type.Literal("progress"), progress: JsonValueSchema },
     { additionalProperties: false },
   ),
   Type.Object(
