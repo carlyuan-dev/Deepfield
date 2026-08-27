@@ -24,6 +24,8 @@ export type PdfLoader = (data: Uint8Array) => PdfLoadingTaskLike;
 
 export interface AbortGuard {
   race<T>(promise: Promise<T>): Promise<T>;
+  /** Rejects with cancelled when the signal aborts (handled; safe to race). */
+  abortSignal: Promise<never>;
   addAbortListener(listener: () => void): () => void;
 }
 
@@ -48,7 +50,7 @@ export function createAbortGuard(signal: AbortSignal): AbortGuard {
     signal.addEventListener("abort", onAbort, { once: true });
     return () => signal.removeEventListener("abort", onAbort);
   };
-  return { race, addAbortListener };
+  return { race, abortSignal: abortDeferred, addAbortListener };
 }
 
 /**

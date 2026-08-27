@@ -216,17 +216,23 @@ export function createParsePdfDefinition(
         // never the PDF bytes or the parser's raw cause.
         throw new ToolExecutionError("invalid_input");
       } finally {
-        removeAbort();
-        if (signal.aborted) {
-          // cancel must settle promptly even if a hostile destroy never settles
-          void startDestroy();
-        } else {
-          // trusted path: wait for the same memoized cleanup
-          await startDestroy();
-        }
-        safeZeroFill(buffer);
-        if (dataView !== undefined) {
-          safeZeroFill(dataView as unknown as Buffer);
+        try {
+          if (signal.aborted) {
+            // cancel must settle promptly even if a hostile destroy never settles
+            void startDestroy();
+          } else {
+            // The abort listener stays attached THROUGH the cleanup, and the
+            // cleanup wait races the abort signal: a never-settling destroy can
+            // neither hang the execution nor let a late completion turn into
+            // success after the caller aborted.
+            await Promise.race([startDestroy(), guard.abortSignal]);
+          }
+        } finally {
+          safeZeroFill(buffer);
+          if (dataView !== undefined) {
+            safeZeroFill(dataView as unknown as Buffer);
+          }
+          removeAbort();
         }
       }
     },

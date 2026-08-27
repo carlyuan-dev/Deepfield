@@ -176,4 +176,61 @@ describe("parse_pdf abort and destroy lifecycle (focused revision)", () => {
       definition.execute({ resourceId: "r1" }, context(), controller.signal, () => {}),
     ).rejects.toMatchObject({ code: "cancelled" });
   });
+
+  it("settles cancelled when aborted during cleanup even though destroy never settles", async () => {
+    let destroyStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      destroyStarted = resolve;
+    });
+    let cleanupResolve!: () => void;
+    const cleanupGate = new Promise<void>((resolve) => {
+      cleanupResolve = resolve;
+    });
+    let destroyCalls = 0;
+    let capturedData: Uint8Array | undefined;
+    const consumedBody = Buffer.from("cleanup-body-marker");
+    const document = {
+      numPages: 1,
+      getMetadata: async () => ({ info: {} }),
+      getPage: async () => ({
+        getTextContent: async () => ({ items: [] }),
+        cleanup() {},
+      }),
+      destroy: async () => {},
+    };
+    const task: PdfLoadingTaskLike = {
+      promise: Promise.resolve(document),
+      destroy: () => {
+        destroyCalls += 1;
+        destroyStarted();
+        return cleanupGate; // never settles unless the test resolves it
+      },
+    };
+    const loader = (data: Uint8Array): PdfLoadingTaskLike => {
+      capturedData = data;
+      return task;
+    };
+    const store = {
+      consume: () => ({ body: consumedBody, metadata: metadata() }),
+      get: () => undefined,
+      size: () => 0,
+      releaseTrace: () => 0,
+      dispose: () => {},
+    } as unknown as ResourceStore;
+    const definition = createParsePdfDefinition({ store, loader });
+    const controller = new AbortController();
+    const execute = definition.execute({ resourceId: "r1" }, context(), controller.signal, () => {});
+    await started; // the parse completed and the cleanup (destroy) is in flight
+    expect(destroyCalls).toBe(1);
+    controller.abort();
+    // must settle cancelled promptly despite the never-settling destroy
+    await expect(execute).rejects.toMatchObject({ code: "cancelled" });
+    expect(destroyCalls).toBe(1); // exactly once
+    expect(capturedData!.every((byte) => byte === 0)).toBe(true); // dataView zeroed
+    expect(consumedBody.every((byte) => byte === 0)).toBe(true); // consumed copy zeroed
+    // a late cleanup completion must not turn into success or a second settle
+    cleanupResolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(destroyCalls).toBe(1);
+  });
 });

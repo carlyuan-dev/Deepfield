@@ -71,6 +71,31 @@ describe("parse_html URL integrity and schema bounds (focused revision)", () => 
     ).rejects.toMatchObject({ code: "invalid_input" });
   });
 
+  it("rejects a base URL whose NORMALIZED href exceeds the bound even when the raw string fits", async () => {
+    // 800 emoji: raw length ~1618 (2 UTF-16 units each) <= 2048, but the
+    // percent-encoded href is ~9620 > 2048. The current check only measures
+    // the raw string, so this currently passes with an over-bound canonical.
+    const emojiPath = "\u{1F600}".repeat(800);
+    const finalUrl = `https://x.example/${emojiPath}`;
+    expect(finalUrl.length).toBeLessThanOrEqual(2048);
+    const store = new ResourceStore({ idFactory: () => "res-encurl" });
+    const { id } = store.put(scope("t1"), Buffer.from("<html><body><p>x</p></body></html>"), metadata("text/html", finalUrl));
+    const definition = createParseHtmlDefinition({ store });
+    await expect(
+      definition.execute({ resourceId: id }, context(), new AbortController().signal, () => {}),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    expect(store.size()).toBe(0); // consumed even on the failure
+  });
+
+  it("skips a link whose normalized href exceeds the bound even when the raw string fits", async () => {
+    const emojiPath = "\u{1F600}".repeat(800);
+    const href = `https://x.example/${emojiPath}`;
+    expect(href.length).toBeLessThanOrEqual(2048);
+    const output = await runRaw(`<html><body><a href="${href}">emoji</a><a href="https://ok.example/fine">ok</a></body></html>`);
+    expect(output.links.map((link) => link.href)).toEqual(["https://ok.example/fine"]);
+    expect(output.truncated).toBe(true);
+  });
+
   it("deeply nested paths report truncated=true", async () => {
     const deep = `<html><body>${"<div>".repeat(1000)}<p>深</p>${"</div>".repeat(1000)}</body></html>`;
     const store = new ResourceStore({ idFactory: () => "res-deep" });

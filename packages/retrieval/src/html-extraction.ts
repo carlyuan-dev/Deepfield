@@ -46,8 +46,10 @@ export function safeResolveUrl(href: string, baseUrl: string): string | undefine
 
 /**
  * Validates the resource finalUrl used as the resolution base: must be an
- * absolute http/https URL within the canonical bound. Anything else is a
- * stable invalid_input rather than a fabricated base.
+ * absolute http/https URL whose NORMALIZED href is within the canonical bound.
+ * Non-ASCII input is percent-encoded by URL normalization, so the raw string
+ * length check alone can let an over-bound href through. Anything invalid is
+ * a stable invalid_input rather than a fabricated base.
  */
 export function validateResourceBaseUrl(finalUrl: string): string {
   if (typeof finalUrl !== "string" || finalUrl.length === 0 || finalUrl.length > MAX_CANONICAL) {
@@ -60,6 +62,9 @@ export function validateResourceBaseUrl(finalUrl: string): string {
     throw new Error("invalid finalUrl");
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("invalid finalUrl");
+  }
+  if (url.href.length > MAX_CANONICAL) {
     throw new Error("invalid finalUrl");
   }
   return url.href;
