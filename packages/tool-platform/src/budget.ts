@@ -27,9 +27,20 @@ export interface ToolBudgetToken {
 
 const METER_CATEGORIES = new Set(["search", "fetch", "link_check", "parse", "none"] as const);
 
-class BudgetToken implements ToolBudgetToken {
-  state: "active" | "completed" | "released" = "active";
+type TokenState = "active" | "released" | "completed";
 
+interface TokenRecord {
+  owner: ToolBudgetLedger;
+  state: TokenState;
+  /** Immutable per-tool key captured at reserve time. */
+  toolName: string;
+}
+
+// Token lifecycle state lives here, keyed by the exact token object. It cannot
+// be forged, moved across ledgers, or modified by callers.
+const tokenRecords = new WeakMap<object, TokenRecord>();
+
+class BudgetToken implements ToolBudgetToken {
   constructor(
     readonly identity: ToolIdentity,
     readonly category: ToolMeterCategory,
@@ -69,7 +80,8 @@ function assertValidLimits(limits: ToolBudgetLimits): void {
 /**
  * Atomic per-trace budget ledger. `reserve` checks every limit and consumes
  * synchronously before returning the token, so two concurrent reservations can
- * never both take the last remaining slot.
+ * never both take the last remaining slot. Tokens are owned by the ledger that
+ * created them; lifecycle state is private and unforgeable.
  */
 export class ToolBudgetLedger {
   readonly #limits: ToolBudgetLimits;
@@ -104,7 +116,10 @@ export class ToolBudgetLedger {
     if (!METER_CATEGORIES.has(category)) {
       throw new ToolBudgetError("invalid meter category");
     }
-    const name = identity.name;
+    // Defensive copy frozen at reserve time: later caller mutation of the
+    // identity object must not change the keys used for counting or release.
+    const capturedIdentity = Object.freeze({ name: identity.name, version: identity.version });
+    const name = capturedIdentity.name;
     if (this.#limits.deadlineMs !== undefined && this.#clock() - this.#startedAt >= this.#limits.deadlineMs) {
       throw new ToolBudgetError("tool budget exceeded: deadline");
     }
@@ -137,7 +152,9 @@ export class ToolBudgetLedger {
     this.#categoryCalls.set(category, (this.#categoryCalls.get(category) ?? 0) + 1);
     this.#concurrency += 1;
     this.#perToolConcurrency.set(name, (this.#perToolConcurrency.get(name) ?? 0) + 1);
-    return new BudgetToken(identity, category);
+    const token = new BudgetToken(capturedIdentity, category);
+    tokenRecords.set(token, { owner: this, state: "active", toolName: name });
+    return token;
   }
 
   recordBytes(bytes: number): void {
@@ -154,41 +171,51 @@ export class ToolBudgetLedger {
     this.#bytes = next;
   }
 
-  /** Reconciles actual bytes and frees concurrency; idempotent per token. */
+  /**
+   * Reconciles actual bytes and frees concurrency. If byte recording fails the
+   * concurrency slot is still released exactly once, the consumed attempt is
+   * kept, over-limit bytes are not recorded, and the token still becomes
+   * terminal so it cannot re-record. Idempotent per token.
+   */
   complete(token: ToolBudgetToken, finalBytes?: number): void {
-    if (!(token instanceof BudgetToken)) {
-      throw new ToolBudgetError("invalid budget token");
-    }
-    if (token.state === "completed") {
+    const record = this.#requireOwnedRecord(token);
+    if (record.state === "completed") {
       return;
     }
-    if (finalBytes !== undefined) {
-      this.recordBytes(finalBytes);
+    const wasActive = record.state === "active";
+    try {
+      if (finalBytes !== undefined) {
+        this.recordBytes(finalBytes);
+      }
+    } finally {
+      record.state = "completed";
+      if (wasActive) {
+        this.#releaseConcurrency(record);
+      }
     }
-    if (token.state === "released") {
-      token.state = "completed";
-      return;
-    }
-    token.state = "completed";
-    this.#releaseConcurrency(token);
   }
 
   /** Frees concurrency only; the reserved attempt stays consumed. Idempotent. */
   release(token: ToolBudgetToken): void {
-    if (!(token instanceof BudgetToken)) {
-      throw new ToolBudgetError("invalid budget token");
-    }
-    if (token.state === "released" || token.state === "completed") {
+    const record = this.#requireOwnedRecord(token);
+    if (record.state === "released" || record.state === "completed") {
       return;
     }
-    token.state = "released";
-    this.#releaseConcurrency(token);
+    record.state = "released";
+    this.#releaseConcurrency(record);
   }
 
-  #releaseConcurrency(token: BudgetToken): void {
+  #requireOwnedRecord(token: ToolBudgetToken): TokenRecord {
+    const record = tokenRecords.get(token);
+    if (record === undefined || record.owner !== this) {
+      throw new ToolBudgetError("invalid budget token for this ledger");
+    }
+    return record;
+  }
+
+  #releaseConcurrency(record: TokenRecord): void {
     this.#concurrency = Math.max(0, this.#concurrency - 1);
-    const name = token.identity.name;
-    const remaining = (this.#perToolConcurrency.get(name) ?? 1) - 1;
-    this.#perToolConcurrency.set(name, Math.max(0, remaining));
+    const remaining = (this.#perToolConcurrency.get(record.toolName) ?? 1) - 1;
+    this.#perToolConcurrency.set(record.toolName, Math.max(0, remaining));
   }
 }

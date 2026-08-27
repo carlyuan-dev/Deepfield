@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ToolBudgetError, ToolBudgetLedger, type ToolBudgetLimits } from "./budget.js";
+import { ToolBudgetError, ToolBudgetLedger, type ToolBudgetLimits, type ToolBudgetToken } from "./budget.js";
 import type { ToolIdentity } from "@deepfield/contracts";
 
 const searchV1: ToolIdentity = { name: "search_web", version: 1 };
@@ -146,6 +146,73 @@ describe("ToolBudgetLedger", () => {
     }
     expect(message).toContain("budget");
     expect(message).not.toContain("search_web");
+    expect(message).not.toContain("fetch_url");
+    expect(message).not.toContain("secret");
+  });
+});
+
+describe("ToolBudgetLedger token boundaries (focused revision)", () => {
+  it("rejects completing or releasing a token on a different ledger", () => {
+    const { ledger: ledgerA } = makeLedger({ maxConcurrencyPerTool: 1 });
+    const { ledger: ledgerB } = makeLedger({});
+    const token = ledgerA.reserve(fetchV1, "fetch");
+    expect(() => ledgerB.release(token)).toThrow(ToolBudgetError);
+    expect(() => ledgerB.complete(token)).toThrow(ToolBudgetError);
+    expect(() => ledgerA.reserve(fetchV1, "fetch")).toThrow(ToolBudgetError);
+    ledgerA.release(token);
+    ledgerA.reserve(fetchV1, "fetch");
+  });
+
+  it("rejects forged tokens that belong to no ledger", () => {
+    const { ledger } = makeLedger({});
+    const forged = { identity: fetchV1, category: "search" } as unknown as ToolBudgetToken;
+    expect(() => ledger.complete(forged)).toThrow(ToolBudgetError);
+    expect(() => ledger.release(forged)).toThrow(ToolBudgetError);
+  });
+
+  it("captures an immutable identity at reserve time", () => {
+    const { ledger } = makeLedger({ maxConcurrencyPerTool: 1 });
+    const identity: ToolIdentity = { name: "fetch_url", version: 1 };
+    const token = ledger.reserve(identity, "fetch");
+    identity.name = "mutated";
+    expect(() => ledger.reserve({ name: "fetch_url", version: 1 }, "fetch")).toThrow(
+      ToolBudgetError,
+    );
+    expect(() => ledger.reserve({ name: "mutated", version: 1 }, "fetch")).not.toThrow(
+      ToolBudgetError,
+    );
+    ledger.release(token);
+    expect(() => ledger.reserve({ name: "fetch_url", version: 1 }, "fetch")).not.toThrow(
+      ToolBudgetError,
+    );
+    expect(Object.isFrozen(token.identity)).toBe(true);
+    expect(() => {
+      token.identity.name = "hacked";
+    }).toThrow(TypeError);
+  });
+
+  it("releases concurrency exactly once when complete fails on over-limit bytes", () => {
+    const { ledger } = makeLedger({ maxBytes: 100, maxConcurrency: 1, maxConcurrencyPerTool: 1 });
+    const token = ledger.reserve(fetchV1, "fetch");
+    expect(() => ledger.complete(token, 200)).toThrow(ToolBudgetError);
+    ledger.reserve(fetchV1, "fetch");
+    ledger.recordBytes(100);
+    ledger.complete(token, 50);
+    expect(() => ledger.recordBytes(1)).toThrow(ToolBudgetError);
+    ledger.release(token);
+  });
+
+  it("fails with safe errors that never leak identity or input", () => {
+    const { ledger: ledgerA } = makeLedger({ maxConcurrency: 1 });
+    const { ledger: ledgerB } = makeLedger({});
+    const token = ledgerA.reserve(fetchV1, "fetch");
+    let message = "";
+    try {
+      ledgerB.release(token);
+    } catch (error) {
+      message = (error as ToolBudgetError).message;
+    }
+    expect(message).toContain("token");
     expect(message).not.toContain("fetch_url");
     expect(message).not.toContain("secret");
   });

@@ -37,6 +37,16 @@ function inputHost(input: Record<string, unknown>): string | undefined {
   }
 }
 
+/**
+ * Fail-closed limit check: when a grant configures a maximum, the request must
+ * supply an explicit positive integer within that maximum. Missing fields,
+ * strings, NaN/Infinity, non-integers, zero/negative and over-limit values all
+ * deny; authorization never relies on executor defaults or input schemas.
+ */
+function isPositiveIntegerAtMost(value: unknown, maximum: number): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= maximum;
+}
+
 /** Deny-by-default authorization: a grant must match every checked dimension. */
 export class ToolPolicy {
   evaluate(request: ToolPolicyRequest, context: ToolRunContext): PolicyDecision {
@@ -61,14 +71,12 @@ export class ToolPolicy {
       }
     }
     if (grant.maxResults !== undefined) {
-      const requested = request.input["maxResults"];
-      if (typeof requested === "number" && requested > grant.maxResults) {
+      if (!isPositiveIntegerAtMost(request.input["maxResults"], grant.maxResults)) {
         return { decision: "deny", code: "permission_denied" };
       }
     }
     if (grant.maxBytes !== undefined) {
-      const requested = request.input["maxBytes"];
-      if (typeof requested === "number" && requested > grant.maxBytes) {
+      if (!isPositiveIntegerAtMost(request.input["maxBytes"], grant.maxBytes)) {
         return { decision: "deny", code: "permission_denied" };
       }
     }

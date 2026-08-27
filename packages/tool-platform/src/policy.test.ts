@@ -117,7 +117,10 @@ describe("ToolPolicy deny-by-default", () => {
   it("allows hosts and limits within the grant bounds", () => {
     const toolSet = new ToolSet([grant({ hostPatterns: ["*.example.com"], maxResults: 3 })]);
     expect(
-      policy.evaluate(request({ input: { url: "https://example.com" } }), context({ toolSet })),
+      policy.evaluate(
+        request({ input: { url: "https://example.com", maxResults: 2 } }),
+        context({ toolSet }),
+      ),
     ).toEqual({ decision: "allow" });
     expect(
       policy.evaluate(
@@ -188,5 +191,76 @@ describe("ToolSet construction", () => {
     const toolSet = new ToolSet([]);
     expect(toolSet.size).toBe(0);
     expect(toolSet.has(fetchV1)).toBe(false);
+  });
+});
+
+describe("ToolPolicy fail-closed parameter limits (focused revision)", () => {
+  const policy = new ToolPolicy();
+
+  it("denies when maxResults is missing or not an explicit positive integer within the grant", () => {
+    const toolSet = new ToolSet([grant({ maxResults: 3 })]);
+    const inputs: unknown[] = [
+      {},
+      { maxResults: "3" },
+      { maxResults: NaN },
+      { maxResults: Infinity },
+      { maxResults: -Infinity },
+      { maxResults: 3.5 },
+      { maxResults: 0 },
+      { maxResults: -1 },
+      { maxResults: 4 },
+    ];
+    for (const input of inputs) {
+      expect(
+        policy.evaluate(
+          request({ input: input as Record<string, unknown> }),
+          context({ toolSet }),
+        ),
+      ).toEqual({ decision: "deny", code: "permission_denied" });
+    }
+    expect(
+      policy.evaluate(request({ input: { maxResults: 3 } }), context({ toolSet })),
+    ).toEqual({ decision: "allow" });
+  });
+
+  it("denies when maxBytes is missing or not an explicit positive integer within the grant", () => {
+    const toolSet = new ToolSet([grant({ maxBytes: 1024 })]);
+    const inputs: unknown[] = [
+      {},
+      { maxBytes: "1024" },
+      { maxBytes: NaN },
+      { maxBytes: Infinity },
+      { maxBytes: 1024.5 },
+      { maxBytes: 0 },
+      { maxBytes: -5 },
+      { maxBytes: 2048 },
+    ];
+    for (const input of inputs) {
+      expect(
+        policy.evaluate(
+          request({ input: input as Record<string, unknown> }),
+          context({ toolSet }),
+        ),
+      ).toEqual({ decision: "deny", code: "permission_denied" });
+    }
+    expect(
+      policy.evaluate(request({ input: { maxBytes: 1024 } }), context({ toolSet })),
+    ).toEqual({ decision: "allow" });
+  });
+
+  it("still enforces host patterns alongside fail-closed limits", () => {
+    const toolSet = new ToolSet([grant({ hostPatterns: ["*.example.com"], maxResults: 3 })]);
+    expect(
+      policy.evaluate(
+        request({ input: { url: "https://ok.example.com", maxResults: 2 } }),
+        context({ toolSet }),
+      ),
+    ).toEqual({ decision: "allow" });
+    expect(
+      policy.evaluate(
+        request({ input: { url: "https://ok.example.com", maxResults: "2" } }),
+        context({ toolSet }),
+      ),
+    ).toEqual({ decision: "deny", code: "permission_denied" });
   });
 });
