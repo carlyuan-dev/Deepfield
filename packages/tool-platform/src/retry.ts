@@ -1,4 +1,4 @@
-import type { ToolFailure, ToolFailureCode } from "./errors.js";
+import type { ToolFailure, ToolFailureCode, ToolFailureMetadata } from "./errors.js";
 
 /** Injectable virtual clock: `wait` must be cancellable via the signal. */
 export interface RetryClock {
@@ -26,9 +26,9 @@ export function isRetryableFailure(code: ToolFailureCode, httpStatus?: number): 
 }
 
 export function httpStatusFromMetadata(
-  metadata: Readonly<Record<string, unknown>> | undefined,
+  metadata: Readonly<ToolFailureMetadata> | undefined,
 ): number | undefined {
-  const status = metadata?.["httpStatus"];
+  const status = metadata?.httpStatus;
   return typeof status === "number" && Number.isInteger(status) ? status : undefined;
 }
 

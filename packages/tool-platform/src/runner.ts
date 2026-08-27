@@ -1,19 +1,20 @@
 import { Value } from "typebox/value";
-import type { ToolCallRequest, ToolExecutionResult } from "@deepfield/contracts";
+import type { ToolCallRequest, ToolExecutionResult, ToolIdentity } from "@deepfield/contracts";
 import type { ToolBudgetLedger, ToolBudgetToken } from "./budget.js";
-import type { ToolDefinition, ToolProgress, ToolRunContext } from "./definition.js";
+import type { ToolDefinition, ToolRunContext } from "./definition.js";
+import { makeToolFailure, type ToolFailure, type ToolFailureCode } from "./errors.js";
 import {
-  makeToolFailure,
-  TOOL_FAILURE_MESSAGES,
-  ToolExecutionError,
-  type ToolFailure,
-  type ToolFailureCode,
-} from "./errors.js";
-import { ToolEventEmitter, type ToolEventDraft, type ToolEventSink, toSafeProgress } from "./events.js";
+  ToolEventEmitter,
+  type ToolEventDraft,
+  type ToolEventSink,
+  toSafeProgress,
+} from "./events.js";
 import { ToolPolicy } from "./policy.js";
 import { ToolRegistry } from "./registry.js";
-import { httpStatusFromMetadata, isRetryableFailure, type RetryClock } from "./retry.js";
+import { type RetryClock } from "./retry.js";
 import type { ToolAuditFinish, ToolAuditSink } from "./audit.js";
+import { runAttempt } from "./runner-attempt.js";
+import { snapshotInput, snapshotScope, snapshotToolIdentity } from "./snapshot.js";
 
 export interface ToolRunnerOptions {
   registry: ToolRegistry;
@@ -23,17 +24,19 @@ export interface ToolRunnerOptions {
   clock: RetryClock;
 }
 
-type AttemptOutcome =
-  | { kind: "value"; value: unknown }
-  | { kind: "failure"; failure: ToolFailure }
-  | { kind: "cancelled" }
-  | { kind: "timeout" };
+// Only reachable for out-of-contract calls whose tool identity cannot be
+// snapshotted at all; the result is a safe invalid_input with a frozen
+// placeholder so no mutable caller object is ever exposed.
+const INVALID_TOOL_PLACEHOLDER: ToolIdentity = Object.freeze({ name: "invalid_tool", version: 1 });
 
 /**
  * Single execution pipeline shared by Pi adapters, Capabilities and direct
- * callers: resolve -> validate input -> policy -> budget -> audit start ->
- * started -> execute/retry -> validate output -> required audit finish +
- * budget finalize -> exactly one terminal event.
+ * callers: entry snapshot -> resolve -> validate input -> policy -> budget ->
+ * audit start -> started -> execute/retry -> validate output -> required audit
+ * finish + budget finalize -> exactly one terminal event. The caller's call
+ * and context are snapshotted before the first emit/await, so listeners,
+ * policy, audit and later caller mutation cannot change what the pipeline
+ * sees.
  */
 export class ToolRunner {
   readonly #registry: ToolRegistry;
@@ -56,7 +59,18 @@ export class ToolRunner {
     signal: AbortSignal,
     onEvent: ToolEventSink,
   ): Promise<ToolExecutionResult> {
-    const { executionId, traceId, tool } = call;
+    const tool = snapshotToolIdentity(call.tool);
+    if (tool === undefined) {
+      return this.#invalidInputPlaceholder(call);
+    }
+    const executionId = call.executionId;
+    const traceId = call.traceId;
+    let input: unknown;
+    try {
+      input = snapshotInput(call.input);
+    } catch {
+      input = undefined;
+    }
     const startedAt = this.#clock.now();
     const emitter = new ToolEventEmitter(executionId, traceId, tool, () => this.#clock.now(), onEvent);
     let settled = false;
@@ -92,6 +106,17 @@ export class ToolRunner {
     };
 
     emit({ type: "accepted" });
+    if (input === undefined) {
+      return fail(makeToolFailure("invalid_input", 1, false));
+    }
+    const scope = snapshotScope({
+      traceId: context.traceId,
+      actor: context.actor,
+      projectId: context.projectId,
+    });
+    if (scope === undefined || scope.traceId !== traceId) {
+      return fail(makeToolFailure("invalid_input", 1, false));
+    }
 
     let definition: ToolDefinition<any, any>;
     try {
@@ -99,13 +124,13 @@ export class ToolRunner {
     } catch {
       return fail(makeToolFailure("tool_not_found", 1, false));
     }
-    if (!Value.Check(definition.inputSchema, call.input)) {
+    if (!Value.Check(definition.inputSchema, input)) {
       return fail(makeToolFailure("invalid_input", 1, false));
     }
     emit({ type: "validated" });
 
     const decision = this.#policy.evaluate(
-      { identity: tool, effect: definition.effect, input: call.input as Record<string, unknown> },
+      { identity: tool, effect: definition.effect, input: input as Record<string, unknown> },
       context,
     );
     if (decision.decision === "deny") {
@@ -126,8 +151,8 @@ export class ToolRunner {
       await this.#audit.start({
         executionId,
         traceId,
-        ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
-        actor: context.actor,
+        ...(scope.projectId !== undefined ? { projectId: scope.projectId } : {}),
+        actor: scope.actor,
         tool,
         attempts: 0,
       });
@@ -163,15 +188,16 @@ export class ToolRunner {
           break;
         }
         emit({ type: "started" });
-        const outcome = await this.#runAttempt(
+        const outcome = await runAttempt({
           definition,
-          call.input,
-          context,
-          internal,
-          deadline - this.#clock.now(),
+          input,
+          context: scope,
+          controller: internal,
+          remainingMs: deadline - this.#clock.now(),
           attempts,
-          (progress) => emit({ type: "progress", progress: toSafeProgress(progress) }),
-        );
+          clock: this.#clock,
+          onProgress: (progress) => emit({ type: "progress", progress: toSafeProgress(progress) }),
+        });
         if (outcome.kind === "value") {
           output = outcome.value;
           break;
@@ -184,16 +210,21 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
-        if (
-          !isRetryableFailure(outcome.failure.code, httpStatusFromMetadata(outcome.failure.metadata)) ||
-          attempt >= maxAttempts
-        ) {
+        if (!outcome.failure.retryable || attempt >= maxAttempts) {
           terminalFailure = outcome.failure;
           break;
         }
-        emit({ type: "retry_scheduled", retryDelayMs: definition.retry.backoffMs });
+        const remaining = deadline - this.#clock.now();
+        if (remaining <= 0) {
+          terminalFailure = makeToolFailure("timeout", attempts, false);
+          break;
+        }
+        // Backoff is capped by the remaining total deadline: the deadline
+        // always bounds executor time plus every backoff, never beyond.
+        const delayMs = Math.min(definition.retry.backoffMs, remaining);
+        emit({ type: "retry_scheduled", retryDelayMs: delayMs });
         try {
-          await this.#clock.wait(definition.retry.backoffMs, internal.signal);
+          await this.#clock.wait(delayMs, internal.signal);
         } catch {
           terminalFailure = makeToolFailure("cancelled", attempts, false);
           break;
@@ -241,50 +272,15 @@ export class ToolRunner {
     return status === "cancelled" ? cancel(terminalFailure) : fail(terminalFailure);
   }
 
-  async #runAttempt(
-    definition: ToolDefinition<any, any>,
-    input: unknown,
-    context: ToolRunContext,
-    controller: AbortController,
-    remainingMs: number,
-    attempts: number,
-    onProgress: (progress: ToolProgress) => void,
-  ): Promise<AttemptOutcome> {
-    const executorPromise = definition.execute(input as never, context, controller.signal, onProgress);
-    executorPromise.catch(() => {}); // suppress late rejection after the race settles
-    try {
-      const winner = await Promise.race([
-        executorPromise.then((value) => ({ kind: "value" as const, value })),
-        this.#clock.wait(Math.max(0, remainingMs), controller.signal).then(() => "timeout" as const),
-      ]);
-      if (winner === "timeout") {
-        controller.abort();
-        return { kind: "timeout" };
-      }
-      return { kind: "value", value: winner.value };
-    } catch (error) {
-      if (controller.signal.aborted) {
-        return { kind: "cancelled" };
-      }
-      return { kind: "failure", failure: this.#classifyExecutorError(error, attempts) };
-    }
-  }
-
-  #classifyExecutorError(error: unknown, attempts: number): ToolFailure {
-    if (error instanceof ToolExecutionError) {
-      const httpStatus = httpStatusFromMetadata(error.metadata);
-      const failure: ToolFailure = {
-        code: error.code,
-        message: TOOL_FAILURE_MESSAGES[error.code],
-        retryable: isRetryableFailure(error.code, httpStatus),
-        attempts,
-      };
-      if (error.metadata !== undefined) {
-        failure.metadata = error.metadata;
-      }
-      return failure;
-    }
-    return makeToolFailure("executor_failed", attempts, false);
+  #invalidInputPlaceholder(call: ToolCallRequest): ToolExecutionResult {
+    return {
+      executionId: typeof call.executionId === "string" ? call.executionId : "",
+      traceId: typeof call.traceId === "string" ? call.traceId : "",
+      tool: INVALID_TOOL_PLACEHOLDER,
+      status: "failed",
+      failure: makeToolFailure("invalid_input", 1, false),
+      attempts: 1,
+    };
   }
 
   async #finishAuditBestEffort(record: ToolAuditFinish): Promise<void> {

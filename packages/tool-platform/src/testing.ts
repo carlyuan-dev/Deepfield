@@ -64,18 +64,29 @@ export type FakeAuditRecord =
   | { kind: "start"; record: ToolAuditStart }
   | { kind: "finish"; record: ToolAuditFinish };
 
-/** Deterministic audit double with failure injection and an optional finish gate. */
+/** Deterministic audit double with failure injection and optional start/finish gates. */
 export class FakeAuditSink implements ToolAuditSink {
   readonly records: FakeAuditRecord[] = [];
   readonly #failStart: boolean;
   readonly #failFinish: boolean;
+  #startGate: { resolve: () => void; promise: Promise<void> } | undefined;
   #finishGate: { resolve: () => void; promise: Promise<void> } | undefined;
+  #startSeen: { resolve: () => void; promise: Promise<void> } | undefined;
 
   constructor(
-    options: { failStart?: boolean; failFinish?: boolean; deferFinish?: boolean } = {},
+    options: {
+      failStart?: boolean;
+      failFinish?: boolean;
+      deferStart?: boolean;
+      deferFinish?: boolean;
+    } = {},
   ) {
     this.#failStart = options.failStart ?? false;
     this.#failFinish = options.failFinish ?? false;
+    if (options.deferStart === true) {
+      this.#startGate = deferred();
+      this.#startSeen = deferred();
+    }
     if (options.deferFinish === true) {
       this.#finishGate = deferred();
     }
@@ -86,6 +97,10 @@ export class FakeAuditSink implements ToolAuditSink {
       throw new Error("audit start failed");
     }
     this.records.push({ kind: "start", record });
+    this.#startSeen?.resolve();
+    if (this.#startGate !== undefined) {
+      await this.#startGate.promise;
+    }
   }
 
   async finish(record: ToolAuditFinish): Promise<void> {
@@ -96,6 +111,14 @@ export class FakeAuditSink implements ToolAuditSink {
     if (this.#finishGate !== undefined) {
       await this.#finishGate.promise;
     }
+  }
+
+  startSeen(): Promise<void> {
+    return this.#startSeen?.promise ?? Promise.resolve();
+  }
+
+  releaseStart(): void {
+    this.#startGate?.resolve();
   }
 
   releaseFinish(): void {

@@ -8,12 +8,19 @@ export {
   type ToolBudgetToken,
 } from "./budget.js";
 export {
+  makeToolFailure,
   TOOL_FAILURE_MESSAGES,
   ToolExecutionError,
   type ToolFailure,
   type ToolFailureCode,
+  type ToolFailureMetadata,
 } from "./errors.js";
-export { type ToolEventSink, toSafeProgress } from "./events.js";
+export {
+  type ProgressKind,
+  type SafeProgress,
+  toSafeProgress,
+  type ToolEventSink,
+} from "./events.js";
 export { httpStatusFromMetadata, httpStatusOf, isRetryableFailure, type RetryClock } from "./retry.js";
 export { type ToolAuditFinish, type ToolAuditSink, type ToolAuditStart } from "./audit.js";
 export { ToolRunner, type ToolRunnerOptions } from "./runner.js";

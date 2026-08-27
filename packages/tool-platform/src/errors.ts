@@ -42,29 +42,54 @@ export const TOOL_FAILURE_MESSAGES: Record<ToolFailureCode, string> = {
   audit_failed: "audit failed",
 };
 
+/**
+ * Whitelisted failure metadata: only the stable numeric fields the Runner
+ * explicitly needs survive. Provider messages, secrets, headers, causes,
+ * stacks and arbitrary nested values are never forwarded.
+ */
+export interface ToolFailureMetadata {
+  httpStatus?: number;
+}
+
 export interface ToolFailure {
   code: ToolFailureCode;
   message: string;
   retryable: boolean;
   attempts: number;
-  metadata?: Readonly<Record<string, unknown>>;
+  metadata?: Readonly<ToolFailureMetadata>;
+}
+
+export function sanitizeFailureMetadata(
+  metadata: unknown,
+): Readonly<ToolFailureMetadata> | undefined {
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const record = metadata as Record<string, unknown>;
+  const status = record["httpStatus"];
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) {
+    return Object.freeze({ httpStatus: status });
+  }
+  return undefined;
 }
 
 /**
  * Safe classified failure thrown by executors and the platform. The message is
  * always the fixed message for the stable code; raw causes and enumerable
- * exception properties are never carried.
+ * exception properties are never carried. Metadata is defensively copied and
+ * whitelisted at construction so later caller mutation cannot change it.
  */
 export class ToolExecutionError extends Error {
   readonly code: ToolFailureCode;
-  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly metadata?: Readonly<ToolFailureMetadata>;
 
-  constructor(code: ToolFailureCode, metadata?: Readonly<Record<string, unknown>>) {
+  constructor(code: ToolFailureCode, metadata?: unknown) {
     super(TOOL_FAILURE_MESSAGES[code]);
     this.name = "ToolExecutionError";
     this.code = code;
-    if (metadata !== undefined) {
-      this.metadata = metadata;
+    const safe = sanitizeFailureMetadata(metadata);
+    if (safe !== undefined) {
+      this.metadata = safe;
     }
   }
 }
@@ -73,11 +98,17 @@ export function makeToolFailure(
   code: ToolFailureCode,
   attempts: number,
   retryable: boolean,
-  metadata?: Readonly<Record<string, unknown>>,
+  metadata?: unknown,
 ): ToolFailure {
-  const failure: ToolFailure = { code, message: TOOL_FAILURE_MESSAGES[code], retryable, attempts };
-  if (metadata !== undefined) {
-    failure.metadata = metadata;
+  const failure: ToolFailure = {
+    code,
+    message: TOOL_FAILURE_MESSAGES[code],
+    retryable,
+    attempts,
+  };
+  const safe = sanitizeFailureMetadata(metadata);
+  if (safe !== undefined) {
+    failure.metadata = safe;
   }
-  return failure;
+  return Object.freeze(failure);
 }
