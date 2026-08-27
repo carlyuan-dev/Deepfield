@@ -59,8 +59,9 @@ export async function readBoundedBody(
       response.destroy();
       throw new TransportError("unsupported_content_type");
     }
-    const declaredBytes = Number(declared.trim());
-    if (Number.isSafeInteger(declaredBytes) && declaredBytes > maxBytes) {
+    // BigInt comparison: arbitrarily large decimal values are never silently
+    // ignored by a Number() overflow.
+    if (BigInt(declared.trim()) > BigInt(maxBytes)) {
       response.destroy();
       throw new TransportError("response_too_large");
     }

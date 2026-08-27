@@ -208,3 +208,75 @@ describe("safe http transport", () => {
     expect(error).toBeInstanceOf(TransportError);
   });
 });
+
+describe("safe http transport abort listener hygiene (focused revision)", () => {
+  class CountingSignal {
+    readonly #counts = new Map<string, number>();
+    aborted = false;
+    addEventListener(type: string): void {
+      this.#counts.set(type, (this.#counts.get(type) ?? 0) + 1);
+    }
+    removeEventListener(type: string): void {
+      this.#counts.set(type, (this.#counts.get(type) ?? 0) - 1);
+    }
+    active(type: string): number {
+      return this.#counts.get(type) ?? 0;
+    }
+  }
+
+  it("removes every added abort listener on success, transport failure and timeout", async () => {
+    // success path
+    const successSignal = new CountingSignal();
+    const ok = adapterFor([() => htmlResponse("ok")]);
+    const successTransport = createSafeHttpTransport({ policy: policy(), adapter: ok, maxBodyBytes: 1024 });
+    await successTransport.fetch("http://example.com/", { signal: successSignal as unknown as AbortSignal });
+    expect(successSignal.active("abort")).toBe(0);
+
+    // transport failure path
+    const failSignal = new CountingSignal();
+    const failing: TransportAdapter = {
+      async request() {
+        throw new Error("boom");
+      },
+    };
+    const failTransport = createSafeHttpTransport({ policy: policy(), adapter: failing, maxBodyBytes: 1024 });
+    await expect(
+      failTransport.fetch("http://example.com/", { signal: failSignal as unknown as AbortSignal }),
+    ).rejects.toBeInstanceOf(TransportError);
+    expect(failSignal.active("abort")).toBe(0);
+
+    // timeout path
+    const timeoutSignal = new CountingSignal();
+    const hanging: TransportAdapter = {
+      async request() {
+        await new Promise<void>(() => {});
+        return { statusCode: 200, headers: {}, body: Readable.from([]), destroy() {} };
+      },
+    };
+    const timeoutTransport = createSafeHttpTransport({
+      policy: policy(),
+      adapter: hanging,
+      maxBodyBytes: 1024,
+      totalTimeoutMs: 100,
+      timer: () => ({ promise: new Promise<void>((resolve) => setTimeout(resolve, 10)), cancel: () => {} }),
+    });
+    await expect(
+      timeoutTransport.fetch("http://example.com/", { signal: timeoutSignal as unknown as AbortSignal }),
+    ).rejects.toThrow(/timeout/);
+    expect(timeoutSignal.active("abort")).toBe(0);
+  });
+
+  it("still returns cancelled when the caller aborts mid-flight", async () => {
+    const adapter: TransportAdapter = {
+      async request() {
+        await new Promise<void>(() => {});
+        return { statusCode: 200, headers: {}, body: Readable.from([]), destroy() {} };
+      },
+    };
+    const transport = createSafeHttpTransport({ policy: policy(), adapter, maxBodyBytes: 1024 });
+    const controller = new AbortController();
+    const fetch = transport.fetch("http://example.com/", { signal: controller.signal });
+    controller.abort();
+    await expect(fetch).rejects.toThrow(/cancelled/);
+  });
+});

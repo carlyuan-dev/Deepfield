@@ -160,3 +160,50 @@ describe("resource store id collision and validation (focused revision)", () => 
     expect(() => new ResourceStore({ maxItemsPerTrace: 1.5 })).toThrow(/maxItems/i);
   });
 });
+
+describe("resource store runtime trust boundary (focused revision)", () => {
+  it("determines the unique id before copying the body (failure leaves no copy)", () => {
+    const input = Buffer.from("AAAA");
+    let calls = 0;
+    const store = new ResourceStore({
+      idFactory: () => {
+        calls += 1;
+        if (calls === 1) {
+          return "dup"; // seed resource
+        }
+        if (calls === 2) {
+          input.fill(66); // "BBBB": mutate the caller buffer during the retry
+          return "dup"; // collision -> retry
+        }
+        return "fresh";
+      },
+    });
+    store.put(scope("t"), Buffer.from("old"), metadata({ finalUrl: "https://old/" }));
+    const { id } = store.put(scope("t"), input, metadata({ finalUrl: "https://new/" }));
+    expect(id).toBe("fresh");
+    // The stored body must observe the mutation, proving the copy happens
+    // after id selection; a copy made before id selection keeps "AAAA".
+    expect(store.get(id, scope("t"))!.body.toString()).toBe("BBBB");
+    // exhaustion never leaves an uncleaned copy: size and old resource intact
+    const exhausted = new ResourceStore({ idFactory: () => "dup" });
+    exhausted.put(scope("t"), Buffer.from("old-body"), metadata());
+    expect(() => exhausted.put(scope("t"), Buffer.from("new-body"), metadata())).toThrow(/id generation/i);
+    expect(exhausted.size()).toBe(1);
+    expect(exhausted.get("dup", scope("t"))!.body.toString()).toBe("old-body");
+  });
+
+  it("rejects malformed scope, body and metadata without consuming quota", () => {
+    const { store } = makeStore();
+    store.put(scope("t"), Buffer.from("valid"), metadata());
+    expect(() => store.put({ traceId: "t", projectId: "", toolSetFingerprint: "fp-A" }, Buffer.from("x"), metadata())).toThrow(ResourceStoreError);
+    expect(() => store.put(scope("t"), "not-a-buffer" as never, metadata())).toThrow(ResourceStoreError);
+    expect(() => store.put(scope("t"), Buffer.from("x"), { finalUrl: "", contentType: "text/html", size: 1, sha256: "a" })).toThrow(ResourceStoreError);
+    expect(() => store.put(scope("t"), Buffer.from("x"), { finalUrl: "u", contentType: "text/html", size: Number.NaN, sha256: "a" })).toThrow(ResourceStoreError);
+    expect(() => store.put(scope("t"), Buffer.from("x"), { finalUrl: "u", contentType: "text/html", size: 1, sha256: "" })).toThrow(ResourceStoreError);
+    expect(() => store.put(scope("t"), Buffer.from("x"), { finalUrl: "u", contentType: "", size: 1, sha256: "a" })).toThrow(ResourceStoreError);
+    // malformed puts never occupied quota or left residue
+    expect(store.size()).toBe(1);
+    expect(store.releaseTrace("t")).toBe(1);
+    expect(store.size()).toBe(0);
+  });
+});

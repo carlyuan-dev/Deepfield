@@ -144,6 +144,48 @@ describe("safe http transport lifecycle hardening (focused revision)", () => {
     await expect(transport.fetch("http://example.com/", fetchOptions())).rejects.toThrow(/timeout/);
   });
 
+  it("destroys the response exactly once when content-encoding is unsupported or malformed", async () => {
+    for (const bad of ["br", ["gzip", "deflate"]]) {
+      const response = destroyCountingResponse(200, { "content-encoding": bad as never, "content-type": "text/html" }, Buffer.from("x"));
+      const adapter = {
+        requests: [] as never[],
+        async request(): Promise<TransportResponse> {
+          return response;
+        },
+      };
+      const transport = createSafeHttpTransport({ policy: policy(), adapter, maxBodyBytes: 1024 });
+      await expect(transport.fetch("http://example.com/", fetchOptions())).rejects.toThrow(/unsupported/i);
+      expect(response.destroyCalls()).toBe(1);
+    }
+  });
+
+  it("does not reject a HEAD response with content-encoding: br (no body to decode)", async () => {
+    const response = destroyCountingResponse(200, { "content-encoding": "br", "content-type": "text/html" }, Buffer.from("x"));
+    const adapter = {
+      requests: [] as never[],
+      async request(): Promise<TransportResponse> {
+        return response;
+      },
+    };
+    const transport = createSafeHttpTransport({ policy: policy(), adapter, maxBodyBytes: 1024 });
+    const result = await transport.fetch("http://example.com/", { ...fetchOptions(), method: "HEAD" });
+    expect(result.body.length).toBe(0);
+    expect(response.destroyCalls()).toBe(1);
+  });
+
+  it("rejects an oversized decimal content-length with BigInt comparison before reading", async () => {
+    const response = destroyCountingResponse(200, { "content-length": "99999999999999999999", "content-type": "text/html" }, Buffer.from("x"));
+    const adapter = {
+      requests: [] as never[],
+      async request(): Promise<TransportResponse> {
+        return response;
+      },
+    };
+    const transport = createSafeHttpTransport({ policy: policy(), adapter, maxBodyBytes: 1024 });
+    await expect(transport.fetch("http://example.com/", fetchOptions())).rejects.toMatchObject({ code: "response_too_large" });
+    expect(response.destroyCalls()).toBe(1);
+  });
+
   it("gives the caller abort precedence over the deadline", async () => {
     const adapter = {
       requests: [] as never[],

@@ -107,6 +107,7 @@ export class ResourceStore {
     metadata: ResourceMetadata,
   ): { id: string } {
     this.#assertValidScope(scope);
+    this.#assertValidBodyAndMetadata(body, metadata);
     const now = this.#clock();
     this.#sweepExpired(now);
     let traceBytes = 0;
@@ -123,26 +124,19 @@ export class ResourceStore {
     if (traceBytes + body.length > this.#maxBytesPerTrace) {
       throw new ResourceStoreError("per-trace byte limit reached");
     }
+    // The unique id is allocated BEFORE the body copy so a failed allocation
+    // (empty/duplicate factory output exhausted) can never leave an
+    // uncleaned Buffer copy behind.
+    const id = this.#allocateId();
     const entry: StoredResource = {
-      id: "",
+      id,
       scope: { ...scope },
       body: Buffer.from(body), // defensive copy: caller mutation cannot leak in
       metadata: { ...metadata },
       expiresAtMs: now + this.#ttlMs,
     };
-    for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
-      const candidate = this.#idFactory();
-      if (typeof candidate !== "string" || candidate.length === 0) {
-        continue; // empty ids are never used
-      }
-      if (this.#resources.has(candidate)) {
-        continue; // collision: retry bounded, never overwrite an existing entry
-      }
-      entry.id = candidate;
-      this.#resources.set(candidate, entry);
-      return { id: candidate };
-    }
-    throw new ResourceStoreError("resource id generation failed");
+    this.#resources.set(id, entry);
+    return { id };
   }
 
   get(id: string, scope: ResourceScope): ResourceView | undefined {
@@ -203,12 +197,47 @@ export class ResourceStore {
     releaseBody(resource.body);
   }
 
+  #allocateId(): string {
+    for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
+      const candidate = this.#idFactory();
+      if (typeof candidate !== "string" || candidate.length === 0) {
+        continue; // empty ids are never used
+      }
+      if (this.#resources.has(candidate)) {
+        continue; // collision: retry bounded, never overwrite an existing entry
+      }
+      return candidate;
+    }
+    throw new ResourceStoreError("resource id generation failed");
+  }
+
   #assertValidScope(scope: ResourceScope): void {
     if (typeof scope.traceId !== "string" || scope.traceId.length === 0) {
       throw new ResourceStoreError("traceId must be a non-empty string");
     }
     if (typeof scope.toolSetFingerprint !== "string" || scope.toolSetFingerprint.length === 0) {
       throw new ResourceStoreError("toolSetFingerprint must be a non-empty string");
+    }
+    if (scope.projectId !== undefined && (typeof scope.projectId !== "string" || scope.projectId.length === 0)) {
+      throw new ResourceStoreError("projectId must be a non-empty string when present");
+    }
+  }
+
+  #assertValidBodyAndMetadata(body: unknown, metadata: ResourceMetadata): void {
+    if (!Buffer.isBuffer(body)) {
+      throw new ResourceStoreError("body must be a Buffer");
+    }
+    if (typeof metadata.finalUrl !== "string" || metadata.finalUrl.length === 0) {
+      throw new ResourceStoreError("metadata.finalUrl must be a non-empty string");
+    }
+    if (typeof metadata.contentType !== "string" || metadata.contentType.length === 0) {
+      throw new ResourceStoreError("metadata.contentType must be a non-empty string");
+    }
+    if (!Number.isFinite(metadata.size) || !Number.isInteger(metadata.size) || metadata.size < 0) {
+      throw new ResourceStoreError("metadata.size must be a non-negative integer");
+    }
+    if (typeof metadata.sha256 !== "string" || metadata.sha256.length === 0) {
+      throw new ResourceStoreError("metadata.sha256 must be a non-empty string");
     }
   }
 

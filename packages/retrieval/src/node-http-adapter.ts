@@ -34,12 +34,17 @@ export function createPinnedLookup(
   targetHostname: string,
   addresses: readonly DnsAnswer[],
 ): (hostname: string, options: NodeLookupOptions, callback: LookupCallback) => void {
+  // Defensive frozen snapshot: later mutation of the caller's array can never
+  // change what this lookup pins sockets to.
+  const snapshot: readonly DnsAnswer[] = Object.freeze(
+    addresses.map((answer) => Object.freeze({ address: answer.address, family: answer.family })),
+  );
   return (hostname, options, callback) => {
     if (typeof hostname !== "string" || hostname.toLowerCase() !== targetHostname.toLowerCase()) {
       callback(new Error("pinned hostname mismatch"));
       return;
     }
-    if (addresses.length === 0) {
+    if (snapshot.length === 0) {
       callback(new Error("no pinned addresses"));
       return;
     }
@@ -47,12 +52,12 @@ export function createPinnedLookup(
       // Full validated snapshot (every entry already passed the public check).
       callback(
         null,
-        addresses.map((answer) => ({ address: answer.address, family: answer.family })),
+        snapshot.map((answer) => ({ address: answer.address, family: answer.family })),
       );
       return;
     }
     const family = options.family ?? 0;
-    const match = addresses.find((answer) => family === 0 || answer.family === family);
+    const match = snapshot.find((answer) => family === 0 || answer.family === family);
     if (match === undefined) {
       callback(new Error("no pinned address for the requested family"));
       return;
@@ -122,6 +127,15 @@ export function createNodeHttpAdapter(options: NodeHttpAdapterOptions = {}): Tra
             cleanup();
           }
         };
+        /** Single atomic settle: the first path to call it wins, all others no-op. */
+        const settle = (action: () => void): void => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          finish();
+          action();
+        };
         const request = requestFactory(
           {
             protocol: target.protocol,
@@ -135,32 +149,30 @@ export function createNodeHttpAdapter(options: NodeHttpAdapterOptions = {}): Tra
           },
           (response) => {
             if (finished) {
-              return;
+              return; // duplicate response after settle: no side effects
             }
-            finish(); // response started: the connect timer must not kill reads
-            const headers: Record<string, string | string[] | undefined> = {};
-            const raw = (response as { headers?: Record<string, unknown> }).headers;
-            if (raw !== undefined) {
-              for (const [name, value] of Object.entries(raw)) {
-                headers[name] = value as string | string[] | undefined;
+            settle(() => {
+              const headers: Record<string, string | string[] | undefined> = {};
+              const raw = (response as { headers?: Record<string, unknown> }).headers;
+              if (raw !== undefined) {
+                for (const [name, value] of Object.entries(raw)) {
+                  headers[name] = value as string | string[] | undefined;
+                }
               }
-            }
-            resolve({
-              statusCode: (response as { statusCode?: number }).statusCode ?? 0,
-              headers,
-              body: response as never,
-              destroy: () => (response as { destroy?: () => void }).destroy?.(),
+              resolve({
+                statusCode: (response as { statusCode?: number }).statusCode ?? 0,
+                headers,
+                body: response as never,
+                destroy: () => (response as { destroy?: () => void }).destroy?.(),
+              });
             });
           },
         );
         request.on("error", () => {
-          if (finished) {
-            return;
-          }
-          finished = true;
-          finish();
-          request.destroy(); // symmetric cleanup for fake and real transports
-          reject(new TransportError("network_unavailable"));
+          settle(() => {
+            request.destroy(); // symmetric cleanup for fake and real transports
+            reject(new TransportError("network_unavailable"));
+          });
         });
         request.on("socket", (socket) => {
           const socketLike = socket as NodeSocketLike;
@@ -177,17 +189,20 @@ export function createNodeHttpAdapter(options: NodeHttpAdapterOptions = {}): Tra
             socketLike.removeListener("error", clear);
           };
           cleanups.push(clear);
-          socketLike.on("connect", clear);
-          socketLike.on("secureConnect", clear);
+          // Connection completion differs by protocol: for HTTP the TCP
+          // 'connect' ends the connect phase; for HTTPS only 'secureConnect'
+          // ends it, so a hung TLS handshake can never clear the timer early.
+          const completeEvent = target.protocol === "https:" ? "secureConnect" : "connect";
+          socketLike.on(completeEvent, clear);
           socketLike.on("error", clear);
           connectTimer.promise.then(() => {
             if (finished || cleared) {
               return;
             }
-            finished = true;
-            clear();
-            request.destroy();
-            reject(new TransportError("timeout"));
+            settle(() => {
+              request.destroy();
+              reject(new TransportError("timeout"));
+            });
           });
         });
       });

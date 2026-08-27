@@ -95,23 +95,28 @@ export async function performFetch(
       current = next.target;
       continue;
     }
-    const encoding = normalizeContentEncoding(response.headers);
     let buffer: Buffer;
     let decompressedBytes: number;
     try {
-      ({ buffer, decompressedBytes } = await readBoundedBody(
-        response,
-        encoding,
-        maxBodyBytes,
-        method,
-        controller.signal,
-      ));
+      if (method === "HEAD") {
+        // HEAD carries no body: decoding is irrelevant (content-encoding is
+        // ignored), the would-be body is destroyed, and the result is empty.
+        response.destroy();
+        buffer = Buffer.alloc(0);
+        decompressedBytes = 0;
+      } else {
+        const encoding = normalizeContentEncoding(response.headers);
+        ({ buffer, decompressedBytes } = await readBoundedBody(
+          response,
+          encoding,
+          maxBodyBytes,
+          method,
+          controller.signal,
+        ));
+      }
     } catch (error) {
       response.destroy(); // encoding/decoder/overrun/abort paths all clean up
       throw error;
-    }
-    if (method === "HEAD") {
-      response.destroy(); // HEAD never buffers a would-be body
     }
     return {
       statusCode: response.statusCode,

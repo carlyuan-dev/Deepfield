@@ -183,14 +183,14 @@ export class SafeHttpTransport {
     const deadlinePromise = deadline.promise.then(() => {
       throw new TransportError("timeout");
     });
+    let rejectCancelled: () => void = () => {};
     const abortPromise = new Promise<never>((_, reject) => {
+      rejectCancelled = () => reject(new TransportError("cancelled"));
       if (signal.aborted) {
-        reject(new TransportError("cancelled"));
+        rejectCancelled();
         return;
       }
-      signal.addEventListener("abort", () => reject(new TransportError("cancelled")), {
-        once: true,
-      });
+      signal.addEventListener("abort", rejectCancelled, { once: true });
     });
     try {
       return await Promise.race([
@@ -213,6 +213,7 @@ export class SafeHttpTransport {
       deadline.cancel();
       controller.abort();
       signal.removeEventListener("abort", onCallerAbort);
+      signal.removeEventListener("abort", rejectCancelled);
     }
   }
 
