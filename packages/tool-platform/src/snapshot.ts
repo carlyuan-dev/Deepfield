@@ -7,6 +7,8 @@ export interface ExecutorScope {
   readonly traceId: string;
   readonly actor: ToolActor;
   readonly projectId?: string;
+  /** Immutable ToolSet authorization fingerprint (stable string). */
+  readonly toolSetFingerprint?: string;
 }
 
 /**
@@ -73,6 +75,7 @@ export function snapshotScope(input: {
   traceId: unknown;
   actor: unknown;
   projectId?: unknown;
+  toolSetFingerprint?: unknown;
 }): ExecutorScope | undefined {
   if (typeof input.traceId !== "string" || input.traceId.length === 0) {
     return undefined;
@@ -85,6 +88,9 @@ export function snapshotScope(input: {
     actor: input.actor as ToolActor,
     ...(typeof input.projectId === "string" && input.projectId.length > 0
       ? { projectId: input.projectId }
+      : {}),
+    ...(typeof input.toolSetFingerprint === "string" && input.toolSetFingerprint.length > 0
+      ? { toolSetFingerprint: input.toolSetFingerprint }
       : {}),
   });
 }
@@ -137,6 +143,7 @@ export function snapshotExecutionInput(
     traceId: context.traceId,
     actor: context.actor,
     projectId: context.projectId,
+    toolSetFingerprint: context.toolSet?.fingerprint(),
   });
   if (scope === undefined || scope.traceId !== traceId) {
     return undefined;

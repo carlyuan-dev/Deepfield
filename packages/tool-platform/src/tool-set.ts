@@ -123,4 +123,29 @@ export class ToolSet {
   get(identity: ToolIdentity): ToolGrant | undefined {
     return this.#grants.get(grantKey(identity));
   }
+
+  /**
+   * Deterministic immutable snapshot fingerprint (grants are frozen at
+   * construction, so this is stable for the lifetime of the set). Used by
+   * scope-bound stores to bind resources to the exact authorization snapshot
+   * instead of trusting self-reported actors.
+   */
+  fingerprint(): string {
+    const entries: string[] = [];
+    for (const [key, grant] of this.#grants) {
+      entries.push(
+        [
+          key,
+          grant.actor,
+          grant.effect,
+          grant.projectId ?? "-",
+          grant.hostPatterns?.join(",") ?? "-",
+          grant.maxResults ?? "-",
+          grant.maxBytes ?? "-",
+          grant.confirmationKind ?? "-",
+        ].join(":"),
+      );
+    }
+    return entries.sort().join("|");
+  }
 }

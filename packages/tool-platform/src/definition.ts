@@ -14,6 +14,12 @@ export interface ToolRunContext {
   actor: ToolActor;
   projectId?: string;
   toolSet?: ToolSet;
+  /**
+   * Immutable authorization fingerprint of the ToolSet snapshot captured by
+   * the Runner (see ExecutorScope). A plain string, never the ToolSet itself:
+   * executors can bind scope-owned state to it but cannot alter authorization.
+   */
+  toolSetFingerprint?: string;
   confirmations?: ReadonlySet<string>;
 }
 
