@@ -49,8 +49,26 @@ export class SqliteToolAudit implements ToolAuditSink {
 
   async finish(record: ToolAuditFinish): Promise<void> {
     try {
+      // status ↔ failure consistency, checked before the repository sees the
+      // record: completed never carries a failure, failed always requires a
+      // valid one, cancelled may carry an optional valid one.
       let errorCode: string | undefined;
-      if (record.failure !== undefined) {
+      if (record.status === "completed") {
+        if (record.failure !== undefined) {
+          throw new SqliteToolAuditError("invalid tool failure for completed execution");
+        }
+      } else if (record.status === "failed") {
+        if (record.failure === undefined) {
+          throw new SqliteToolAuditError("missing tool failure for failed execution");
+        }
+        if (
+          typeof record.failure.code !== "string" ||
+          !KNOWN_FAILURE_CODES.has(record.failure.code)
+        ) {
+          throw new SqliteToolAuditError("invalid tool failure code");
+        }
+        errorCode = record.failure.code;
+      } else if (record.failure !== undefined) {
         if (
           typeof record.failure.code !== "string" ||
           !KNOWN_FAILURE_CODES.has(record.failure.code)

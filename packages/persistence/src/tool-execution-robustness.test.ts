@@ -127,6 +127,28 @@ describe("tool execution robustness (focused revision)", () => {
     cleanup();
   });
 
+  it("rejects contradictory status and errorCode combinations on finish", () => {
+    const { repos, cleanup } = openTemp();
+    start(repos, "comp");
+    expect(() => finish(repos, "comp", { status: "completed", errorCode: "timeout" })).toThrow(
+      ToolExecutionError,
+    );
+    start(repos, "fail-no-code");
+    expect(() => finish(repos, "fail-no-code", { status: "failed" })).toThrow(ToolExecutionError);
+    expect(repos.toolExecutions.getById("comp")?.status).toBe("running");
+    expect(repos.toolExecutions.getById("fail-no-code")?.status).toBe("running");
+    const rows = repos.toolExecutions.listRecent(10);
+    expect(rows.every((row) => row.status === "running" && row.errorCode === undefined)).toBe(true);
+    start(repos, "ok-fail");
+    finish(repos, "ok-fail", { status: "failed", errorCode: "executor_failed" });
+    expect(repos.toolExecutions.getById("ok-fail")?.status).toBe("failed");
+    expect(repos.toolExecutions.getById("ok-fail")?.errorCode).toBe("executor_failed");
+    start(repos, "ok-cancel");
+    finish(repos, "ok-cancel", { status: "cancelled" });
+    expect(repos.toolExecutions.getById("ok-cancel")?.status).toBe("cancelled");
+    cleanup();
+  });
+
   it("fails closed on corrupted rows for both getById and listRecent", () => {
     const { db, repos, cleanup } = openTemp();
     const corruptions: { name: string; sql: string }[] = [
@@ -138,12 +160,33 @@ describe("tool execution robustness (focused revision)", () => {
       { name: "forbidden summary", sql: "UPDATE tool_executions SET input_summary_json = '{\"body\":\"secret\"}'" },
       { name: "corrupt summary json", sql: "UPDATE tool_executions SET input_summary_json = '{broken'" },
       { name: "unknown error code", sql: "UPDATE tool_executions SET error_code = 'sk-secret-provider-value'" },
+      { name: "running with error_code", sql: "UPDATE tool_executions SET error_code = 'timeout'" },
+      { name: "completed with error_code", sql: "UPDATE tool_executions SET status = 'completed', finished_at = '2026-01-01T00:00:01.000Z', error_code = 'timeout'" },
+      { name: "failed without error_code", sql: "UPDATE tool_executions SET status = 'failed', finished_at = '2026-01-01T00:00:01.000Z', error_code = NULL" },
     ];
     corruptions.forEach((corruption, i) => {
       start(repos, `c${i}`);
       db.exec(`${corruption.sql} WHERE id='c${i}'`);
-      expect(() => repos.toolExecutions.getById(`c${i}`)).toThrow(ToolExecutionError);
-      expect(() => repos.toolExecutions.listRecent(10)).toThrow(ToolExecutionError);
+      let getError: unknown;
+      try {
+        repos.toolExecutions.getById(`c${i}`);
+      } catch (error) {
+        getError = error;
+      }
+      expect(getError).toBeInstanceOf(ToolExecutionError);
+      if (getError instanceof ToolExecutionError) {
+        expect(getError.code).toBe("persistence");
+      }
+      let listError: unknown;
+      try {
+        repos.toolExecutions.listRecent(10);
+      } catch (error) {
+        listError = error;
+      }
+      expect(listError).toBeInstanceOf(ToolExecutionError);
+      if (listError instanceof ToolExecutionError) {
+        expect(listError.code).toBe("persistence");
+      }
     });
     let message = "";
     try {
@@ -153,6 +196,8 @@ describe("tool execution robustness (focused revision)", () => {
     }
     expect(message).not.toContain("broken");
     expect(message).not.toContain("secret");
+    expect(message).not.toContain("2026-99-99");
+    expect(message).not.toContain("-1");
     cleanup();
   });
 });

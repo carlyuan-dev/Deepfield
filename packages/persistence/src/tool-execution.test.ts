@@ -222,7 +222,7 @@ describe("tool execution repository", () => {
     finish(repos, "exec-1");
     let message = "";
     try {
-      finish(repos, "exec-1", { status: "failed" });
+      finish(repos, "exec-1", { status: "failed", errorCode: "executor_failed" });
     } catch (error) {
       message = (error as Error).message;
     }

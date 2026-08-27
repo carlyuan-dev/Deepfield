@@ -5,57 +5,23 @@ import type {
   ToolExecutionRepository,
   ToolExecutionRow,
   ToolExecutionStart,
-  ToolExecutionStatus,
 } from "./types.js";
 import { sanitizeSummary } from "./summary-sanitizer.js";
+import { TOOL_FAILURE_CODES, ToolExecutionError } from "./tool-execution-errors.js";
+import { rowToExecution } from "./tool-execution-row-validation.js";
 
-export class ToolExecutionError extends Error {
-  readonly code: "invalid_input" | "duplicate" | "not_found" | "already_finished" | "persistence";
-
-  constructor(code: ToolExecutionError["code"], message: string) {
-    super(message);
-    this.name = "ToolExecutionError";
-    this.code = code;
-  }
-}
-
-/**
- * Local stable failure-code allowlist mirroring @deepfield/tool-platform's
- * public codes (alignment is asserted by tool-failure-codes.test.ts). A Set is
- * used so prototype keys like __proto__/constructor are never treated as codes.
- */
-export const TOOL_FAILURE_CODES: ReadonlySet<string> = new Set([
-  "invalid_input",
-  "tool_not_found",
-  "tool_not_allowed",
-  "permission_denied",
-  "confirmation_required",
-  "budget_exceeded",
-  "timeout",
-  "cancelled",
-  "rate_limited",
-  "authentication_failed",
-  "network_unavailable",
-  "url_blocked",
-  "redirect_blocked",
-  "response_too_large",
-  "unsupported_content_type",
-  "parse_failed",
-  "invalid_output",
-  "executor_failed",
-  "audit_failed",
-]);
+export { TOOL_FAILURE_CODES, ToolExecutionError } from "./tool-execution-errors.js";
 
 // Canonical Date.toISOString() output only: YYYY-MM-DDTHH:mm:ss.sssZ.
 const CANONICAL_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const TERMINAL_STATUSES: readonly ToolExecutionStatus[] = ["completed", "failed", "cancelled"];
+const TERMINAL_STATUSES: readonly ToolExecutionFinish["status"][] = [
+  "completed",
+  "failed",
+  "cancelled",
+];
 
 function invalid(): never {
   throw new ToolExecutionError("invalid_input", "invalid tool execution input");
-}
-
-function persistence(): never {
-  throw new ToolExecutionError("persistence", "stored tool execution data is invalid");
 }
 
 function requireNonEmptyString(value: unknown): string {
@@ -92,84 +58,6 @@ function requireCanonicalIso(value: unknown): string {
     invalid();
   }
   return value;
-}
-
-/** The database is an untrusted boundary: every row field is re-validated. */
-function validateRow(row: ToolExecutionRow): void {
-  requireNonEmptyString(row.id);
-  requireNonEmptyString(row.trace_id);
-  if (row.project_id !== null) {
-    requireNonEmptyString(row.project_id);
-  }
-  requireNonEmptyString(row.actor);
-  requireNonEmptyString(row.tool_name);
-  requirePositiveInteger(row.tool_version);
-  requireNonNegativeInteger(row.attempts);
-  requireNonNegativeInteger(row.retries);
-  requireNonNegativeInteger(row.bytes_received);
-  requireNonNegativeInteger(row.result_count);
-  requireCanonicalIso(row.started_at);
-  if (row.finished_at !== null) {
-    requireCanonicalIso(row.finished_at);
-  }
-  if (row.duration_ms !== null) {
-    requireNonNegativeInteger(row.duration_ms);
-  }
-  if (row.error_code !== null && !TOOL_FAILURE_CODES.has(row.error_code)) {
-    persistence();
-  }
-  if (row.status !== "running" && !TERMINAL_STATUSES.includes(row.status)) {
-    persistence();
-  }
-  if (row.status === "running" && row.finished_at !== null) {
-    persistence();
-  }
-  if (row.status !== "running" && row.finished_at === null) {
-    persistence();
-  }
-}
-
-function parseStoredSummary(json: string): unknown {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    persistence();
-  }
-  // Re-run the same sanitizer used at write time: forbidden keys, resource
-  // limits and UTF-8 budgets must hold for whatever is actually stored.
-  if (sanitizeSummary(parsed) === undefined) {
-    persistence();
-  }
-  return parsed;
-}
-
-function rowToExecution(row: ToolExecutionRow): ToolExecution {
-  validateRow(row);
-  const execution: ToolExecution = {
-    id: row.id,
-    traceId: row.trace_id,
-    ...(row.project_id !== null ? { projectId: row.project_id } : {}),
-    actor: row.actor,
-    toolName: row.tool_name,
-    toolVersion: row.tool_version,
-    status: row.status,
-    ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
-    attempts: row.attempts,
-    retries: row.retries,
-    bytesReceived: row.bytes_received,
-    resultCount: row.result_count,
-    startedAt: row.started_at,
-    ...(row.finished_at !== null ? { finishedAt: row.finished_at } : {}),
-    ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
-  };
-  if (row.input_summary_json !== null) {
-    execution.inputSummary = parseStoredSummary(row.input_summary_json);
-  }
-  if (row.output_summary_json !== null) {
-    execution.outputSummary = parseStoredSummary(row.output_summary_json);
-  }
-  return execution;
 }
 
 export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRepository {
@@ -214,6 +102,14 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
           invalid();
         }
         errorCode = record.errorCode;
+      }
+      // status ↔ errorCode consistency (validated before any write):
+      // completed requires no error_code, failed requires one, cancelled allows either.
+      if (record.status === "completed" && errorCode !== null) {
+        invalid();
+      }
+      if (record.status === "failed" && errorCode === null) {
+        invalid();
       }
       const outputSummary = sanitizeSummary(record.outputSummary);
       try {
