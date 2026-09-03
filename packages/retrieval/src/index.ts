@@ -126,6 +126,7 @@ export {
   type ProviderTransportResponse,
 } from "./provider-http-client.js";
 export { createNodeProviderTransport } from "./provider-node-transport.js";
+export { BAIDU_ENDPOINT, countBaiduQueryUnits, createBaiduProvider, type BaiduAuthHeader, type BaiduProviderDeps } from "./providers/baidu.js";
 export { createBraveProvider, type BraveProviderDeps } from "./providers/brave.js";
 export { createTavilyProvider, type TavilyProviderDeps } from "./providers/tavily.js";
 export { createSerperProvider, type SerperProviderDeps } from "./providers/serper.js";

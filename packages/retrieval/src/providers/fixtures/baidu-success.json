@@ -1,0 +1,22 @@
+{
+  "code": 0,
+  "message": "ok",
+  "references": [
+    {
+      "title": "Official Site",
+      "url": "https://example.com",
+      "snippet": "From snippet field.",
+      "content": "Raw content one that must never surface.",
+      "date": "2026-08-31 09:30:00",
+      "authority_score": 0.9,
+      "rerank_score": 12,
+      "icon": "data:image/png;base64,ZmFrZQ=="
+    },
+    {
+      "title": "Second Result",
+      "url": "https://other.example/path",
+      "content": "Content fallback used because snippet is absent.",
+      "date": "not-a-calendar-date"
+    }
+  ]
+}
