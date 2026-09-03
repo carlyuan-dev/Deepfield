@@ -1,0 +1,20 @@
+{
+  "request_id": "req-synthetic-0001",
+  "search_intent": "general",
+  "search_result": [
+    {
+      "title": "Official Site",
+      "link": "https://example.com",
+      "content": "The official example site.",
+      "publish_date": "2026-08-31 09:30:00",
+      "icon": "data:image/png;base64,ZmFrZQ==",
+      "provider_code": "zhipu"
+    },
+    {
+      "title": "Second Result",
+      "link": "https://other.example/path",
+      "content": "Another synthetic result.",
+      "publish_date": "not-a-calendar-date"
+    }
+  ]
+}
