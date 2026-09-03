@@ -18,9 +18,9 @@ export interface ProviderPrice {
 }
 
 export interface ResolvedProviderPricing {
-  /** Frozen native-currency price records keyed by provider. */
+  /** Frozen native-currency price records keyed by provider (null prototype). */
   readonly records: Readonly<Record<string, ProviderPrice>>;
-  /** Frozen USD-per-request costs: amountPerRequest * usdPerCurrencyUnit. */
+  /** Frozen USD-per-request costs: amountPerRequest * usdPerCurrencyUnit (null prototype). */
   readonly usdPerRequest: Readonly<Record<string, number>>;
 }
 
@@ -36,6 +36,40 @@ const KNOWN_FIELDS = new Set([
 
 function fail(provider: string, label: string): never {
   throw new Error(`pricing: ${provider}: ${label}`);
+}
+
+/** Reads ONLY an own DATA property descriptor; accessors and inherited fields are rejected. */
+function ownDataValue(object: object, key: string, provider: string, label: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (descriptor === undefined || "value" in descriptor === false) {
+    fail(provider, label);
+  }
+  return descriptor.value;
+}
+
+function assertPlainRecord(record: unknown, provider: string): asserts record is Record<string, unknown> {
+  if (typeof record !== "object" || record === null || Array.isArray(record)) {
+    fail(provider, "invalid record");
+  }
+  const proto = Object.getPrototypeOf(record);
+  if (proto !== Object.prototype && proto !== null) {
+    fail(provider, "invalid record");
+  }
+  const ownKeys = Reflect.ownKeys(record);
+  const enumerableKeys = Object.keys(record);
+  // symbol keys OR non-enumerable own fields (incl. unknown ones) both break this invariant
+  if (ownKeys.length !== enumerableKeys.length || ownKeys.some((key) => typeof key !== "string")) {
+    fail(provider, "invalid record");
+  }
+  for (const key of enumerableKeys) {
+    if (!KNOWN_FIELDS.has(key)) {
+      fail(provider, "unknown field");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (descriptor === undefined || "value" in descriptor === false) {
+      fail(provider, "invalid record");
+    }
+  }
 }
 
 function requireHttpsUrl(value: unknown, provider: string, label: string): void {
@@ -55,10 +89,13 @@ function requireHttpsUrl(value: unknown, provider: string, label: string): void 
 
 /**
  * Validates the provider list and every price record, clones + freezes each
- * record and derives USD-per-request WITHOUT rounding. Object keys must EXACTLY
- * equal the provider set; no inherited fields are read and no unknown
- * properties are copied. Errors carry only provider ids and stable labels —
- * never serialized records or URLs.
+ * record and derives USD-per-request WITHOUT rounding. Every value is read
+ * through OWN DATA property descriptors only — inherited fields, accessors,
+ * symbol keys and non-enumerable own fields are all rejected and no getter is
+ * ever invoked. Object keys must EXACTLY equal the provider set. The output
+ * dictionaries have a null prototype so even the legal provider id "__proto__"
+ * is stored as an ordinary own key. Errors carry only provider ids and stable
+ * labels — never serialized records or URLs.
  */
 export function resolveProviderPricing(
   input: Readonly<Record<string, ProviderPrice>>,
@@ -77,38 +114,37 @@ export function resolveProviderPricing(
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new Error("pricing: invalid pricing object");
   }
-  const inputKeys = Object.keys(input);
+  const inputKeys = Object.keys(input); // own enumerable keys; no getters invoked
   if (inputKeys.length !== seen.size || inputKeys.some((key) => !seen.has(key))) {
     throw new Error("pricing: provider price records must exactly match providers");
   }
 
-  const records: Record<string, ProviderPrice> = {};
-  const usdPerRequest: Record<string, number> = {};
+  // Null-prototype output dictionaries: "__proto__" can never hit a prototype setter.
+  const records: Record<string, ProviderPrice> = Object.create(null) as Record<string, ProviderPrice>;
+  const usdPerRequest: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const provider of providers) {
-    const raw = input[provider];
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      fail(provider, "invalid record");
-    }
-    const own = raw as unknown as Record<string, unknown>;
-    for (const key of Object.keys(own)) {
-      if (!KNOWN_FIELDS.has(key)) {
-        fail(provider, "unknown field");
-      }
-    }
-    const amountPerRequest = own.amountPerRequest;
+    // Read the provider record through its own data descriptor (never a root getter).
+    const raw = ownDataValue(input, provider, provider, "invalid record");
+    assertPlainRecord(raw, provider);
+    const amountPerRequest = ownDataValue(raw, "amountPerRequest", provider, "invalid amountPerRequest");
+    const currency = ownDataValue(raw, "currency", provider, "invalid currency");
+    const usdPerCurrencyUnit = ownDataValue(raw, "usdPerCurrencyUnit", provider, "invalid usdPerCurrencyUnit");
+    const priceSourceUrl = ownDataValue(raw, "priceSourceUrl", provider, "invalid priceSourceUrl");
+    const priceObservedOn = ownDataValue(raw, "priceObservedOn", provider, "invalid priceObservedOn");
+    const exchangeRateSourceUrl = Object.getOwnPropertyDescriptor(raw, "exchangeRateSourceUrl");
+    const exchangeRateObservedOn = Object.getOwnPropertyDescriptor(raw, "exchangeRateObservedOn");
+
     if (typeof amountPerRequest !== "number" || !Number.isFinite(amountPerRequest) || amountPerRequest < 0) {
       fail(provider, "invalid amountPerRequest");
     }
-    const currency = own.currency;
     if (currency !== "CNY" && currency !== "USD") {
       fail(provider, "invalid currency");
     }
-    const usdPerCurrencyUnit = own.usdPerCurrencyUnit;
     if (typeof usdPerCurrencyUnit !== "number" || !Number.isFinite(usdPerCurrencyUnit) || usdPerCurrencyUnit <= 0) {
       fail(provider, "invalid usdPerCurrencyUnit");
     }
-    const hasExchangeSource = own.exchangeRateSourceUrl !== undefined;
-    const hasExchangeObserved = own.exchangeRateObservedOn !== undefined;
+    const hasExchangeSource = exchangeRateSourceUrl !== undefined && "value" in exchangeRateSourceUrl;
+    const hasExchangeObserved = exchangeRateObservedOn !== undefined && "value" in exchangeRateObservedOn;
     if (currency === "USD") {
       if (usdPerCurrencyUnit !== 1) {
         fail(provider, "usd rate must be 1");
@@ -116,22 +152,23 @@ export function resolveProviderPricing(
       if (hasExchangeSource || hasExchangeObserved) {
         fail(provider, "exchange fields forbidden for usd");
       }
-    } else {
-      if (!hasExchangeSource || !hasExchangeObserved) {
-        fail(provider, "exchange fields required for cny");
-      }
+    } else if (!hasExchangeSource || !hasExchangeObserved) {
+      fail(provider, "exchange fields required for cny");
     }
-    requireHttpsUrl(own.priceSourceUrl, provider, "invalid priceSourceUrl");
-    if (typeof own.priceObservedOn !== "string" || !isValidDateString(own.priceObservedOn)) {
+    requireHttpsUrl(priceSourceUrl, provider, "invalid priceSourceUrl");
+    if (typeof priceObservedOn !== "string" || !isValidDateString(priceObservedOn)) {
       fail(provider, "invalid priceObservedOn");
     }
     if (currency === "CNY") {
-      requireHttpsUrl(own.exchangeRateSourceUrl, provider, "invalid exchangeRateSourceUrl");
-      if (typeof own.exchangeRateObservedOn !== "string" || !isValidDateString(own.exchangeRateObservedOn)) {
+      const source = hasExchangeSource ? exchangeRateSourceUrl.value : undefined;
+      const observed = hasExchangeObserved ? exchangeRateObservedOn.value : undefined;
+      requireHttpsUrl(source, provider, "invalid exchangeRateSourceUrl");
+      if (typeof observed !== "string" || !isValidDateString(observed)) {
         fail(provider, "invalid exchangeRateObservedOn");
       }
     }
-    // clone ONLY the known own fields; never spread inherited/unknown props
+
+    // clone ONLY the known own data fields; never spread inherited/unknown props
     const clone: {
       amountPerRequest: number;
       currency: PriceCurrency;
@@ -144,14 +181,14 @@ export function resolveProviderPricing(
       amountPerRequest: amountPerRequest as number,
       currency: currency as PriceCurrency,
       usdPerCurrencyUnit: usdPerCurrencyUnit as number,
-      priceSourceUrl: own.priceSourceUrl as string,
-      priceObservedOn: own.priceObservedOn as string,
+      priceSourceUrl: priceSourceUrl as string,
+      priceObservedOn: priceObservedOn as string,
     };
     if (hasExchangeSource) {
-      clone.exchangeRateSourceUrl = own.exchangeRateSourceUrl as string;
+      clone.exchangeRateSourceUrl = exchangeRateSourceUrl.value as string;
     }
     if (hasExchangeObserved) {
-      clone.exchangeRateObservedOn = own.exchangeRateObservedOn as string;
+      clone.exchangeRateObservedOn = exchangeRateObservedOn.value as string;
     }
     records[provider] = Object.freeze(clone) as ProviderPrice;
     usdPerRequest[provider] = clone.amountPerRequest * clone.usdPerCurrencyUnit; // no rounding

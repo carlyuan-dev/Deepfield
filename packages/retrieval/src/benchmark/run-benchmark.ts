@@ -4,7 +4,7 @@ import type { LiveProviderId } from "../providers/live-config.js";
 import { QUERIES_V1, type QuerySetV1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1, type ReferenceSetV1 } from "./reference-companies.js";
 import { scoreBenchmark, type BenchmarkedRun, type LinkEvidence } from "./scoring.js";
-import { resolveProviderPricing, type ProviderPrice } from "./pricing.js";
+import { resolveProviderPricing, type ProviderPrice, type ResolvedProviderPricing } from "./pricing.js";
 import type { BenchmarkReport } from "./report.js";
 
 /** Narrow per-URL accessibility dependency; the live assembly reuses the accepted core. */
@@ -86,7 +86,13 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
     throw new BenchmarkInputError("at least two providers required");
   }
   const expectedProviders = deps.providers.map((provider) => provider.id);
-  const resolvedPricing = resolveProviderPricing(deps.pricing, expectedProviders); // fail-closed before any request
+  let resolvedPricing: ResolvedProviderPricing;
+  try {
+    resolvedPricing = resolveProviderPricing(deps.pricing, expectedProviders); // fail-closed before any request
+  } catch {
+    // stable sanitized label: no attached cause, no record/url/secret details
+    throw new BenchmarkInputError("invalid pricing");
+  }
   const pricingUsd = resolvedPricing.usdPerRequest;
 
   // FIXED before any request: never grows with progress

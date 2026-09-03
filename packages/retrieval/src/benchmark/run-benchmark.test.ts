@@ -158,11 +158,52 @@ describe("benchmark harness state machine (focused revision)", () => {
   });
 
   it("rejects illegal pricing and config before any measurement", async () => {
-    await expect(runBenchmark(harnessDeps({ pricing: { brave: { ...USD_TAVILY, amountPerRequest: -1 }, tavily: CNY_BAIDU } }))).rejects.toThrow(/pricing/);
-    await expect(runBenchmark(harnessDeps({ pricing: { brave: { ...USD_TAVILY, amountPerRequest: Number.NaN }, tavily: CNY_BAIDU } }))).rejects.toThrow(/pricing/);
-    await expect(runBenchmark(harnessDeps({ pricing: { brave: USD_TAVILY } }))).rejects.toThrow(/pricing/);
+    await expect(runBenchmark(harnessDeps({ pricing: { brave: { ...USD_TAVILY, amountPerRequest: -1 }, tavily: CNY_BAIDU } }))).rejects.toThrow(BenchmarkInputError);
+    await expect(runBenchmark(harnessDeps({ pricing: { brave: { ...USD_TAVILY, amountPerRequest: Number.NaN }, tavily: CNY_BAIDU } }))).rejects.toThrow(BenchmarkInputError);
+    await expect(runBenchmark(harnessDeps({ pricing: { brave: USD_TAVILY } }))).rejects.toThrow(BenchmarkInputError);
     await expect(runBenchmark(harnessDeps({ runsPerQuery: 0 }))).rejects.toThrow(BenchmarkInputError);
     await expect(runBenchmark(harnessDeps({ providers: [fakeProvider("brave")] }))).rejects.toThrow(/at least two/);
+  });
+
+  it("maps EVERY pricing validation failure to a stable sanitized BenchmarkInputError with no cause", async () => {
+    const badCases: Array<Record<string, unknown>> = [
+      { brave: { ...USD_TAVILY, amountPerRequest: -1 }, tavily: CNY_BAIDU },
+      { brave: { ...USD_TAVILY, amountPerRequest: Number.NaN }, tavily: CNY_BAIDU },
+      { brave: { ...USD_TAVILY, apiKey: "sk-live-secret" }, tavily: CNY_BAIDU },
+      { brave: USD_TAVILY }, // missing tavily
+      { brave: { ...USD_TAVILY, usdPerCurrencyUnit: 0 }, tavily: CNY_BAIDU },
+    ];
+    for (const pricing of badCases) {
+      const checker = new FakeLinkChecker(new Map());
+      let writerCalls = 0;
+      await expect(
+        runBenchmark(harnessDeps({
+          pricing: pricing as Record<string, never>,
+          linkChecker: checker,
+          writer: () => {
+            writerCalls += 1;
+          },
+        })),
+      ).rejects.toMatchObject({ name: "BenchmarkInputError" });
+      try {
+        await runBenchmark(harnessDeps({
+          pricing: pricing as Record<string, never>,
+          linkChecker: checker,
+          writer: () => {
+            writerCalls += 1;
+          },
+        }));
+        throw new Error("unreachable");
+      } catch (error) {
+        expect(error).toBeInstanceOf(BenchmarkInputError);
+        expect((error as Error).message).toBe("invalid pricing"); // fixed sanitized label
+        expect((error as Error).cause).toBeUndefined(); // no attached cause
+        expect(String(error)).not.toContain("sk-"); // never leaks a secret
+        expect(String(error)).not.toContain("pricing:"); // never leaks the resolver detail
+      }
+      expect(checker.checks).toHaveLength(0); // no link check ever ran
+      expect(writerCalls).toBe(0); // no checkpoint ever written
+    }
   });
 
   it("records stable sanitized failures (no raw provider/link error messages or urls)", async () => {

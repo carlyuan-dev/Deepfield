@@ -40,9 +40,12 @@ describe("benchmark pricing (focused revision)", () => {
     expect(Object.isFrozen(resolved.records.baidu)).toBe(true);
     expect(Object.isFrozen(resolved.usdPerRequest)).toBe(true);
     expect(Object.isFrozen(resolved)).toBe(true);
-    // cloning: mutating the input after resolution never changes the frozen records
-    const mutable = { ...CNY_BAIDU } as { amountPerRequest: number };
-    mutable.amountPerRequest = 999;
+  });
+
+  it("clones the ACTUAL input record: mutating it after resolve never changes the frozen output", () => {
+    const mutableInput: ProviderPrice = { ...CNY_BAIDU };
+    const resolved = resolveProviderPricing({ baidu: mutableInput }, ["baidu"]);
+    (mutableInput as { amountPerRequest: number }).amountPerRequest = 999;
     expect(resolved.records.baidu!.amountPerRequest).toBe(0.036);
   });
 
@@ -103,6 +106,81 @@ describe("benchmark pricing (focused revision)", () => {
       expect(message).not.toContain("bad.example");
       expect(message).not.toContain("0.01");
     }
+  });
+
+  it("reads ONLY own data property descriptors: inherited/accessor/symbol/non-enumerable fields are rejected without running getters", () => {
+    // required fields inherited from the prototype: must be rejected
+    const inherited = Object.create(USD_TAVILY) as ProviderPrice;
+    expect(() => resolveProviderPricing({ tavily: inherited }, ["tavily"])).toThrow(/pricing/);
+
+    // an accessor field: the getter must NEVER run (it would throw with a secret)
+    const accessorRecord: Record<string, unknown> = {
+      currency: "USD",
+      usdPerCurrencyUnit: 1,
+      priceSourceUrl: "https://docs.tavily.com/pricing",
+      priceObservedOn: "2026-09-01",
+    };
+    Object.defineProperty(accessorRecord, "amountPerRequest", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-accessor-secret");
+      },
+    });
+    try {
+      resolveProviderPricing({ tavily: accessorRecord as unknown as ProviderPrice }, ["tavily"]);
+      throw new Error("unreachable");
+    } catch (error) {
+      expect(String(error)).toMatch(/pricing/);
+      expect(String(error)).not.toContain("sk-accessor-secret");
+    }
+
+    // a symbol own field: rejected
+    const symbolRecord: Record<string | symbol, unknown> = { ...USD_TAVILY };
+    symbolRecord[Symbol("boom")] = 1;
+    expect(() => resolveProviderPricing({ tavily: symbolRecord as unknown as ProviderPrice }, ["tavily"])).toThrow(/pricing/);
+
+    // a non-enumerable unknown own field: rejected
+    const hiddenRecord: Record<string, unknown> = { ...USD_TAVILY };
+    Object.defineProperty(hiddenRecord, "apiKey", { enumerable: false, configurable: true, writable: true, value: "sk-hidden" });
+    try {
+      resolveProviderPricing({ tavily: hiddenRecord as unknown as ProviderPrice }, ["tavily"]);
+      throw new Error("unreachable");
+    } catch (error) {
+      expect(String(error)).toMatch(/pricing/);
+      expect(String(error)).not.toContain("sk-hidden");
+    }
+
+    // a provider ENTRY as an accessor on the input root: never invoked
+    const root: Record<string, ProviderPrice> = {};
+    Object.defineProperty(root, "tavily", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-root-secret");
+      },
+    });
+    try {
+      resolveProviderPricing(root, ["tavily"]);
+      throw new Error("unreachable");
+    } catch (error) {
+      expect(String(error)).toMatch(/pricing/);
+      expect(String(error)).not.toContain("sk-root-secret");
+    }
+  });
+
+  it("supports the legal provider id __proto__ via null-prototype dictionaries", () => {
+    const input: Record<string, ProviderPrice> = {};
+    Object.defineProperty(input, "__proto__", { value: USD_TAVILY, enumerable: true, configurable: true, writable: true });
+    const resolved = resolveProviderPricing(input, ["__proto__"]);
+    // records and usdPerRequest must OWN the key (no prototype setter triggered)
+    expect(Object.prototype.hasOwnProperty.call(resolved.records, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(resolved.records)).toBe(null);
+    expect(Object.getOwnPropertyDescriptor(resolved.records, "__proto__")!.value).toEqual(USD_TAVILY);
+    expect(Object.prototype.hasOwnProperty.call(resolved.usdPerRequest, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(resolved.usdPerRequest)).toBe(null);
+    expect(Object.getOwnPropertyDescriptor(resolved.usdPerRequest, "__proto__")!.value).toBe(0.01);
+    expect(Object.isFrozen(resolved.records)).toBe(true);
   });
 
   it("parseProviderPricingJson handles missing/blank/malformed/array/null roots and unknown properties", () => {
