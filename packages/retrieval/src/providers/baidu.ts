@@ -22,7 +22,8 @@ export type BaiduAuthHeader = "authorization" | "x-appbuilder-authorization";
 
 const BAIDU_MAX_QUERY_UNITS = 72;
 const ALLOWED_AUTH_HEADERS = new Set<string>(["authorization", "x-appbuilder-authorization"]);
-const HAN_PATTERN = /[\u4e00-\u9fff]/;
+/** Runtime-supported Unicode property escape covering EVERY Han code point (incl. Ext A/B). */
+const HAN_SCRIPT = /^\p{Script_Extensions=Han}$/u;
 
 export interface BaiduProviderDeps {
   client: ProviderHttpClient;
@@ -48,9 +49,16 @@ function assertClientEndpoint(client: ProviderHttpClient, expected: ProviderEndp
 export function countBaiduQueryUnits(query: string): number {
   let units = 0;
   for (const character of query) {
-    units += HAN_PATTERN.test(character) ? 2 : 1;
+    units += HAN_SCRIPT.test(character) ? 2 : 1;
   }
   return units;
+}
+
+function requireJsonPayload(payload: unknown): asserts payload is { references?: unknown } {
+  // plain non-null, non-array JSON object BEFORE any field access; never a native TypeError
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new SearchProviderError("malformed_response");
+  }
 }
 
 function parseJson(body: Buffer): unknown {
@@ -112,22 +120,28 @@ export function createBaiduProvider(deps: BaiduProviderDeps): SearchProvider {
         body: JSON.stringify(body),
         signal,
       });
-      const payload = parseJson(response.body) as { references?: unknown };
+      const payload = parseJson(response.body);
+      requireJsonPayload(payload);
       if (!Array.isArray(payload.references)) {
         throw new SearchProviderError("malformed_response");
       }
       return normalizeSearchResults(
         "baidu",
         payload.references.map((entry) => {
+          // each entry must be a non-null, non-array object BEFORE field access
+          if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+            throw new SearchProviderError("malformed_response");
+          }
           const result = entry as Record<string, unknown>;
           // snippet wins; content is the fallback ONLY when snippet is absent;
           // authority/rerank/icon/raw-content/diagnostic fields are never read
           const snippet = result.snippet !== undefined ? result.snippet : result.content;
+          const date = normalizeBaiduDate(result.date); // computed once
           return {
             title: result.title,
             url: result.url,
             snippet,
-            ...(normalizeBaiduDate(result.date) !== undefined ? { date: normalizeBaiduDate(result.date) } : {}),
+            ...(date !== undefined ? { date } : {}),
           };
         }),
         request.maxResults,

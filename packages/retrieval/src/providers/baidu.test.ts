@@ -86,6 +86,27 @@ describe("baidu basic search adapter (focused revision)", () => {
     expect(countBaiduQueryUnits("A\u{1F600}人")).toBe(4); // 1 + 1 + 2
   });
 
+  it("counts EVERY Han code point x2 across all Script_Extensions=Han ranges", () => {
+    // Extension A (U+3400) and Extension B astral Han (U+20000) each count as TWO
+    expect(countBaiduQueryUnits("\u{3400}")).toBe(2);
+    expect(countBaiduQueryUnits("\u{20000}")).toBe(2);
+    expect(countBaiduQueryUnits("\u{20000}\u{3400}")).toBe(4);
+    // ordinary astral non-Han (emoji) still counts ONE
+    expect(countBaiduQueryUnits("\u{1F600}")).toBe(1);
+    // mixed query accumulates per code point: 1 + 2 + 1 + 2
+    expect(countBaiduQueryUnits("A\u{3400}\u{1F600}\u{20000}")).toBe(6);
+  });
+
+  it("rejects extension-Han queries over 72 units before the transport is called", async () => {
+    const { transport, requests } = scriptedTransport([]);
+    const provider = makeProvider(transport);
+    const signal = new AbortController().signal;
+    expect(countBaiduQueryUnits("\u{3400}".repeat(36))).toBe(72); // boundary is legal
+    expect((await errorOf(provider.search({ query: "\u{3400}".repeat(37), maxResults: 20 }, signal)))).toMatchObject({ code: "invalid_request" });
+    expect((await errorOf(provider.search({ query: "\u{20000}".repeat(37), maxResults: 20 }, signal)))).toMatchObject({ code: "invalid_request" });
+    expect(requests).toHaveLength(0);
+  });
+
   it("rejects over-limit queries before the transport is called", async () => {
     const { transport, requests } = scriptedTransport([]);
     const provider = makeProvider(transport);
@@ -205,8 +226,12 @@ describe("baidu basic search adapter (focused revision)", () => {
     expect((await baiduError([() => jsonResponse(200, { references: [{ title: "A", url: "https://x.example/" }] })])).code).toBe("malformed_response"); // both snippets absent
     expect((await baiduError([() => rawResponse(401, "nope")])).code).toBe("unauthorized");
     expect((await baiduError([() => rawResponse(429, "slow", { "retry-after": "3" })])).code).toBe("rate_limited");
-    expect((await baiduError([() => rawResponse(503, "down")])).code).toBe("provider_unavailable");
-    expect((await baiduError([() => rawResponse(200, "{not-json")])).code).toBe("malformed_response");
+    // the parsed Retry-After survives across the adapter boundary (it is the
+    // client error propagated untouched, never rethrown with a fresh message)
+    const retryError = (await baiduError([() => rawResponse(429, "slow", { "retry-after": "3" })])) as unknown as { code: string; retryAfterMs?: number };
+    expect(retryError.code).toBe("rate_limited");
+    expect(retryError.retryAfterMs).toBe(3000);
+    expect((await baiduError([() => rawResponse(503, "down")])).code).toBe("provider_unavailable");    expect((await baiduError([() => rawResponse(200, "{not-json")])).code).toBe("malformed_response");
     expect((await baiduError([() => rawResponse(500, "{\"error\":\"sk-response-secret\"}")])).code).toBe("provider_unavailable");
     // 401 is a single attempt: no second request with another header
     const { transport, requests } = scriptedTransport([() => rawResponse(401, "nope")]);
