@@ -146,6 +146,16 @@ export {
   type ReferenceSetV1,
 } from "./benchmark/reference-companies.js";
 export {
+  BENCHMARK_CANDIDATES_V1,
+  KEYCHAIN_SERVICES,
+  LIVE_PROVIDER_ENV_KEYS,
+  SUPPORTED_PROVIDER_IDS,
+  requireBenchmarkCandidateAssembly,
+  type LiveProviderId,
+  type SupportedProviderId,
+} from "./providers/provider-catalog.js";
+
+export {
   parseProviderPricingJson,
   resolveProviderPricing,
   type PriceCurrency,

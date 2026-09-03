@@ -1,6 +1,6 @@
 import type { NormalizedSearchResponse } from "../search-provider.js";
 import { SearchProviderError } from "../search-provider.js";
-import type { LiveProviderId } from "../providers/live-config.js";
+import type { SupportedProviderId } from "../providers/provider-catalog.js";
 import { QUERIES_V1, type QuerySetV1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1, type ReferenceSetV1 } from "./reference-companies.js";
 import { scoreBenchmark, type BenchmarkedRun, type LinkEvidence } from "./scoring.js";
@@ -14,7 +14,9 @@ export interface LinkChecker {
 }
 
 export interface HarnessProvider {
-  id: LiveProviderId;
+  // offline harness is generic over SUPPORTED adapters; the live assembly
+  // gates the actual v1 candidate set separately via requireBenchmarkCandidateAssembly
+  id: SupportedProviderId;
   endpoint: string;
   search(query: string, maxResults: number, signal: AbortSignal): Promise<NormalizedSearchResponse>;
 }

@@ -4,7 +4,12 @@ import { createNodeProviderTransport } from "../provider-node-transport.js";
 import { createBraveProvider, ENDPOINT as BRAVE_ENDPOINT } from "../providers/brave.js";
 import { createTavilyProvider, ENDPOINT as TAVILY_ENDPOINT } from "../providers/tavily.js";
 import { createSerperProvider, ENDPOINT as SERPER_ENDPOINT } from "../providers/serper.js";
-import { resolveLiveRun, type LiveProviderId } from "../providers/live-config.js";
+import { resolveLiveRun } from "../providers/live-config.js";
+import {
+  requireBenchmarkCandidateAssembly,
+  type LiveProviderId,
+  type SupportedProviderId,
+} from "../providers/provider-catalog.js";
 import { runBenchmark, type HarnessProvider } from "./run-benchmark.js";
 import { createHttpLinkChecker } from "./link-checker.js";
 import { parseProviderPricingJson, type ProviderPrice } from "./pricing.js";
@@ -14,13 +19,34 @@ import { createNodeHttpAdapter } from "../node-http-adapter.js";
 import { join } from "node:path";
 
 /**
- * OPT-IN live benchmark. The selected provider set and every required key are
- * resolved at module load; the native-currency pricing evidence is parsed and
- * validated BEFORE any network request or report write — anything missing or
- * illegal fails the whole suite (exit != 0) and no benchmark-results/ file is
- * created. The loop/checkpoint state machine is the offline-tested
- * runBenchmark harness.
+ * OPT-IN live benchmark. Phase 1 has only the legacy brave/tavily/serper
+ * endpoint/factory literals, so requireBenchmarkCandidateAssembly fails closed
+ * with the stable incomplete-assembly error BEFORE any key resolution,
+ * transport construction, pricing parse, writer call or test body — the
+ * three-provider live path can never silently execute and no benchmark-results
+ * file is written.
  */
+const ENDPOINTS: Partial<Record<SupportedProviderId, { origin: string; pathPrefix: string }>> = {
+  brave: BRAVE_ENDPOINT,
+  tavily: TAVILY_ENDPOINT,
+  serper: SERPER_ENDPOINT,
+};
+
+type ProviderLike = { search(req: { query: string; maxResults: number }, signal: AbortSignal): Promise<{ provider: string; results: { title: string; url: string; snippet: string; rank: number; provider: string }[] }> };
+type Factory = (client: ProviderHttpClient, token: string) => ProviderLike;
+
+const FACTORIES: Partial<Record<SupportedProviderId, Factory>> = {
+  brave: (client, token) => createBraveProvider({ client, token }),
+  tavily: (client, token) => createTavilyProvider({ client, token }),
+  serper: (client, token) => createSerperProvider({ client, token }),
+};
+
+// Fail-closed Phase 1 boundary: throws before any I/O while baidu/zhipu/metaso
+// are missing (P2-T8A Phase 2 search-benchmark assembly is incomplete:
+// baidu,zhipu,metaso). The complete record is the only map indexed below.
+const ENDPOINT_ASSEMBLY = requireBenchmarkCandidateAssembly("search-benchmark endpoints", ENDPOINTS);
+const FACTORY_ASSEMBLY = requireBenchmarkCandidateAssembly("search-benchmark", FACTORIES);
+
 const RUN = resolveLiveRun(process.env as Record<string, string | undefined>);
 
 /** DEEPFIELD_SEARCH_PRICING carries native-currency price evidence (never keys). */
@@ -30,29 +56,17 @@ function loadPricing(): Readonly<Record<string, ProviderPrice>> {
 
 const PRICING = loadPricing();
 
-const ENDPOINTS: Record<LiveProviderId, { origin: string; pathPrefix: string }> = {
-  brave: BRAVE_ENDPOINT,
-  tavily: TAVILY_ENDPOINT,
-  serper: SERPER_ENDPOINT,
-};
-
-const FACTORIES: Record<LiveProviderId, (client: ProviderHttpClient, token: string) => { search(req: { query: string; maxResults: number }, signal: AbortSignal): Promise<{ provider: string; results: { title: string; url: string; snippet: string; rank: number; provider: string }[] }> }> = {
-  brave: (client, token) => createBraveProvider({ client, token }),
-  tavily: (client, token) => createTavilyProvider({ client, token }),
-  serper: (client, token) => createSerperProvider({ client, token }),
-};
-
 function makeHarnessProviders(): HarnessProvider[] {
-  return RUN.providers.map((id) => {
+  return RUN.providers.map((id: LiveProviderId) => {
     const client = new ProviderHttpClient({
       transport: createNodeProviderTransport(),
-      endpoint: ENDPOINTS[id],
+      endpoint: ENDPOINT_ASSEMBLY[id],
       totalTimeoutMs: 20_000,
     });
-    const provider = FACTORIES[id](client, RUN.tokens[id]);
+    const provider = FACTORY_ASSEMBLY[id](client, RUN.tokens[id]);
     return {
       id,
-      endpoint: `${ENDPOINTS[id].origin}${ENDPOINTS[id].pathPrefix}`,
+      endpoint: `${ENDPOINT_ASSEMBLY[id].origin}${ENDPOINT_ASSEMBLY[id].pathPrefix}`,
       search: (query, maxResults, signal) => provider.search({ query, maxResults }, signal),
     };
   });

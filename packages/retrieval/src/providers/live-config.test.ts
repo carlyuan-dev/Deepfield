@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveLiveProviders, requireLiveKeys, resolveLiveRun, ALL_LIVE_PROVIDERS } from "./live-config.js";
+import { resolveLiveProviders, requireLiveKeys, resolveLiveRun } from "./live-config.js";
+import { BENCHMARK_CANDIDATES_V1 } from "./provider-catalog.js";
+
+const FIVE = [...BENCHMARK_CANDIDATES_V1];
 
 describe("live provider selection (focused revision)", () => {
   it("requires an explicit DEEPFIELD_SEARCH_PROVIDERS value", () => {
@@ -8,34 +11,61 @@ describe("live provider selection (focused revision)", () => {
     expect(() => resolveLiveProviders("   ")).toThrow(/DEEPFIELD_SEARCH_PROVIDERS/);
   });
 
-  it("requires at least two providers", () => {
-    expect(() => resolveLiveProviders("brave")).toThrow(/at least two/);
-    expect(() => resolveLiveProviders("tavily")).toThrow(/at least two/);
+  it("returns the canonical frozen candidate order regardless of input order", () => {
+    expect(resolveLiveProviders("serper,baidu,tavily,metaso,zhipu")).toEqual(FIVE);
+    expect(resolveLiveProviders("zhipu,metaso,tavily,serper,baidu")).toEqual(FIVE);
+    expect(resolveLiveProviders(FIVE.join(","))).toEqual(FIVE);
   });
 
-  it("rejects unknown and duplicate providers", () => {
-    expect(() => resolveLiveProviders("brave,evil")).toThrow(/unknown provider/i);
-    expect(() => resolveLiveProviders("brave,tavily,serper,extra")).toThrow(/unknown provider/i);
-    expect(() => resolveLiveProviders("brave,brave")).toThrow(/duplicate/i);
-    expect(() => resolveLiveProviders("brave,tavily,tavily")).toThrow(/duplicate/i);
+  it("rejects single, unknown, duplicate, missing and Brave-containing sets", () => {
+    expect(() => resolveLiveProviders("baidu")).toThrow(/five|candidate|DEEPFIELD_SEARCH_PROVIDERS/);
+    expect(() => resolveLiveProviders("brave,tavily,serper,baidu,zhipu")).toThrow(/brave|unknown|exactly/i);
+    expect(() => resolveLiveProviders("brave,baidu,zhipu,metaso,tavily,serper")).toThrow(/brave|unknown|exactly/i);
+    expect(() => resolveLiveProviders("evil,baidu,zhipu,metaso,tavily,serper")).toThrow(/unknown/i);
+    expect(() => resolveLiveProviders("baidu,zhipu,metaso,tavily")).toThrow(/missing|exactly|candidate/i); // missing serper
+    expect(() => resolveLiveProviders("baidu,zhipu,metaso,tavily,serper,serper")).toThrow(/duplicate/i);
+    expect(() => resolveLiveProviders("baidu,,zhipu,metaso,tavily,serper")).toThrow(/empty/i);
+    expect(() => resolveLiveProviders("brave")).toThrow();
   });
 
-  it("accepts exactly the whitelisted set with whitespace tolerance", () => {
-    expect(resolveLiveProviders("brave, tavily")).toEqual(["brave", "tavily"]);
-    expect(resolveLiveProviders("serper,brave,tavily")).toEqual(["serper", "brave", "tavily"]);
-    expect(ALL_LIVE_PROVIDERS).toEqual(["brave", "tavily", "serper"]);
+  it("requires all five keys, rejecting blank/whitespace-only values without echoing values", () => {
+    const fullEnv: Record<string, string> = {
+      BAIDU_SEARCH_API_KEY: "k-baidu",
+      ZHIPU_SEARCH_API_KEY: "k-zhipu",
+      METASO_SEARCH_API_KEY: "k-metaso",
+      TAVILY_API_KEY: "k-tavily",
+      SERPER_API_KEY: "k-serper",
+    };
+    expect(Object.keys(requireLiveKeys(FIVE, fullEnv)).sort()).toEqual([...FIVE].sort());
+
+    const missing = { ...fullEnv };
+    delete missing.TAVILY_API_KEY;
+    expect(() => requireLiveKeys(FIVE, missing)).toThrow(/TAVILY_API_KEY/);
+
+    const blank = { ...fullEnv, SERPER_API_KEY: "   " };
+    try {
+      requireLiveKeys(FIVE, blank);
+      throw new Error("unreachable");
+    } catch (error) {
+      const message = String(error);
+      expect(message).toContain("SERPER_API_KEY");
+      expect(message).not.toContain("k-"); // never echoes available key values
+    }
   });
 
-  it("requires a key for every selected provider (fail closed before any I/O)", () => {
-    expect(() => requireLiveKeys(["brave", "tavily"], { BRAVE_SEARCH_API_KEY: "k" })).toThrow(/TAVILY_API_KEY is required/);
-    expect(() => requireLiveKeys(["brave", "tavily"], {})).toThrow(/BRAVE_SEARCH_API_KEY is required/);
-    const tokens = requireLiveKeys(["brave", "tavily"], { BRAVE_SEARCH_API_KEY: "k1", TAVILY_API_KEY: "k2" });
-    expect(tokens).toEqual({ brave: "k1", tavily: "k2" });
-    // one-shot live run setup: selection + keys together
-    const run = resolveLiveRun({ DEEPFIELD_SEARCH_PROVIDERS: "brave,tavily", BRAVE_SEARCH_API_KEY: "k1", TAVILY_API_KEY: "k2" });
-    expect(run.providers).toEqual(["brave", "tavily"]);
-    expect(run.tokens.tavily).toBe("k2");
-    expect(() => resolveLiveRun({ DEEPFIELD_SEARCH_PROVIDERS: "brave,tavily", BRAVE_SEARCH_API_KEY: "k1" })).toThrow(/TAVILY_API_KEY is required/);
-    expect(() => resolveLiveRun({ DEEPFIELD_SEARCH_PROVIDERS: "brave" })).toThrow(/at least two/);
+  it("resolveLiveRun keeps its signature and uses the single catalog", () => {
+    const env: Record<string, string> = {
+      DEEPFIELD_SEARCH_PROVIDERS: FIVE.join(","),
+      BAIDU_SEARCH_API_KEY: "k1",
+      ZHIPU_SEARCH_API_KEY: "k2",
+      METASO_SEARCH_API_KEY: "k3",
+      TAVILY_API_KEY: "k4",
+      SERPER_API_KEY: "k5",
+    };
+    const run = resolveLiveRun(env);
+    expect(run.providers).toEqual(FIVE);
+    expect(Object.keys(run.tokens).sort()).toEqual([...FIVE].sort());
+    expect(() => resolveLiveRun({ ...env, DEEPFIELD_SEARCH_PROVIDERS: "brave" })).toThrow();
+    expect(() => resolveLiveRun({ DEEPFIELD_SEARCH_PROVIDERS: FIVE.join(",") })).toThrow(/API_KEY/);
   });
 });
