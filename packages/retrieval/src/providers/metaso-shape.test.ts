@@ -123,6 +123,71 @@ describe("metaso value-free shape summarizer (focused revision)", () => {
     }
   });
 
+  it("rejects accessor getters on ANY existing array index (not only index 0)", () => {
+    // index 1 carries an accessor while index 0 is a plain value: must be rejected
+    const withAccessorIndex: unknown[] = ["plain-first"];
+    Object.defineProperty(withAccessorIndex, "1", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-index-one-leak");
+      },
+    });
+    try {
+      summarizeJsonShape(withAccessorIndex);
+      throw new Error("unreachable");
+    } catch (error) {
+      expect(String(error)).toMatch(/shape/i);
+      expect(String(error)).not.toContain("sk-index-one-leak");
+    }
+
+    // a deep non-zero index accessor inside the probed first element chain
+    const nested: unknown[] = [[{ ok: 1 }]];
+    Object.defineProperty(nested[0] as object, "1", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-nested-index-leak");
+      },
+    });
+    try {
+      summarizeJsonShape(nested);
+      throw new Error("unreachable");
+    } catch (error) {
+      expect(String(error)).toMatch(/shape/i);
+      expect(String(error)).not.toContain("sk-nested-index-leak");
+    }
+  });
+
+  it("rejects extra enumerable own properties on arrays (incl. accessors) without running them", () => {
+    // a non-index enumerable DATA property is not an ordinary array element
+    const withExtraData: unknown[] = [1];
+    Object.defineProperty(withExtraData, "extra", { value: 5, enumerable: true, writable: true, configurable: true });
+    expect(() => summarizeJsonShape(withExtraData)).toThrow(/shape/i);
+
+    // an extra enumerable ACCESSOR property: rejected without running the getter
+    const withExtraGetter: unknown[] = [1];
+    Object.defineProperty(withExtraGetter, "extra", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-extra-prop-leak");
+      },
+    });
+    try {
+      summarizeJsonShape(withExtraGetter);
+      throw new Error("unreachable");
+    } catch (error) {
+      expect(String(error)).toMatch(/shape/i);
+      expect(String(error)).not.toContain("sk-extra-prop-leak");
+    }
+
+    // a non-canonical index spelling ("00") is an extra property, not an element
+    const nonCanonical: unknown[] = [1];
+    Object.defineProperty(nonCanonical, "00", { value: 9, enumerable: true, writable: true, configurable: true });
+    expect(() => summarizeJsonShape(nonCanonical)).toThrow(/shape/i);
+  });
+
   it("enforces depth 12, 100 properties per object and 10000 array length", () => {
     const deep: Record<string, unknown> = {};
     let cursor: Record<string, unknown> = deep;
@@ -158,16 +223,49 @@ describe("metaso value-free shape summarizer (focused revision)", () => {
     expect(() => summarizeJsonShape(new Array(10001))).toThrow(/shape/i);
   });
 
-  it("never includes numbers, secret values or input in fixed error messages", () => {
+  it("never includes numbers, secret values or input in fixed error messages of the SAME offending input", () => {
+    // one single illegal input carries secret/url/number values AND a trigger
+    // field (accessor) so the produced error is proven sanitized end-to-end
+    const offending: Record<string, unknown> = {
+      token: "sk-top-secret",
+      url: "https://leak.example/x",
+      n: 123456789,
+    };
+    Object.defineProperty(offending, "secret", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-getter-secret");
+      },
+    });
     try {
-      summarizeJsonShape({ token: "sk-top-secret", url: "https://leak.example/x", n: 123456789 });
-      summarizeJsonShape(undefined);
+      summarizeJsonShape(offending);
       throw new Error("unreachable");
     } catch (error) {
       const message = String(error);
+      expect(message).toMatch(/shape/i);
       expect(message).not.toContain("sk-top-secret");
+      expect(message).not.toContain("sk-getter-secret");
       expect(message).not.toContain("https://leak.example");
       expect(message).not.toContain("123456789");
+    }
+    // same end-to-end sanitization through an illegal array input
+    const arrayOffending: unknown[] = [];
+    Object.defineProperty(arrayOffending, "1", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error("sk-array-secret");
+      },
+    });
+    try {
+      summarizeJsonShape([arrayOffending, { token: "sk-second-secret", n: 42 }]);
+      throw new Error("unreachable");
+    } catch (error) {
+      const message = String(error);
+      expect(message).not.toContain("sk-array-secret");
+      expect(message).not.toContain("sk-second-secret");
+      expect(message).not.toContain("42");
     }
   });
 });

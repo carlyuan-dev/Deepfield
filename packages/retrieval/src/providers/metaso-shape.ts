@@ -22,6 +22,18 @@ function fail(): never {
   throw new ShapeProbeError();
 }
 
+/** Canonical array index per spec: own enumerable array elements only. */
+function isCanonicalArrayIndex(key: string): boolean {
+  if (key === "0") {
+    return true;
+  }
+  if (!/^[1-9][0-9]*$/.test(key)) {
+    return false;
+  }
+  const numeric = Number(key);
+  return Number.isInteger(numeric) && numeric < 4294967295;
+}
+
 function summarize(value: unknown, depth: number, seen: WeakSet<object>): JsonShape {
   if (value === null) {
     return "null";
@@ -54,19 +66,37 @@ function summarize(value: unknown, depth: number, seen: WeakSet<object>): JsonSh
     if (value.length > MAX_ARRAY_LENGTH) {
       fail();
     }
-    const ownNames = Object.getOwnPropertyNames(value); // indices + "length"
+    const ownNames = Object.getOwnPropertyNames(value); // present indices + "length"
     const enumerable = Object.keys(value);
     // reject symbol keys and any custom non-enumerable own field on the array
-    if (Reflect.ownKeys(value).length !== ownNames.length || ownNames.length !== enumerable.length + 1) {
+    if (Reflect.ownKeys(value).length !== ownNames.length) {
       fail();
+    }
+    const present = ownNames.filter((key) => key !== "length");
+    // every own key besides "length" must be enumerable (no hidden custom fields)
+    if (present.length !== enumerable.length) {
+      fail();
+    }
+    for (const key of present) {
+      // ONLY canonical array indices with own DATA descriptors are accepted:
+      // accessor getters on ANY existing element and extra enumerable
+      // properties (data or accessor) are rejected without ever running them
+      if (!isCanonicalArrayIndex(key)) {
+        fail();
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || "value" in descriptor === false) {
+        fail();
+      }
     }
     if (value.length === 0) {
       return Object.freeze({ type: "array", length: 0 });
     }
-    // inspect ONLY element zero; never a getter, never a sparse hole
+    // inspect ONLY element zero (own data, guaranteed above); never a getter,
+    // never a sparse hole; later holes stay allowed
     const firstDescriptor = Object.getOwnPropertyDescriptor(value, "0");
     if (firstDescriptor === undefined || "value" in firstDescriptor === false) {
-      fail(); // sparse array or accessor element: stable rejection
+      fail(); // sparse array with hole at index 0: stable rejection
     }
     const first = summarize(firstDescriptor.value, depth + 1, seen);
     return Object.freeze({ type: "array", length: value.length, first });
