@@ -1,0 +1,506 @@
+# Search Provider Candidate Expansion Phase 2 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Convert the observed MetaSo response contract into a strict adapter, assemble all five approved search candidates behind the existing live boundaries, and complete reviewed one-call contract smokes before requesting approval for the 100-call benchmark.
+
+**Architecture:** Keep the accepted `SearchProvider` and fixed-origin `ProviderHttpClient` contracts unchanged. Add one fixture-backed MetaSo adapter, then expose one immutable five-provider endpoint/factory assembly consumed by both live entry points. Expand the Keychain launcher with closed, explicit modes; resolve the five keys and five native-currency price records before the first request. Live contract smokes and the later benchmark remain separate user-approved operations.
+
+**Tech Stack:** TypeScript 7, Node.js 24, Vitest 4, zsh, macOS Keychain, existing `@deepfield/retrieval` provider and benchmark infrastructure.
+
+**Spec:** `docs/superpowers/specs/2026-09-01-search-provider-candidate-expansion-design.md`
+
+## Observed MetaSo Contract Gate
+
+The separately approved one-call probe ran once on 2026-09-03 and returned a value-free shape. This is the only live fact this plan may use:
+
+```text
+root.webpages: array
+root.webpages[].title: string
+root.webpages[].link: string
+root.webpages[].snippet: string
+root.webpages[].date: string
+root.webpages[].position: number
+root.webpages[].score: string
+root.credits: number
+root.total: number
+root.searchParameters: object
+```
+
+The adapter maps only `title`, `link`, `snippet`, and a valid date. It assigns local one-based ranks and ignores `position`, `score`, `credits`, `total`, and `searchParameters`. The ignored fields are provider diagnostics, not evidence and not normalized output.
+
+## Global Constraints
+
+- The live candidate order is exactly `baidu,zhipu,metaso,tavily,serper`; Brave remains supported but is not a v1 benchmark candidate.
+- Use MetaSo `POST https://metaso.cn/api/v1/search`; never call `/api/v1/chat/completions` or any generated-answer endpoint.
+- MetaSo request fields are exactly `q`, `scope: "webpage"`, `size`, `includeSummary: false`, `includeRawContent: false`, and `conciseSnippet: true`.
+- Use one `Authorization: Bearer <key>` header for MetaSo. Use one `authorization` Bearer header for the first Baidu contract smoke; a 401 stops the gate and never triggers an automatic second-header attempt.
+- Every selected candidate, Keychain key, and native-currency price record must resolve before the first contract or benchmark HTTP request.
+- No live response body, title, URL, snippet, page content, request header, API key, or Keychain output may be committed or copied into a DSH report.
+- Default `npm test` must never run `*.live.test.ts`; every live operation requires a separate explicit user approval with a maximum call count.
+- Provider contract smokes use at most five provider-search calls, stop at the first failed test, and never retry automatically.
+- The full benchmark remains exactly 100 provider-search calls: five providers × ten queries × two runs. It is outside the implementation tasks and requires a fresh cost estimate and approval.
+- No automatic provider failover, blending, proxy support, generated search answer, full-page provider option, runtime multi-provider selection, or Capability/UI change is added.
+- Production and test TypeScript files should stay below 300 lines. Split by responsibility before exceeding the limit.
+- Do not read, modify, stage, delete, or commit `docs/Deepfield项目开发教程-临时学习版.md`.
+
+---
+
+### Task P2-T8A-6: Strict Fixture-Backed MetaSo Adapter
+
+**Files:**
+- Create: `packages/retrieval/src/providers/metaso.ts`
+- Create: `packages/retrieval/src/providers/metaso.test.ts`
+- Create: `packages/retrieval/src/providers/metaso-boundaries.test.ts`
+- Create: `packages/retrieval/src/providers/fixtures/metaso-success.json`
+- Create: `packages/retrieval/src/providers/fixtures/metaso-zero.json`
+- Modify: `packages/retrieval/src/index.ts`
+
+**Interfaces:**
+- Consumes: `ProviderHttpClient`, `ProviderEndpoint`, `SearchProvider`, `SearchRequest`, `NormalizedSearchResponse`, `SearchProviderError`, `assertValidSearchRequest`, `isValidDateString`, and `normalizeSearchResults`.
+- Produces:
+
+```ts
+export const METASO_ENDPOINT: ProviderEndpoint;
+
+export interface MetaSoProviderDeps {
+  client: ProviderHttpClient;
+  token: string;
+}
+
+export function createMetaSoProvider(deps: MetaSoProviderDeps): SearchProvider;
+```
+
+- `SearchProvider.id` is `metaso`; `capabilities.timeRange` is `false`.
+
+- [ ] **Step 1: Add minimal synthetic fixtures from the observed shape**
+
+Create `metaso-success.json` with two synthetic `webpages` entries. Include `title`, HTTPS `link`, `snippet`, `date`, `position`, and string `score`, plus synthetic `credits`, `total`, and `searchParameters`. Use only `.example` URLs and invented text; do not reconstruct or paste live values. Create `metaso-zero.json` with an empty `webpages` array and synthetic top-level metadata.
+
+- [ ] **Step 2: Write failing request and mapping tests**
+
+In `metaso.test.ts`, use the existing scripted `ProviderTransport` pattern. Assert:
+
+```ts
+expect(METASO_ENDPOINT).toEqual({
+  origin: "https://metaso.cn",
+  pathPrefix: "/api/v1/search",
+});
+
+expect(JSON.parse(request.body!)).toEqual({
+  q: "人形机器人 公司",
+  scope: "webpage",
+  size: 20,
+  includeSummary: false,
+  includeRawContent: false,
+  conciseSnippet: true,
+});
+```
+
+Assert exactly one POST, JSON accept/content headers, exactly one `authorization` header, no token in the body, and no Q&A/raw-content/summary request mode. Assert the success fixture becomes normalized results with local ranks `1,2`; a valid leading `YYYY-MM-DD` is retained, an invalid date is omitted, and `position`, `score`, `credits`, `total`, and `searchParameters` never enter serialized output. Assert zero results for `metaso-zero.json`.
+
+- [ ] **Step 3: Write failing boundary and failure tests**
+
+Cover endpoint mismatch, blank token, supplied `timeRange`, malformed JSON, null/array/primitive roots, missing or non-array `webpages`, null/array/primitive result entries, non-string `title`/`link`/`snippet`, dangerous URL, 401, 429 with bounded Retry-After, 5xx, pre-abort, and a provider body containing a distinctive test secret. Assert all failures are stable `SearchProviderError` values, never native `TypeError`, never contain the token/raw body/test secret, and never attach a raw cause. A rejected `timeRange` must make zero transport calls.
+
+- [ ] **Step 4: Run the adapter tests and record RED**
+
+```bash
+npm test -- packages/retrieval/src/providers/metaso.test.ts packages/retrieval/src/providers/metaso-boundaries.test.ts
+```
+
+Expected: FAIL because `./metaso.js` does not exist. Record the exact missing-module failure before implementation.
+
+- [ ] **Step 5: Implement the minimal MetaSo adapter**
+
+Bind `METASO_ENDPOINT` at factory construction and reject a blank token with `SearchProviderError("invalid_request")`. In `search`, call `assertValidSearchRequest`, reject any `timeRange` before I/O, send the exact request body, parse one bounded JSON response in memory, require a non-null non-array root and `webpages` array, and require each entry to be a non-null non-array object before reading fields.
+
+Map only:
+
+```ts
+{
+  title: result.title,
+  url: result.link,
+  snippet: result.snippet,
+  ...(validDate !== undefined ? { date: validDate } : {}),
+}
+```
+
+Delegate title/snippet/URL/rank/count validation to `normalizeSearchResults`. Normalize a date only when its first ten characters pass `isValidDateString`. Do not read or copy provider position, score, credits, totals, echoed search parameters, or unknown fields.
+
+- [ ] **Step 6: Run GREEN and regression gates**
+
+```bash
+npm test -- packages/retrieval/src/providers/metaso.test.ts packages/retrieval/src/providers/metaso-boundaries.test.ts
+npm test -- packages/retrieval/src/providers/provider-contract.test.ts packages/retrieval/src/search-provider.test.ts
+npm run typecheck
+npm test
+npm run build
+git diff --check
+npm ls --depth=0
+```
+
+Expected: all offline tests pass; no `*.live.test.ts`, Keychain command, DNS request, or external HTTP request runs.
+
+- [ ] **Step 7: Commit Task P2-T8A-6**
+
+```bash
+git add packages/retrieval/src/providers/metaso.ts packages/retrieval/src/providers/metaso.test.ts packages/retrieval/src/providers/metaso-boundaries.test.ts packages/retrieval/src/providers/fixtures/metaso-success.json packages/retrieval/src/providers/fixtures/metaso-zero.json packages/retrieval/src/index.ts
+git commit -m "feat: add strict MetaSo search adapter"
+```
+
+Stop for main-window review. Do not start Task P2-T8A-7 in the same DSH task.
+
+---
+
+### Task P2-T8A-7: Immutable Five-Provider Live Assembly
+
+**Files:**
+- Create: `packages/retrieval/src/providers/live-provider-assembly.ts`
+- Create: `packages/retrieval/src/providers/live-provider-assembly.test.ts`
+- Modify: `packages/retrieval/src/providers/provider-contract.live.test.ts`
+- Modify: `packages/retrieval/src/benchmark/search-benchmark.live.test.ts`
+- Modify: `packages/retrieval/src/index.ts`
+
+**Interfaces:**
+- Consumes: the five adapter factories and endpoints, `BENCHMARK_CANDIDATES_V1`, `requireBenchmarkCandidateAssembly`, `ProviderHttpClient`, and `SearchProvider`.
+- Produces:
+
+```ts
+export type LiveProviderFactory = (
+  client: ProviderHttpClient,
+  token: string,
+) => SearchProvider;
+
+export const LIVE_PROVIDER_ENDPOINTS:
+  Readonly<Record<LiveProviderId, ProviderEndpoint>>;
+
+export const LIVE_PROVIDER_FACTORIES:
+  Readonly<Record<LiveProviderId, LiveProviderFactory>>;
+
+export interface LiveProviderSetup {
+  readonly providers: readonly LiveProviderId[];
+  readonly tokens: Readonly<Record<LiveProviderId, string>>;
+  readonly pricing: Readonly<Record<LiveProviderId, ProviderPrice>>;
+}
+
+export function resolveLiveProviderSetup(
+  env: Record<string, string | undefined>,
+): LiveProviderSetup;
+```
+
+- Baidu is bound to the explicit `authorization` header for its first contract smoke. No factory performs retries or fallback.
+
+- [ ] **Step 1: Write failing assembly tests**
+
+Assert both exported records have exactly the candidate keys in canonical order, have null prototypes, are frozen, omit Brave, and contain no undefined/placeholder entries. For every candidate, construct a `ProviderHttpClient` with its exact endpoint and call the factory with a synthetic token; assert the returned provider ID matches the key. Assert capabilities are `true` for Baidu/Tavily and `false` for Zhipu/MetaSo/Serper. Assert the Baidu factory emits only the selected `authorization` header in its existing offline request test path.
+
+For `resolveLiveProviderSetup`, pass a complete synthetic environment and assert canonical frozen providers, frozen null-prototype tokens, and frozen native-currency price records. Test missing/extra provider selection, every missing/blank key, missing/malformed/partial/extra pricing, and a pricing record accessor whose getter would throw a distinctive secret. Every failure must occur inside setup, use a fixed sanitized message, and never execute a factory or getter.
+
+- [ ] **Step 2: Run assembly RED**
+
+```bash
+npm test -- packages/retrieval/src/providers/live-provider-assembly.test.ts
+```
+
+Expected: FAIL because `live-provider-assembly.ts` does not exist.
+
+- [ ] **Step 3: Implement one shared immutable assembly**
+
+Create partial maps from the six supported adapters, then pass them through `requireBenchmarkCandidateAssembly`. The resulting exported maps contain exactly the five benchmark candidates. Bind factories as follows:
+
+```ts
+baidu: (client, token) => createBaiduProvider({
+  client,
+  token,
+  authHeader: "authorization",
+}),
+zhipu: (client, token) => createZhipuProvider({ client, token }),
+metaso: (client, token) => createMetaSoProvider({ client, token }),
+tavily: (client, token) => createTavilyProvider({ client, token }),
+serper: (client, token) => createSerperProvider({ client, token }),
+```
+
+Do not duplicate endpoints or factories in either live test after this task.
+
+Implement `resolveLiveProviderSetup` in this non-live module as the single pre-I/O boundary:
+
+```ts
+const run = resolveLiveRun(env);
+const pricing = parseProviderPricingJson(
+  ownDataEnvironmentValue(env, "DEEPFIELD_SEARCH_PRICING"),
+  run.providers,
+);
+return Object.freeze({
+  providers: Object.freeze([...run.providers]),
+  tokens: run.tokens,
+  pricing,
+});
+```
+
+Use this private helper signature:
+
+```ts
+function ownDataEnvironmentValue(
+  env: Record<string, string | undefined>,
+  name: string,
+): string | undefined;
+```
+
+Read `DEEPFIELD_SEARCH_PRICING` through an own data-property descriptor, consistent with the existing key boundary; inherited/accessor values are treated as missing and the getter never executes. Do not copy environment values into an error.
+
+- [ ] **Step 4: Replace both incomplete Phase 1 live maps**
+
+In `provider-contract.live.test.ts`, import `LIVE_PROVIDER_ENDPOINTS`, `LIVE_PROVIDER_FACTORIES`, and `resolveLiveProviderSetup`. At module setup, call:
+
+```ts
+const SETUP = resolveLiveProviderSetup(
+  process.env as Record<string, string | undefined>,
+);
+```
+
+before constructing a transport or entering a test body. Build probes only from `SETUP.providers`, `SETUP.tokens`, and the shared factories. Pricing need not be logged; resolving it here enforces complete evidence before the first live request.
+
+In `search-benchmark.live.test.ts`, call the same `resolveLiveProviderSetup` and pass `SETUP.pricing` to `runBenchmark`. Preserve its 20-second client timeout, benchmark harness, report writer, and link checker. Remove the obsolete incomplete-assembly literals/comments and the duplicate `loadPricing` function.
+
+- [ ] **Step 5: Add a static live-entry regression test**
+
+Read both live entry source files as text in `live-provider-assembly.test.ts`. For each file, assert it imports `resolveLiveProviderSetup`, `LIVE_PROVIDER_ENDPOINTS`, and `LIVE_PROVIDER_FACTORIES`; assert it does not contain local declarations named `ENDPOINTS`, `FACTORIES`, or `loadPricing`. Assert the first textual occurrence of `resolveLiveProviderSetup(` precedes the first occurrence of `new ProviderHttpClient(`. This is an offline structural test; never import a live test module under default Vitest.
+
+- [ ] **Step 6: Run GREEN and regression gates**
+
+```bash
+npm test -- packages/retrieval/src/providers/live-provider-assembly.test.ts packages/retrieval/src/providers/provider-catalog.test.ts packages/retrieval/src/providers/live-config.test.ts
+npm run typecheck
+npm test
+npm run build
+git diff --check
+npm ls --depth=0
+```
+
+Expected: all offline tests pass and both live files compile, but no live test runs and no environment key is required by the default suite.
+
+- [ ] **Step 7: Commit Task P2-T8A-7**
+
+```bash
+git add packages/retrieval/src/providers/live-provider-assembly.ts packages/retrieval/src/providers/live-provider-assembly.test.ts packages/retrieval/src/providers/provider-contract.live.test.ts packages/retrieval/src/benchmark/search-benchmark.live.test.ts packages/retrieval/src/index.ts
+git commit -m "feat: assemble five live search candidates"
+```
+
+Stop for main-window review. Do not run a provider contract smoke.
+
+---
+
+### Task P2-T8A-8: Fail-Closed Keychain Modes and Pricing Gate
+
+**Files:**
+- Modify: `scripts/run-search-live-from-keychain.zsh`
+- Create: `scripts/run-search-live-from-keychain-test-helpers.ts`
+- Modify: `scripts/run-search-live-from-keychain.test.ts`
+- Create: `scripts/run-search-live-from-keychain-modes.test.ts`
+- Modify: `package.json`
+
+**Interfaces:**
+- Consumes: the five `KEYCHAIN_SERVICES`, their corresponding environment variable names, and caller-provided non-secret `DEEPFIELD_SEARCH_PRICING` JSON.
+- Produces exactly three allowlisted launcher modes:
+
+```text
+metaso-shape       -> existing one-call shape test, retained for audit only
+provider-contract  -> at most five one-query provider contract tests
+search-benchmark   -> the separately approved 100-call benchmark
+```
+
+- `provider-contract` and `search-benchmark` export exactly the five candidate keys plus `DEEPFIELD_SEARCH_PROVIDERS=baidu,zhipu,metaso,tavily,serper` to the child. Both require a non-blank `DEEPFIELD_SEARCH_PRICING`; neither parses or prints it in zsh—the live TypeScript boundary performs strict parsing.
+
+- [ ] **Step 1: Split the existing launcher test support before adding cases**
+
+Move temporary sandbox/fake executable construction into `run-search-live-from-keychain-test-helpers.ts`. Keep tests value-free: fake `security` and fake `npm` write only invocation counts and `pass`/`fail` markers. They must never write a fake secret or pricing JSON to stdout, stderr, or assertion files.
+
+- [ ] **Step 2: Write failing allowlist and preflight tests**
+
+Assert missing, unknown, and extra arguments fail before `security` or `npm`. Assert `provider-contract` and `search-benchmark` reject missing/blank `DEEPFIELD_SEARCH_PRICING` before the first Keychain read. Assert the existing `metaso-shape` mode still retrieves only the MetaSo service and invokes only `npm run test:metaso-shape:live`.
+
+- [ ] **Step 3: Write failing five-key and exact-child tests**
+
+For both new modes, fake `security` must verify exactly one call for each account/service pair:
+
+```text
+deepfield / com.deepfield.benchmark.baidu
+deepfield / com.deepfield.benchmark.zhipu
+deepfield / com.deepfield.benchmark.metaso
+deepfield / com.deepfield.benchmark.tavily
+deepfield / com.deepfield.benchmark.serper
+```
+
+Fake `npm` compares, without printing values, that all five child environment keys equal their corresponding fake Keychain values, the provider list is exact, and the inherited pricing JSON is byte-for-byte unchanged. Assert exact argv:
+
+```text
+provider-contract -> npm run test:providers:live
+search-benchmark  -> npm run benchmark:search
+```
+
+For each of the five services, test a missing, command-failed, empty, and whitespace-only result. The launcher must exit nonzero before npm; no later Keychain service should be queried after the first failure; stdout/stderr/markers must contain no fake secret.
+
+- [ ] **Step 4: Run launcher RED**
+
+```bash
+npm test -- scripts/run-search-live-from-keychain.test.ts scripts/run-search-live-from-keychain-modes.test.ts
+```
+
+Expected: the new modes fail because the launcher currently accepts only `metaso-shape`.
+
+- [ ] **Step 5: Implement the minimal zsh mode dispatcher**
+
+Keep `set -euo pipefail`, `set +x`, and `unset HISTFILE`. Validate mode/argument count first. For the two new modes, validate pricing presence before any `security` command, retrieve each service with the explicit command form, reject blank values silently, export the exact environment names and provider list, then use `exec npm run ...`. Do not use `eval`, indirect shell execution, glob-derived service names, or a loop that constructs an unvalidated Keychain service.
+
+Change the contract script to stop after the first failed provider test:
+
+```json
+"test:providers:live": "vitest run --bail=1 --config vitest.live.config.ts packages/retrieval/src/providers/provider-contract.live.test.ts"
+```
+
+Do not add retries to either live script.
+
+- [ ] **Step 6: Run GREEN and offline safety gates**
+
+```bash
+npm test -- scripts/run-search-live-from-keychain.test.ts scripts/run-search-live-from-keychain-modes.test.ts
+zsh -n scripts/run-search-live-from-keychain.zsh
+npm run typecheck
+npm test
+npm run build
+git diff --check
+npm ls --depth=0
+```
+
+Expected: all tests pass using fake executables; no real `security` invocation, DNS request, provider request, or live test occurs. Confirm the launcher remains mode `100755`.
+
+- [ ] **Step 7: Commit Task P2-T8A-8**
+
+```bash
+git add scripts/run-search-live-from-keychain.zsh scripts/run-search-live-from-keychain-test-helpers.ts scripts/run-search-live-from-keychain.test.ts scripts/run-search-live-from-keychain-modes.test.ts package.json
+git commit -m "feat: add fail-closed live search launch modes"
+```
+
+Stop for main-window review. Do not run either new mode.
+
+---
+
+### Task P2-T8A-9: Five-Provider Contract Smoke Gate
+
+**Files:**
+- No tracked file changes.
+- No fixture is generated from live output.
+
+**Interfaces:**
+- Consumes: five Keychain API keys and one valid `DEEPFIELD_SEARCH_PRICING` JSON object containing exactly the five native-currency records.
+- Produces: reviewed pass/fail status and schema compatibility for each candidate; never a persisted provider response.
+
+- [ ] **Step 1: Prepare and validate price evidence without network I/O**
+
+The main window obtains current official price-source URLs and observation dates. CNY records include one explicit CNY-to-USD rate, source URL, and observation date. A credit-based MetaSo price is derived from the user's purchased-credit price and documented credit formula. Construct the five-record JSON in memory and run only the existing `parseProviderPricingJson` boundary with the exact candidate list. Do not put API keys in this object.
+
+If any provider lacks a finite per-request amount and source evidence, stop with `P2-T8A-9` blocked. Do not substitute zero for an unknown price and do not run a contract request.
+
+- [ ] **Step 2: Present the contract-smoke authorization gate**
+
+Report to the user:
+
+```text
+maximum provider calls: 5
+per-provider maximum: 1
+automatic retries: 0
+stop-on-first-failure: yes
+maximum native spend: one separately stated amount per provider in that provider's source currency
+maximum converted USD spend: sum(amountPerRequest * usdPerCurrencyUnit)
+```
+
+Obtain explicit approval immediately before execution. Prior approval for the MetaSo shape probe or the later 100-call benchmark does not count.
+
+- [ ] **Step 3: Run the allowlisted contract mode exactly once**
+
+With the validated non-secret pricing JSON in `DEEPFIELD_SEARCH_PRICING`, run:
+
+```bash
+scripts/run-search-live-from-keychain.zsh provider-contract
+```
+
+Do not rerun on any failure. `--bail=1` ensures later providers are not called after a failed test.
+
+- [ ] **Step 4: Review the five contract outcomes**
+
+For each candidate, record only provider ID, pass/fail, stable error code, and whether normalized results contain HTTP(S) URLs. Do not copy response values. Confirm exactly one auth header and one request per executed provider from test assertions, not logs.
+
+If Baidu returns 401, stop; do not try `x-appbuilder-authorization` without a separately reviewed fixture/code change and new user approval. If any provider has schema drift, change its synthetic fixture and adapter through a new TDD task, then request a fresh maximum-one-call approval for only that failed provider. Never weaken validation at the live-test layer.
+
+- [ ] **Step 5: Verify no repository side effects**
+
+```bash
+git diff --check
+git status --short
+test ! -d benchmark-results
+```
+
+Expected: no tracked changes and no benchmark output. The only permitted status entry is the pre-existing untracked user tutorial file.
+
+Stop for main-window review. A successful five-provider contract gate completes P2-T8A Phase 2 implementation; it does not authorize the benchmark.
+
+---
+
+### Task P2-T8A-10: Fresh 100-Call Benchmark Cost and Approval Gate
+
+**Files:**
+- No tracked file changes.
+- This task does not execute the benchmark.
+
+**Interfaces:**
+- Consumes: the same validated five-provider pricing records and five successful reviewed contract outcomes.
+- Produces: a concrete maximum-cost statement and an explicit user decision for original P2-T9.
+
+- [ ] **Step 1: Revalidate benchmark preconditions offline**
+
+Confirm the candidate set is still exactly five, all contract smokes passed, the query set contains exactly ten queries, `runsPerQuery` is `2`, `maxResults` is `20`, and every price record is still valid for its observation date. Confirm `benchmark-results/` is absent or contains no prior run that could be mistaken for the new run.
+
+- [ ] **Step 2: Calculate the maximum search-provider spend**
+
+Each provider receives `10 × 2 = 20` search calls. Report per-provider native maximum:
+
+```text
+providerMaximumNative = 20 * amountPerRequest
+```
+
+Report the common converted maximum without rounding inside the calculation:
+
+```text
+maximumUsd = 20 * sum(amountPerRequest * usdPerCurrencyUnit)
+```
+
+List the price and exchange-rate source URLs and observation dates. Keep the five already completed contract-smoke calls separate from the 100-call estimate. Destination-page link checks may generate additional ordinary web requests but are not provider-search API calls.
+
+- [ ] **Step 3: Obtain a new explicit benchmark approval**
+
+State exactly:
+
+```text
+maximum provider-search calls: 100
+automatic provider retries: 0
+queries: 10
+runs per query: 2
+providers: 5
+top results requested: 20
+```
+
+Ask the user to approve or reject the run. Do not run `search-benchmark`, create `benchmark-results/`, or begin provider selection in this task. If approved, resume original P2-T9 at its live benchmark execution step using the expanded five-candidate rules from the approved expansion specification.
+
+---
+
+## Plan Self-Review Checklist
+
+- [x] Every observed MetaSo field used by the adapter is listed; every ignored diagnostic field is explicitly excluded.
+- [x] Both live entry points consume one shared complete assembly.
+- [x] Five keys and five price records fail closed before transport construction.
+- [x] Default tests remain offline and live calls have separate user gates.
+- [x] Contract smokes are capped at five calls with no retry and first-failure bail.
+- [x] The benchmark is not executed until a fresh 100-call cost approval.
+- [x] No task changes Capability A, Chat UI, provider failover, or production multi-provider behavior.
+- [x] No task reads or stages the untracked user tutorial document.
