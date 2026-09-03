@@ -7,6 +7,7 @@ import { createSerperProvider, ENDPOINT as SERPER_ENDPOINT } from "../providers/
 import { resolveLiveRun, type LiveProviderId } from "../providers/live-config.js";
 import { runBenchmark, type HarnessProvider } from "./run-benchmark.js";
 import { createHttpLinkChecker } from "./link-checker.js";
+import { parseProviderPricingJson, type ProviderPrice } from "./pricing.js";
 import { writeBenchmarkReport } from "./report.js";
 import { SafeHttpTransport } from "../http-transport.js";
 import { createNodeHttpAdapter } from "../node-http-adapter.js";
@@ -14,40 +15,20 @@ import { join } from "node:path";
 
 /**
  * OPT-IN live benchmark. The selected provider set and every required key are
- * resolved at module load and the per-request pricing config is parsed and
- * validated BEFORE any network request or report write; anything missing or
+ * resolved at module load; the native-currency pricing evidence is parsed and
+ * validated BEFORE any network request or report write — anything missing or
  * illegal fails the whole suite (exit != 0) and no benchmark-results/ file is
  * created. The loop/checkpoint state machine is the offline-tested
  * runBenchmark harness.
  */
 const RUN = resolveLiveRun(process.env as Record<string, string | undefined>);
 
-function parsePricing(): Record<string, number> {
-  const raw = process.env.DEEPFIELD_SEARCH_PRICING;
-  if (raw === undefined || raw.trim().length === 0) {
-    throw new Error("DEEPFIELD_SEARCH_PRICING is required (JSON per-request USD, e.g. {\"brave\":0.01,\"tavily\":0.02})");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("invalid DEEPFIELD_SEARCH_PRICING: not valid JSON");
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("invalid DEEPFIELD_SEARCH_PRICING: must be an object");
-  }
-  const pricing: Record<string, number> = {};
-  for (const [provider, price] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof price !== "number" || !Number.isFinite(price) || price < 0) {
-      throw new Error(`invalid DEEPFIELD_SEARCH_PRICING for ${provider}: must be a finite non-negative number`);
-    }
-    pricing[provider] = price;
-  }
-  return pricing;
+/** DEEPFIELD_SEARCH_PRICING carries native-currency price evidence (never keys). */
+function loadPricing(): Readonly<Record<string, ProviderPrice>> {
+  return parseProviderPricingJson(process.env.DEEPFIELD_SEARCH_PRICING, RUN.providers);
 }
 
-const PRICING_USD = parsePricing();
-const PRICING_NOTE = "Task-9-confirmed per-request USD pricing; version v1";
+const PRICING = loadPricing();
 
 const ENDPOINTS: Record<LiveProviderId, { origin: string; pathPrefix: string }> = {
   brave: BRAVE_ENDPOINT,
@@ -90,8 +71,7 @@ describe("search benchmark live (opt-in)", () => {
       runsPerQuery: 2,
       maxResults: 20,
       linkChecker: createHttpLinkChecker(transport),
-      pricingUsd: PRICING_USD,
-      pricingNote: PRICING_NOTE,
+      pricing: PRICING,
       writer: (entry) => {
         writeBenchmarkReport(join(process.cwd(), "benchmark-results"), entry);
       },
@@ -100,5 +80,6 @@ describe("search benchmark live (opt-in)", () => {
     expect(report.attemptedMeasurements).toBe(report.expectedMeasurements);
     expect(report.expectedMeasurements).toBe(RUN.providers.length * 10 * 2);
     expect(JSON.stringify(report)).not.toContain("API_KEY");
+    expect(JSON.stringify(report.pricing)).not.toContain("API_KEY");
   });
 });

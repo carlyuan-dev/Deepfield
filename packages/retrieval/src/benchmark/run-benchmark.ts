@@ -4,6 +4,7 @@ import type { LiveProviderId } from "../providers/live-config.js";
 import { QUERIES_V1, type QuerySetV1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1, type ReferenceSetV1 } from "./reference-companies.js";
 import { scoreBenchmark, type BenchmarkedRun, type LinkEvidence } from "./scoring.js";
+import { resolveProviderPricing, type ProviderPrice } from "./pricing.js";
 import type { BenchmarkReport } from "./report.js";
 
 /** Narrow per-URL accessibility dependency; the live assembly reuses the accepted core. */
@@ -25,9 +26,8 @@ export interface BenchmarkHarnessDeps {
   runsPerQuery: number;
   maxResults: number;
   linkChecker: LinkChecker;
-  /** Per-request USD per provider (Task-9-confirmed pricing; never contains keys). */
-  pricingUsd: Readonly<Record<string, number>>;
-  pricingNote: string;
+  /** Native-currency price evidence per provider (never contains keys). */
+  pricing: Readonly<Record<string, ProviderPrice>>;
   /** Atomic checkpoint writer (called after EVERY attempted measurement). */
   writer: (report: BenchmarkReport) => void;
   signal?: AbortSignal;
@@ -39,13 +39,6 @@ export class BenchmarkInputError extends Error {
     super(message);
     this.name = "BenchmarkInputError";
   }
-}
-
-function requireProviderPrice(price: unknown, provider: string): number {
-  if (typeof price !== "number" || !Number.isFinite(price) || price < 0) {
-    throw new BenchmarkInputError(`invalid pricing for ${provider}: must be a finite non-negative number`);
-  }
-  return price;
 }
 
 const PROVIDER_FAILURE_CODES: Partial<Record<string, string>> = {
@@ -92,11 +85,9 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
   if (deps.providers.length < 2) {
     throw new BenchmarkInputError("at least two providers required");
   }
-  const pricingUsd: Record<string, number> = {};
-  for (const provider of deps.providers) {
-    pricingUsd[provider.id] = requireProviderPrice(deps.pricingUsd[provider.id], provider.id);
-  }
   const expectedProviders = deps.providers.map((provider) => provider.id);
+  const resolvedPricing = resolveProviderPricing(deps.pricing, expectedProviders); // fail-closed before any request
+  const pricingUsd = resolvedPricing.usdPerRequest;
 
   // FIXED before any request: never grows with progress
   const expectedMeasurements = deps.providers.length * queries.queries.length * deps.runsPerQuery;
@@ -145,8 +136,7 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
       attemptedMeasurements: attempted,
       successfulMeasurements: runs.length,
       benchmarkComplete,
-      pricingUsd: { ...pricingUsd },
-      pricingNote: deps.pricingNote,
+      pricing: { ...resolvedPricing.records },
       linkEvidence,
       linkCheckFailures: [...linkCheckFailures],
       completions: scored.completions,

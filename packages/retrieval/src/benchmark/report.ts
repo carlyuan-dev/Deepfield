@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
 import type { BenchmarkedRun, HardGateStatus, LinkEvidence, ProviderCompletion, ProviderEligibility, ProviderRawMetrics, ProviderScore } from "./scoring.js";
+import type { ProviderPrice } from "./pricing.js";
 
 export const REPORT_FILENAME = "search-benchmark.json";
 
@@ -26,9 +27,8 @@ export interface BenchmarkReport {
   successfulMeasurements: number;
   /** True ONLY when attempted === expected AND the outer loop finished normally. */
   benchmarkComplete: boolean;
-  /** Non-secret per-request USD pricing (Task-9-confirmed; never contains keys). */
-  pricingUsd: Record<string, number>;
-  pricingNote: string;
+  /** Frozen native-currency price evidence per provider (never contains keys). */
+  pricing: Record<string, ProviderPrice>;
   /** Per-provider per-URL accessibility evidence at this checkpoint. */
   linkEvidence: Record<string, readonly LinkEvidence[]>;
   linkCheckFailures: string[];

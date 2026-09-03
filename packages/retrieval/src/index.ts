@@ -146,6 +146,14 @@ export {
   type ReferenceSetV1,
 } from "./benchmark/reference-companies.js";
 export {
+  parseProviderPricingJson,
+  resolveProviderPricing,
+  type PriceCurrency,
+  type ProviderPrice,
+  type ResolvedProviderPricing,
+} from "./benchmark/pricing.js";
+
+export {
   assertValidScoringInput,
   linkValidityFromEvidence,
   scoreBenchmark,

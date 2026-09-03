@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { runBenchmark, BenchmarkInputError, type BenchmarkHarnessDeps, type HarnessProvider, type LinkChecker } from "./run-benchmark.js";
+import type { ProviderPrice } from "./pricing.js";
 import type { BenchmarkReport } from "./report.js";
 import type { NormalizedSearchResponse } from "../search-provider.js";
 import { QUERIES_V1 } from "./queries.js";
 import { REFERENCE_COMPANIES_V1 } from "./reference-companies.js";
+
+const USD_TAVILY: ProviderPrice = {
+  amountPerRequest: 0.01,
+  currency: "USD",
+  usdPerCurrencyUnit: 1,
+  priceSourceUrl: "https://docs.tavily.com/pricing",
+  priceObservedOn: "2026-09-01",
+};
+
+const CNY_BAIDU: ProviderPrice = {
+  amountPerRequest: 0.036,
+  currency: "CNY",
+  usdPerCurrencyUnit: 0.14,
+  priceSourceUrl: "https://cloud.baidu.com/pricing",
+  priceObservedOn: "2026-09-01",
+  exchangeRateSourceUrl: "https://example.com/fx",
+  exchangeRateObservedOn: "2026-09-01",
+};
 
 function fakeProvider(id: "brave" | "tavily", opts: { failQueries?: Set<string>; urls?: (queryId: string, round: number) => string[] } = {}): HarnessProvider {
   return {
@@ -54,8 +73,7 @@ function harnessDeps(overrides: Partial<BenchmarkHarnessDeps> = {}): BenchmarkHa
     runsPerQuery: 2,
     maxResults: 20,
     linkChecker: new FakeLinkChecker(new Map()),
-    pricingUsd: { brave: 0.01, tavily: 0.02 },
-    pricingNote: "test pricing v1",
+    pricing: { brave: USD_TAVILY, tavily: CNY_BAIDU },
     writer: () => {},
     ...overrides,
   };
@@ -140,9 +158,9 @@ describe("benchmark harness state machine (focused revision)", () => {
   });
 
   it("rejects illegal pricing and config before any measurement", async () => {
-    await expect(runBenchmark(harnessDeps({ pricingUsd: { brave: -1, tavily: 0.02 } }))).rejects.toThrow(BenchmarkInputError);
-    await expect(runBenchmark(harnessDeps({ pricingUsd: { brave: Number.NaN, tavily: 0.02 } }))).rejects.toThrow(BenchmarkInputError);
-    await expect(runBenchmark(harnessDeps({ pricingUsd: { brave: 0.01 } }))).rejects.toThrow(/pricing/);
+    await expect(runBenchmark(harnessDeps({ pricing: { brave: { ...USD_TAVILY, amountPerRequest: -1 }, tavily: CNY_BAIDU } }))).rejects.toThrow(/pricing/);
+    await expect(runBenchmark(harnessDeps({ pricing: { brave: { ...USD_TAVILY, amountPerRequest: Number.NaN }, tavily: CNY_BAIDU } }))).rejects.toThrow(/pricing/);
+    await expect(runBenchmark(harnessDeps({ pricing: { brave: USD_TAVILY } }))).rejects.toThrow(/pricing/);
     await expect(runBenchmark(harnessDeps({ runsPerQuery: 0 }))).rejects.toThrow(BenchmarkInputError);
     await expect(runBenchmark(harnessDeps({ providers: [fakeProvider("brave")] }))).rejects.toThrow(/at least two/);
   });
@@ -223,11 +241,17 @@ describe("benchmark harness state machine (focused revision)", () => {
     expect(report.hardGates.fewerThanTwoCompleted).toBe(true);
   });
 
-  it("records the pricing config (no keys) in every checkpoint", async () => {
+  it("records the native-currency pricing evidence (no keys) in every checkpoint", async () => {
     const checkpoints: BenchmarkReport[] = [];
     const report = await runBenchmark(harnessDeps({ writer: (entry) => checkpoints.push(entry) }));
-    expect(report.pricingUsd).toEqual({ brave: 0.01, tavily: 0.02 });
-    expect(report.pricingNote).toBe("test pricing v1");
+    expect(report.pricing.brave).toEqual(USD_TAVILY);
+    expect(report.pricing.tavily!.currency).toBe("CNY");
+    expect(report.pricing.tavily!.amountPerRequest).toBe(0.036);
+    // scoring costUsd derives from amountPerRequest x usdPerCurrencyUnit
+    const tavilyRuns = report.runs.filter((run) => run.provider === "tavily");
+    expect(tavilyRuns.length).toBeGreaterThan(0);
+    expect(tavilyRuns[0]!.costUsd).toBeCloseTo(0.036 * 0.14, 6);
     expect(JSON.stringify(checkpoints[0])).not.toContain("API_KEY");
+    expect(JSON.stringify(report)).not.toContain("API_KEY");
   });
 });
