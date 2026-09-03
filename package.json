@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "benchmark:search": "vitest run --config vitest.live.config.ts packages/retrieval/src/benchmark/search-benchmark.live.test.ts",
     "test:providers:live": "vitest run --config vitest.live.config.ts packages/retrieval/src/providers/provider-contract.live.test.ts",
+    "test:metaso-shape:live": "vitest run --config vitest.live.config.ts packages/retrieval/src/providers/metaso-shape.live.test.ts",
     "test:e2e": "npm run build && playwright test",
     "dist:dir": "npm run build && electron-builder --mac --arm64 --dir",
     "dist:local": "npm run build && electron-builder --mac dmg zip --arm64 --config.mac.identity=null",
