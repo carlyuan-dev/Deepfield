@@ -6,6 +6,13 @@ import {
 
 export type { LiveProviderId } from "./provider-catalog.js";
 
+/** One live probe binding: a candidate, its assembled factory and its env-sourced token. */
+export interface LiveProbeBinding<T> {
+  id: LiveProviderId;
+  binding: T;
+  token: string;
+}
+
 /**
  * Strict fail-closed selection of the live provider set from
  * DEEPFIELD_SEARCH_PROVIDERS (comma separated). The parsed set must EXACTLY
@@ -40,31 +47,63 @@ export function resolveLiveProviders(raw: string | undefined): readonly LiveProv
   return [...BENCHMARK_CANDIDATES_V1];
 }
 
+/** Reads an env value ONLY through its own data property descriptor. */
+function ownEnvValue(env: Record<string, string | undefined>, name: string): string | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(env, name);
+  if (descriptor === undefined || "value" in descriptor === false) {
+    return undefined; // accessors are never invoked; inherited values are never accepted
+  }
+  return descriptor.value;
+}
+
 /**
- * Requires a key for EVERY selected provider (the five v1 candidates). Called
- * before any network request or report write; a missing or blank key fails the
- * whole live run loudly. Errors contain only env variable and provider names —
- * never any key value.
+ * Requires a key for EVERY v1 candidate. The providers set must EXACTLY equal
+ * BENCHMARK_CANDIDATES_V1 (subset, duplicate, missing-candidate and runtime
+ * unknown ids are all rejected with a fixed sanitized error BEFORE any env
+ * value is read — no input ids or values are echoed). Each env value must be a
+ * non-blank own string. The returned token record is frozen with a null
+ * prototype so it cannot be replaced after validation.
  */
 export function requireLiveKeys(
   providers: readonly LiveProviderId[],
   env: Record<string, string | undefined>,
-): Record<LiveProviderId, string> {
+): Readonly<Record<LiveProviderId, string>> {
+  if (!Array.isArray(providers) || providers.length !== BENCHMARK_CANDIDATES_V1.length) {
+    throw new Error("live keys require exactly the five v1 candidates");
+  }
+  const set = new Set(providers);
+  if (set.size !== BENCHMARK_CANDIDATES_V1.length || BENCHMARK_CANDIDATES_V1.some((provider) => !set.has(provider))) {
+    throw new Error("live keys require exactly the five v1 candidates");
+  }
   const tokens = Object.create(null) as Record<LiveProviderId, string>;
-  for (const provider of providers) {
+  for (const provider of BENCHMARK_CANDIDATES_V1) {
     const name = LIVE_PROVIDER_ENV_KEYS[provider];
-    const value = env[name];
-    if (value === undefined || value.trim().length === 0) {
+    const value = ownEnvValue(env, name);
+    if (typeof value !== "string" || value.trim().length === 0) {
       throw new Error(`${name} is required for the selected provider "${provider}"`);
     }
     tokens[provider] = value;
   }
-  return tokens;
+  return Object.freeze(tokens);
 }
 
 /** One-shot live run setup: strict selection + keys, failing before any I/O. */
-export function resolveLiveRun(env: Record<string, string | undefined>): { providers: readonly LiveProviderId[]; tokens: Record<LiveProviderId, string> } {
+export function resolveLiveRun(env: Record<string, string | undefined>): { providers: readonly LiveProviderId[]; tokens: Readonly<Record<LiveProviderId, string>> } {
   const providers = resolveLiveProviders(env.DEEPFIELD_SEARCH_PROVIDERS);
   const tokens = requireLiveKeys(providers, env);
   return { providers, tokens };
+}
+
+/**
+ * Binds an assembled factory/endpoint record to env-sourced tokens. Call this
+ * AFTER requireBenchmarkCandidateAssembly has passed so the complete candidate
+ * record is the only map indexed; every probe token comes from the resolved
+ * environment — never from a placeholder literal.
+ */
+export function bindLiveProbe<T>(
+  assembly: Readonly<Record<LiveProviderId, T>>,
+  env: Record<string, string | undefined>,
+): readonly LiveProbeBinding<T>[] {
+  const run = resolveLiveRun(env);
+  return run.providers.map((id) => ({ id, binding: assembly[id], token: run.tokens[id] }));
 }

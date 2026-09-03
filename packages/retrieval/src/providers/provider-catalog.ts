@@ -36,8 +36,6 @@ export const KEYCHAIN_SERVICES: Readonly<Record<LiveProviderId, string>> = Objec
   serper: "com.deepfield.benchmark.serper",
 });
 
-const CANDIDATE_SET = new Set<string>(BENCHMARK_CANDIDATES_V1);
-
 /**
  * Temporary fail-closed Phase 1 boundary: assembles a COMPLETE map for the
  * five v1 candidates from a partial supported-provider map. Brave may be
