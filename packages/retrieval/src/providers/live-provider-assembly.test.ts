@@ -219,4 +219,3 @@ function recordingTransport(requests: Array<{ headers: Record<string, string> }>
     },
   };
 }
-
