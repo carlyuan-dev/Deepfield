@@ -1,0 +1,32 @@
+{
+  "credits": 2,
+  "total": 2,
+  "searchParameters": {
+    "q": "synthetic-query",
+    "scope": "webpage",
+    "size": 2,
+    "includeSummary": false,
+    "includeRawContent": false,
+    "conciseSnippet": true,
+    "format": "json",
+    "searchFile": false
+  },
+  "webpages": [
+    {
+      "title": "Official Site",
+      "link": "https://example.com",
+      "snippet": "Synthetic snippet one from an invented page.",
+      "date": "2026-08-31 09:30:00",
+      "position": 1,
+      "score": "0.99"
+    },
+    {
+      "title": "Second Result",
+      "link": "https://other.example/path",
+      "snippet": "Synthetic snippet two from another invented page.",
+      "date": "not-a-calendar-date",
+      "position": 2,
+      "score": "0.80"
+    }
+  ]
+}
