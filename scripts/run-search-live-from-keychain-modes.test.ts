@@ -9,6 +9,9 @@ import {
   markerContent,
   cleanSandbox,
   securityCallCount,
+  expectNoValueLeak,
+  fiveValues,
+  chainValues,
   PROVIDERS,
   ENV_NAMES,
   type Sandbox,
@@ -22,6 +25,7 @@ const MODES: ReadonlyArray<{ mode: string; npmArgv: string[] }> = [
 ];
 
 const PRICING_RAW = '{"key":"synthetic"}';
+const FORBIDDEN_VALUES = [...chainValues(), PRICING_RAW];
 
 function allBehaviors(value: string): Record<string, string> {
   const behaviors: Record<string, string> = {};
@@ -29,15 +33,6 @@ function allBehaviors(value: string): Record<string, string> {
     behaviors[provider] = value;
   }
   return behaviors;
-}
-
-function fiveValues(): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const provider of PROVIDERS) {
-    values[provider] = `sk-${provider}-chain`;
-    values[ENV_NAMES[provider]] = `sk-${provider}-chain`;
-  }
-  return values;
 }
 
 function marker(sandbox: Sandbox, name: string): string {
@@ -83,14 +78,7 @@ describe("run-search-live-from-keychain launcher modes (focused revision)", () =
       expectMarkerPass(marker(sandbox, "ok-providers"));
       expectMarkerPass(marker(sandbox, "ok-pricing"));
       expectMarkerPass(marker(sandbox, "ok-argv"));
-      expect(stdout).not.toContain("sk-baidu-chain");
-      expect(stdout).not.toContain(PRICING_RAW);
-      expect(stderr).not.toContain("sk-baidu-chain");
-      expect(stderr).not.toContain(PRICING_RAW);
-      // markers stay value-free
-      for (let index = 1; index <= 5; index += 1) {
-        expect(markerContent(marker(sandbox, `security-argv-${index}`))).not.toContain("chain");
-      }
+      expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
     });
   }
 
@@ -103,8 +91,7 @@ describe("run-search-live-from-keychain launcher modes (focused revision)", () =
         expect(status).not.toBe(0);
         expect(securityCallCount(sandbox)).toBe(0);
         expect(existsSync(marker(sandbox, "npm-invoked"))).toBe(false);
-        expect(stdout).not.toContain("sk-baidu-chain");
-        expect(stderr).not.toContain("sk-baidu-chain");
+        expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
       }
     }
   });
@@ -124,9 +111,8 @@ describe("run-search-live-from-keychain launcher modes (focused revision)", () =
           // only services up to and including the failing one were queried
           expect(securityCallCount(sandbox)).toBe(position + 1);
           expect(existsSync(marker(sandbox, "npm-invoked"))).toBe(false);
-          expect(stdout).not.toContain("sk-baidu-chain");
-          expect(stderr).not.toContain("sk-baidu-chain");
           expect(markerContent(marker(sandbox, "ok-providers"))).toBe("<missing>");
+          expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
         }
       });
     }

@@ -9,6 +9,7 @@ import {
   markerContent,
   cleanSandbox,
   securityCallCount,
+  expectNoValueLeak,
   ENV_NAMES,
   type Sandbox,
   type FakeOptions,
@@ -48,8 +49,7 @@ describe("run-search-live-from-keychain launcher (focused revision)", () => {
     expectMarkerPass(marker(sandbox, "ok-METASO_SEARCH_API_KEY"));
     expectMarkerPass(marker(sandbox, "ok-providers"));
     expectMarkerPass(marker(sandbox, "ok-argv"));
-    expect(stdout).not.toContain(SHAPE_VALUE);
-    expect(stderr).not.toContain(SHAPE_VALUE);
+    expectNoValueLeak(sandbox, { stdout, stderr }, [SHAPE_VALUE]);
     // only the MetaSo env key is exported in this mode
     for (const envName of Object.values(ENV_NAMES)) {
       if (envName !== "METASO_SEARCH_API_KEY") {
@@ -66,8 +66,7 @@ describe("run-search-live-from-keychain launcher (focused revision)", () => {
       expect(status).not.toBe(0);
       expect(securityCallCount(sandbox)).toBe(0);
       expect(existsSync(marker(sandbox, "npm-invoked"))).toBe(false);
-      expect(stdout).not.toContain(SHAPE_VALUE);
-      expect(stderr).not.toContain(SHAPE_VALUE);
+      expectNoValueLeak(sandbox, { stdout, stderr }, [SHAPE_VALUE]);
     }
   });
 
@@ -78,8 +77,7 @@ describe("run-search-live-from-keychain launcher (focused revision)", () => {
       const { status, stdout, stderr } = runLauncher(sandbox, ["metaso-shape"]);
       expect(status).not.toBe(0);
       expect(existsSync(marker(sandbox, "npm-invoked"))).toBe(false);
-      expect(stdout).not.toContain(SHAPE_VALUE);
-      expect(stderr).not.toContain(SHAPE_VALUE);
+      expectNoValueLeak(sandbox, { stdout, stderr }, [SHAPE_VALUE]);
     }
   });
 });

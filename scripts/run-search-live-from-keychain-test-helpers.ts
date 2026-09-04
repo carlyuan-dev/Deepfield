@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, chmodSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -158,13 +158,43 @@ export function cleanSandbox(sandbox: Sandbox): void {
   rmSync(sandbox.dir, { recursive: true, force: true });
 }
 
-/** Standard five-value keychain map for the five candidate services. */
+/**
+ * Single shared source of the five distinct fake keychain values: keyed by
+ * provider id AND by its env variable name (same value under both keys).
+ */
 export function fiveValues(): Record<string, string> {
   const values: Record<string, string> = {};
   for (const provider of PROVIDERS) {
     values[provider] = `sk-${provider}-chain`;
+    values[ENV_NAMES[provider]] = `sk-${provider}-chain`;
   }
   return values;
+}
+
+/** The five DISTINCT fake keychain values (one per candidate). */
+export function chainValues(): string[] {
+  return PROVIDERS.map((provider) => `sk-${provider}-chain`);
+}
+
+/**
+ * Value-free no-leak proof: asserts none of the forbidden test values/pricing
+ * appears in launcher stdout/stderr or in ANY marker/assertion file under the
+ * sandbox (fake executable sources under bin/ are never scanned).
+ */
+export function expectNoValueLeak(sandbox: Sandbox, output: { stdout: string; stderr: string }, forbidden: readonly string[]): void {
+  for (const value of forbidden) {
+    expect(output.stdout).not.toContain(value);
+    expect(output.stderr).not.toContain(value);
+  }
+  for (const file of readdirSync(sandbox.assertionDir)) {
+    if (file === "bin") {
+      continue;
+    }
+    const content = readFileSync(join(sandbox.assertionDir, file), "utf8");
+    for (const value of forbidden) {
+      expect(content).not.toContain(value);
+    }
+  }
 }
 
 export function securityCallCount(sandbox: Sandbox): number {
