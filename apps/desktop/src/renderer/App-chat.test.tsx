@@ -3,12 +3,11 @@ import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
-import type { ChatSendResult } from "@deepfield/contracts";
 import {
   chatMessage,
   chatSendResult,
+  conversation,
   makeFakeApi,
-  project,
   workerEvent,
   type FakeDesktopApi,
 } from "./renderer-test-helpers.js";
@@ -21,171 +20,131 @@ async function renderApp(fake: FakeDesktopApi) {
   return { user, ...utils };
 }
 
-async function openProjectChat(fake: FakeDesktopApi, user: ReturnType<typeof userEvent.setup>) {
-  const projectButton = await screen.findByRole("button", { name: "人形机器人" });
-  await user.click(projectButton);
-  await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
+async function chatVisible(): Promise<HTMLTextAreaElement> {
+  let input: HTMLTextAreaElement | undefined;
+  await waitFor(() => {
+    input = screen.getByLabelText("消息输入") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+  });
+  return input as HTMLTextAreaElement;
 }
 
-describe("app chat", () => {
-  it("streams a full conversation from submit to completion", async () => {
+describe("app conversation chat", () => {
+  it("opens the newest recent Conversation ready to type, switches history and titles a new first message", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    const older = conversation("c-older", "旧对话", true);
+    const newer = conversation("c-newer", "最近对话", true);
+    fake.conversations.openInitial.mockResolvedValue({ active: newer, recent: [newer, older] });
+    fake.chat.listMessages.mockImplementation(async (conversationId) =>
+      conversationId === newer.id
+        ? [
+            chatMessage("n1", "user", "新项目问题"),
+            chatMessage("n2", "assistant", "新项目回答"),
+          ]
+        : conversationId === older.id
+          ? [chatMessage("o1", "user", "旧对话问题")]
+          : [],
+    );
     const { user } = await renderApp(fake);
-    await openProjectChat(fake, user);
 
-    const input = screen.getByLabelText("消息输入") as HTMLTextAreaElement;
-    await user.type(input, "你好");
+    // The newest recent Conversation is open immediately without selecting a Project.
+    await waitFor(() => expect(screen.getByText("新项目回答")).toBeTruthy());
+    expect(screen.queryByText("请先创建或选择一个项目")).toBeNull();
+    const input = await chatVisible();
+    await user.type(input, "再问一次");
     await user.click(screen.getByRole("button", { name: "发送" }));
-
-    // local user message appears immediately and the composer is disabled
-    expect(screen.getByText("你好")).toBeTruthy();
-    await waitFor(() => expect(input.disabled).toBe(true));
-    expect(fake.chat.send).toHaveBeenCalledWith("p1", "你好", REQUEST_ID, { webSearch: false });
-
+    expect(fake.chat.send).toHaveBeenCalledWith("c-newer", "再问一次", REQUEST_ID, {
+      webSearch: false,
+    });
     fake.emit(workerEvent(REQUEST_ID, "started"));
-    fake.emit(workerEvent(REQUEST_ID, "text_delta", "测"));
-    fake.emit(workerEvent(REQUEST_ID, "text_delta", "试回"));
-    fake.emit(workerEvent(REQUEST_ID, "completed", "测试回复"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "再"));
+    fake.emit(workerEvent(REQUEST_ID, "completed", "再答"));
 
-    await waitFor(() => expect(screen.getByText("测试回复")).toBeTruthy());
-    await waitFor(() => expect(input.disabled).toBe(false));
-    await user.type(input, "再问");
+    // Click the older conversation and observe its own messages.
+    await user.click(screen.getByRole("button", { name: "旧对话" }));
+    await waitFor(() => expect(screen.getByText("旧对话问题")).toBeTruthy());
+
+    // ＋ 新对话 opens a blank usable Chat with no Project involvement.
+    fake.conversations.create.mockResolvedValue(conversation("c-fresh", "新对话", false));
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c-fresh", "研究目标整理"));
+    fake.chat.listMessages.mockImplementation(async (conversationId) =>
+      conversationId === "c-fresh" ? [] : [],
+    );
+    await user.click(screen.getByRole("button", { name: "＋ 新对话" }));
+    await waitFor(() => expect(screen.getByText("还没有消息")).toBeTruthy());
+    const blankInput = await chatVisible();
+    await user.type(blankInput, "研究目标整理");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(fake.chat.send).toHaveBeenCalledWith("c-fresh", "研究目标整理", REQUEST_ID, {
+      webSearch: false,
+    });
+
+    // The first-message title appears in the 对话 sidebar after the send resolves.
     await waitFor(() =>
-      expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
+      expect(screen.getByRole("button", { name: "研究目标整理" })).toBeTruthy(),
     );
   });
 
-  it("sends one manual Skill request and shows the Skill badge on the reply", async () => {
+  it("keeps the ordinary Chat stream path after a selected Skill affects exactly one send", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    const active = conversation("c1", "对话一", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([chatMessage("m1", "user", "你好")]);
     fake.skills.list.mockResolvedValue([
       {
         name: "structured-brief",
         description: "Turn a topic or rough notes into a concise three-part research brief.",
       },
     ]);
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c1", "对话一"));
     const { user } = await renderApp(fake);
-    await openProjectChat(fake, user);
 
+    const input = await chatVisible();
     const picker = screen.getByLabelText("Skill") as HTMLSelectElement;
-    await waitFor(() => expect(picker.options.length).toBe(2)); // 不使用 Skill + structured-brief
-
+    await waitFor(() => expect(picker.options.length).toBe(2));
     await user.selectOptions(picker, "structured-brief");
-    expect(picker.value).toBe("structured-brief");
-    // the selected Skill label is visible before send
     expect(screen.getByText("Skill: structured-brief")).toBeTruthy();
 
-    await user.type(screen.getByLabelText("消息输入"), "整理研究目标");
+    await user.type(input, "整理研究目标");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    expect(fake.chat.send).toHaveBeenCalledWith("p1", "整理研究目标", REQUEST_ID, {
+    expect(fake.chat.send).toHaveBeenCalledWith("c1", "整理研究目标", REQUEST_ID, {
       webSearch: false,
       skillName: "structured-brief",
     });
-    // the selector returns to the empty state after send
     await waitFor(() => expect(picker.value).toBe(""));
 
-    // a started event carrying the Skill shows the badge on the assistant draft
     fake.emit({ requestId: REQUEST_ID, type: "started", skillName: "structured-brief" });
     fake.emit(workerEvent(REQUEST_ID, "text_delta", "测"));
-    fake.emit(workerEvent(REQUEST_ID, "text_delta", "试回"));
     fake.emit(workerEvent(REQUEST_ID, "completed", "测试回复"));
     await waitFor(() => expect(screen.getByText("测试回复")).toBeTruthy());
     expect(screen.getByText("Skill: structured-brief")).toBeTruthy();
+
+    // The next ordinary send carries only the default options.
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c1", "对话一"));
+    const nextInput = await chatVisible();
+    await user.type(nextInput, "普通问题");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(fake.chat.send).toHaveBeenCalledWith("c1", "普通问题", REQUEST_ID, {
+      webSearch: false,
+    });
   });
 
-  it("marks a failed request visibly, keeps the user message and restores the composer", async () => {
+  it("restores the composer when a send is rejected", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    const active = conversation("c1", "对话一", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([]);
+    fake.chat.send.mockRejectedValue(new Error("deepseek key missing"));
     const { user } = await renderApp(fake);
-    await openProjectChat(fake, user);
 
-    await user.type(screen.getByLabelText("消息输入"), "你好");
+    const input = await chatVisible();
+    await user.type(input, "你好");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    fake.emit(workerEvent(REQUEST_ID, "started"));
-    fake.emit(workerEvent(REQUEST_ID, "failed", "provider_error"));
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
-    expect(screen.getByText("你好")).toBeTruthy(); // worker failure keeps the persisted user
+    expect((screen.getByLabelText("消息输入") as HTMLTextAreaElement).value).toBe("你好");
     await waitFor(() =>
       expect((screen.getByLabelText("消息输入") as HTMLTextAreaElement).disabled).toBe(false),
     );
-  });
-
-  it("handles events that arrive before the send promise resolves", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    let resolveSend!: (value: ChatSendResult) => void;
-    fake.chat.send.mockImplementation(
-      () =>
-        new Promise<ChatSendResult>((resolve) => {
-          resolveSend = resolve;
-        }),
-    );
-    const { user } = await renderApp(fake);
-    await openProjectChat(fake, user);
-
-    await user.type(screen.getByLabelText("消息输入"), "你好");
-    await user.click(screen.getByRole("button", { name: "发送" }));
-    // event arrives before send() resolves
-    fake.emit(workerEvent(REQUEST_ID, "started"));
-    fake.emit(workerEvent(REQUEST_ID, "text_delta", "早到"));
-    await waitFor(() => expect(screen.getByText("早到")).toBeTruthy());
-    resolveSend(chatSendResult(REQUEST_ID));
-  });
-
-  it("ignores late deltas after completion", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    const { user } = await renderApp(fake);
-    await openProjectChat(fake, user);
-
-    await user.type(screen.getByLabelText("消息输入"), "你好");
-    await user.click(screen.getByRole("button", { name: "发送" }));
-    fake.emit(workerEvent(REQUEST_ID, "completed", "最终"));
-    fake.emit(workerEvent(REQUEST_ID, "text_delta", "晚到"));
-
-    await waitFor(() => expect(screen.getByText("最终")).toBeTruthy());
-    expect(screen.queryByText(/最终晚到/)).toBeNull();
-  });
-
-  it("keeps old-project events out of the current project", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([
-      project({ id: "p1", industry: "人形机器人" }),
-      project({ id: "p2", industry: "低空经济" }),
-    ]);
-    const { user } = await renderApp(fake);
-
-    await openProjectChat(fake, user);
-    await user.type(screen.getByLabelText("消息输入"), "你好");
-    await user.click(screen.getByRole("button", { name: "发送" }));
-    fake.emit(workerEvent(REQUEST_ID, "started"));
-
-    // switch to p2
-    const p2Button = await screen.findByRole("button", { name: "低空经济" });
-    await user.click(p2Button);
-    await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
-    fake.emit(workerEvent(REQUEST_ID, "text_delta", "旧项目内容"));
-
-    await waitFor(() => expect(screen.queryByText("旧项目内容")).toBeNull());
-    await waitFor(() => expect(screen.getByText("还没有消息")).toBeTruthy());
-  });
-
-  it("loads persisted history for the opened project", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    fake.chat.listMessages.mockResolvedValue([
-      chatMessage("m1", "user", "历史问题"),
-      chatMessage("m2", "assistant", "历史回答"),
-    ]);
-    const { user } = await renderApp(fake);
-    await openProjectChat(fake, user);
-
-    await waitFor(() => expect(screen.getByText("历史问题")).toBeTruthy());
-    expect(screen.getByText("历史回答")).toBeTruthy();
-    expect(fake.chat.listMessages).toHaveBeenCalledWith("p1");
   });
 });

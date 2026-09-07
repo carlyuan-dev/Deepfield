@@ -61,16 +61,28 @@ function conversationFixture(): Conversation {
   };
 }
 
-export function chatSendResult(requestId: string, conversationId = "conv-1"): ChatSendResult {
+export function conversation(
+  id: string,
+  title = "新对话",
+  hasUserMessage = false,
+): Conversation {
+  return {
+    id: id as ConversationId,
+    title,
+    hasUserMessage,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+export function chatSendResult(
+  requestId: string,
+  conversationId = "conv-1",
+  title = "新对话",
+): ChatSendResult {
   return {
     requestId,
-    conversation: {
-      id: conversationId as ConversationId,
-      title: "新对话",
-      hasUserMessage: true,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    },
+    conversation: conversation(conversationId, title, true),
   };
 }
 

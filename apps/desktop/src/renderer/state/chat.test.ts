@@ -24,9 +24,9 @@ function event(
   }
 }
 
-function loadedProject(projectId: string, history: ChatMessage[] = []): ChatState {
-  let state = chatReducer(initialChatState, { type: "LOAD_START", projectId });
-  state = chatReducer(state, { type: "LOAD_SUCCESS", projectId, messages: history });
+function loadedConversation(conversationId: string, history: ChatMessage[] = []): ChatState {
+  let state = chatReducer(initialChatState, { type: "LOAD_START", conversationId });
+  state = chatReducer(state, { type: "LOAD_SUCCESS", conversationId, messages: history });
   return state;
 }
 
@@ -40,14 +40,17 @@ const persisted = (id: string, role: "user" | "assistant", content: string): Cha
 
 describe("chat reducer", () => {
   it("loads history and renders it as done messages", () => {
-    const state = loadedProject("p1", [persisted("m1", "user", "a"), persisted("m2", "assistant", "b")]);
+    const state = loadedConversation("c1", [
+      persisted("m1", "user", "a"),
+      persisted("m2", "assistant", "b"),
+    ]);
     expect(state.loadState).toBe("ready");
     expect(state.messages.map((message) => message.content)).toEqual(["a", "b"]);
     expect(visibleMessages(state).map((message) => message.content)).toEqual(["a", "b"]);
   });
 
   it("appends the local user message immediately with a pending marker and disables sending", () => {
-    const state = chatReducer(loadedProject("p1"), {
+    const state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",
       content: "你好",
       requestId: "r1",
@@ -62,7 +65,7 @@ describe("chat reducer", () => {
   });
 
   it("removes the pending user message when the send is rejected", () => {
-    let state = chatReducer(loadedProject("p1"), {
+    let state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",
       content: "你好",
       requestId: "r1",
@@ -70,112 +73,168 @@ describe("chat reducer", () => {
     state = chatReducer(state, { type: "SEND_ERROR", requestId: "r1", error: "发送失败，请重试" });
     expect(state.sending).toBe(false);
     expect(state.sendError).toBe("发送失败，请重试");
-    expect(state.messages.some((message) => message.role === "user" && message.content === "你好")).toBe(false);
+    expect(
+      state.messages.some((message) => message.role === "user" && message.content === "你好"),
+    ).toBe(false);
   });
 
   it("marks the pending user as persisted once worker events arrive", () => {
-    let state = chatReducer(loadedProject("p1"), {
+    let state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",
       content: "你好",
       requestId: "r1",
     });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "started"),
+    });
     expect(state.messages[state.messages.length - 1]).toMatchObject({ pending: false });
   });
 
   it("keeps the user message when the worker reports failure", () => {
-    let state = chatReducer(loadedProject("p1"), {
+    let state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",
       content: "你好",
       requestId: "r1",
     });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "failed", "provider_error") });
-    expect(state.messages.some((message) => message.role === "user" && message.content === "你好")).toBe(true);
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "failed", "provider_error"),
+    });
+    expect(
+      state.messages.some((message) => message.role === "user" && message.content === "你好"),
+    ).toBe(true);
   });
 
   it("builds a draft from started and appends deltas in order", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "测") });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "试回") });
+    let state = chatReducer(loadedConversation("c1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "text_delta", "测"),
+    });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "text_delta", "试回"),
+    });
     expect(state.drafts["r1"]).toMatchObject({ status: "streaming", content: "测试回" });
     expect(visibleMessages(state).at(-1)).toMatchObject({ role: "assistant", content: "测试回" });
   });
 
   it("replaces the draft with the completed text and restores sending", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "completed", "测试回复") });
+    let state = chatReducer(loadedConversation("c1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "completed", "测试回复"),
+    });
     expect(state.drafts["r1"]).toMatchObject({ status: "done", content: "测试回复" });
     expect(state.sending).toBe(false);
   });
 
   it("marks the draft failed and restores sending without a final text", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "failed", "provider_error") });
+    let state = chatReducer(loadedConversation("c1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "failed", "provider_error"),
+    });
     expect(state.drafts["r1"]).toMatchObject({ status: "failed" });
     expect(state.sending).toBe(false);
   });
 
   it("ignores late deltas after completion", () => {
-    let state = chatReducer(loadedProject("p1"), { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "completed", "最终") });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "晚到") });
+    let state = chatReducer(loadedConversation("c1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "completed", "最终"),
+    });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "text_delta", "晚到"),
+    });
     expect(state.drafts["r1"]).toMatchObject({ status: "done", content: "最终" });
   });
 
   it("applies events before the send promise resolves via the request id", () => {
-    let state = loadedProject("p1");
+    let state = loadedConversation("c1");
     state = chatReducer(state, { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
     expect(state.drafts["r1"]).toMatchObject({ status: "streaming", content: "" });
   });
 
-  it("ignores events from other projects", () => {
-    let state = loadedProject("p2");
+  it("ignores events from other conversations", () => {
+    let state = loadedConversation("c2");
     state = chatReducer(state, { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
     const before = state;
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
     expect(state.drafts).toEqual(before.drafts);
     expect(state.drafts["r1"]).toBeUndefined();
   });
 
-  it("keeps old-project drafts out of the current project render", () => {
-    let state = loadedProject("p1");
+  it("keeps other-conversation drafts out of the current conversation render", () => {
+    let state = loadedConversation("c1");
     state = chatReducer(state, { type: "USER_SUBMIT", content: "你好", requestId: "r1" });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "started") });
-    state = chatReducer(state, { type: "WORKER_EVENT", projectId: "p1", event: event("r1", "text_delta", "旧") });
-    state = chatReducer(state, { type: "LOAD_START", projectId: "p2" });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "text_delta", "旧"),
+    });
+    state = chatReducer(state, { type: "LOAD_START", conversationId: "c2" });
     expect(visibleMessages(state).length).toBe(0);
   });
 
-  it("ignores stale history loads from a previous project", () => {
-    let state = chatReducer(initialChatState, { type: "LOAD_START", projectId: "p2" });
+  it("ignores stale history loads from a previous conversation", () => {
+    let state = chatReducer(initialChatState, { type: "LOAD_START", conversationId: "c2" });
     state = chatReducer(state, {
       type: "LOAD_SUCCESS",
-      projectId: "p1",
+      conversationId: "c1",
       messages: [persisted("m1", "user", "stale")],
     });
     expect(state.messages).toEqual([]);
     state = chatReducer(state, {
       type: "LOAD_SUCCESS",
-      projectId: "p2",
+      conversationId: "c2",
       messages: [persisted("m2", "assistant", "fresh")],
     });
     expect(state.messages.map((message) => message.content)).toEqual(["fresh"]);
   });
 
   it("surfaces load errors visibly", () => {
-    let state = chatReducer(initialChatState, { type: "LOAD_START", projectId: "p1" });
-    state = chatReducer(state, { type: "LOAD_ERROR", projectId: "p1", error: "加载消息失败" });
+    let state = chatReducer(initialChatState, { type: "LOAD_START", conversationId: "c1" });
+    state = chatReducer(state, { type: "LOAD_ERROR", conversationId: "c1", error: "加载消息失败" });
     expect(state.loadState).toBe("error");
     expect(state.loadError).toBe("加载消息失败");
   });
 
   it("reset clears the session state", () => {
-    const state = chatReducer(loadedProject("p1"), { type: "RESET" });
-    expect(state.projectId).toBeUndefined();
+    const state = chatReducer(loadedConversation("c1"), { type: "RESET" });
+    expect(state.conversationId).toBeUndefined();
     expect(state.messages).toEqual([]);
     expect(state.sending).toBe(false);
   });

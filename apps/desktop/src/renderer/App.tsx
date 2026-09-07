@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DesktopApi, Project } from "@deepfield/contracts";
-import { initialWorkspaceState, workspaceReducer } from "./state/workspace.js";
 import { createChatEventHub } from "./state/chat-event-hub.js";
 import { createRequestId } from "./request-id.js";
-import { Sidebar, type SidebarActive } from "./components/Sidebar.js";
+import { useConversations } from "./state/use-conversations.js";
+import { Sidebar } from "./components/Sidebar.js";
 import { ChatView } from "./components/ChatView.js";
-import { ChatRail } from "./components/ChatRail.js";
 import { CapabilityView } from "./features/projects/CapabilityView.js";
 import { SettingsView } from "./features/settings/SettingsView.js";
 
@@ -15,10 +14,10 @@ export interface AppProps {
 }
 
 export function App({ api, requestIdFactory = createRequestId }: AppProps) {
-  const [workspace, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectsError, setProjectsError] = useState<string>();
+  const conversations = useConversations(api);
+  const [view, setView] = useState<"chat" | "capability">("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [researchProject, setResearchProject] = useState<Project | undefined>(undefined);
   const eventHub = useMemo(() => createChatEventHub(), []);
 
   useEffect(() => {
@@ -29,102 +28,69 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
     };
   }, [api, eventHub]);
 
-  const refreshProjects = useCallback((): void => {
-    void api.projects.list().then(
-      (list) => setProjects(list),
-      () => setProjectsError("加载项目列表失败"),
-    );
-  }, [api]);
+  const openChat = (): void => {
+    setSettingsOpen(false);
+    setView("chat");
+  };
+  const openResearch = (): void => {
+    setSettingsOpen(false);
+    setView("capability");
+  };
+  const openSettings = (): void => {
+    setSettingsOpen(true);
+  };
 
-  useEffect(() => {
-    refreshProjects();
-  }, [refreshProjects]);
-
-  const activeCapability = workspace.capability[workspace.activeCapability];
-  const showRail = workspace.view === "capability" && activeCapability.chatRail !== "hidden";
-  const chatProjectId = workspace.view === "chat" ? workspace.chat.projectId : undefined;
-  const capabilityProject = activeCapability.projectId
-    ? projects.find((project) => project.id === activeCapability.projectId)
-    : undefined;
-  const chatProjectLabel = chatProjectId
-    ? projects.find((project) => project.id === chatProjectId)?.industry
-    : undefined;
-
-  const active: SidebarActive = settingsOpen
-    ? "settings"
-    : workspace.view === "capability"
-      ? "capability"
-      : "chat";
+  const active: "chat" | "capability" | "settings" =
+    settingsOpen ? "settings" : view === "capability" ? "capability" : "chat";
 
   return (
     <div className="shell">
       <Sidebar
-        projects={projects}
-        projectsError={projectsError}
+        conversations={conversations.conversations}
         active={active}
-        onOpenChat={() => {
-          setSettingsOpen(false);
-          dispatch({ type: "OPEN_CHAT" });
+        onNewConversation={() => {
+          void conversations.newConversation();
+          openChat();
         }}
-        onOpenResearch={() => {
-          setSettingsOpen(false);
-          dispatch({ type: "OPEN_CAPABILITY_DIRECT", projectId: undefined });
+        onOpenConversation={(conversationId) => {
+          conversations.open(conversationId);
+          openChat();
         }}
-        onOpenProject={(projectId) => {
-          setSettingsOpen(false);
-          dispatch({ type: "OPEN_CAPABILITY_DIRECT", projectId });
-        }}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenResearch={openResearch}
+        onOpenSettings={openSettings}
       />
       <main className="workspace">
         {settingsOpen ? (
           <SettingsView api={api} onBack={() => setSettingsOpen(false)} />
-        ) : workspace.view === "chat" ? (
+        ) : view === "capability" ? (
+          <CapabilityView
+            api={api}
+            source="directUi"
+            projectId={researchProject?.id}
+            project={researchProject}
+            onCreated={(project) => {
+              setResearchProject(project);
+            }}
+            onOpenProjectChat={() => openChat()}
+          />
+        ) : conversations.loading ? (
+          <p className="muted">加载对话…</p>
+        ) : conversations.error !== undefined ? (
+          <div className="error" role="alert">
+            {conversations.error}
+            <button onClick={conversations.retry}>重新加载</button>
+          </div>
+        ) : conversations.activeConversation !== undefined ? (
           <ChatView
+            key={conversations.activeConversation.id}
             api={api}
             eventHub={eventHub}
             requestIdFactory={requestIdFactory}
-            projectId={chatProjectId}
-            projectLabel={chatProjectLabel}
-            onOpenResearch={() =>
-              dispatch({
-                type: "OPEN_CAPABILITY_FROM_CHAT",
-                projectId: chatProjectId,
-              })
-            }
-            onNeedProject={() =>
-              dispatch({ type: "OPEN_CAPABILITY_DIRECT", projectId: undefined })
-            }
+            conversation={conversations.activeConversation}
+            acceptUpdated={conversations.acceptUpdated}
           />
-        ) : (
-          <CapabilityView
-            api={api}
-            source={workspace.activeCapability}
-            projectId={activeCapability.projectId}
-            project={capabilityProject}
-            onCreated={(project) => {
-              dispatch({
-                type: "PROJECT_CREATED",
-                projectId: project.id,
-                fromChat: workspace.activeCapability === "chat",
-              });
-              setProjects((previous) => [project, ...previous]);
-            }}
-            onOpenProjectChat={(projectId) => dispatch({ type: "OPEN_PROJECT_CHAT", projectId })}
-          />
-        )}
+        ) : null}
       </main>
-      {showRail && (
-        <ChatRail
-          api={api}
-          eventHub={eventHub}
-          requestIdFactory={requestIdFactory}
-          projectId={activeCapability.projectId}
-          collapsed={activeCapability.chatRail === "collapsed"}
-          onCollapse={() => dispatch({ type: "COLLAPSE_CHAT" })}
-          onExpand={() => dispatch({ type: "EXPAND_CHAT" })}
-        />
-      )}
     </div>
   );
 }

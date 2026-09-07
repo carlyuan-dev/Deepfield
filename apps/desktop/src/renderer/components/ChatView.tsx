@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatRequestOptions, DesktopApi, SkillSummary } from "@deepfield/contracts";
+import type {
+  ChatRequestOptions,
+  Conversation,
+  DesktopApi,
+  SkillSummary,
+} from "@deepfield/contracts";
 import { useChat } from "../state/use-chat.js";
 import type { ChatEventHub } from "../state/chat-event-hub.js";
 import { visibleMessages } from "../state/chat.js";
@@ -11,23 +16,18 @@ export interface ChatViewProps {
   api: DesktopApi;
   eventHub: ChatEventHub;
   requestIdFactory: () => string;
-  projectId: string | undefined;
-  projectLabel: string | undefined;
-  onOpenResearch(): void;
-  onNeedProject(): void;
+  conversation: Conversation;
+  acceptUpdated(conversation: Conversation): void;
 }
 
 export function ChatView({
   api,
   eventHub,
   requestIdFactory,
-  projectId,
-  projectLabel,
-  onOpenResearch,
-  onNeedProject,
+  conversation,
+  acceptUpdated,
 }: ChatViewProps) {
-  const { state, submit, reload } = useChat(api, projectId, eventHub, requestIdFactory);
-  const [mode, setMode] = useState<"chat" | "research">("chat");
+  const { state, submit, reload } = useChat(api, conversation.id, eventHub, requestIdFactory);
   const [draft, setDraft] = useState("");
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string | undefined>(undefined);
@@ -64,7 +64,7 @@ export function ChatView({
   return (
     <section className="chat-view" aria-label="项目 Chat">
       <header className="chat-header">
-        <div className="chat-context">项目：{projectLabel ?? "未选择项目"}</div>
+        <div className="chat-context">{conversation.title}</div>
         {state.loadState === "error" && (
           <div className="error" role="alert">
             {state.loadError}
@@ -77,28 +77,7 @@ export function ChatView({
           </p>
         )}
       </header>
-      <label className="mode-select">
-        模式
-        <select
-          value={mode}
-          onChange={(event) => {
-            const next = event.target.value;
-            setMode(next as "chat" | "research");
-            if (next === "research") {
-              onOpenResearch();
-            }
-          }}
-        >
-          <option value="chat">Chat</option>
-          <option value="research">行业研究</option>
-        </select>
-      </label>
-      {projectId === undefined ? (
-        <div className="chat-empty">
-          <p>当前为项目对话模式，请先创建或选择一个项目。</p>
-          <button onClick={onNeedProject}>创建 / 选择项目</button>
-        </div>
-      ) : state.loadState === "loading" ? (
+      {state.loadState === "loading" ? (
         <p className="muted">加载消息…</p>
       ) : (
         <>
@@ -127,11 +106,16 @@ export function ChatView({
                 webSearch: false,
                 ...(selectedSkillName !== undefined ? { skillName: selectedSkillName } : {}),
               };
-              submit(content, options);
+              const sendResult = submit(content, options);
               // The selected Skill applies to exactly one send.
               if (selectedSkillName !== undefined) {
                 setSelectedSkillName(undefined);
               }
+              void sendResult.then((result) => {
+                if (result !== undefined) {
+                  acceptUpdated(result.conversation);
+                }
+              });
             }}
           />
         </>

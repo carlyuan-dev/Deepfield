@@ -1,25 +1,30 @@
 import { useCallback, useEffect, useReducer } from "react";
-import type { ChatRequestOptions, DesktopApi } from "@deepfield/contracts";
+import type {
+  ChatRequestOptions,
+  ChatSendResult,
+  ConversationId,
+  DesktopApi,
+} from "@deepfield/contracts";
 import { chatReducer, initialChatState, type ChatState } from "./chat.js";
 import type { ChatEventHub } from "./chat-event-hub.js";
 
 export interface ChatController {
   state: ChatState;
-  submit: (content: string, options: ChatRequestOptions) => void;
+  submit: (content: string, options: ChatRequestOptions) => Promise<ChatSendResult | undefined>;
   reload: () => void;
 }
 
 export function useChat(
   api: DesktopApi,
-  projectId: string | undefined,
+  conversationId: string | undefined,
   eventHub: ChatEventHub,
   requestIdFactory: () => string,
 ): ChatController {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
 
   useEffect(() => {
-    const unregister = eventHub.subscribe(({ projectId: routedProjectId, event }) => {
-      dispatch({ type: "WORKER_EVENT", projectId: routedProjectId, event });
+    const unregister = eventHub.subscribe(({ conversationId: routedConversationId, event }) => {
+      dispatch({ type: "WORKER_EVENT", conversationId: routedConversationId, event });
     });
     return unregister;
   }, [eventHub]);
@@ -27,16 +32,16 @@ export function useChat(
   const load = useCallback(
     (target: string): (() => void) => {
       let cancelled = false;
-      dispatch({ type: "LOAD_START", projectId: target });
+      dispatch({ type: "LOAD_START", conversationId: target });
       void api.chat.listMessages(target).then(
         (messages) => {
           if (!cancelled) {
-            dispatch({ type: "LOAD_SUCCESS", projectId: target, messages });
+            dispatch({ type: "LOAD_SUCCESS", conversationId: target, messages });
           }
         },
         () => {
           if (!cancelled) {
-            dispatch({ type: "LOAD_ERROR", projectId: target, error: "加载消息失败" });
+            dispatch({ type: "LOAD_ERROR", conversationId: target, error: "加载消息失败" });
           }
         },
       );
@@ -48,41 +53,44 @@ export function useChat(
   );
 
   useEffect(() => {
-    if (projectId === undefined) {
+    if (conversationId === undefined) {
       dispatch({ type: "RESET" });
       return;
     }
-    return load(projectId);
-  }, [projectId, load]);
+    return load(conversationId);
+  }, [conversationId, load]);
 
   const reload = useCallback((): void => {
-    if (projectId !== undefined) {
-      load(projectId);
+    if (conversationId !== undefined) {
+      load(conversationId);
     }
-  }, [projectId, load]);
+  }, [conversationId, load]);
 
   const submit = useCallback(
-    (content: string, options: ChatRequestOptions) => {
-      if (projectId === undefined || state.sending || state.loadState !== "ready") {
-        return;
+    (content: string, options: ChatRequestOptions): Promise<ChatSendResult | undefined> => {
+      if (conversationId === undefined || state.sending || state.loadState !== "ready") {
+        return Promise.resolve(undefined);
       }
       const requestId = requestIdFactory();
-      eventHub.registerRequest(requestId, projectId);
+      eventHub.registerRequest(requestId, conversationId as ConversationId);
       dispatch({ type: "USER_SUBMIT", content, requestId });
-      void api.chat.send(projectId, content, requestId, options).then(
+      return api.chat.send(conversationId, content, requestId, options).then(
         (result) => {
           if (result.requestId !== requestId) {
             eventHub.unregisterRequest(requestId);
             dispatch({ type: "SEND_ERROR", requestId, error: "发送失败，请重试" });
+            return undefined;
           }
+          return result;
         },
         () => {
           eventHub.unregisterRequest(requestId);
           dispatch({ type: "SEND_ERROR", requestId, error: "发送失败，请重试" });
+          return undefined;
         },
       );
     },
-    [api, projectId, state.sending, state.loadState, eventHub, requestIdFactory],
+    [api, conversationId, state.sending, state.loadState, eventHub, requestIdFactory],
   );
 
   return { state, submit, reload };

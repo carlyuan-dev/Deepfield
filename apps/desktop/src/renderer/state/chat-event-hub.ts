@@ -1,14 +1,14 @@
 import type { AgentWorkerEvent } from "@deepfield/contracts";
 
 export interface ChatEventPayload {
-  projectId: string;
+  conversationId: string;
   event: AgentWorkerEvent;
 }
 
 export type ChatListener = (payload: ChatEventPayload) => void;
 
 export interface ChatEventHub {
-  registerRequest(requestId: string, projectId: string): void;
+  registerRequest(requestId: string, conversationId: string): void;
   unregisterRequest(requestId: string): void;
   emit(event: AgentWorkerEvent): void;
   subscribe(listener: ChatListener): () => void;
@@ -24,30 +24,30 @@ function isTerminal(event: AgentWorkerEvent): boolean {
 
 export function createChatEventHub(): ChatEventHub {
   const listeners = new Set<ChatListener>();
-  const requestProjects = new Map<string, string>();
+  const requestConversations = new Map<string, string>();
   const rememberedTerminals = new Set<string>();
 
   return {
-    registerRequest(requestId, projectId) {
-      requestProjects.set(requestId, projectId);
+    registerRequest(requestId, conversationId) {
+      requestConversations.set(requestId, conversationId);
       rememberedTerminals.delete(requestId);
     },
     unregisterRequest(requestId) {
-      requestProjects.delete(requestId);
+      requestConversations.delete(requestId);
     },
     emit(event) {
-      const projectId = requestProjects.get(event.requestId);
-      if (projectId === undefined) {
-        return; // never guess an unknown request's project
+      const conversationId = requestConversations.get(event.requestId);
+      if (conversationId === undefined) {
+        return; // never guess an unknown request's conversation
       }
       if (rememberedTerminals.has(event.requestId)) {
         return; // late event after a terminal — drop
       }
       if (isTerminal(event)) {
         for (const listener of [...listeners]) {
-          listener({ projectId, event });
+          listener({ conversationId, event });
         }
-        requestProjects.delete(event.requestId);
+        requestConversations.delete(event.requestId);
         if (rememberedTerminals.size >= MAX_REMEMBERED) {
           const oldest = rememberedTerminals.values().next().value;
           if (oldest !== undefined) {
@@ -58,7 +58,7 @@ export function createChatEventHub(): ChatEventHub {
         return;
       }
       for (const listener of [...listeners]) {
-        listener({ projectId, event });
+        listener({ conversationId, event });
       }
     },
     subscribe(listener) {
@@ -68,11 +68,11 @@ export function createChatEventHub(): ChatEventHub {
       };
     },
     activeCount() {
-      return requestProjects.size;
+      return requestConversations.size;
     },
     dispose() {
       listeners.clear();
-      requestProjects.clear();
+      requestConversations.clear();
       rememberedTerminals.clear();
     },
   };
