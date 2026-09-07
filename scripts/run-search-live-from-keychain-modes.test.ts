@@ -114,7 +114,7 @@ describe("run-search-live-from-keychain launcher modes (focused revision)", () =
           expect(markerContent(marker(sandbox, "ok-providers"))).toBe("<missing>");
           expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
         }
-      });
+      }, 30_000); // five sequential zsh spawns per case: never fit the 5s default
     }
   }
 });
