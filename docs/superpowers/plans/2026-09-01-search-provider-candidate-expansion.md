@@ -1,5 +1,13 @@
 # Search Provider Candidate Expansion — Phase 1 Implementation Plan
 
+> **SUPERSEDED (2026-09-07):** this file is the historical implementation plan
+> for the Phase-1 expansion. It was executed as written (including Zhipu).
+> Current configuration removed Zhipu (no free quota; adapter/fixtures deleted,
+> recoverable from Git history; Keychain entry not deleted) and the operative
+> candidate set is now `baidu,metaso,tavily,serper`. See the spec decision
+> record §0 and the Phase-2 plan Current State block before treating anything
+> here as current configuration.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Extend the accepted P2-T8 benchmark foundation with currency-neutral pricing, a deterministic five-provider candidate catalog, strict Baidu and Zhipu adapters, and a non-persisting MetaSo response-shape probe.

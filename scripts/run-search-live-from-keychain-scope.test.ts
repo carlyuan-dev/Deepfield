@@ -9,7 +9,7 @@ import {
   cleanSandbox,
   securityCallCount,
   expectNoValueLeak,
-  fiveValues,
+  candidateValues,
   chainValues,
   PROVIDERS,
   ENV_NAMES,
@@ -25,7 +25,7 @@ function baseOptions(scope: { value: string } | { unset: true }): FakeOptions {
   return {
     expectedServices: [...PROVIDERS],
     behaviors: Object.fromEntries(PROVIDERS.map((provider) => [provider, "value" as SecurityBehavior])),
-    values: fiveValues(),
+    values: candidateValues(),
     verifyEnv: PROVIDERS.map((provider) => ENV_NAMES[provider]),
     npmArgv: ["run", "test:providers:live"],
     expectedPricing: PRICING_RAW,
@@ -45,13 +45,13 @@ describe("provider-contract-overseas launcher scope (focused revision)", () => {
     }
   });
 
-  it("runs the shared live suite with the fixed overseas scope and full five-key validation", () => {
+  it("runs the shared live suite with the fixed overseas scope and full four-key validation", () => {
     sandbox = makeSandbox();
     writeFakes(sandbox, baseOptions({ value: "overseas" }));
     const { status, stdout, stderr } = runLauncher(sandbox, ["provider-contract-overseas"], { DEEPFIELD_SEARCH_PRICING: PRICING_RAW });
     expect(status).toBe(0);
-    expect(securityCallCount(sandbox)).toBe(5);
-    for (let index = 1; index <= 5; index += 1) {
+    expect(securityCallCount(sandbox)).toBe(4);
+    for (let index = 1; index <= 4; index += 1) {
       expectMarkerPass(marker(sandbox, `security-argv-${index}`));
     }
     for (const envName of PROVIDERS.map((provider) => ENV_NAMES[provider])) {
@@ -107,7 +107,7 @@ describe("provider-contract-overseas launcher scope (focused revision)", () => {
       expect(existsSync(marker(sandbox, "npm-invoked"))).toBe(false);
       expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
     }
-  }, 30_000); // five sequential zsh spawns: never fit the 5s default
+  }, 30_000); // four sequential zsh spawns: never fit the 5s default
 });
 
 describe("regular provider-contract scope hygiene (focused revision)", () => {
@@ -118,7 +118,7 @@ describe("regular provider-contract scope hygiene (focused revision)", () => {
     }
   });
 
-  it("clears any caller-injected scope so the full five-provider suite cannot be downgraded", () => {
+  it("clears any caller-injected scope so the full four-provider suite cannot be downgraded", () => {
     sandbox = makeSandbox();
     writeFakes(sandbox, baseOptions({ unset: true }));
     const { status, stdout, stderr } = runLauncher(sandbox, ["provider-contract"], {
@@ -128,7 +128,7 @@ describe("regular provider-contract scope hygiene (focused revision)", () => {
     expect(status).toBe(0);
     expectMarkerPass(marker(sandbox, "ok-scope")); // child env has NO scope
     expectMarkerPass(marker(sandbox, "ok-argv"));
-    expect(securityCallCount(sandbox)).toBe(5);
+    expect(securityCallCount(sandbox)).toBe(4);
     expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
   });
 

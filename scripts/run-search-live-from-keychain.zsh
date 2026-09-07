@@ -46,23 +46,21 @@ unset DEEPFIELD_SEARCH_CONTRACT_SCOPE
 if [[ "$mode" == "metaso-shape" ]]; then
   METASO_SEARCH_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.metaso)"
   export METASO_SEARCH_API_KEY
-  export DEEPFIELD_SEARCH_PROVIDERS=baidu,zhipu,metaso,tavily,serper
+  export DEEPFIELD_SEARCH_PROVIDERS=baidu,metaso,tavily,serper
   exec npm run test:metaso-shape:live
 fi
 
 # Five explicit keychain reads (fixed account deepfield, fixed services).
 BAIDU_SEARCH_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.baidu)"
-ZHIPU_SEARCH_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.zhipu)"
 METASO_SEARCH_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.metaso)"
 TAVILY_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.tavily)"
 SERPER_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.serper)"
 
 export BAIDU_SEARCH_API_KEY
-export ZHIPU_SEARCH_API_KEY
 export METASO_SEARCH_API_KEY
 export TAVILY_API_KEY
 export SERPER_API_KEY
-export DEEPFIELD_SEARCH_PROVIDERS=baidu,zhipu,metaso,tavily,serper
+export DEEPFIELD_SEARCH_PROVIDERS=baidu,metaso,tavily,serper
 
 # DEEPFIELD_SEARCH_PRICING is inherited byte-for-byte from the caller; the live
 # TypeScript boundary parses it strictly. No echo/print/env/eval or secret argv.

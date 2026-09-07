@@ -10,7 +10,7 @@ import {
   cleanSandbox,
   securityCallCount,
   expectNoValueLeak,
-  fiveValues,
+  candidateValues,
   chainValues,
   PROVIDERS,
   ENV_NAMES,
@@ -43,7 +43,7 @@ function optionsFor(mode: { mode: string; npmArgv: string[] }): FakeOptions {
   return {
     expectedServices: [...PROVIDERS],
     behaviors: allBehaviors("value"),
-    values: fiveValues(),
+    values: candidateValues(),
     verifyEnv: PROVIDERS.map((provider) => ENV_NAMES[provider]),
     npmArgv: mode.npmArgv,
     expectedPricing: PRICING_RAW,
@@ -63,13 +63,13 @@ describe("run-search-live-from-keychain launcher modes (focused revision)", () =
   });
 
   for (const mode of MODES) {
-    it(`${mode.mode}: retrieves all five services in exact order once and exports exact child env`, () => {
+    it(`${mode.mode}: retrieves all four services in exact order once and exports exact child env`, () => {
       sandbox = makeSandbox();
       writeFakes(sandbox, optionsFor(mode));
       const { status, stdout, stderr } = runLauncher(sandbox, [mode.mode], { DEEPFIELD_SEARCH_PRICING: PRICING_RAW });
       expect(status).toBe(0);
-      expect(securityCallCount(sandbox)).toBe(5);
-      for (let index = 1; index <= 5; index += 1) {
+      expect(securityCallCount(sandbox)).toBe(4);
+      for (let index = 1; index <= 4; index += 1) {
         expectMarkerPass(marker(sandbox, `security-argv-${index}`));
       }
       for (const envName of PROVIDERS.map((provider) => ENV_NAMES[provider])) {
@@ -114,7 +114,7 @@ describe("run-search-live-from-keychain launcher modes (focused revision)", () =
           expect(markerContent(marker(sandbox, "ok-providers"))).toBe("<missing>");
           expectNoValueLeak(sandbox, { stdout, stderr }, FORBIDDEN_VALUES);
         }
-      }, 30_000); // five sequential zsh spawns per case: never fit the 5s default
+      }, 30_000); // four sequential zsh spawns per case: never fit the 5s default
     }
   }
 });

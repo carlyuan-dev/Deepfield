@@ -2,7 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Convert the observed MetaSo response contract into a strict adapter, assemble all five approved search candidates behind the existing live boundaries, and complete reviewed one-call contract smokes before requesting approval for the 100-call benchmark.
+## Current State (2026-09-07, operative)
+
+- Zhipu is REMOVED from the current product and formal candidates (decision:
+  no free quota). Tasks T8A-7/T8A-9 below were executed and reviewed against the
+  historical five-candidate set and are therefore SUPERSEDED as current
+  configuration — they remain as an accurate record of what was run.
+- **Operative candidate order:** `baidu,metaso,tavily,serper`; supported
+  adapters are `brave,tavily,serper,baidu,metaso`. Candidate env keys and
+  Keychain services exclude Zhipu. Adapter/fixture code for Zhipu is deleted
+  but recoverable from Git history; the Keychain entry is not deleted.
+- **Future routing intent (not implemented here):** renewable-free pool =
+  Baidu/MetaSo/Tavily (internal order pending the benchmark); Serper (free
+  quota does not refresh) is the fixed last resort; stop-and-prompt when all
+  free channels are exhausted — never auto-call a paid provider.
+- **Next benchmark (task T8A-10 onward):** four candidates x ten queries x
+  one run = 40 provider calls; the historical 100-call / five-provider text
+  below is superseded.
+
+**Goal (historical five-candidate plan, superseded for current state):** Convert the observed MetaSo response contract into a strict adapter, assemble the approved search candidates behind the existing live boundaries, and complete reviewed one-call contract smokes before requesting approval for the live benchmark.
 
 **Architecture:** Keep the accepted `SearchProvider` and fixed-origin `ProviderHttpClient` contracts unchanged. Add one fixture-backed MetaSo adapter, then expose one immutable five-provider endpoint/factory assembly consumed by both live entry points. Expand the Keychain launcher with closed, explicit modes; resolve the five keys and five native-currency price records before the first request. Live contract smokes and the later benchmark remain separate user-approved operations.
 
@@ -31,15 +49,15 @@ The adapter maps only `title`, `link`, `snippet`, and a valid date. It assigns l
 
 ## Global Constraints
 
-- The live candidate order is exactly `baidu,zhipu,metaso,tavily,serper`; Brave remains supported but is not a v1 benchmark candidate.
+- **Operative** live candidate order is exactly `baidu,metaso,tavily,serper`; Brave remains supported but is not a candidate. (Historical text below that mentions `zhipu` records the earlier five-candidate state and is superseded.)
 - Use MetaSo `POST https://metaso.cn/api/v1/search`; never call `/api/v1/chat/completions` or any generated-answer endpoint.
 - MetaSo request fields are exactly `q`, `scope: "webpage"`, `size`, `includeSummary: false`, `includeRawContent: false`, and `conciseSnippet: true`.
 - Use one `Authorization: Bearer <key>` header for MetaSo. Use one `authorization` Bearer header for the first Baidu contract smoke; a 401 stops the gate and never triggers an automatic second-header attempt.
 - Every selected candidate, Keychain key, and native-currency price record must resolve before the first contract or benchmark HTTP request.
 - No live response body, title, URL, snippet, page content, request header, API key, or Keychain output may be committed or copied into a DSH report.
 - Default `npm test` must never run `*.live.test.ts`; every live operation requires a separate explicit user approval with a maximum call count.
-- Provider contract smokes use at most five provider-search calls, stop at the first failed test, and never retry automatically.
-- The full benchmark remains exactly 100 provider-search calls: five providers × ten queries × two runs. It is outside the implementation tasks and requires a fresh cost estimate and approval.
+- Provider contract smokes use at most the operative candidate count (four) provider-search calls (the overseas scope restricts to tavily+serper), stop at the first failed test, and never retry automatically.
+- **Superseded benchmark arithmetic (five providers x ten queries x two runs = 100 calls).** Operative: four providers x ten queries x one run = 40 calls; the benchmark is outside the implementation tasks and requires a fresh cost estimate and approval.
 - No automatic provider failover, blending, proxy support, generated search answer, full-page provider option, runtime multi-provider selection, or Capability/UI change is added.
 - Production and test TypeScript files should stay below 300 lines. Split by responsibility before exceeding the limit.
 - Do not read, modify, stage, delete, or commit `docs/Deepfield项目开发教程-临时学习版.md`.
@@ -153,7 +171,7 @@ Stop for main-window review. Do not start Task P2-T8A-7 in the same DSH task.
 
 ---
 
-### Task P2-T8A-7: Immutable Five-Provider Live Assembly
+### Task P2-T8A-7: Immutable Five-Provider Live Assembly (EXECUTED, historical: five candidates — SUPERSEDED by 2026-09-07 four-candidate decision)
 
 **Files:**
 - Create: `packages/retrieval/src/providers/live-provider-assembly.ts`
@@ -386,7 +404,7 @@ Stop for main-window review. Do not run either new mode.
 
 ---
 
-### Task P2-T8A-9: Five-Provider Contract Smoke Gate
+### Task P2-T8A-9: Five-Provider Contract Smoke Gate (EXECUTED, historical: five candidates — SUPERSEDED by 2026-09-07 decision; current contract scope resolves baidu/metaso/tavily/serper, overseas tavily+serper)
 
 **Files:**
 - No tracked file changes.
@@ -447,7 +465,7 @@ Stop for main-window review. A successful five-provider contract gate completes 
 
 ---
 
-### Task P2-T8A-10: Fresh 100-Call Benchmark Cost and Approval Gate
+### Task P2-T8A-10: Fresh Benchmark Cost and Approval Gate (operative: FOUR candidates, 10 queries x 1 run = 40 calls)
 
 **Files:**
 - No tracked file changes.

@@ -22,7 +22,7 @@ export interface LiveProbeBinding<T> {
  */
 export function resolveLiveProviders(raw: string | undefined): readonly LiveProviderId[] {
   if (raw === undefined || raw.trim().length === 0) {
-    throw new Error("DEEPFIELD_SEARCH_PROVIDERS is required (all five v1 candidates, comma separated)");
+    throw new Error("DEEPFIELD_SEARCH_PROVIDERS is required (all four v1 candidates, comma separated)");
   }
   const parts = raw.split(",").map((part) => part.trim());
   if (parts.some((part) => part.length === 0)) {
@@ -42,7 +42,7 @@ export function resolveLiveProviders(raw: string | undefined): readonly LiveProv
   }
   const candidateSet = new Set<string>(BENCHMARK_CANDIDATES_V1);
   if (seen.size !== candidateSet.size || [...seen].some((part) => !candidateSet.has(part))) {
-    throw new Error("invalid DEEPFIELD_SEARCH_PROVIDERS: must select exactly the five v1 candidates");
+    throw new Error("invalid DEEPFIELD_SEARCH_PROVIDERS: must select exactly the four v1 candidates");
   }
   return [...BENCHMARK_CANDIDATES_V1];
 }
@@ -57,7 +57,7 @@ function ownEnvValue(env: Record<string, string | undefined>, name: string): str
 }
 
 /**
- * Requires a key for EVERY v1 candidate. The providers set must EXACTLY equal
+ * Requires a key for EVERY v1 candidate (the four v1 candidates). The providers set must EXACTLY equal
  * BENCHMARK_CANDIDATES_V1 (subset, duplicate, missing-candidate and runtime
  * unknown ids are all rejected with a fixed sanitized error BEFORE any env
  * value is read — no input ids or values are echoed). Each env value must be a
@@ -69,11 +69,11 @@ export function requireLiveKeys(
   env: Record<string, string | undefined>,
 ): Readonly<Record<LiveProviderId, string>> {
   if (!Array.isArray(providers) || providers.length !== BENCHMARK_CANDIDATES_V1.length) {
-    throw new Error("live keys require exactly the five v1 candidates");
+    throw new Error("live keys require exactly the four v1 candidates");
   }
   const set = new Set(providers);
   if (set.size !== BENCHMARK_CANDIDATES_V1.length || BENCHMARK_CANDIDATES_V1.some((provider) => !set.has(provider))) {
-    throw new Error("live keys require exactly the five v1 candidates");
+    throw new Error("live keys require exactly the four v1 candidates");
   }
   const tokens = Object.create(null) as Record<LiveProviderId, string>;
   for (const provider of BENCHMARK_CANDIDATES_V1) {

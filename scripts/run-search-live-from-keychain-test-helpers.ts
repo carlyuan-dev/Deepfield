@@ -4,11 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const SCRIPT = join(import.meta.dirname, "run-search-live-from-keychain.zsh");
-export const PROVIDERS = ["baidu", "zhipu", "metaso", "tavily", "serper"] as const;
+export const PROVIDERS = ["baidu", "metaso", "tavily", "serper"] as const;
 export const EXPECTED_PROVIDERS = PROVIDERS.join(",");
 export const ENV_NAMES: Readonly<Record<string, string>> = {
   baidu: "BAIDU_SEARCH_API_KEY",
-  zhipu: "ZHIPU_SEARCH_API_KEY",
   metaso: "METASO_SEARCH_API_KEY",
   tavily: "TAVILY_API_KEY",
   serper: "SERPER_API_KEY",
@@ -176,10 +175,10 @@ export function cleanSandbox(sandbox: Sandbox): void {
 }
 
 /**
- * Single shared source of the five distinct fake keychain values: keyed by
+ * Single shared source of the candidate fake keychain values: keyed by
  * provider id AND by its env variable name (same value under both keys).
  */
-export function fiveValues(): Record<string, string> {
+export function candidateValues(): Record<string, string> {
   const values: Record<string, string> = {};
   for (const provider of PROVIDERS) {
     values[provider] = `sk-${provider}-chain`;
@@ -188,7 +187,7 @@ export function fiveValues(): Record<string, string> {
   return values;
 }
 
-/** The five DISTINCT fake keychain values (one per candidate). */
+/** The four DISTINCT fake keychain values (one per candidate). */
 export function chainValues(): string[] {
   return PROVIDERS.map((provider) => `sk-${provider}-chain`);
 }

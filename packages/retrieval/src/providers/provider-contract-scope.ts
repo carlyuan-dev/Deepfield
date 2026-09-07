@@ -3,7 +3,7 @@ import { BENCHMARK_CANDIDATES_V1, type LiveProviderId } from "./provider-catalog
 /**
  * Internal (never package-exported) fixed scope for the OPT-IN provider
  * contract live suite. The launcher owns the env value: `provider-contract`
- * clears DEEPFIELD_SEARCH_CONTRACT_SCOPE so all five candidates run;
+ * clears DEEPFIELD_SEARCH_CONTRACT_SCOPE so all four candidates run;
  * `provider-contract-overseas` exports exactly "overseas" so ONLY tavily and
  * serper run. Arbitrary provider CSV or caller-chosen targets are rejected.
  */

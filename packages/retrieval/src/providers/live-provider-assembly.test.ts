@@ -15,13 +15,12 @@ import {
 } from "./live-contract-timeouts.js";
 import { BENCHMARK_CANDIDATES_V1, type LiveProviderId } from "./provider-catalog.js";
 import { createBaiduProvider, BAIDU_ENDPOINT } from "./baidu.js";
-import { createZhipuProvider, ZHIPU_ENDPOINT } from "./zhipu.js";
 import { createMetaSoProvider, METASO_ENDPOINT } from "./metaso.js";
 import { createTavilyProvider, ENDPOINT as TAVILY_ENDPOINT } from "./tavily.js";
 import { createSerperProvider, ENDPOINT as SERPER_ENDPOINT } from "./serper.js";
 
-const FIVE = [...BENCHMARK_CANDIDATES_V1];
-const FIVE_STRING = FIVE.join(",");
+const FOUR = [...BENCHMARK_CANDIDATES_V1];
+const FOUR_STRING = FOUR.join(",");
 
 function syntheticPricingJson(): string {
   const record = {
@@ -39,15 +38,14 @@ function syntheticPricingJson(): string {
     exchangeRateSourceUrl: "https://example.com/fx",
     exchangeRateObservedOn: "2026-09-01",
   };
-  return JSON.stringify({ baidu, zhipu: record, metaso: record, tavily: record, serper: record });
+  return JSON.stringify({ baidu, metaso: record, tavily: record, serper: record });
 }
 
 function fullEnv(pricing = syntheticPricingJson()): Record<string, string> {
   return {
-    DEEPFIELD_SEARCH_PROVIDERS: FIVE_STRING,
+    DEEPFIELD_SEARCH_PROVIDERS: FOUR_STRING,
     DEEPFIELD_SEARCH_PRICING: pricing,
     BAIDU_SEARCH_API_KEY: "k-baidu",
-    ZHIPU_SEARCH_API_KEY: "k-zhipu",
     METASO_SEARCH_API_KEY: "k-metaso",
     TAVILY_API_KEY: "k-tavily",
     SERPER_API_KEY: "k-serper",
@@ -55,14 +53,14 @@ function fullEnv(pricing = syntheticPricingJson()): Record<string, string> {
 }
 
 describe("live provider assembly (focused revision)", () => {
-  it("exposes exactly the five candidates in canonical order on frozen null-prototype maps", () => {
+  it("exposes exactly the four candidates in canonical order on frozen null-prototype maps", () => {
     for (const map of [LIVE_PROVIDER_ENDPOINTS, LIVE_PROVIDER_FACTORIES]) {
-      expect(Object.keys(map)).toEqual(FIVE);
+      expect(Object.keys(map)).toEqual(FOUR);
       expect(Object.getPrototypeOf(map)).toBe(null);
       expect(Object.isFrozen(map)).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(map, "brave")).toBe(false);
     }
-    for (const id of FIVE) {
+    for (const id of FOUR) {
       expect(LIVE_PROVIDER_ENDPOINTS[id]).toBeDefined();
       expect(LIVE_PROVIDER_FACTORIES[id]).toBeDefined();
     }
@@ -70,14 +68,13 @@ describe("live provider assembly (focused revision)", () => {
 
   it("pins each candidate endpoint to its approved adapter endpoint", () => {
     expect(LIVE_PROVIDER_ENDPOINTS.baidu).toEqual(BAIDU_ENDPOINT);
-    expect(LIVE_PROVIDER_ENDPOINTS.zhipu).toEqual(ZHIPU_ENDPOINT);
-    expect(LIVE_PROVIDER_ENDPOINTS.metaso).toEqual(METASO_ENDPOINT);
+        expect(LIVE_PROVIDER_ENDPOINTS.metaso).toEqual(METASO_ENDPOINT);
     expect(LIVE_PROVIDER_ENDPOINTS.tavily).toEqual(TAVILY_ENDPOINT);
     expect(LIVE_PROVIDER_ENDPOINTS.serper).toEqual(SERPER_ENDPOINT);
   });
 
   it("builds every candidate provider with matching id and declared capabilities", () => {
-    for (const id of FIVE) {
+    for (const id of FOUR) {
       const client = new ProviderHttpClient({ transport: transportStub(), endpoint: LIVE_PROVIDER_ENDPOINTS[id] });
       const provider = LIVE_PROVIDER_FACTORIES[id](client, "sk-synthetic");
       expect(provider.id).toBe(id);
@@ -104,24 +101,24 @@ describe("live provider assembly (focused revision)", () => {
     const setup = resolveLiveProviderSetup(fullEnv());
     expect(Object.isFrozen(setup)).toBe(true);
     expect(Object.isFrozen(setup.providers)).toBe(true);
-    expect([...setup.providers]).toEqual(FIVE);
+    expect([...setup.providers]).toEqual(FOUR);
     expect(Object.getPrototypeOf(setup.tokens)).toBe(null);
     expect(Object.isFrozen(setup.tokens)).toBe(true);
-    expect(Object.keys(setup.tokens)).toEqual(FIVE);
+    expect(Object.keys(setup.tokens)).toEqual(FOUR);
     expect(Object.getPrototypeOf(setup.pricing)).toBe(null);
     expect(Object.isFrozen(setup.pricing)).toBe(true);
-    expect(Object.keys(setup.pricing)).toEqual(FIVE);
+    expect(Object.keys(setup.pricing)).toEqual(FOUR);
     expect(setup.pricing.baidu!.currency).toBe("CNY");
     expect(setup.pricing.tavily!.currency).toBe("USD");
   });
 
   it("fails closed inside setup on provider/key/pricing boundary violations with fixed messages", () => {
     // missing provider in the explicit selection
-    expect(() => resolveLiveProviderSetup({ ...fullEnv(), DEEPFIELD_SEARCH_PROVIDERS: "baidu,zhipu,metaso,tavily" })).toThrow(/providers/i);
+    expect(() => resolveLiveProviderSetup({ ...fullEnv(), DEEPFIELD_SEARCH_PROVIDERS: "baidu,metaso,tavily" })).toThrow(/providers/i);
     // an extra unknown provider
-    expect(() => resolveLiveProviderSetup({ ...fullEnv(), DEEPFIELD_SEARCH_PROVIDERS: `${FIVE_STRING},brave` })).toThrow(/providers/i);
+    expect(() => resolveLiveProviderSetup({ ...fullEnv(), DEEPFIELD_SEARCH_PROVIDERS: `${FOUR_STRING},brave` })).toThrow(/providers/i);
     // each missing key
-    for (const key of ["BAIDU_SEARCH_API_KEY", "ZHIPU_SEARCH_API_KEY", "METASO_SEARCH_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"]) {
+    for (const key of ["BAIDU_SEARCH_API_KEY", "METASO_SEARCH_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"]) {
       const env = fullEnv();
       delete env[key];
       expect(() => resolveLiveProviderSetup(env)).toThrow(/API_KEY/);
@@ -134,7 +131,7 @@ describe("live provider assembly (focused revision)", () => {
     expect(() => resolveLiveProviderSetup(noPricing)).toThrow(/pricing/i);
     expect(() => resolveLiveProviderSetup(fullEnv("{not-json"))).toThrow(/pricing/i);
     const partial = JSON.parse(syntheticPricingJson()) as Record<string, unknown>;
-    delete partial.zhipu;
+    delete partial.metaso;
     expect(() => resolveLiveProviderSetup(fullEnv(JSON.stringify(partial)))).toThrow(/pricing/i);
     const extra = JSON.parse(syntheticPricingJson()) as Record<string, unknown>;
     (extra as Record<string, unknown>).evil = { amountPerRequest: 0.01, currency: "USD", usdPerCurrencyUnit: 1, priceSourceUrl: "https://example.com/", priceObservedOn: "2026-09-01" };

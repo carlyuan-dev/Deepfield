@@ -128,7 +128,6 @@ export {
 export { createNodeProviderTransport } from "./provider-node-transport.js";
 export { BAIDU_ENDPOINT, countBaiduQueryUnits, createBaiduProvider, type BaiduAuthHeader, type BaiduProviderDeps } from "./providers/baidu.js";
 export { createBraveProvider, type BraveProviderDeps } from "./providers/brave.js";
-export { countUnicodeCodePoints, createZhipuProvider, ZHIPU_ENDPOINT, type ZhipuProviderDeps } from "./providers/zhipu.js";
 export { METASO_ENDPOINT, createMetaSoProvider, type MetaSoProviderDeps } from "./providers/metaso.js";
 export {
   LIVE_PROVIDER_ENDPOINTS,

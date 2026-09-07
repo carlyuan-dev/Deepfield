@@ -15,8 +15,8 @@ import { join } from "node:path";
 
 /**
  * OPT-IN live benchmark. resolveLiveProviderSetup runs at module setup — the
- * single pre-I/O boundary — validating the exact five-provider selection, all
- * five keys and the exact five native-currency price records BEFORE any
+ * single pre-I/O boundary — validating the exact four-provider selection, all
+ * four keys and the exact four native-currency price records BEFORE any
  * transport construction, pricing parse or test body. Providers come only from
  * SETUP.providers/tokens plus the shared endpoint/factory maps; SETUP.pricing
  * feeds the offline-tested runBenchmark harness.

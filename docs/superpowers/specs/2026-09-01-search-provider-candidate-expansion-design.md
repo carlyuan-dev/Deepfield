@@ -6,6 +6,27 @@
 
 **Applies before:** P2-T9 live benchmark and `search_web v1` provider selection
 
+## 0. 2026-09-07 Decision Record (current operative configuration)
+
+- Zhipu has NO free quota and is excluded from the current product and from
+  the formal candidate set. Its adapter/fixtures are removed from the codebase;
+  they remain recoverable from Git history. The existing macOS Keychain entry
+  is NOT deleted by this project (no `security delete`, no Keychain reads).
+- **Operative benchmark candidates (canonical order):** `baidu`, `metaso`,
+  `tavily`, `serper`. **Supported adapters:** `brave`, `tavily`, `serper`,
+  `baidu`, `metaso`.
+- Candidate env keys are the four documented names without
+  `ZHIPU_SEARCH_API_KEY`; keychain services are the four
+  `com.deepfield.benchmark.<candidate>` names without `zhipu`.
+- Future routing intent (not implemented in this task): a renewable-free pool
+  of Baidu/MetaSo/Tavily (internal order pending the benchmark) is preferred;
+  Serper (free quota does not refresh) is the fixed last resort; when every
+  free channel is exhausted/unavailable, stop and prompt — never auto-call a
+  paid provider.
+- Text below dated 2026-09-01 describing a five-candidate plan (incl. zhipu)
+  is historical planning; where it conflicts with this record, this record
+  wins for current configuration.
+
 ## 1. Decision Summary
 
 Deepfield will expand the P2-T9 live benchmark from the original Brave, Tavily
@@ -53,9 +74,9 @@ come from opt-in live contract tests using the user's local keys.
 
 The code must distinguish two concepts:
 
-- **supported adapters:** `brave`, `tavily`, `serper`, `baidu`, `zhipu`,
-  `metaso`;
-- **P2-T9 v1 candidates:** `baidu`, `zhipu`, `metaso`, `tavily`, `serper`.
+- **supported adapters (operative):** `brave`, `tavily`, `serper`, `baidu`,
+  `metaso` (zhipu removed 2026-09-07, see §0);
+- **P2-T9 v1 candidates (operative):** `baidu`, `metaso`, `tavily`, `serper`.
 
 The live configuration must reject unknown, duplicate or fewer than two
 candidates before network I/O. Every selected candidate must have a key.
@@ -88,22 +109,13 @@ created; it must never silently narrow the candidate set.
   query or reference-company coverage gates, Baidu is ineligible. The adapter
   must not silently switch to `turbo`.
 
-### 3.2 Zhipu
+### 3.2 Zhipu (REMOVED 2026-09-07 — historical record only)
 
-- Endpoint: `POST https://open.bigmodel.cn/api/paas/v4/web_search`.
-- Product: independent Web Search API only.
-- Engine: `search_pro`, frozen before the benchmark because recall is more
-  important than the small price difference and cost carries only 5% of the
-  existing score.
-- Request: `search_intent: false`, `count: maxResults`,
-  `content_size: "medium"`, and no Chat API wrapper.
-- Response source: `search_result[]`.
-- Normalized mapping: `title`, `link`, `content`, local rank, and
-  `publish_date` only when it can be normalized to `YYYY-MM-DD`.
-- Exact time range: unsupported. The adapter declares
-  `capabilities.timeRange = false` and rejects a supplied exact range before
-  I/O rather than approximating it with one-day/one-week presets.
-- Provider query limit: 70 Unicode code points, rejected before I/O.
+Zhipu had no free quota and is removed from the current product and from the
+formal candidate set (decision record §0). Its endpoint, request/response
+interface, pricing and API documentation below this stub were deleted as
+operative content; the adapter implementation lives on in Git history. The
+Keychain entry is intentionally not deleted by this project.
 
 ### 3.3 MetaSo
 
@@ -145,15 +157,15 @@ normalized `search_web` output or automatically establish trust.
 
 ## 5. Secrets and Live-Test Gate
 
-The user has obtained keys for all five v1 candidates. Keys remain an external
-precondition and are not part of this specification or repository.
+The user has obtained keys for the operative v1 candidates. Keys remain an
+external precondition and are not part of this specification or repository.
 
 - Never paste keys into Chat, DSH messages, YAML reports or shell output.
 - Never store keys in fixtures, tracked files, benchmark reports or audit
   events.
-- Live tests read the five documented environment-variable names only:
-  `BAIDU_SEARCH_API_KEY`, `ZHIPU_SEARCH_API_KEY`, `METASO_SEARCH_API_KEY`,
-  `TAVILY_API_KEY`, and `SERPER_API_KEY`.
+- Live tests read the four documented environment-variable names only:
+  `BAIDU_SEARCH_API_KEY`, `METASO_SEARCH_API_KEY`, `TAVILY_API_KEY`, and
+  `SERPER_API_KEY`.
 - The live entry point must resolve and validate the complete candidate/key
   set before the first HTTP request.
 - Provider errors and malformed responses cross the boundary only as the
@@ -199,8 +211,8 @@ those fields. The report records the pricing evidence but never a key.
 
 Live validation is deliberately split from the full benchmark:
 
-1. Resolve exactly the five proposed v1 candidates, five keys and five price
-   records.
+1. Resolve exactly the operative four v1 candidates, four keys and four
+   price records (zhipu removed per §0).
 2. Run one inexpensive contract query per provider.
 3. Validate status, response bounds and the strict documented result shape.
 4. Stop on API drift, authentication failure or a missing URL field; update a
@@ -217,8 +229,9 @@ Live validation is deliberately split from the full benchmark:
 
 Contract smokes and benchmark calls are separately reported so a schema test
 cannot be mistaken for a quality measurement. An interrupted or partial run
-cannot select a provider. With all five candidates, the full run has 100
-provider search calls plus five one-query contract smokes; no such calls occur
+cannot select a provider. With the operative four candidates, the next full run is 10 queries x 1 run =
+40 provider search calls plus the four one-query contract smokes (the earlier
+five-candidate plan counted 100 calls; superseded by §0). No such calls occur
 while writing or implementing the offline expansion.
 
 ## 8. Failure and Eligibility Rules
@@ -269,6 +282,4 @@ configures only the winning provider.
 
 - Baidu basic search API: <https://cloud.baidu.com/doc/qianfan/s/2mh4su4uy>
 - Baidu basic search pricing: <https://cloud.baidu.com/doc/qianfan/s/1mh4sv6c4>
-- Zhipu Web Search API: <https://docs.bigmodel.cn/api-reference/%E5%B7%A5%E5%85%B7-api/%E7%BD%91%E7%BB%9C%E6%90%9C%E7%B4%A2>
-- Zhipu engines and pricing: <https://docs.bigmodel.cn/cn/guide/tools/web-search>
 - MetaSo API playground: <https://metaso.cn/search-api/playground>

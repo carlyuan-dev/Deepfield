@@ -16,8 +16,8 @@ import { resolveContractScope } from "./provider-contract-scope.js";
 /**
  * OPT-IN live URL-bearing compatibility smoke. resolveLiveProviderSetup runs
  * at module setup — BEFORE any ProviderHttpClient is constructed or any test
- * body runs — validating the exact five-provider selection, all five keys and
- * the exact five native-currency price records. The fixed scope (all five by
+ * body runs — validating the exact four-provider selection, all four keys and
+ * the exact four native-currency price records. The fixed scope (all four by
  * default; ONLY tavily+serper when the launcher exports the exact "overseas"
  * value) is resolved AFTER that full validation, and the probe loop iterates
  * exactly the scope — so at most the scoped providers are ever constructed or

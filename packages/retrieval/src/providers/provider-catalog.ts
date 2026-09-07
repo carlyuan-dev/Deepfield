@@ -3,13 +3,11 @@ export const SUPPORTED_PROVIDER_IDS = Object.freeze([
   "tavily",
   "serper",
   "baidu",
-  "zhipu",
   "metaso",
 ] as const);
 
 export const BENCHMARK_CANDIDATES_V1 = Object.freeze([
   "baidu",
-  "zhipu",
   "metaso",
   "tavily",
   "serper",
@@ -18,27 +16,25 @@ export const BENCHMARK_CANDIDATES_V1 = Object.freeze([
 export type SupportedProviderId = (typeof SUPPORTED_PROVIDER_IDS)[number];
 export type LiveProviderId = (typeof BENCHMARK_CANDIDATES_V1)[number];
 
-/** Approved environment variable names for the five v1 candidates. */
+/** Approved environment variable names for the four v1 candidates. */
 export const LIVE_PROVIDER_ENV_KEYS: Readonly<Record<LiveProviderId, string>> = Object.freeze({
   baidu: "BAIDU_SEARCH_API_KEY",
-  zhipu: "ZHIPU_SEARCH_API_KEY",
   metaso: "METASO_SEARCH_API_KEY",
   tavily: "TAVILY_API_KEY",
   serper: "SERPER_API_KEY",
 });
 
-/** Keychain service names for the five v1 candidates. */
+/** Keychain service names for the four v1 candidates. */
 export const KEYCHAIN_SERVICES: Readonly<Record<LiveProviderId, string>> = Object.freeze({
   baidu: "com.deepfield.benchmark.baidu",
-  zhipu: "com.deepfield.benchmark.zhipu",
   metaso: "com.deepfield.benchmark.metaso",
   tavily: "com.deepfield.benchmark.tavily",
   serper: "com.deepfield.benchmark.serper",
 });
 
 /**
- * Temporary fail-closed Phase 1 boundary: assembles a COMPLETE map for the
- * five v1 candidates from a partial supported-provider map. Brave may be
+ * Temporary fail-closed boundary: assembles a COMPLETE map for the four v1
+ * candidates from a partial supported-provider map. Brave may be
  * present in the input (it stays supported) but is never copied into the
  * result. Every candidate must be an own, defined entry; accessor entries are
  * never invoked. Returns a frozen null-prototype record. The error is the
