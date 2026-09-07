@@ -7,6 +7,10 @@ import {
   resolveLiveProviderSetup,
 } from "./live-provider-assembly.js";
 import { acceptLiveProviderResponse } from "./provider-live-acceptance.js";
+import {
+  LIVE_CONTRACT_HTTP_TIMEOUT_MS,
+  LIVE_CONTRACT_TEST_TIMEOUT_MS,
+} from "./live-contract-timeouts.js";
 
 /**
  * OPT-IN live URL-bearing compatibility smoke. resolveLiveProviderSetup runs
@@ -24,20 +28,26 @@ const SETUP = resolveLiveProviderSetup(process.env as Record<string, string | un
 
 describe("provider live URL-bearing compatibility (opt-in)", () => {
   for (const id of SETUP.providers) {
-    it(`${id}: one query returns the provider id with at least one clickable http(s) result`, async () => {
-      const client = new ProviderHttpClient({
-        transport: createNodeProviderTransport(),
-        endpoint: LIVE_PROVIDER_ENDPOINTS[id],
-        totalTimeoutMs: 15_000,
-      });
-      const provider = LIVE_PROVIDER_FACTORIES[id](client, SETUP.tokens[id]);
-      const response = await provider.search(
-        { query: "humanoid robot companies official website", maxResults: 5 },
-        new AbortController().signal,
-      );
-      acceptLiveProviderResponse(id, response);
-      expect(response.provider).toBe(id);
-      expect(response.results.length).toBeGreaterThan(0);
-    });
+    // per-test deadline exceeds the 15s client budget (30s) so vitest never
+    // cuts a probe short before the client finishes or cleans up
+    it(
+      `${id}: one query returns the provider id with at least one clickable http(s) result`,
+      async () => {
+        const client = new ProviderHttpClient({
+          transport: createNodeProviderTransport(),
+          endpoint: LIVE_PROVIDER_ENDPOINTS[id],
+          totalTimeoutMs: LIVE_CONTRACT_HTTP_TIMEOUT_MS,
+        });
+        const provider = LIVE_PROVIDER_FACTORIES[id](client, SETUP.tokens[id]);
+        const response = await provider.search(
+          { query: "humanoid robot companies official website", maxResults: 5 },
+          new AbortController().signal,
+        );
+        acceptLiveProviderResponse(id, response);
+        expect(response.provider).toBe(id);
+        expect(response.results.length).toBeGreaterThan(0);
+      },
+      LIVE_CONTRACT_TEST_TIMEOUT_MS,
+    );
   }
 });

@@ -8,6 +8,12 @@ import {
   LIVE_PROVIDER_FACTORIES,
   resolveLiveProviderSetup,
 } from "./live-provider-assembly.js";
+import {
+  LIVE_CONTRACT_CLEANUP_MARGIN_MS,
+  LIVE_CONTRACT_HTTP_TIMEOUT_MS,
+  LIVE_CONTRACT_TEST_TIMEOUT_MS,
+  VITEST_DEFAULT_TEST_TIMEOUT_MS,
+} from "./live-contract-timeouts.js";
 import { BENCHMARK_CANDIDATES_V1, type LiveProviderId } from "./provider-catalog.js";
 import { createBaiduProvider, BAIDU_ENDPOINT } from "./baidu.js";
 import { createZhipuProvider, ZHIPU_ENDPOINT } from "./zhipu.js";
@@ -193,6 +199,33 @@ describe("live entry static regression (focused revision)", () => {
       expect(setupIndex).toBeGreaterThanOrEqual(0);
       expect(clientIndex).toBeGreaterThan(setupIndex);
     }
+  });
+
+  it("keeps the provider-contract per-test deadline above the client timeout (vitest default 5s is too short)", () => {
+    // Vitest's documented default per-test timeout (no testTimeout in
+    // vitest.live.config.ts) is 5000ms, which would cut the 15000ms client
+    // budget short — the executed Tavily failure. The shared internal module
+    // below is the ACTUAL source both the live test and this regression use.
+    expect(VITEST_DEFAULT_TEST_TIMEOUT_MS).toBe(5_000);
+    expect(LIVE_CONTRACT_HTTP_TIMEOUT_MS).toBe(15_000);
+    // the effective per-test deadline must exceed the client budget with room
+    // for cleanup: client 15s + margin 15s => vitest sees 30s
+    expect(LIVE_CONTRACT_CLEANUP_MARGIN_MS).toBeGreaterThanOrEqual(LIVE_CONTRACT_HTTP_TIMEOUT_MS);
+    expect(LIVE_CONTRACT_TEST_TIMEOUT_MS).toBe(LIVE_CONTRACT_HTTP_TIMEOUT_MS + LIVE_CONTRACT_CLEANUP_MARGIN_MS);
+    expect(LIVE_CONTRACT_TEST_TIMEOUT_MS).toBeGreaterThan(LIVE_CONTRACT_HTTP_TIMEOUT_MS);
+    expect(VITEST_DEFAULT_TEST_TIMEOUT_MS).toBeLessThan(LIVE_CONTRACT_HTTP_TIMEOUT_MS);
+    // the live entry really passes both budgets into the runtime call boundary
+    expect(contract).toContain("LIVE_CONTRACT_HTTP_TIMEOUT_MS");
+    expect(contract).toContain("LIVE_CONTRACT_TEST_TIMEOUT_MS");
+    expect(contract).toMatch(/totalTimeoutMs:\s*LIVE_CONTRACT_HTTP_TIMEOUT_MS/);
+    expect(contract).toMatch(/LIVE_CONTRACT_TEST_TIMEOUT_MS\s*,?\s*\);/);
+  });
+
+  it("records that the search-benchmark live entry still inherits the 5s default (budgeted by T8A-10)", () => {
+    // intentionally NOT fixed here: the benchmark must be given its own whole
+    // deadline design before T8A-10; this pins the current shortfall.
+    expect(benchmark).not.toContain("LIVE_CONTRACT_TEST_TIMEOUT_MS");
+    expect(benchmark).not.toMatch(/\btestTimeout\b/);
   });
 });
 
