@@ -50,7 +50,7 @@ if [[ "$mode" == "metaso-shape" ]]; then
   exec npm run test:metaso-shape:live
 fi
 
-# Five explicit keychain reads (fixed account deepfield, fixed services).
+# Four explicit keychain reads (fixed account deepfield, fixed services).
 BAIDU_SEARCH_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.baidu)"
 METASO_SEARCH_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.metaso)"
 TAVILY_API_KEY="$(keychain_secret deepfield com.deepfield.benchmark.tavily)"

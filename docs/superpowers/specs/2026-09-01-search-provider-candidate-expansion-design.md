@@ -27,11 +27,12 @@
   is historical planning; where it conflicts with this record, this record
   wins for current configuration.
 
-## 1. Decision Summary
+## 1. Decision Summary (HISTORICAL — 2026-09-01 decision, superseded by §0 on 2026-09-07)
 
-Deepfield will expand the P2-T9 live benchmark from the original Brave, Tavily
-and Serper set to five candidates that the user can actually test from the
-current China-based Mac:
+This section is preserved as the historical record of the original five-candidate
+plan (including Zhipu). It is NOT current configuration: Zhipu was removed
+2026-09-07 and the operative benchmark is baidu/metaso/tavily/serper, 10 queries
+x 1 run = 40 calls. Do not treat anything below that conflicts with §0 as operative.
 
 1. `baidu` — Baidu Qianfan basic Baidu Search, not AI-generated search;
 2. `zhipu` — Zhipu independent Web Search API, not Chat web access;
@@ -270,11 +271,11 @@ The outcome remains one measured, encrypted-key-backed provider registered as
 
 The existing P2 plan is amended by inserting a separately reviewable
 **P2-T8A: Domestic Candidate and Pricing Expansion** before P2-T9. P2-T8A
-delivers the Baidu, Zhipu and MetaSo adapters, the five-candidate live config,
+delivered the Baidu, Zhipu and MetaSo adapters and the five-candidate live config (historical execution record; superseded by §0),
 currency-neutral pricing evidence and offline/live contract tests. It does not
 select a winner.
 
-P2-T9 then runs the five-candidate live benchmark, pauses for the existing
+P2-T9 historically ran a five-candidate live benchmark plan (superseded by §0: operative benchmark is the four candidates x 10 x 1 = 40 calls), pauses for the existing
 human annotation review, applies hard gates, records the selection and
 configures only the winning provider.
 

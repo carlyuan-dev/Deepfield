@@ -22,7 +22,7 @@
 
 **Goal (historical five-candidate plan, superseded for current state):** Convert the observed MetaSo response contract into a strict adapter, assemble the approved search candidates behind the existing live boundaries, and complete reviewed one-call contract smokes before requesting approval for the live benchmark.
 
-**Architecture:** Keep the accepted `SearchProvider` and fixed-origin `ProviderHttpClient` contracts unchanged. Add one fixture-backed MetaSo adapter, then expose one immutable five-provider endpoint/factory assembly consumed by both live entry points. Expand the Keychain launcher with closed, explicit modes; resolve the five keys and five native-currency price records before the first request. Live contract smokes and the later benchmark remain separate user-approved operations.
+**Architecture (operative, per 2026-09-07 decision):** Keep the accepted `SearchProvider` and fixed-origin `ProviderHttpClient` contracts unchanged. The immutable endpoint/factory assembly covers the four candidates `baidu,metaso,tavily,serper` (Zhipu removed). The Keychain launcher has closed, explicit modes and resolves the four keys and four native-currency price records before the first request. Live contract smokes and the later benchmark remain separate user-approved operations.
 
 **Tech Stack:** TypeScript 7, Node.js 24, Vitest 4, zsh, macOS Keychain, existing `@deepfield/retrieval` provider and benchmark infrastructure.
 
@@ -324,11 +324,11 @@ Stop for main-window review. Do not run a provider contract smoke.
 
 ```text
 metaso-shape       -> existing one-call shape test, retained for audit only
-provider-contract  -> at most five one-query provider contract tests
-search-benchmark   -> the separately approved 100-call benchmark
+provider-contract  -> at most one-query provider contract tests over the operative candidates (historical T8A-8 text said five; operative is four)
+search-benchmark   -> the separately approved benchmark (historical text: 100 calls; operative: 40 calls — 10 queries x 1 run)
 ```
 
-- `provider-contract` and `search-benchmark` export exactly the five candidate keys plus `DEEPFIELD_SEARCH_PROVIDERS=baidu,zhipu,metaso,tavily,serper` to the child. Both require a non-blank `DEEPFIELD_SEARCH_PRICING`; neither parses or prints it in zsh—the live TypeScript boundary performs strict parsing.
+- `provider-contract` and `search-benchmark` export the candidate keys plus `DEEPFIELD_SEARCH_PROVIDERS` to the child (historical T8A-8 text named five keys incl. zhipu; operative per the 2026-09-07 decision is four: baidu/metaso/tavily/serper). Both require a non-blank `DEEPFIELD_SEARCH_PRICING`; neither parses or prints it in zsh—the live TypeScript boundary performs strict parsing.
 
 - [ ] **Step 1: Split the existing launcher test support before adding cases**
 
@@ -433,7 +433,7 @@ maximum native spend: one separately stated amount per provider in that provider
 maximum converted USD spend: sum(amountPerRequest * usdPerCurrencyUnit)
 ```
 
-Obtain explicit approval immediately before execution. Prior approval for the MetaSo shape probe or the later 100-call benchmark does not count.
+Obtain explicit approval immediately before execution. Prior approval for the MetaSo shape probe or the later benchmark (operative 40 calls) does not count.
 
 - [ ] **Step 3: Run the allowlisted contract mode exactly once**
 
@@ -472,43 +472,43 @@ Stop for main-window review. A successful five-provider contract gate completes 
 - This task does not execute the benchmark.
 
 **Interfaces:**
-- Consumes: the same validated five-provider pricing records and five successful reviewed contract outcomes.
+- Consumes: the same validated four-provider pricing records and four successful reviewed contract outcomes (historical five-provider runs are not part of the new count).
 - Produces: a concrete maximum-cost statement and an explicit user decision for original P2-T9.
 
 - [ ] **Step 1: Revalidate benchmark preconditions offline**
 
-Confirm the candidate set is still exactly five, all contract smokes passed, the query set contains exactly ten queries, `runsPerQuery` is `2`, `maxResults` is `20`, and every price record is still valid for its observation date. Confirm `benchmark-results/` is absent or contains no prior run that could be mistaken for the new run.
+Confirm the candidate set is still exactly `baidu,metaso,tavily,serper`, all four contract smokes passed, the query set contains exactly ten queries, `runsPerQuery` is `1`, `maxResults` is `20`, and every price record is still valid for its observation date. Confirm `benchmark-results/` is absent or contains no prior run that could be mistaken for the new run.
 
 - [ ] **Step 2: Calculate the maximum search-provider spend**
 
-Each provider receives `10 × 2 = 20` search calls. Report per-provider native maximum:
+Each provider receives `10 × 1 = 10` search calls. Report per-provider native maximum:
 
 ```text
-providerMaximumNative = 20 * amountPerRequest
+providerMaximumNative = 10 * amountPerRequest
 ```
 
-Report the common converted maximum without rounding inside the calculation:
+Report the common converted maximum without rounding inside the calculation (single-run fallback price per provider):
 
 ```text
-maximumUsd = 20 * sum(amountPerRequest * usdPerCurrencyUnit)
+maximumUsd = 10 * sum(amountPerRequest * usdPerCurrencyUnit)
 ```
 
-List the price and exchange-rate source URLs and observation dates. Keep the five already completed contract-smoke calls separate from the 100-call estimate. Destination-page link checks may generate additional ordinary web requests but are not provider-search API calls.
+List the price and exchange-rate source URLs and observation dates. Keep the already completed contract-smoke calls separate from the 40-call estimate. Expected cash spend is 0: if the free-quota/balance precondition check fails, stop and prompt the user — never auto-call a paid provider. Destination-page link checks may generate additional ordinary web requests but are not provider-search API calls.
 
 - [ ] **Step 3: Obtain a new explicit benchmark approval**
 
 State exactly:
 
 ```text
-maximum provider-search calls: 100
+maximum provider-search calls: 40
 automatic provider retries: 0
 queries: 10
-runs per query: 2
-providers: 5
+runs per query: 1
+providers: 4
 top results requested: 20
 ```
 
-Ask the user to approve or reject the run. Do not run `search-benchmark`, create `benchmark-results/`, or begin provider selection in this task. If approved, resume original P2-T9 at its live benchmark execution step using the expanded five-candidate rules from the approved expansion specification.
+Ask the user to approve or reject the run. Do not run `search-benchmark`, create `benchmark-results/`, or begin provider selection in this task. If approved, resume original P2-T9 at its live benchmark execution step using the operative four-candidate rules (baidu/metaso/tavily/serper; Zhipu removed 2026-09-07) from the approved expansion specification decision record.
 
 ---
 
@@ -516,9 +516,9 @@ Ask the user to approve or reject the run. Do not run `search-benchmark`, create
 
 - [x] Every observed MetaSo field used by the adapter is listed; every ignored diagnostic field is explicitly excluded.
 - [x] Both live entry points consume one shared complete assembly.
-- [x] Five keys and five price records fail closed before transport construction.
+- [x] Four keys and four price records fail closed before transport construction.
 - [x] Default tests remain offline and live calls have separate user gates.
-- [x] Contract smokes are capped at five calls with no retry and first-failure bail.
-- [x] The benchmark is not executed until a fresh 100-call cost approval.
+- [x] Contract smokes are capped at the operative candidate count (four) with no retry and first-failure bail.
+- [x] The benchmark is not executed until a fresh 40-call cost approval (10 queries x 1 run, retries 0, top 20).
 - [x] No task changes Capability A, Chat UI, provider failover, or production multi-provider behavior.
 - [x] No task reads or stages the untracked user tutorial document.
