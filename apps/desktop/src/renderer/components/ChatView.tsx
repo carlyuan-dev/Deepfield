@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { DesktopApi } from "@deepfield/contracts";
+import type { ChatRequestOptions, DesktopApi, SkillSummary } from "@deepfield/contracts";
 import { useChat } from "../state/use-chat.js";
 import type { ChatEventHub } from "../state/chat-event-hub.js";
 import { visibleMessages } from "../state/chat.js";
 import { Composer } from "./Composer.js";
 import { Messages } from "./Messages.js";
+import { SkillPicker } from "./SkillPicker.js";
 
 export interface ChatViewProps {
   api: DesktopApi;
@@ -28,8 +29,31 @@ export function ChatView({
   const { state, submit, reload } = useChat(api, projectId, eventHub, requestIdFactory);
   const [mode, setMode] = useState<"chat" | "research">("chat");
   const [draft, setDraft] = useState("");
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [selectedSkillName, setSelectedSkillName] = useState<string | undefined>(undefined);
   const lastSubmitted = useRef("");
   const messages = visibleMessages(state);
+
+  // Load once on mount. A loading failure must leave ordinary Chat usable, so
+  // it degrades to an empty Skill list.
+  useEffect(() => {
+    let cancelled = false;
+    void api.skills.list().then(
+      (summaries) => {
+        if (!cancelled) {
+          setSkills(summaries);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setSkills([]);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
 
   useEffect(() => {
     if (state.sendError !== undefined && lastSubmitted.current.length > 0) {
@@ -83,10 +107,31 @@ export function ChatView({
             value={draft}
             onChange={setDraft}
             disabled={state.sending || state.loadState !== "ready"}
+            actions={
+              <>
+                <SkillPicker
+                  skills={skills}
+                  value={selectedSkillName}
+                  disabled={state.sending}
+                  onChange={setSelectedSkillName}
+                />
+                {selectedSkillName !== undefined && (
+                  <span className="skill-pill">Skill: {selectedSkillName}</span>
+                )}
+              </>
+            }
             onSubmit={(content) => {
               lastSubmitted.current = content;
               setDraft("");
-              submit(content);
+              const options: ChatRequestOptions = {
+                webSearch: false,
+                ...(selectedSkillName !== undefined ? { skillName: selectedSkillName } : {}),
+              };
+              submit(content, options);
+              // The selected Skill applies to exactly one send.
+              if (selectedSkillName !== undefined) {
+                setSelectedSkillName(undefined);
+              }
             }}
           />
         </>

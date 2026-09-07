@@ -9,6 +9,8 @@ export interface ChatMessageView {
   status: "done" | DraftStatus;
   requestId: string | undefined;
   pending: boolean;
+  /** Display-only skill used for this assistant reply; not persisted. */
+  skillName?: string;
 }
 
 export interface ChatState {
@@ -136,7 +138,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       let sending = state.sending;
       switch (event.type) {
         case "started":
-          draft = { ...draft, status: "streaming" };
+          draft = {
+            ...draft,
+            status: "streaming",
+            ...(event.skillName !== undefined ? { skillName: event.skillName } : {}),
+          };
           break;
         case "text_delta":
           draft = { ...draft, content: draft.content + event.delta };

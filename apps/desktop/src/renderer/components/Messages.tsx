@@ -12,6 +12,9 @@ export function Messages({ messages, emptyLabel = "还没有消息" }: MessagesP
       {messages.map((message) => (
         <div key={message.key} className={`message ${message.role} ${message.status}`}>
           <div className="message-role">{message.role === "user" ? "我" : "Deepfield"}</div>
+          {message.role === "assistant" && message.skillName !== undefined && (
+            <div className="skill-badge">Skill: {message.skillName}</div>
+          )}
           <div className="message-content">
             {message.content.length > 0 ? message.content : message.status === "streaming" ? "…" : ""}
           </div>

@@ -5,11 +5,9 @@ import type { ChatEventHub } from "./chat-event-hub.js";
 
 export interface ChatController {
   state: ChatState;
-  submit: (content: string, options?: ChatRequestOptions) => void;
+  submit: (content: string, options: ChatRequestOptions) => void;
   reload: () => void;
 }
-
-const ORDINARY_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
 
 export function useChat(
   api: DesktopApi,
@@ -64,7 +62,7 @@ export function useChat(
   }, [projectId, load]);
 
   const submit = useCallback(
-    (content: string, options: ChatRequestOptions = ORDINARY_CHAT_OPTIONS) => {
+    (content: string, options: ChatRequestOptions) => {
       if (projectId === undefined || state.sending || state.loadState !== "ready") {
         return;
       }

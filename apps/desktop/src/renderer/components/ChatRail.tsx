@@ -78,7 +78,7 @@ export function ChatRail({
             onSubmit={(content) => {
               lastSubmitted.current = content;
               setDraft("");
-              submit(content);
+              submit(content, { webSearch: false });
             }}
             placeholder="输入消息…"
           />

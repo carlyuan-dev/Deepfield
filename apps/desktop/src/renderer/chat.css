@@ -136,5 +136,48 @@
 
 .composer-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+}
+
+.composer-actions-leading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.skill-picker {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  max-width: 220px;
+  color: var(--text);
+}
+
+.skill-picker:disabled {
+  opacity: 0.6;
+}
+
+.skill-pill {
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.skill-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin: 2px 0;
 }

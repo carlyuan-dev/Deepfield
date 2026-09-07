@@ -1,9 +1,13 @@
+import type { ReactNode } from "react";
+
 export interface ComposerProps {
   value: string;
   onChange(value: string): void;
   disabled: boolean;
   onSubmit(content: string): void;
   placeholder?: string;
+  /** Optional controls rendered at the leading edge of the actions row. */
+  actions?: ReactNode;
 }
 
 export function Composer({
@@ -12,6 +16,7 @@ export function Composer({
   disabled,
   onSubmit,
   placeholder = "输入消息…",
+  actions,
 }: ComposerProps) {
   const submit = (): void => {
     const trimmed = value.trim();
@@ -39,6 +44,7 @@ export function Composer({
         disabled={disabled}
       />
       <div className="composer-actions">
+        {actions !== undefined && <div className="composer-actions-leading">{actions}</div>}
         <button type="submit" disabled={disabled || value.trim().length === 0}>
           发送
         </button>

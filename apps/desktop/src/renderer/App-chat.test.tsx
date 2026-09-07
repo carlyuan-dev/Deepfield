@@ -56,6 +56,44 @@ describe("app chat", () => {
     );
   });
 
+  it("sends one manual Skill request and shows the Skill badge on the reply", async () => {
+    const fake = makeFakeApi();
+    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    fake.skills.list.mockResolvedValue([
+      {
+        name: "structured-brief",
+        description: "Turn a topic or rough notes into a concise three-part research brief.",
+      },
+    ]);
+    const { user } = await renderApp(fake);
+    await openProjectChat(fake, user);
+
+    const picker = screen.getByLabelText("Skill") as HTMLSelectElement;
+    await waitFor(() => expect(picker.options.length).toBe(2)); // 不使用 Skill + structured-brief
+
+    await user.selectOptions(picker, "structured-brief");
+    expect(picker.value).toBe("structured-brief");
+    // the selected Skill label is visible before send
+    expect(screen.getByText("Skill: structured-brief")).toBeTruthy();
+
+    await user.type(screen.getByLabelText("消息输入"), "整理研究目标");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(fake.chat.send).toHaveBeenCalledWith("p1", "整理研究目标", REQUEST_ID, {
+      webSearch: false,
+      skillName: "structured-brief",
+    });
+    // the selector returns to the empty state after send
+    await waitFor(() => expect(picker.value).toBe(""));
+
+    // a started event carrying the Skill shows the badge on the assistant draft
+    fake.emit({ requestId: REQUEST_ID, type: "started", skillName: "structured-brief" });
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "测"));
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "试回"));
+    fake.emit(workerEvent(REQUEST_ID, "completed", "测试回复"));
+    await waitFor(() => expect(screen.getByText("测试回复")).toBeTruthy());
+    expect(screen.getByText("Skill: structured-brief")).toBeTruthy();
+  });
+
   it("marks a failed request visibly, keeps the user message and restores the composer", async () => {
     const fake = makeFakeApi();
     fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
