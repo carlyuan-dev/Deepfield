@@ -66,7 +66,10 @@ export function useConversations(api: DesktopApi): ConversationController {
   }, [api, activeConversation]);
 
   const acceptUpdated = useCallback((conversation: Conversation): void => {
-    setActiveConversation(conversation);
+    // Always refresh list metadata (e.g. a late first-message title). The
+    // active Conversation only changes when the update belongs to the one the
+    // user is currently viewing; a late result must never yank the user back
+    // to an older Conversation they switched away from.
     setConversations((previous) => {
       const without = previous.filter((item) => item.id !== conversation.id);
       if (!conversation.hasUserMessage) {
@@ -74,6 +77,9 @@ export function useConversations(api: DesktopApi): ConversationController {
       }
       return [conversation, ...without];
     });
+    setActiveConversation((previous) =>
+      previous !== undefined && previous.id === conversation.id ? conversation : previous,
+    );
   }, []);
 
   const retry = useCallback((): void => {

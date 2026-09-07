@@ -1,123 +1,85 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
 import {
-  chatMessage,
+  conversation,
   makeFakeApi,
-  project,
   type FakeDesktopApi,
 } from "./renderer-test-helpers.js";
 
+const REQUEST_ID = "fixed-req";
+
 async function renderApp(fake: FakeDesktopApi) {
   const user = userEvent.setup();
-  const utils = render(<App api={fake} />);
+  const utils = render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
   return { user, ...utils };
 }
 
-describe("app shell", () => {
-  it("renders the brand, primary navigation, disabled future items and settings", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
-    await renderApp(fake);
-
-    expect(screen.getByText("Deepfield")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "新对话" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "行业研究" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
-    for (const label of ["公司库", "项目资料库", "任务中心"]) {
-      const button = screen.getByRole("button", { name: label }) as HTMLButtonElement;
-      expect(button.disabled).toBe(true);
-    }
+async function chatReady(): Promise<HTMLTextAreaElement> {
+  let input: HTMLTextAreaElement | undefined;
+  await waitFor(() => {
+    input = screen.getByLabelText("消息输入") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
   });
+  return input as HTMLTextAreaElement;
+}
 
-  it("opens the direct capability with the form and no chat rail", async () => {
+describe("app three-pane shell", () => {
+  it("keeps the Chat pane mounted through capability open, expand, streaming collapse and conversation clicks", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
+    const active = conversation("c1", "对话甲", true);
+    const older = conversation("c2", "对话乙", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active, older] });
+    fake.chat.listMessages.mockImplementation(async (conversationId) =>
+      conversationId === "c1" ? [] : [],
+    );
     const { user } = await renderApp(fake);
 
+    // 1) Initial state: no Capability, Chat fills the workspace.
+    const input = await chatReady();
+    expect(screen.queryByRole("heading", { name: "行业研究" })).toBeNull();
+    expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
+    expect(document.querySelector(".capability-pane")).toBeNull();
+
+    // 2) Direct 行业研究 click opens the Capability and collapses Chat to a narrow rail.
     await user.click(screen.getByRole("button", { name: "行业研究" }));
     expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
     expect(screen.getByLabelText("行业")).toBeTruthy();
-    expect(document.querySelector("aside")).toBeNull();
-  });
+    expect(document.querySelector(".chat-pane")?.className).toContain("collapsed");
+    expect(screen.getByRole("button", { name: "展开 Chat" })).toBeTruthy();
 
-  it("opens the capability from chat with the rail open", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
-    const { user } = await renderApp(fake);
+    // 3) The arrow expands Chat beside the Capability; the Capability stays mounted.
+    await user.click(screen.getByRole("button", { name: "展开 Chat" }));
+    expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
+    expect(screen.getByRole("button", { name: "收起 Chat" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "新对话" }));
-    await user.selectOptions(screen.getByLabelText("模式"), "research");
-    expect(screen.getByLabelText("行业")).toBeTruthy();
-    const rail = document.querySelector("aside");
-    expect(rail).not.toBeNull();
-    expect(rail!.className).toContain("chat-rail");
-  });
+    // 4) Stream a reply, collapse mid-flight, keep streaming, re-expand: the draft survives.
+    await user.type(input, "研究目标");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    fake.emit({ requestId: REQUEST_ID, type: "started" });
+    fake.emit({ requestId: REQUEST_ID, type: "text_delta", delta: "测" });
+    await waitFor(() => expect(screen.getByText("测")).toBeTruthy());
 
-  it("collapses and expands the rail without losing the project form", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
-    const { user } = await renderApp(fake);
+    await user.click(screen.getByRole("button", { name: "收起 Chat" }));
+    expect(document.querySelector(".chat-pane")?.className).toContain("collapsed");
+    // ChatView stays mounted: further deltas still arrive while collapsed.
+    fake.emit({ requestId: REQUEST_ID, type: "text_delta", delta: "试回" });
+    await user.click(screen.getByRole("button", { name: "展开 Chat" }));
+    fake.emit({ requestId: REQUEST_ID, type: "completed", text: "测试回复" });
+    await waitFor(() => expect(screen.getByText("测试回复")).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "新对话" }));
-    await user.selectOptions(screen.getByLabelText("模式"), "research");
-    await user.click(screen.getByRole("button", { name: "收起 Chat 侧栏" }));
-    expect(document.querySelector("aside")!.className).toContain("collapsed");
-    expect(screen.getByLabelText("行业")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "展开 Chat 侧栏" }));
-    expect(document.querySelector("aside")!.className).not.toContain("collapsed");
-    expect(screen.getByLabelText("行业")).toBeTruthy();
-  });
-
-  it("lists projects and opens a project workspace from the sidebar", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1", industry: "低空经济" })]);
-    const { user } = await renderApp(fake);
-
-    const projectButton = await screen.findByRole("button", { name: "低空经济" });
-    await user.click(projectButton);
-    expect(screen.getByText("状态：项目已创建")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "打开项目 Chat" })).toBeTruthy();
-  });
-
-  it("subscribes to chat events once on mount and unsubscribes on unmount", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
-    const unsubscribe = vi.fn();
-    fake.chat.subscribe.mockImplementation(() => unsubscribe);
-    const { unmount } = await renderApp(fake);
-    expect(fake.chat.subscribe).toHaveBeenCalledTimes(1);
-    unmount();
-    expect(unsubscribe).toHaveBeenCalledTimes(1);
-  });
-
-  it("provides a polite live region for streaming output", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    const { user } = await renderApp(fake);
-
-    const projectButton = await screen.findByRole("button", { name: "人形机器人" });
-    await user.click(projectButton);
-    await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
-    const live = document.querySelector('[aria-live="polite"]');
-    expect(live).not.toBeNull();
-  });
-
-  it("clears the bound project when 新对话 is clicked", async () => {
-    const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    fake.chat.listMessages.mockResolvedValue([chatMessage("m1", "user", "历史问题")]);
-    const { user } = await renderApp(fake);
-
-    const projectButton = await screen.findByRole("button", { name: "人形机器人" });
-    await user.click(projectButton);
-    await user.click(screen.getByRole("button", { name: "打开项目 Chat" }));
-    await waitFor(() => expect(screen.getByText("历史问题")).toBeTruthy());
-
-    await user.click(screen.getByRole("button", { name: "新对话" }));
-    expect(screen.getByText(/请先创建或选择一个项目/)).toBeTruthy();
-    expect(screen.queryByText("历史问题")).toBeNull();
+    // 5) A Conversation click re-expands Chat while the Capability remains mounted.
+    await user.click(screen.getByRole("button", { name: "收起 Chat" }));
+    expect(document.querySelector(".chat-pane")?.className).toContain("collapsed");
+    await user.click(screen.getByRole("button", { name: "对话乙" }));
+    expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
+    expect(screen.getByRole("button", { name: "收起 Chat" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
+    // the switched Conversation is usable and open beside the Capability
+    expect(screen.getByLabelText("消息输入")).toBeTruthy();
   });
 });

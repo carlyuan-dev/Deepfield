@@ -2,7 +2,7 @@ import type { Project, ProjectScope } from "@deepfield/contracts";
 
 export interface ProjectWorkspaceProps {
   project: Project;
-  onOpenChat(): void;
+  onExpandChat(): void;
 }
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -27,7 +27,7 @@ function scopeEntries(scope: ProjectScope): Array<[string, string]> {
   return entries;
 }
 
-export function ProjectWorkspace({ project, onOpenChat }: ProjectWorkspaceProps) {
+export function ProjectWorkspace({ project, onExpandChat }: ProjectWorkspaceProps) {
   const entries = scopeEntries(project.scope);
   return (
     <div className="project-workspace">
@@ -40,9 +40,9 @@ export function ProjectWorkspace({ project, onOpenChat }: ProjectWorkspaceProps)
           </div>
         ))}
       </dl>
-      <p className="status">状态：项目已创建</p>
+      <p className="status">状态：研究条目已创建</p>
       <p className="notice">研究工作流将在下一阶段接入，尚未执行行业研究。</p>
-      <button onClick={onOpenChat}>打开项目 Chat</button>
+      <button onClick={onExpandChat}>展开 Chat</button>
     </div>
   );
 }

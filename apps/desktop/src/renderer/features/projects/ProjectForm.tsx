@@ -3,7 +3,6 @@ import type { DesktopApi, Project, ProjectScope } from "@deepfield/contracts";
 
 export interface ProjectFormProps {
   api: DesktopApi;
-  launchSource: "direct-ui" | "chat";
   onCreated(project: Project): void;
 }
 
@@ -22,7 +21,7 @@ function parseList(text: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-export function ProjectForm({ api, launchSource, onCreated }: ProjectFormProps) {
+export function ProjectForm({ api, onCreated }: ProjectFormProps) {
   const [industry, setIndustry] = useState("");
   const [focus, setFocus] = useState("");
   const [geography, setGeography] = useState("");
@@ -63,7 +62,11 @@ export function ProjectForm({ api, launchSource, onCreated }: ProjectFormProps) 
       scope.customRequirements = customRequirements;
     }
     try {
-      const project = await api.projects.create({ industry: trimmedIndustry, scope, launchSource });
+      const project = await api.projects.create({
+        industry: trimmedIndustry,
+        scope,
+        launchSource: "direct-ui",
+      });
       onCreated(project);
     } catch {
       setError("创建失败，请重试");
@@ -73,7 +76,7 @@ export function ProjectForm({ api, launchSource, onCreated }: ProjectFormProps) 
 
   return (
     <form className="project-form" onSubmit={handleSubmit}>
-      <h2>创建行业研究项目</h2>
+      <h2>创建行业研究条目</h2>
       {error !== undefined && (
         <p className="error" role="alert">
           {error}
@@ -129,7 +132,7 @@ export function ProjectForm({ api, launchSource, onCreated }: ProjectFormProps) 
         />
       </label>
       <button type="submit" disabled={submitting}>
-        {submitting ? "创建中…" : "创建项目"}
+        {submitting ? "创建中…" : "创建研究条目"}
       </button>
     </form>
   );

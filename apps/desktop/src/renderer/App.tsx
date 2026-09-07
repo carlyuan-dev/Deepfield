@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import type { DesktopApi, Project } from "@deepfield/contracts";
 import { createChatEventHub } from "./state/chat-event-hub.js";
 import { createRequestId } from "./request-id.js";
+import {
+  initialWorkspaceState,
+  workspaceReducer,
+  type ChatPaneState,
+} from "./state/workspace.js";
 import { useConversations } from "./state/use-conversations.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ChatView } from "./components/ChatView.js";
@@ -15,9 +20,9 @@ export interface AppProps {
 
 export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const conversations = useConversations(api);
-  const [view, setView] = useState<"chat" | "capability">("chat");
+  const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspaceState);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [researchProject, setResearchProject] = useState<Project | undefined>(undefined);
+  const [researchItem, setResearchItem] = useState<Project | undefined>(undefined);
   const eventHub = useMemo(() => createChatEventHub(), []);
 
   useEffect(() => {
@@ -28,20 +33,22 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
     };
   }, [api, eventHub]);
 
-  const openChat = (): void => {
-    setSettingsOpen(false);
-    setView("chat");
+  const chatPane: ChatPaneState = workspace.chatPane;
+  const capabilityOpen = workspace.activeCapability !== undefined;
+
+  const toggleChatPane = (): void => {
+    dispatchWorkspace({ type: chatPane === "expanded" ? "COLLAPSE_CHAT" : "EXPAND_CHAT" });
   };
-  const openResearch = (): void => {
-    setSettingsOpen(false);
-    setView("capability");
-  };
-  const openSettings = (): void => {
-    setSettingsOpen(true);
+  const openConversation = (): void => {
+    dispatchWorkspace({ type: "OPEN_CONVERSATION" });
   };
 
   const active: "chat" | "capability" | "settings" =
-    settingsOpen ? "settings" : view === "capability" ? "capability" : "chat";
+    settingsOpen
+      ? "settings"
+      : workspace.activeCapability !== undefined && chatPane === "collapsed"
+        ? "capability"
+        : "chat";
 
   return (
     <div className="shell">
@@ -50,46 +57,68 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
         active={active}
         onNewConversation={() => {
           void conversations.newConversation();
-          openChat();
+          openConversation();
         }}
         onOpenConversation={(conversationId) => {
           conversations.open(conversationId);
-          openChat();
+          openConversation();
         }}
-        onOpenResearch={openResearch}
-        onOpenSettings={openSettings}
+        onOpenResearch={() =>
+          dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId: "industry-research" })
+        }
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="workspace">
         {settingsOpen ? (
           <SettingsView api={api} onBack={() => setSettingsOpen(false)} />
-        ) : view === "capability" ? (
-          <CapabilityView
-            api={api}
-            source="directUi"
-            projectId={researchProject?.id}
-            project={researchProject}
-            onCreated={(project) => {
-              setResearchProject(project);
-            }}
-            onOpenProjectChat={() => openChat()}
-          />
-        ) : conversations.loading ? (
-          <p className="muted">加载对话…</p>
-        ) : conversations.error !== undefined ? (
-          <div className="error" role="alert">
-            {conversations.error}
-            <button onClick={conversations.retry}>重新加载</button>
+        ) : (
+          <div className="workspace-panes">
+            <section
+              className={`chat-pane ${chatPane}`}
+              aria-label="Chat"
+            >
+              {capabilityOpen && (
+                <button
+                  className="chat-pane-toggle"
+                  aria-label={chatPane === "expanded" ? "收起 Chat" : "展开 Chat"}
+                  onClick={toggleChatPane}
+                >
+                  {chatPane === "expanded" ? "‹" : "›"}
+                </button>
+              )}
+              {conversations.loading ? (
+                <p className="muted pane-message">加载对话…</p>
+              ) : conversations.error !== undefined ? (
+                <div className="error pane-message" role="alert">
+                  {conversations.error}
+                  <button onClick={conversations.retry}>重新加载</button>
+                </div>
+              ) : conversations.activeConversation !== undefined ? (
+                <ChatView
+                  key={conversations.activeConversation.id}
+                  api={api}
+                  eventHub={eventHub}
+                  requestIdFactory={requestIdFactory}
+                  conversation={conversations.activeConversation}
+                  acceptUpdated={conversations.acceptUpdated}
+                />
+              ) : null}
+            </section>
+            {capabilityOpen && (
+              <aside className="capability-pane" aria-label="Capability">
+                <CapabilityView
+                  api={api}
+                  projectId={researchItem?.id}
+                  project={researchItem}
+                  onCreated={(project) => {
+                    setResearchItem(project);
+                  }}
+                  onOpenProjectChat={() => openConversation()}
+                />
+              </aside>
+            )}
           </div>
-        ) : conversations.activeConversation !== undefined ? (
-          <ChatView
-            key={conversations.activeConversation.id}
-            api={api}
-            eventHub={eventHub}
-            requestIdFactory={requestIdFactory}
-            conversation={conversations.activeConversation}
-            acceptUpdated={conversations.acceptUpdated}
-          />
-        ) : null}
+        )}
       </main>
     </div>
   );

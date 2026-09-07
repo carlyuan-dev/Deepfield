@@ -62,7 +62,7 @@ export function ChatView({
   }, [state.sendError]);
 
   return (
-    <section className="chat-view" aria-label="项目 Chat">
+    <section className="chat-view" aria-label="Chat">
       <header className="chat-header">
         <div className="chat-context">{conversation.title}</div>
         {state.loadState === "error" && (
