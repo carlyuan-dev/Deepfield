@@ -17,3 +17,8 @@ mac:
     - target: zip
       arch: [arm64]
 artifactName: Deepfield-${version}-${arch}.${ext}
+extraResources:
+  - from: skills
+    to: skills
+    filter:
+      - "**/*"
