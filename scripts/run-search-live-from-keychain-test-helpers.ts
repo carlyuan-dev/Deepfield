@@ -38,6 +38,8 @@ export interface FakeOptions {
   npmArgv: readonly string[];
   /** when true, fake npm verifies DEEPFIELD_SEARCH_PRICING byte equality against this literal. */
   expectedPricing?: string;
+  /** scope env expectation: exact value (overseas) or unset (regular modes). */
+  expectedScope?: { value: string } | { unset: true };
 }
 
 function quote(value: string): string {
@@ -116,6 +118,20 @@ else
   printf fail > "${sandbox.assertionDir}/ok-pricing"
 fi`
     : "";
+  const scopeCheck =
+    opts.expectedScope !== undefined
+      ? ("value" in opts.expectedScope
+          ? `if [ "\${DEEPFIELD_SEARCH_CONTRACT_SCOPE-}" = ${quote(opts.expectedScope.value)} ]; then
+  printf pass > "${sandbox.assertionDir}/ok-scope"
+else
+  printf fail > "${sandbox.assertionDir}/ok-scope"
+fi`
+          : `if [ -z "\${DEEPFIELD_SEARCH_CONTRACT_SCOPE+x}" ]; then
+  printf pass > "${sandbox.assertionDir}/ok-scope"
+else
+  printf fail > "${sandbox.assertionDir}/ok-scope"
+fi`)
+      : "";
   const npmScript = `#!/bin/sh
 : > "${sandbox.npmInvoked}"
 ${envChecks}
@@ -126,6 +142,7 @@ else
 fi
 ${argvCheck}
 ${pricingCheck}
+${scopeCheck}
 exit 0
 `;
   writeFileSync(join(sandbox.bin, "npm"), npmScript);
