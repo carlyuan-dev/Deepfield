@@ -76,12 +76,12 @@ export class ChatService {
     try {
       userMessage = this.repositories.runInTransaction(() => {
         const message = this.repositories.messages.append(conversation.id, "user", content);
-        if (!conversation.hasUserMessage) {
-          updated = this.repositories.conversations.activate(
-            conversation.id,
-            titleFromFirstMessage(content),
-          );
-        }
+        // Every persisted user message refreshes the Conversation's recency;
+        // the deterministic title is only generated for the first message.
+        updated = this.repositories.conversations.activate(
+          conversation.id,
+          conversation.hasUserMessage ? conversation.title : titleFromFirstMessage(content),
+        );
         return message;
       });
     } catch {

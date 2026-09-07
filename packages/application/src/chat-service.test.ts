@@ -154,6 +154,51 @@ describe("chat service", () => {
     expect(recent[0]!.title).toBe(titleFromFirstMessage(content));
   });
 
+  it("refreshes recency on later messages, keeps the first title and re-orders recent", async () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const worker = new FakeWorker({
+      events: (request) => [chatEvent(request.requestId, "completed", "ok")],
+    });
+    const { service } = makeService(db, worker);
+    const a = makeConversation(db);
+    const b = makeConversation(db);
+
+    const setUpdatedAt = (id: string, at: string): void => {
+      db.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(at, id);
+    };
+
+    const firstA = await service.send(a.id, "甲 对话", "req-a1", () => {});
+    expect(firstA.conversation.title).toBe("甲 对话");
+    expect(firstA.conversation.hasUserMessage).toBe(true);
+    await service.send(b.id, "乙 对话", "req-b1", () => {});
+
+    // B is the newer Conversation until A speaks again: age A (2000) and B (2005).
+    setUpdatedAt(a.id, "2000-01-01T00:00:00.000Z");
+    setUpdatedAt(b.id, "2005-01-01T00:00:00.000Z");
+    expect(db.repos.conversations.listRecent().map((conversation) => conversation.id)).toEqual([
+      b.id,
+      a.id,
+    ]);
+
+    const againA = await service.send(a.id, "甲 追问", "req-a2", () => {});
+    expect(againA.conversation.title).toBe("甲 对话"); // first title is kept
+    expect(againA.conversation.updatedAt).toBe(db.repos.conversations.getById(a.id)!.updatedAt);
+    expect(againA.conversation.updatedAt > "2005-01-01T00:00:00.000Z").toBe(true);
+
+    const users = db.repos.messages
+      .listByConversation(a.id)
+      .filter((message) => message.role === "user")
+      .map((message) => message.content);
+    expect(users).toEqual(["甲 对话", "甲 追问"]);
+
+    // A re-enters the top of recent after its later message.
+    expect(db.repos.conversations.listRecent().map((conversation) => conversation.id)).toEqual([
+      a.id,
+      b.id,
+    ]);
+  });
+
   it("forwards a worker failed event without storing an assistant or activity", async () => {
     const db = openTestDb();
     dbs.push(db);

@@ -60,9 +60,11 @@ export function createConversationRepository(db: DatabaseSync): ConversationRepo
     },
 
     listRecent(): Conversation[] {
+      // rowid DESC is the stable tie-breaker when two updates share the same
+      // millisecond timestamp (later-inserted rows win).
       const rows = db
         .prepare(
-          "SELECT * FROM conversations WHERE has_user_message = 1 ORDER BY updated_at DESC",
+          "SELECT * FROM conversations WHERE has_user_message = 1 ORDER BY updated_at DESC, rowid DESC",
         )
         .all() as unknown as ConversationRow[];
       return rows.map(toConversation);
