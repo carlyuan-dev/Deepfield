@@ -32,10 +32,11 @@ Deepfield 是供一名财经记者私人使用的 Apple Silicon macOS 桌面应�
 
 1. 普通 Chat；
 2. 用户通过按钮开启的 DeepSeek 内置联网搜索；
-3. 调用 Deepfield 原子 Tools；
-4. 启动有持久化业务状态的 Capability。
+3. 用户手动选择的 Pi Skill；
+4. 调用 Deepfield 原子 Tools；
+5. 启动有持久化业务状态的 Capability。
 
-Chat 输入框提供“联网搜索”按钮，默认关闭。用户打开后，本轮消息必须执行联网搜索，界面展示联网状态，回答中的来源可点击。Capability 可以拥有独立的联网设置。
+Chat 输入框提供“联网搜索”按钮，默认关闭。用户打开后，本轮消息必须执行联网搜索，界面展示联网状态，回答中的来源可点击。Chat 同时提供手动 Skill 选择器，选中的标准 Pi `SKILL.md` 只作用于当前一次发送。Capability 可以拥有独立的联网设置。
 
 行业公司发现既可以在外部通用 Agent 中完成并粘贴到 Deepfield，也可以直接在 Deepfield Chat 中完成。Chat 结果可以一键送入公司候选整理页面。
 
@@ -104,7 +105,7 @@ Research Agent 以一次调研任务为上下文边界。运行结束后释放 A
 
 当前交付顺序为：
 
-1. Chat-1：通用对话、短期记忆、历史恢复、DeepSeek 联网按钮、流式回答和可点击来源；
+1. Chat-1：通用对话、短期记忆、历史恢复、DeepSeek 联网按钮、手动 Pi Skill、流式回答和可点击来源；
 2. Chat-2：少量实用 Tool 调用；
 3. Chat-3：拖入文件、项目资料库和最小文件检索；
 4. 行业创建与公司候选整理；
