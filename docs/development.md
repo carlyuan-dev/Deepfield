@@ -88,6 +88,20 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   应用从不把 key 写回 UI/日志/错误文案）
 - `attachments/` —— 附件目录
 
+## Chat Skill（Chat-1A）
+
+- Skill 目录解析（`apps/desktop/src/main/skill-paths.ts`）：开发态为
+  `app.getAppPath()/skills`（仓库根 `skills/`）；打包态为
+  `Contents/Resources/skills`（`electron-builder.yml` 的 `extraResources` 会把
+  `skills/**` 带入 Resources）。
+- 当前内置：`skills/structured-brief/SKILL.md`（Pi 标准 SKILL.md；打包后位于
+  `Deepfield.app/Contents/Resources/skills/structured-brief/SKILL.md`）。
+- 手动测试一次 Skill 回复：启动应用（`DEEPFIELD_AGENT_MODE=fake npm run dev` 或
+  打包 app），进入项目 Chat；在输入区 Skill 下拉选择 `structured-brief`，输入一段
+  粗略研究笔记后发送。该次回复应按 Skill 指令输出
+  “核心结论 / 关键依据 / 待核实问题”三节；选择在发送后自动清除，下一条消息回到
+  普通对话。
+
 ## 本地打包（arm64）
 
 ```bash
