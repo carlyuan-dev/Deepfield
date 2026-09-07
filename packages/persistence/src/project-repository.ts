@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { CreateProjectInput, ConversationId, Project, ProjectId } from "@deepfield/contracts";
+import type { CreateProjectInput, Project, ProjectId } from "@deepfield/contracts";
 import { createActivityRepository } from "./activity-repository.js";
-import { insertConversationRow } from "./conversation-repository.js";
 import { toProject } from "./mappers.js";
 import type { ProjectRepository, ProjectRow } from "./types.js";
 
@@ -23,7 +22,7 @@ export function createProjectRepository(db: DatabaseSync): ProjectRepository {
   const activities = createActivityRepository(db);
 
   return {
-    createWithConversation(input: CreateProjectInput): Project {
+    create(input: CreateProjectInput): Project {
       const now = new Date().toISOString();
       const project: Project = {
         id: randomUUID() as ProjectId,
@@ -37,13 +36,6 @@ export function createProjectRepository(db: DatabaseSync): ProjectRepository {
       db.exec("BEGIN IMMEDIATE;");
       try {
         insertProjectRow(db, project);
-        insertConversationRow(db, {
-          id: randomUUID() as ConversationId,
-          projectId: project.id,
-          hasUserMessage: false,
-          createdAt: now,
-          updatedAt: now,
-        });
         activities.append(
           project.id,
           "project.created",

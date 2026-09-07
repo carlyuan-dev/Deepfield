@@ -2,6 +2,8 @@ import type {
   AgentWorkerEvent,
   ChatMessage,
   ChatRequestOptions,
+  Conversation,
+  ConversationId,
   CreateProjectInput,
   Project,
   ProjectId,
@@ -95,6 +97,42 @@ export class FakeProjectService {
   }
 }
 
+export class FakeConversationService {
+  createCalls = 0;
+  openInitialCalls = 0;
+  listRecentCalls = 0;
+  recent: Conversation[] = [];
+  initialActive: Conversation | undefined;
+
+  makeConversation(id: string, title = "新对话", hasUserMessage = false): Conversation {
+    return {
+      id: id as ConversationId,
+      title,
+      hasUserMessage,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  create(): Conversation {
+    this.createCalls += 1;
+    const created = this.makeConversation(`c-created-${this.createCalls}`);
+    this.initialActive = created;
+    return created;
+  }
+
+  openInitial(): { active: Conversation; recent: Conversation[] } {
+    this.openInitialCalls += 1;
+    const active = this.initialActive ?? this.create();
+    return { active, recent: this.recent };
+  }
+
+  listRecent(): Conversation[] {
+    this.listRecentCalls += 1;
+    return this.recent;
+  }
+}
+
 export class FakeSecretSettings {
   hasCalls: string[] = [];
   setCalls: Array<{ name: string; value: string }> = [];
@@ -123,7 +161,7 @@ export class FakeSkillList {
 
 export class FakeChatService {
   sendCalls: Array<{
-    projectId: string;
+    conversationId: string;
     content: string;
     requestId: string;
     options: ChatRequestOptions;
@@ -133,19 +171,28 @@ export class FakeChatService {
   private listeners: Array<(event: AgentWorkerEvent) => void> = [];
 
   send(
-    projectId: string,
+    conversationId: string,
     content: string,
     requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
     options: ChatRequestOptions,
   ) {
-    this.sendCalls.push({ projectId, content, requestId, options });
+    this.sendCalls.push({ conversationId, content, requestId, options });
     this.listeners.push(onEvent);
-    return Promise.resolve({ requestId });
+    return Promise.resolve({
+      requestId,
+      conversation: {
+        id: conversationId as ConversationId,
+        title: content.slice(0, 28),
+        hasUserMessage: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
   }
 
-  listMessages(projectId: string): ChatMessage[] {
-    this.listMessagesCalls.push(projectId);
+  listMessages(conversationId: string): ChatMessage[] {
+    this.listMessagesCalls.push(conversationId);
     return this.history;
   }
 
@@ -156,13 +203,14 @@ export class FakeChatService {
 
 export function makeDeps() {
   const ipcMain = new FakeIpcMain();
+  const conversations = new FakeConversationService();
   const projects = new FakeProjectService();
   const settings = new FakeSecretSettings();
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
-  const deps: IpcServiceDeps = { ipcMain, projects, settings, skills, chat };
+  const deps: IpcServiceDeps = { ipcMain, conversations, projects, settings, skills, chat };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, projects, settings, skills, chat, dispose };
+  return { ipcMain, conversations, projects, settings, skills, chat, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

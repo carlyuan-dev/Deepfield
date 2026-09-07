@@ -4,6 +4,8 @@ import type {
   AgentWorkerEvent,
   ChatMessage,
   ChatRequestOptions,
+  ChatSendResult,
+  Conversation,
   ConversationId,
   CreateProjectInput,
   DesktopApi,
@@ -14,6 +16,11 @@ import type {
 } from "@deepfield/contracts";
 
 export interface FakeDesktopApi extends DesktopApi {
+  conversations: {
+    create: Mock<() => Promise<Conversation>>;
+    openInitial: Mock<() => Promise<{ active: Conversation; recent: Conversation[] }>>;
+    listRecent: Mock<() => Promise<Conversation[]>>;
+  };
   projects: {
     create: Mock<(input: CreateProjectInput) => Promise<Project>>;
     list: Mock<() => Promise<Project[]>>;
@@ -28,14 +35,14 @@ export interface FakeDesktopApi extends DesktopApi {
   chat: {
     send: Mock<
       (
-        projectId: string,
+        conversationId: string,
         content: string,
         requestId: string,
         options: ChatRequestOptions,
-      ) => Promise<{ requestId: string }>
+      ) => Promise<ChatSendResult>
     >;
     subscribe: Mock<(listener: (event: AgentWorkerEvent) => void) => () => void>;
-    listMessages: Mock<(projectId: string) => Promise<ChatMessage[]>>;
+    listMessages: Mock<(conversationId: string) => Promise<ChatMessage[]>>;
   };
   listeners: Set<(event: AgentWorkerEvent) => void>;
   emit(event: AgentWorkerEvent): void;
@@ -44,9 +51,42 @@ export interface FakeDesktopApi extends DesktopApi {
 
 let sendSeq = 0;
 
+function conversationFixture(): Conversation {
+  return {
+    id: `c-${++sendSeq}` as ConversationId,
+    title: "新对话",
+    hasUserMessage: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+export function chatSendResult(requestId: string, conversationId = "conv-1"): ChatSendResult {
+  return {
+    requestId,
+    conversation: {
+      id: conversationId as ConversationId,
+      title: "新对话",
+      hasUserMessage: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+}
+
 export function makeFakeApi(): FakeDesktopApi {
   const listeners = new Set<(event: AgentWorkerEvent) => void>();
   const api = {
+    conversations: {
+      create: vi.fn(async (): Promise<Conversation> => conversationFixture()),
+      openInitial: vi.fn(
+        async (): Promise<{ active: Conversation; recent: Conversation[] }> => {
+          const active = conversationFixture();
+          return { active, recent: [] };
+        },
+      ),
+      listRecent: vi.fn(async (): Promise<Conversation[]> => []),
+    },
     projects: {
       create: vi.fn(async (input: CreateProjectInput): Promise<Project> => ({
         id: `p-${++sendSeq}` as ProjectId,
@@ -68,12 +108,19 @@ export function makeFakeApi(): FakeDesktopApi {
     chat: {
       send: vi.fn(
         async (
-          _projectId: string,
+          conversationId: string,
           _content: string,
           requestId: string,
           _options: ChatRequestOptions,
-        ): Promise<{ requestId: string }> => {
-          return { requestId };
+        ): Promise<ChatSendResult> => {
+          const conversation: Conversation = {
+            id: conversationId as ConversationId,
+            title: "新对话",
+            hasUserMessage: true,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
+          return { requestId, conversation };
         },
       ),
       subscribe: vi.fn((listener: (event: AgentWorkerEvent) => void): (() => void) => {

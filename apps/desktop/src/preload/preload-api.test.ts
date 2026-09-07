@@ -38,7 +38,8 @@ describe("preload api", () => {
   it("exposes only the DesktopApi shape without ipcRenderer or secrets", () => {
     const { ipc } = makeFakeIpc();
     const api: DesktopApi = createPreloadApi(ipc);
-    expect(Object.keys(api).sort()).toEqual(["chat", "projects", "settings", "skills"]);
+    expect(Object.keys(api).sort()).toEqual(["chat", "conversations", "projects", "settings", "skills"]);
+    expect(Object.keys(api.conversations).sort()).toEqual(["create", "listRecent", "openInitial"]);
     expect(Object.keys(api.projects).sort()).toEqual(["create", "list"]);
     expect(Object.keys(api.settings).sort()).toEqual(["hasDeepSeekKey", "setDeepSeekKey"]);
     expect(Object.keys(api.skills).sort()).toEqual(["list"]);
@@ -56,17 +57,23 @@ describe("preload api", () => {
     await api.projects.list();
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
+    await api.conversations.create();
+    await api.conversations.openInitial();
+    await api.conversations.listRecent();
     await api.skills.list();
-    await api.chat.send("p1", "你好", "req-1", CHAT_OPTIONS);
-    await api.chat.listMessages("p1");
+    await api.chat.send("conv-1", "你好", "req-1", CHAT_OPTIONS);
+    await api.chat.listMessages("conv-1");
     expect(invokes).toEqual([
       { channel: IPC_CHANNELS.projectsCreate, args: [input] },
       { channel: IPC_CHANNELS.projectsList, args: [] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
+      { channel: IPC_CHANNELS.conversationsCreate, args: [] },
+      { channel: IPC_CHANNELS.conversationsOpenInitial, args: [] },
+      { channel: IPC_CHANNELS.conversationsListRecent, args: [] },
       { channel: IPC_CHANNELS.skillsList, args: [] },
-      { channel: IPC_CHANNELS.chatSend, args: ["p1", "你好", "req-1", CHAT_OPTIONS] },
-      { channel: IPC_CHANNELS.chatListMessages, args: ["p1"] },
+      { channel: IPC_CHANNELS.chatSend, args: ["conv-1", "你好", "req-1", CHAT_OPTIONS] },
+      { channel: IPC_CHANNELS.chatListMessages, args: ["conv-1"] },
     ]);
   });
 

@@ -3,15 +3,16 @@ import {
   DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type ChatMessage,
+  type ChatRequestOptions,
 } from "@deepfield/contracts";
-import { ChatService, ChatServiceError } from "./chat-service.js";
+import { ChatService, ChatServiceError, titleFromFirstMessage } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 import {
   chatEvent,
   FakeWorker,
   makeChatService as makeService,
-  makeProject,
+  makeConversation,
   makeSecrets,
 } from "./chat-service-helpers.js";
 
@@ -31,9 +32,9 @@ describe("chat service", () => {
     const contextBuilder = new ContextBuilder(db.repos);
     const secrets = makeSecrets("sk-configured");
     const service = new ChatService(db.repos, contextBuilder, secrets, worker);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
 
-    await expect(service.send(project.id, "   ", "req-1", () => {})).rejects.toBeInstanceOf(
+    await expect(service.send(conversation.id, "   ", "req-1", () => {})).rejects.toBeInstanceOf(
       ChatServiceError,
     );
     expect(secrets.getCalls).toBe(0);
@@ -46,25 +47,37 @@ describe("chat service", () => {
     dbs.push(db);
     const worker = new FakeWorker();
     const contextBuilder = new ContextBuilder(db.repos);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
 
     const missing = new ChatService(db.repos, contextBuilder, makeSecrets(undefined), worker);
-    await expect(missing.send(project.id, "你好", "req-1", () => {})).rejects.toBeInstanceOf(
-      ChatServiceError,
-    );
+    await expect(
+      missing.send(conversation.id, "你好", "req-1", () => {}),
+    ).rejects.toBeInstanceOf(ChatServiceError);
     expect(worker.requests).toHaveLength(0);
     expect(db.repos.messages.listByConversation(conversation.id)).toEqual([]);
-    expect(db.repos.conversations.listByProject(project.id)[0]!.hasUserMessage).toBe(false);
+    expect(db.repos.conversations.getById(conversation.id)!.hasUserMessage).toBe(false);
     expect(db.repos.conversations.listRecent()).toEqual([]);
 
     const blank = new ChatService(db.repos, contextBuilder, makeSecrets("   "), worker);
-    await expect(blank.send(project.id, "你好", "req-1", () => {})).rejects.toBeInstanceOf(
-      ChatServiceError,
+    await expect(
+      blank.send(conversation.id, "你好", "req-1", () => {}),
+    ).rejects.toBeInstanceOf(ChatServiceError);
+    expect(worker.requests).toHaveLength(0);
+  });
+
+  it("fails safely when the conversation id does not exist", async () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const worker = new FakeWorker();
+    const { service } = makeService(db, worker);
+
+    await expect(service.send("missing-conversation", "你好", "req-1", () => {})).rejects.toThrow(
+      /conversation not found/,
     );
     expect(worker.requests).toHaveLength(0);
   });
 
-  it("persists the user first, streams events in order and stores one assistant", async () => {
+  it("sends the first standalone message: raw content persisted, deterministic title returned, no Project field, options forwarded", async () => {
     const db = openTestDb();
     dbs.push(db);
     const worker = new FakeWorker({
@@ -76,35 +89,46 @@ describe("chat service", () => {
       ],
     });
     const { service, finished } = makeService(db, worker);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
 
     const forwarded: AgentWorkerEvent[] = [];
     let userMessageAtSend: ChatMessage | undefined;
     let contextMessagesAtSend: Array<{ role: string; content: string }> = [];
+    let contextKeysAtSend: string[] = [];
     worker.onSend = (request) => {
       userMessageAtSend = db.repos.messages.listByConversation(conversation.id)[0];
       contextMessagesAtSend = request.context.messages;
+      contextKeysAtSend = Object.keys(request.context);
     };
 
-    const result = await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
+    const skillOptions: ChatRequestOptions = { webSearch: false, skillName: "structured-brief" };
+    const content = "整理  人形机器人 行业目标";
+    const result = await service.send(conversation.id, content, "req-1", (event) =>
+      forwarded.push(event),
+    skillOptions);
     expect(result.requestId).toBe("req-1");
+    expect(result.conversation.id).toBe(conversation.id);
+    expect(result.conversation.title).toBe(titleFromFirstMessage(content));
+    expect(result.conversation.hasUserMessage).toBe(true);
     await finished.promise;
 
-    expect(userMessageAtSend).toMatchObject({ role: "user", content: "你好" });
-    expect(contextMessagesAtSend.some((message) => message.content === "你好")).toBe(false);
+    expect(userMessageAtSend).toMatchObject({ role: "user", content });
+    expect(contextMessagesAtSend.some((message) => message.content === content)).toBe(false);
     expect(contextMessagesAtSend.length).toBe(0);
+    expect(contextKeysAtSend).not.toContain("projectId");
 
     expect(worker.requests).toHaveLength(1);
     const request = worker.requests[0]!;
     expect(request).toMatchObject({
       requestId: "req-1",
       kind: "chat.prompt",
-      prompt: "你好",
+      prompt: content,
       modelId: DEFAULT_DEEPSEEK_MODEL_ID,
       apiKey: "sk-configured",
+      options: skillOptions,
     });
     expect(request.context.conversationId).toBe(conversation.id);
-    expect(request.context.projectId).toBe(project.id);
+    expect(request.context).not.toHaveProperty("projectId");
 
     expect(forwarded).toEqual([
       { requestId: "req-1", type: "started" },
@@ -115,30 +139,32 @@ describe("chat service", () => {
 
     const messages = db.repos.messages.listByConversation(conversation.id);
     expect(messages).toHaveLength(2);
-    expect(messages[0]).toMatchObject({ role: "user", content: "你好" });
+    expect(messages[0]).toMatchObject({ role: "user", content });
     expect(messages[1]).toMatchObject({ role: "assistant", content: "测试回复" });
 
-    const activities = db.repos.activities.listByProject(project.id);
-    const completed = activities.find((activity) => activity.type === "chat.message.completed");
-    expect(completed).toMatchObject({ source: "chat", importance: "normal" });
-    const payload = JSON.stringify(completed?.payload ?? {});
-    expect(payload).not.toContain("测试回复");
-    expect(payload).not.toContain("sk-configured");
+    // Standalone Chat writes no Project activity.
+    const activityCount = db.db
+      .prepare("SELECT count(*) AS n FROM project_activity_events")
+      .get() as unknown as { n: number };
+    expect(activityCount.n).toBe(0);
 
-    expect(db.repos.conversations.listRecent()).toHaveLength(1);
+    const recent = db.repos.conversations.listRecent();
+    expect(recent).toHaveLength(1);
+    expect(recent[0]!.id).toBe(conversation.id);
+    expect(recent[0]!.title).toBe(titleFromFirstMessage(content));
   });
 
-  it("forwards a worker failed event without storing an assistant or completed activity", async () => {
+  it("forwards a worker failed event without storing an assistant or activity", async () => {
     const db = openTestDb();
     dbs.push(db);
     const worker = new FakeWorker({
       events: (request) => [chatEvent(request.requestId, "failed", "provider_error")],
     });
     const { service, finished } = makeService(db, worker);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
 
     const forwarded: AgentWorkerEvent[] = [];
-    await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
+    await service.send(conversation.id, "你好", "req-1", (event) => forwarded.push(event));
     await finished.promise;
 
     expect(forwarded).toEqual([
@@ -147,9 +173,8 @@ describe("chat service", () => {
     const messages = db.repos.messages.listByConversation(conversation.id);
     expect(messages).toHaveLength(1);
     expect(messages[0]!.role).toBe("user");
-    const activities = db.repos.activities.listByProject(project.id);
-    expect(activities).toHaveLength(1);
-    expect(activities[0]!.type).toBe("project.created");
+    expect(db.repos.conversations.getById(conversation.id)!.hasUserMessage).toBe(true);
+    expect(db.repos.conversations.listRecent()).toHaveLength(1);
   });
 
   it("ignores events after the first terminal and persists at most once", async () => {
@@ -163,17 +188,15 @@ describe("chat service", () => {
       ],
     });
     const { service, finished } = makeService(db, worker);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
 
     const forwarded: AgentWorkerEvent[] = [];
-    await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
+    await service.send(conversation.id, "你好", "req-1", (event) => forwarded.push(event));
     await finished.promise;
 
     expect(forwarded).toEqual([{ requestId: "req-1", type: "completed", text: "最终" }]);
     const messages = db.repos.messages.listByConversation(conversation.id);
     expect(messages.filter((message) => message.role === "assistant")).toHaveLength(1);
-    const activities = db.repos.activities.listByProject(project.id);
-    expect(activities.filter((activity) => activity.type === "chat.message.completed")).toHaveLength(1);
   });
 
   it("uses an injectable request id factory", async () => {
@@ -183,9 +206,9 @@ describe("chat service", () => {
       events: (request) => [chatEvent(request.requestId, "completed", "ok")],
     });
     const { service, finished } = makeService(db, worker);
-    const { project } = makeProject(db);
+    const conversation = makeConversation(db);
 
-    const result = await service.send(project.id, "你好", "custom-id-9", () => {});
+    const result = await service.send(conversation.id, "你好", "custom-id-9", () => {});
     await finished.promise;
 
     expect(result.requestId).toBe("custom-id-9");
@@ -197,9 +220,9 @@ describe("chat service", () => {
     dbs.push(db);
     const worker = new FakeWorker({ neverEnds: true });
     const { service } = makeService(db, worker);
-    const { project } = makeProject(db);
+    const conversation = makeConversation(db);
 
-    const result = await service.send(project.id, "你好", "req-1", () => {});
+    const result = await service.send(conversation.id, "你好", "req-1", () => {});
     expect(result.requestId).toBe("req-1");
     await new Promise((resolve) => setImmediate(resolve));
     expect(worker.requests).toHaveLength(1);
@@ -215,10 +238,10 @@ describe("chat service", () => {
       ],
     });
     const { service, finished } = makeService(db, worker);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
 
     let sinkCalls = 0;
-    await service.send(project.id, "你好", "req-1", () => {
+    await service.send(conversation.id, "你好", "req-1", () => {
       sinkCalls += 1;
       throw new Error("sink destroyed");
     });

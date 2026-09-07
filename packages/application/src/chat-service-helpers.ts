@@ -1,4 +1,4 @@
-import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
+import type { AgentWorkerEvent, AgentWorkerRequest, Conversation } from "@deepfield/contracts";
 import type { AgentWorkerPort, SecretReader } from "./ports.js";
 import type { TestDb } from "./application-test-helpers.js";
 import { ChatService } from "./chat-service.js";
@@ -94,12 +94,6 @@ export function makeChatService(
   return { service, finished };
 }
 
-export function makeProject(db: TestDb) {
-  const project = db.repos.projects.createWithConversation({
-    industry: "人形机器人",
-    scope: {},
-    launchSource: "direct-ui",
-  });
-  const conversation = db.repos.conversations.listByProject(project.id)[0]!;
-  return { project, conversation };
+export function makeConversation(db: TestDb): Conversation {
+  return db.repos.conversations.create();
 }

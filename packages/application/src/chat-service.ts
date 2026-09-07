@@ -6,8 +6,9 @@ import {
   type AgentWorkerRequest,
   type ChatMessage,
   type ChatRequestOptions,
+  type ChatSendResult,
+  type Conversation,
   type ConversationId,
-  type ProjectId,
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { ContextBuilder } from "./context-builder.js";
@@ -15,15 +16,13 @@ import type { AgentWorkerPort, SecretReader } from "./ports.js";
 
 export const DEEPSEEK_KEY_NAME = "deepseek.apiKey";
 
+export type { ChatSendResult } from "@deepfield/contracts";
+
 export class ChatServiceError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ChatServiceError";
   }
-}
-
-export interface ChatSendResult {
-  requestId: string;
 }
 
 export interface ChatServiceOptions {
@@ -33,6 +32,13 @@ export interface ChatServiceOptions {
 const FAILED_MESSAGE = "chat request failed";
 
 const DEFAULT_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
+
+/** Deterministic first-message title: trimmed single-spaced text, 28 chars max. */
+export function titleFromFirstMessage(content: string): string {
+  const normalized = content.trim().replace(/\s+/g, " ");
+  const characters = Array.from(normalized);
+  return characters.length <= 28 ? normalized : `${characters.slice(0, 28).join("")}…`;
+}
 
 export class ChatService {
   constructor(
@@ -44,7 +50,7 @@ export class ChatService {
   ) {}
 
   async send(
-    projectId: string,
+    conversationId: string,
     content: string,
     requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
@@ -60,26 +66,28 @@ export class ChatService {
     if (apiKey === undefined || apiKey.trim().length === 0) {
       throw new ChatServiceError("deepseek api key is not configured");
     }
-    const project = this.repositories.projects.getById(projectId as ProjectId);
-    if (!project) {
-      throw new ChatServiceError("project not found");
-    }
-    const conversation = this.repositories.conversations.listByProject(projectId as ProjectId)[0];
+    const conversation = this.repositories.conversations.getById(conversationId as ConversationId);
     if (!conversation) {
       throw new ChatServiceError("conversation not found");
     }
 
     let userMessage: ChatMessage;
+    let updated: Conversation = conversation;
     try {
       userMessage = this.repositories.runInTransaction(() => {
         const message = this.repositories.messages.append(conversation.id, "user", content);
-        this.repositories.conversations.markHasUserMessage(conversation.id);
+        if (!conversation.hasUserMessage) {
+          updated = this.repositories.conversations.activate(
+            conversation.id,
+            titleFromFirstMessage(content),
+          );
+        }
         return message;
       });
     } catch {
       throw new ChatServiceError("failed to persist user message");
     }
-    const context = this.contextBuilder.build(project.id, { excludeMessageId: userMessage.id });
+    const context = this.contextBuilder.build(conversation.id, { excludeMessageId: userMessage.id });
 
     const request: AgentWorkerRequest = {
       requestId,
@@ -91,18 +99,14 @@ export class ChatService {
       modelId: DEFAULT_DEEPSEEK_MODEL_ID,
     };
 
-    void this.consume(request, conversation.id, project.id, onEvent).catch(() => {
+    void this.consume(request, conversation.id, onEvent).catch(() => {
       // Background consumption must never surface as an unhandled rejection.
     });
-    return { requestId };
+    return { requestId, conversation: updated };
   }
 
-  listMessages(projectId: string): ChatMessage[] {
-    const project = this.repositories.projects.getById(projectId as ProjectId);
-    if (!project) {
-      throw new ChatServiceError("project not found");
-    }
-    const conversation = this.repositories.conversations.listByProject(projectId as ProjectId)[0];
+  listMessages(conversationId: string): ChatMessage[] {
+    const conversation = this.repositories.conversations.getById(conversationId as ConversationId);
     if (!conversation) {
       throw new ChatServiceError("conversation not found");
     }
@@ -112,7 +116,6 @@ export class ChatService {
   private async consume(
     request: AgentWorkerRequest,
     conversationId: ConversationId,
-    projectId: ProjectId,
     onEvent: (event: AgentWorkerEvent) => void,
   ): Promise<void> {
     let settled = false;
@@ -151,16 +154,10 @@ export class ChatService {
         }
         if (event.type === "completed") {
           try {
+            // Standalone Chat has no Project: persist the assistant reply only,
+            // without writing a Project activity event.
             this.repositories.runInTransaction(() => {
               this.repositories.messages.append(conversationId, "assistant", event.text);
-              this.repositories.activities.append(
-                projectId,
-                "chat.message.completed",
-                "chat",
-                "normal",
-                "Chat 回复完成",
-                { requestId: request.requestId, conversationId },
-              );
             });
           } catch {
             fail("chat_persistence_failed");

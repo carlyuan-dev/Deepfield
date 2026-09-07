@@ -111,6 +111,7 @@ void app.whenReady().then(async () => {
   });
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
+    conversations: appRuntime.conversationService,
     projects: appRuntime.projectService,
     settings: secrets,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },

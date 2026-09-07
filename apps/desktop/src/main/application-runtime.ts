@@ -2,6 +2,7 @@ import type { Repositories } from "@deepfield/persistence";
 import {
   ChatService,
   ContextBuilder,
+  ConversationService,
   ProjectService,
   type AgentWorkerPort,
   type SecretReader,
@@ -15,12 +16,14 @@ export interface ApplicationRuntimeDeps {
 
 export interface ApplicationRuntime {
   projectService: ProjectService;
+  conversationService: ConversationService;
   contextBuilder: ContextBuilder;
   chatService: ChatService;
 }
 
 export function createApplicationRuntime(deps: ApplicationRuntimeDeps): ApplicationRuntime {
   const projectService = new ProjectService(deps.repositories);
+  const conversationService = new ConversationService(deps.repositories);
   const contextBuilder = new ContextBuilder(deps.repositories);
   const chatService = new ChatService(
     deps.repositories,
@@ -28,5 +31,5 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.secrets,
     deps.worker,
   );
-  return { projectService, contextBuilder, chatService };
+  return { projectService, conversationService, contextBuilder, chatService };
 }

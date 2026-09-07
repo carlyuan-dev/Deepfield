@@ -35,12 +35,7 @@ describe("repository transactions", () => {
   it("rolls back all writes when work throws and preserves the original error", () => {
     const { repos, cleanup } = openTestRepos();
     open.push(cleanup);
-    const project = repos.projects.createWithConversation({
-      industry: "人形机器人",
-      scope: {},
-      launchSource: "direct-ui",
-    });
-    const conversation = repos.conversations.listByProject(project.id)[0]!;
+    const conversation = repos.conversations.create();
 
     const boom = new Error("boom in the middle");
     expect(() =>
@@ -55,12 +50,7 @@ describe("repository transactions", () => {
   it("commits all writes when work succeeds", () => {
     const { repos, cleanup } = openTestRepos();
     open.push(cleanup);
-    const project = repos.projects.createWithConversation({
-      industry: "人形机器人",
-      scope: {},
-      launchSource: "direct-ui",
-    });
-    const conversation = repos.conversations.listByProject(project.id)[0]!;
+    const conversation = repos.conversations.create();
 
     const result = repos.runInTransaction(() => {
       repos.messages.append(conversation.id, "user", "a");

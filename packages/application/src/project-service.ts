@@ -23,7 +23,7 @@ export class ProjectService {
     if (input.industry.trim().length === 0) {
       throw new ProjectServiceError("industry must not be blank");
     }
-    return this.repositories.projects.createWithConversation({
+    return this.repositories.projects.create({
       ...input,
       industry: input.industry.trim(),
     });

@@ -65,6 +65,33 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    // Development migration: standalone Conversations no longer belong to a
+    // Project. The user approved discarding current test conversations, so the
+    // two Chat tables are rebuilt without project references.
+    version: 3,
+    up(db) {
+      db.exec(`
+        DROP TABLE messages;
+        DROP TABLE conversations;
+        CREATE TABLE conversations(
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          has_user_message INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE messages(
+          id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+          role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+          content TEXT NOT NULL, created_at TEXT NOT NULL,
+          FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_messages_conversation_id ON messages(conversation_id, created_at);
+        CREATE INDEX idx_conversations_recent ON conversations(has_user_message, updated_at);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

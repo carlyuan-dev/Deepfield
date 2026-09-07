@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("project service", () => {
-  it("creates a direct-ui project with a lazy empty conversation and no worker involvement", () => {
+  it("creates a direct-ui project with a silent activity and never creates a Conversation", () => {
     const db = openTestDb();
     dbs.push(db);
     const service = new ProjectService(db.repos);
@@ -26,9 +26,10 @@ describe("project service", () => {
     expect(project.industry).toBe("人形机器人");
     expect(project.status).toBe("draft");
 
-    const conversations = db.repos.conversations.listByProject(project.id);
-    expect(conversations).toHaveLength(1);
-    expect(conversations[0]!.hasUserMessage).toBe(false);
+    const conversationCount = db.db
+      .prepare("SELECT count(*) AS n FROM conversations")
+      .get() as unknown as { n: number };
+    expect(conversationCount.n).toBe(0);
 
     const activities = db.repos.activities.listByProject(project.id);
     expect(activities).toHaveLength(1);
@@ -39,7 +40,6 @@ describe("project service", () => {
     });
 
     expect(db.repos.conversations.listRecent()).toEqual([]);
-    expect(db.repos.messages.listByConversation(conversations[0]!.id)).toEqual([]);
   });
 
   it("re-validates the input and rejects blank industries, invalid scope and launch source", () => {

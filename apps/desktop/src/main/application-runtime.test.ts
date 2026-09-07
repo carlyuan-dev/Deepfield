@@ -32,15 +32,18 @@ describe("application runtime composition", () => {
       },
     });
 
-    const project = runtime.projectService.create({
+    // Project creation stays isolated from standalone Conversations.
+    runtime.projectService.create({
       industry: "人形机器人",
       scope: {},
       launchSource: "direct-ui",
     });
-    const conversation = db.repos.conversations.listByProject(project.id)[0]!;
+    expect(db.repos.conversations.listRecent()).toEqual([]);
+
+    const conversation = runtime.conversationService.create();
     const forwarded: unknown[] = [];
     const result = await runtime.chatService.send(
-      project.id,
+      conversation.id,
       "你好",
       "runtime-req-1",
       (event) => forwarded.push(event),
@@ -49,6 +52,7 @@ describe("application runtime composition", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(result.requestId).toBe("runtime-req-1");
+    expect(result.conversation.id).toBe(conversation.id);
     expect(requests).toEqual([result.requestId]);
     expect(forwarded).toEqual([
       { requestId: result.requestId, type: "started" },
@@ -59,5 +63,28 @@ describe("application runtime composition", () => {
     expect(messages[1]).toMatchObject({ role: "assistant", content: "运行结果" });
     expect(requests[0] && runtime.chatService).toBeDefined();
     expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-v4-flash");
+  });
+
+  it("exposes conversation create, openInitial and listRecent", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const runtime = createApplicationRuntime({
+      repositories: db.repos,
+      secrets: { get: () => undefined },
+      worker: {
+        send: () => ({
+          async *[Symbol.asyncIterator]() {
+            /* no events */
+          },
+        }),
+      },
+    });
+
+    const created = runtime.conversationService.create();
+    expect(created.title).toBe("新对话");
+    const initial = runtime.conversationService.openInitial();
+    expect(initial.active.id).toBe(created.id);
+    expect(initial.recent).toEqual([]);
+    expect(runtime.conversationService.listRecent()).toEqual([]);
   });
 });

@@ -133,7 +133,6 @@ export function request(options?: ChatRequestOptions): AgentWorkerRequest {
     kind: "chat.prompt",
     prompt: "当前问题",
     context: {
-      projectId: "p1",
       conversationId: "c1",
       systemPrompt: "sys",
       messages: [

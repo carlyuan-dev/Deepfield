@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ChatService, ChatServiceError } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
-import { FakeWorker, makeProject, makeSecrets } from "./chat-service-helpers.js";
+import { FakeWorker, makeConversation, makeSecrets } from "./chat-service-helpers.js";
 
 const dbs: TestDb[] = [];
 
@@ -26,12 +26,12 @@ describe("chat history query", () => {
     const db = openTestDb();
     dbs.push(db);
     const service = makeService(db);
-    const { project, conversation } = makeProject(db);
+    const conversation = makeConversation(db);
     db.repos.messages.append(conversation.id, "user", "a");
     db.repos.messages.append(conversation.id, "assistant", "b");
     db.repos.messages.append(conversation.id, "user", "c");
 
-    const messages = service.listMessages(project.id);
+    const messages = service.listMessages(conversation.id);
     expect(messages.map((message) => message.content)).toEqual(["a", "b", "c"]);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
     expect(messages.every((message) => message.id.length > 0 && message.createdAt.length > 0)).toBe(
@@ -39,22 +39,11 @@ describe("chat history query", () => {
     );
   });
 
-  it("fails safely when the project is missing", () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const service = makeService(db);
-    expect(() => service.listMessages("missing-project")).toThrow(ChatServiceError);
-  });
-
   it("fails safely when the conversation is missing", () => {
     const db = openTestDb();
     dbs.push(db);
     const service = makeService(db);
-    db.db
-      .prepare(
-        "INSERT INTO projects(id, industry, scope_json, status, created_at, updated_at) VALUES (?, ?, ?, 'draft', ?, ?)",
-      )
-      .run("orphan", "孤儿项目", "{}", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
-    expect(() => service.listMessages("orphan")).toThrow(/conversation/);
+    expect(() => service.listMessages("missing-conversation")).toThrow(ChatServiceError);
+    expect(() => service.listMessages("missing-conversation")).toThrow(/conversation/);
   });
 });

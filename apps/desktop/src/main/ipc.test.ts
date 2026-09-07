@@ -11,15 +11,19 @@ import {
 } from "./ipc-test-helpers.js";
 
 const SKILL_OPTIONS = { webSearch: false, skillName: "structured-brief" };
+const CONVERSATION_ID = "conv-1";
 
 describe("ipc handlers", () => {
-  it("registers exactly the seven invoke channels and no chat.events handler", () => {
+  it("registers exactly the ten invoke channels and no chat.events handler", () => {
     const { ipcMain } = makeDeps();
     const registered = [...ipcMain.handlers.keys()].sort();
     expect(registered).toEqual(
       [
         IPC_CHANNELS.projectsCreate,
         IPC_CHANNELS.projectsList,
+        IPC_CHANNELS.conversationsCreate,
+        IPC_CHANNELS.conversationsOpenInitial,
+        IPC_CHANNELS.conversationsListRecent,
         IPC_CHANNELS.settingsHasDeepSeekKey,
         IPC_CHANNELS.settingsSetDeepSeekKey,
         IPC_CHANNELS.skillsList,
@@ -84,6 +88,55 @@ describe("ipc handlers", () => {
     expect(settings.setCalls).toHaveLength(1);
   });
 
+  it("creates a blank Conversation through the service", async () => {
+    const { ipcMain, conversations } = makeDeps();
+    const sender = new FakeWebContents(1);
+
+    const created = await ipcMain.invoke(IPC_CHANNELS.conversationsCreate, event(sender));
+    expect(created).toMatchObject({ id: "c-created-1", title: "新对话", hasUserMessage: false });
+    expect(conversations.createCalls).toBe(1);
+
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.conversationsCreate, event(sender), "extra"),
+    ).rejects.toThrow(/invalid conversation input/);
+    expect(conversations.createCalls).toBe(1);
+  });
+
+  it("opens the initial Conversation with its recent list", async () => {
+    const { ipcMain, conversations } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const active = conversations.makeConversation("conv-1", "整理研究目标", true);
+    const recent = [
+      active,
+      conversations.makeConversation("conv-2", "旧对话", true),
+    ];
+    conversations.initialActive = active;
+    conversations.recent = recent;
+
+    const result = await ipcMain.invoke(IPC_CHANNELS.conversationsOpenInitial, event(sender));
+    expect(result).toEqual({ active, recent });
+    expect(conversations.openInitialCalls).toBe(1);
+
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.conversationsOpenInitial, event(sender), "extra"),
+    ).rejects.toThrow(/invalid conversation input/);
+  });
+
+  it("lists recent Conversations and requires zero arguments", async () => {
+    const { ipcMain, conversations } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const recent = [conversations.makeConversation("conv-1", "整理研究目标", true)];
+    conversations.recent = recent;
+
+    const result = await ipcMain.invoke(IPC_CHANNELS.conversationsListRecent, event(sender));
+    expect(result).toEqual(recent);
+    expect(conversations.listRecentCalls).toBe(1);
+
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.conversationsListRecent, event(sender), "extra"),
+    ).rejects.toThrow(/invalid conversation input/);
+  });
+
   it("returns only summary metadata from skills.list and requires zero arguments", async () => {
     const { ipcMain, skills } = makeDeps();
     const sender = new FakeWebContents(1);
@@ -102,61 +155,63 @@ describe("ipc handlers", () => {
     expect(skills.listCalls).toBe(1);
   });
 
-  it("validates chat input and delegates options to the service", async () => {
+  it("validates chat input by Conversation ID and delegates options to the service", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(1);
     const result = await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(sender),
-      "p1",
+      CONVERSATION_ID,
       "你好",
       "req-1",
       SKILL_OPTIONS,
     );
-    expect(result).toEqual({ requestId: "req-1" });
+    expect(result).toEqual({
+      requestId: "req-1",
+      conversation: expect.objectContaining({ id: CONVERSATION_ID, hasUserMessage: true }),
+    });
     expect(chat.sendCalls).toEqual([
-      { projectId: "p1", content: "你好", requestId: "req-1", options: SKILL_OPTIONS },
+      {
+        conversationId: CONVERSATION_ID,
+        content: "你好",
+        requestId: "req-1",
+        options: SKILL_OPTIONS,
+      },
     ]);
 
     await expect(
       ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "", "你好", "req-1", SKILL_OPTIONS),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "   ", "req-1", SKILL_OPTIONS),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), CONVERSATION_ID, "   ", "req-1", SKILL_OPTIONS),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "", SKILL_OPTIONS),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), CONVERSATION_ID, "你好", "", SKILL_OPTIONS),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1", {}),
-    ).rejects.toThrow();
-    await expect(
-      ipcMain.invoke(
-        IPC_CHANNELS.chatSend,
-        event(sender),
-        "p1",
-        "你好",
-        "req-1",
-        { webSearch: false, skillName: "" },
-      ),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), CONVERSATION_ID, "你好", "req-1", {}),
     ).rejects.toThrow();
     expect(chat.sendCalls).toHaveLength(1);
   });
 
-  it("delegates chat message history for the project", async () => {
+  it("delegates chat message history for the Conversation", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(1);
     chat.history = [
       {
         id: "m1" as MessageId,
-        conversationId: "c1" as ConversationId,
+        conversationId: CONVERSATION_ID as ConversationId,
         role: "user",
         content: "a",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ];
-    const history = await ipcMain.invoke(IPC_CHANNELS.chatListMessages, event(sender), "p1");
-    expect(chat.listMessagesCalls).toEqual(["p1"]);
+    const history = await ipcMain.invoke(
+      IPC_CHANNELS.chatListMessages,
+      event(sender),
+      CONVERSATION_ID,
+    );
+    expect(chat.listMessagesCalls).toEqual([CONVERSATION_ID]);
     expect(history).toEqual(chat.history);
   });
 
@@ -167,7 +222,7 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(senderA),
-      "p1",
+      CONVERSATION_ID,
       "你好",
       "req-1",
       DEFAULT_CHAT_OPTIONS,
@@ -175,7 +230,7 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(senderB),
-      "p1",
+      CONVERSATION_ID,
       "你好",
       "req-2",
       DEFAULT_CHAT_OPTIONS,
@@ -194,7 +249,7 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(sender),
-      "p1",
+      CONVERSATION_ID,
       "a",
       "req-1",
       DEFAULT_CHAT_OPTIONS,
@@ -202,7 +257,7 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(sender),
-      "p1",
+      CONVERSATION_ID,
       "b",
       "req-2",
       DEFAULT_CHAT_OPTIONS,
@@ -216,7 +271,7 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(sender),
-      "p1",
+      CONVERSATION_ID,
       "你好",
       "req-1",
       DEFAULT_CHAT_OPTIONS,
@@ -234,7 +289,7 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
       event(sender),
-      "p1",
+      CONVERSATION_ID,
       "你好",
       "req-1",
       DEFAULT_CHAT_OPTIONS,

@@ -37,7 +37,7 @@ export function request(requestId = "req-1"): AgentWorkerRequest {
     requestId,
     kind: "chat.prompt",
     prompt: "你好",
-    context: { projectId: "p1", conversationId: "c1", systemPrompt: "sys", messages: [] },
+    context: { conversationId: "c1", systemPrompt: "sys", messages: [] },
     options: { webSearch: false },
     apiKey: "sk-test-key",
     modelId: "deepseek-v4-flash",

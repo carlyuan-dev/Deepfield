@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
+import type { ChatSendResult } from "@deepfield/contracts";
 import {
   chatMessage,
+  chatSendResult,
   makeFakeApi,
   project,
   workerEvent,
@@ -37,10 +39,10 @@ describe("app chat edge cases", () => {
         ? [chatMessage("m1", "user", "你好"), chatMessage("m2", "assistant", "最终")]
         : [],
     );
-    let resolveSend!: (value: { requestId: string }) => void;
+    let resolveSend!: (value: ChatSendResult) => void;
     fake.chat.send.mockImplementation(
       () =>
-        new Promise<{ requestId: string }>((resolve) => {
+        new Promise<ChatSendResult>((resolve) => {
           resolveSend = resolve;
         }),
     );
@@ -61,7 +63,7 @@ describe("app chat edge cases", () => {
     await waitFor(() => expect(screen.getByText("还没有消息")).toBeTruthy());
 
     // send resolves; a late completed must not appear in p2
-    resolveSend({ requestId: REQUEST_ID });
+    resolveSend(chatSendResult(REQUEST_ID));
     fake.emit(workerEvent(REQUEST_ID, "completed", "最终"));
     await waitFor(() => expect(screen.queryByText("最终")).toBeNull());
 
@@ -90,7 +92,7 @@ describe("app chat edge cases", () => {
   it("treats a mismatched returned request id as a protocol error and cleans up", async () => {
     const fake = makeFakeApi();
     fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    fake.chat.send.mockResolvedValue({ requestId: "different-id" });
+    fake.chat.send.mockResolvedValue(chatSendResult("different-id"));
     const { user } = await renderApp(fake);
     await openProjectChat(user, "人形机器人");
 

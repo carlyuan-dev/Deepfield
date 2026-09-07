@@ -37,7 +37,6 @@ describe("agent worker request schema", () => {
     kind: "chat.prompt",
     prompt: "你好",
     context: {
-      projectId: "project_1",
       conversationId: "conversation_1",
       systemPrompt: "你是 Deepfield 的主 Agent",
       messages: [

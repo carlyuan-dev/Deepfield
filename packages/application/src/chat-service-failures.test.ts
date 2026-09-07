@@ -3,7 +3,7 @@ import type { AgentWorkerEvent } from "@deepfield/contracts";
 import { ChatService } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
-import { chatEvent, deferred, FakeWorker } from "./chat-service-helpers.js";
+import { chatEvent, deferred, FakeWorker, makeConversation } from "./chat-service-helpers.js";
 
 const dbs: TestDb[] = [];
 
@@ -22,29 +22,18 @@ function makeService(db: TestDb, worker: FakeWorker) {
   return { service, finished };
 }
 
-function makeProject(db: TestDb) {
-  const project = db.repos.projects.createWithConversation({
-    industry: "人形机器人",
-    scope: {},
-    launchSource: "direct-ui",
-  });
-  const conversation = db.repos.conversations.listByProject(project.id)[0]!;
-  return { project, conversation };
-}
-
 async function runFailureCase(
   db: TestDb,
   worker: FakeWorker,
-): Promise<{ forwarded: AgentWorkerEvent[]; messages: number; activities: number }> {
+): Promise<{ forwarded: AgentWorkerEvent[]; messages: number }> {
   const { service, finished } = makeService(db, worker);
-  const { project, conversation } = makeProject(db);
+  const conversation = makeConversation(db);
   const forwarded: AgentWorkerEvent[] = [];
-  await service.send(project.id, "你好", "req-1", (event) => forwarded.push(event));
+  await service.send(conversation.id, "你好", "req-1", (event) => forwarded.push(event));
   await finished.promise;
   return {
     forwarded,
     messages: db.repos.messages.listByConversation(conversation.id).length,
-    activities: db.repos.activities.listByProject(project.id).length,
   };
 }
 
@@ -55,7 +44,7 @@ describe("chat service failure synthesis", () => {
     const worker = new FakeWorker({
       sendError: new Error("network exploded with sk-configured and 你好"),
     });
-    const { forwarded, messages, activities } = await runFailureCase(db, worker);
+    const { forwarded, messages } = await runFailureCase(db, worker);
     expect(forwarded).toEqual([
       { requestId: "req-1", type: "failed", code: "worker_send_failed", message: "chat request failed" },
     ]);
@@ -64,7 +53,6 @@ describe("chat service failure synthesis", () => {
     expect(serialized).not.toContain("sk-configured");
     expect(serialized).not.toContain("你好");
     expect(messages).toBe(1);
-    expect(activities).toBe(1);
   });
 
   it("synthesizes one sanitized failed when iteration throws", async () => {
@@ -77,7 +65,7 @@ describe("chat service failure synthesis", () => {
       ],
       iterateError: new Error("stream broke with sk-configured"),
     });
-    const { forwarded, messages, activities } = await runFailureCase(db, worker);
+    const { forwarded, messages } = await runFailureCase(db, worker);
     expect(forwarded).toEqual([
       { requestId: "req-1", type: "started" },
       { requestId: "req-1", type: "text_delta", delta: "半句" },
@@ -86,7 +74,6 @@ describe("chat service failure synthesis", () => {
     expect(JSON.stringify(forwarded)).not.toContain("stream broke");
     expect(JSON.stringify(forwarded)).not.toContain("sk-configured");
     expect(messages).toBe(1);
-    expect(activities).toBe(1);
   });
 
   it("synthesizes one sanitized failed when the stream ends without a terminal", async () => {
@@ -98,7 +85,7 @@ describe("chat service failure synthesis", () => {
         { requestId: request.requestId, type: "text_delta", delta: "半句" },
       ],
     });
-    const { forwarded, messages, activities } = await runFailureCase(db, worker);
+    const { forwarded, messages } = await runFailureCase(db, worker);
     expect(forwarded).toEqual([
       { requestId: "req-1", type: "started" },
       { requestId: "req-1", type: "text_delta", delta: "半句" },
@@ -110,6 +97,5 @@ describe("chat service failure synthesis", () => {
       },
     ]);
     expect(messages).toBe(1);
-    expect(activities).toBe(1);
   });
 });

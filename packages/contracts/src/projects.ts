@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { ProjectId, ConversationId } from "./ids.js";
+import type { ProjectId } from "./ids.js";
 
 export const ProjectScopeSchema = Type.Object({
   focus: Type.Optional(Type.String()),
@@ -22,14 +22,6 @@ export interface Project {
   industry: string;
   scope: ProjectScope;
   status: "draft";
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Conversation {
-  id: ConversationId;
-  projectId: ProjectId;
-  hasUserMessage: boolean;
   createdAt: string;
   updatedAt: string;
 }

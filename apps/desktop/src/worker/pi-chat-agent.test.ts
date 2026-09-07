@@ -193,7 +193,6 @@ it.skipIf(!hasSmokeKey)(
       kind: "chat.prompt",
       prompt: "只回复 OK",
       context: {
-        projectId: "p1",
         conversationId: "c1",
         systemPrompt: "你是 Deepfield 的主 Agent",
         messages: [],

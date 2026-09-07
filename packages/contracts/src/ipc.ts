@@ -1,8 +1,14 @@
 import type { CreateProjectInput, Project } from "./projects.js";
-import type { AgentWorkerEvent, ChatMessage, ChatRequestOptions } from "./chat.js";
+import type { Conversation } from "./conversations.js";
+import type { AgentWorkerEvent, ChatMessage, ChatRequestOptions, ChatSendResult } from "./chat.js";
 import type { SkillSummary } from "./skills.js";
 
 export interface DesktopApi {
+  conversations: {
+    create(): Promise<Conversation>;
+    openInitial(): Promise<{ active: Conversation; recent: Conversation[] }>;
+    listRecent(): Promise<Conversation[]>;
+  };
   projects: {
     create(input: CreateProjectInput): Promise<Project>;
     list(): Promise<Project[]>;
@@ -16,12 +22,12 @@ export interface DesktopApi {
   };
   chat: {
     send(
-      projectId: string,
+      conversationId: string,
       content: string,
       requestId: string,
       options: ChatRequestOptions,
-    ): Promise<{ requestId: string }>;
+    ): Promise<ChatSendResult>;
     subscribe(listener: (event: AgentWorkerEvent) => void): () => void;
-    listMessages(projectId: string): Promise<ChatMessage[]>;
+    listMessages(conversationId: string): Promise<ChatMessage[]>;
   };
 }

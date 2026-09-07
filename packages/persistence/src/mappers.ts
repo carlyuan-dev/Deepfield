@@ -33,7 +33,7 @@ export function toProject(row: ProjectRow): Project {
 export function toConversation(row: ConversationRow): Conversation {
   return {
     id: row.id as ConversationId,
-    projectId: row.project_id as ProjectId,
+    title: row.title,
     hasUserMessage: row.has_user_message === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

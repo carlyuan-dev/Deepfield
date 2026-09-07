@@ -5,6 +5,8 @@ import {
   type AgentWorkerEvent,
   type ChatMessage,
   type ChatRequestOptions,
+  type ChatSendResult,
+  type Conversation,
   type CreateProjectInput,
   type Project,
   type SkillSummary,
@@ -36,6 +38,12 @@ export interface ProjectServiceLike {
   list(): Project[];
 }
 
+export interface ConversationServiceLike {
+  create(): Conversation;
+  openInitial(): { active: Conversation; recent: Conversation[] };
+  listRecent(): Conversation[];
+}
+
 export interface SecretSettingsLike {
   has(name: string): boolean;
   set(name: string, value: string): void;
@@ -47,17 +55,18 @@ export interface SkillListLike {
 
 export interface ChatServiceLike {
   send(
-    projectId: string,
+    conversationId: string,
     content: string,
     requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
     options: ChatRequestOptions,
-  ): Promise<{ requestId: string }>;
-  listMessages(projectId: string): ChatMessage[];
+  ): Promise<ChatSendResult>;
+  listMessages(conversationId: string): ChatMessage[];
 }
 
 export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
+  conversations: ConversationServiceLike;
   projects: ProjectServiceLike;
   settings: SecretSettingsLike;
   skills: SkillListLike;
@@ -67,6 +76,9 @@ export interface IpcServiceDeps {
 const INVOKE_CHANNELS = [
   IPC_CHANNELS.projectsCreate,
   IPC_CHANNELS.projectsList,
+  IPC_CHANNELS.conversationsCreate,
+  IPC_CHANNELS.conversationsOpenInitial,
+  IPC_CHANNELS.conversationsListRecent,
   IPC_CHANNELS.settingsHasDeepSeekKey,
   IPC_CHANNELS.settingsSetDeepSeekKey,
   IPC_CHANNELS.skillsList,
@@ -119,6 +131,27 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.projects.list();
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.conversationsCreate, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid conversation input");
+    }
+    return deps.conversations.create();
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.conversationsOpenInitial, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid conversation input");
+    }
+    return deps.conversations.openInitial();
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.conversationsListRecent, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid conversation input");
+    }
+    return deps.conversations.listRecent();
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.settingsHasDeepSeekKey, async (_event, ...args) => {
     if (args.length !== 0) {
       throw new Error("invalid settings input");
@@ -144,14 +177,14 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.chatSend, async (event, ...args) => {
-    const projectId = args[0];
+    const conversationId = args[0];
     const content = args[1];
     const requestId = args[2];
     const options = args[3];
     if (
       args.length !== 4 ||
-      typeof projectId !== "string" ||
-      projectId.length === 0 ||
+      typeof conversationId !== "string" ||
+      conversationId.length === 0 ||
       typeof content !== "string" ||
       content.trim().length === 0 ||
       typeof requestId !== "string" ||
@@ -162,17 +195,17 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
       throw new Error("invalid chat input");
     }
     trackSender(event.sender);
-    return deps.chat.send(projectId, content, requestId, (workerEvent) => {
+    return deps.chat.send(conversationId, content, requestId, (workerEvent) => {
       emitToSender(event.sender, workerEvent);
     }, options);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.chatListMessages, async (_event, ...args) => {
-    const projectId = args[0];
-    if (args.length !== 1 || typeof projectId !== "string" || projectId.length === 0) {
+    const conversationId = args[0];
+    if (args.length !== 1 || typeof conversationId !== "string" || conversationId.length === 0) {
       throw new Error("invalid chat input");
     }
-    return deps.chat.listMessages(projectId);
+    return deps.chat.listMessages(conversationId);
   });
 
   return () => {

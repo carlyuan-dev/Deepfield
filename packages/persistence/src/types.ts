@@ -20,16 +20,17 @@ export interface ProjectActivityEvent {
 }
 
 export interface ProjectRepository {
-  createWithConversation(input: CreateProjectInput): Project;
+  create(input: CreateProjectInput): Project;
   list(): Project[];
   getById(projectId: ProjectId): Project | undefined;
 }
 
 export interface ConversationRepository {
-  listByProject(projectId: ProjectId): Conversation[];
-  getOrCreateForProject(projectId: ProjectId): Conversation;
+  create(): Conversation;
+  getOrCreateDraft(): Conversation;
+  getById(conversationId: ConversationId): Conversation | undefined;
   listRecent(): Conversation[];
-  markHasUserMessage(conversationId: ConversationId): void;
+  activate(conversationId: ConversationId, title: string): Conversation;
 }
 
 export interface MessageRepository {
@@ -113,7 +114,7 @@ export interface Repositories {
 
 export interface NewConversation {
   id: ConversationId;
-  projectId: ProjectId;
+  title: string;
   hasUserMessage: boolean;
   createdAt: string;
   updatedAt: string;
@@ -130,7 +131,7 @@ export interface ProjectRow {
 
 export interface ConversationRow {
   id: string;
-  project_id: string;
+  title: string;
   has_user_message: number;
   created_at: string;
   updated_at: string;

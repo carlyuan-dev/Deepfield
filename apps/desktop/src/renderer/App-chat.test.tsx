@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
+import type { ChatSendResult } from "@deepfield/contracts";
 import {
   chatMessage,
+  chatSendResult,
   makeFakeApi,
   project,
   workerEvent,
@@ -115,10 +117,10 @@ describe("app chat", () => {
   it("handles events that arrive before the send promise resolves", async () => {
     const fake = makeFakeApi();
     fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
-    let resolveSend!: (value: { requestId: string }) => void;
+    let resolveSend!: (value: ChatSendResult) => void;
     fake.chat.send.mockImplementation(
       () =>
-        new Promise<{ requestId: string }>((resolve) => {
+        new Promise<ChatSendResult>((resolve) => {
           resolveSend = resolve;
         }),
     );
@@ -131,7 +133,7 @@ describe("app chat", () => {
     fake.emit(workerEvent(REQUEST_ID, "started"));
     fake.emit(workerEvent(REQUEST_ID, "text_delta", "早到"));
     await waitFor(() => expect(screen.getByText("早到")).toBeTruthy());
-    resolveSend({ requestId: REQUEST_ID });
+    resolveSend(chatSendResult(REQUEST_ID));
   });
 
   it("ignores late deltas after completion", async () => {

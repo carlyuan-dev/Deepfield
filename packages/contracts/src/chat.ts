@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import type { ConversationId, MessageId } from "./ids.js";
+import type { Conversation } from "./conversations.js";
 
 export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-v4-flash" as const;
 
@@ -15,7 +16,6 @@ export type AgentContextMessage = Static<typeof AgentContextMessageSchema>;
 
 export const AgentContextSnapshotSchema = Type.Object(
   {
-    projectId: Type.String(),
     conversationId: Type.String(),
     systemPrompt: Type.String(),
     messages: Type.Array(AgentContextMessageSchema),
@@ -82,4 +82,9 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+}
+
+export interface ChatSendResult {
+  requestId: string;
+  conversation: Conversation;
 }
