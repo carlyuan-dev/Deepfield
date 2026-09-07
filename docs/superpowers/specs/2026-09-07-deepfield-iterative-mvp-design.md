@@ -133,6 +133,8 @@ DSH 任务只描述当前切片的目标、用户路径、接口、最少验收�
 
 ## 8. 当前设计入口
 
-当前实施切片是 Chat-1，详细设计见：
+当前实施切片是 Agent-first Chat Shell 修正，详细设计见：
 
-`docs/superpowers/specs/2026-09-07-deepfield-chat-1-design.md`
+`docs/superpowers/specs/2026-09-08-deepfield-agent-first-chat-shell-design.md`
+
+原 Chat-1 规格中已经实现的手动 Pi Skill 继续有效；其中“Chat 依附项目”的内容已被上述修正规格取代。

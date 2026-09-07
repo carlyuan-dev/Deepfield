@@ -2,9 +2,11 @@
 
 日期：2026-09-07
 
-状态：当前切片设计，已通过对话评审
+状态：部分有效；手动 Pi Skill 已实现，项目绑定 Chat 设计已被取代
 
 上位设计：`docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`
+
+> 2026-09-08 修正：Conversation 不再拥有 Project 属性，应用默认入口改为独立通用 Chat，页面采用“左侧导航 / Chat / Capability”Shell。相关数据模型、上下文和交互以 `docs/superpowers/specs/2026-09-08-deepfield-agent-first-chat-shell-design.md` 为准。本文件中手动 Pi Skill 的格式、加载和单轮选择设计继续有效。
 
 ## 1. 目标
 
