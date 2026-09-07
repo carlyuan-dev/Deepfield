@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useReducer } from "react";
-import type { DesktopApi } from "@deepfield/contracts";
+import type { ChatRequestOptions, DesktopApi } from "@deepfield/contracts";
 import { chatReducer, initialChatState, type ChatState } from "./chat.js";
 import type { ChatEventHub } from "./chat-event-hub.js";
 
 export interface ChatController {
   state: ChatState;
-  submit: (content: string) => void;
+  submit: (content: string, options?: ChatRequestOptions) => void;
   reload: () => void;
 }
+
+const ORDINARY_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
 
 export function useChat(
   api: DesktopApi,
@@ -62,14 +64,14 @@ export function useChat(
   }, [projectId, load]);
 
   const submit = useCallback(
-    (content: string) => {
+    (content: string, options: ChatRequestOptions = ORDINARY_CHAT_OPTIONS) => {
       if (projectId === undefined || state.sending || state.loadState !== "ready") {
         return;
       }
       const requestId = requestIdFactory();
       eventHub.registerRequest(requestId, projectId);
       dispatch({ type: "USER_SUBMIT", content, requestId });
-      void api.chat.send(projectId, content, requestId).then(
+      void api.chat.send(projectId, content, requestId, options).then(
         (result) => {
           if (result.requestId !== requestId) {
             eventHub.unregisterRequest(requestId);

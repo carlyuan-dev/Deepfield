@@ -1,10 +1,13 @@
 import { Value } from "typebox/value";
 import {
+  ChatRequestOptionsSchema,
   CreateProjectInputSchema,
   type AgentWorkerEvent,
   type ChatMessage,
+  type ChatRequestOptions,
   type CreateProjectInput,
   type Project,
+  type SkillSummary,
 } from "@deepfield/contracts";
 import { DEEPSEEK_KEY_NAME } from "@deepfield/application";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
@@ -38,12 +41,17 @@ export interface SecretSettingsLike {
   set(name: string, value: string): void;
 }
 
+export interface SkillListLike {
+  list(): SkillSummary[];
+}
+
 export interface ChatServiceLike {
   send(
     projectId: string,
     content: string,
     requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
+    options: ChatRequestOptions,
   ): Promise<{ requestId: string }>;
   listMessages(projectId: string): ChatMessage[];
 }
@@ -52,6 +60,7 @@ export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
   projects: ProjectServiceLike;
   settings: SecretSettingsLike;
+  skills: SkillListLike;
   chat: ChatServiceLike;
 }
 
@@ -60,6 +69,7 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.projectsList,
   IPC_CHANNELS.settingsHasDeepSeekKey,
   IPC_CHANNELS.settingsSetDeepSeekKey,
+  IPC_CHANNELS.skillsList,
   IPC_CHANNELS.chatSend,
   IPC_CHANNELS.chatListMessages,
 ] as const;
@@ -124,25 +134,37 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     deps.settings.set(DEEPSEEK_KEY_NAME, value);
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.skillsList, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid list input");
+    }
+    // The Main catalog exposes only summary metadata; full skill content stays
+    // in the backend (Main and Utility) boundary.
+    return deps.skills.list();
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.chatSend, async (event, ...args) => {
     const projectId = args[0];
     const content = args[1];
     const requestId = args[2];
+    const options = args[3];
     if (
-      args.length !== 3 ||
+      args.length !== 4 ||
       typeof projectId !== "string" ||
       projectId.length === 0 ||
       typeof content !== "string" ||
       content.trim().length === 0 ||
       typeof requestId !== "string" ||
-      requestId.length === 0
+      requestId.length === 0 ||
+      options === undefined ||
+      !Value.Check(ChatRequestOptionsSchema, options)
     ) {
       throw new Error("invalid chat input");
     }
     trackSender(event.sender);
     return deps.chat.send(projectId, content, requestId, (workerEvent) => {
       emitToSender(event.sender, workerEvent);
-    });
+    }, options);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.chatListMessages, async (_event, ...args) => {

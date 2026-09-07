@@ -3,9 +3,11 @@ import {
   AgentWorkerEventSchema,
   type AgentWorkerEvent,
   type ChatMessage,
+  type ChatRequestOptions,
   type CreateProjectInput,
   type DesktopApi,
   type Project,
+  type SkillSummary,
 } from "@deepfield/contracts";
 
 export const IPC_CHANNELS = {
@@ -13,6 +15,7 @@ export const IPC_CHANNELS = {
   projectsList: "deepfield:projects:list",
   settingsHasDeepSeekKey: "deepfield:settings:hasDeepSeekKey",
   settingsSetDeepSeekKey: "deepfield:settings:setDeepSeekKey",
+  skillsList: "deepfield:skills:list",
   chatSend: "deepfield:chat:send",
   chatEvents: "deepfield:chat:events",
   chatListMessages: "deepfield:chat:listMessages",
@@ -36,9 +39,17 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
       setDeepSeekKey: (value: string) =>
         ipc.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, value) as Promise<void>,
     },
+    skills: {
+      list: () => ipc.invoke(IPC_CHANNELS.skillsList) as Promise<SkillSummary[]>,
+    },
     chat: {
-      send: (projectId: string, content: string, requestId: string) =>
-        ipc.invoke(IPC_CHANNELS.chatSend, projectId, content, requestId) as Promise<{
+      send: (
+        projectId: string,
+        content: string,
+        requestId: string,
+        options: ChatRequestOptions,
+      ) =>
+        ipc.invoke(IPC_CHANNELS.chatSend, projectId, content, requestId, options) as Promise<{
           requestId: string;
         }>,
       subscribe: (listener: (event: AgentWorkerEvent) => void) =>

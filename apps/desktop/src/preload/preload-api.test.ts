@@ -4,7 +4,9 @@ import {
   IPC_CHANNELS,
   type IpcBridge,
 } from "./preload-api.js";
-import type { AgentWorkerEvent, CreateProjectInput, DesktopApi } from "@deepfield/contracts";
+import type { AgentWorkerEvent, ChatRequestOptions, CreateProjectInput, DesktopApi } from "@deepfield/contracts";
+
+const CHAT_OPTIONS: ChatRequestOptions = { webSearch: false, skillName: "structured-brief" };
 
 interface FakeIpc {
   ipc: IpcBridge;
@@ -36,9 +38,10 @@ describe("preload api", () => {
   it("exposes only the DesktopApi shape without ipcRenderer or secrets", () => {
     const { ipc } = makeFakeIpc();
     const api: DesktopApi = createPreloadApi(ipc);
-    expect(Object.keys(api).sort()).toEqual(["chat", "projects", "settings"]);
+    expect(Object.keys(api).sort()).toEqual(["chat", "projects", "settings", "skills"]);
     expect(Object.keys(api.projects).sort()).toEqual(["create", "list"]);
     expect(Object.keys(api.settings).sort()).toEqual(["hasDeepSeekKey", "setDeepSeekKey"]);
+    expect(Object.keys(api.skills).sort()).toEqual(["list"]);
     expect(Object.keys(api.chat).sort()).toEqual(["listMessages", "send", "subscribe"]);
     expect(JSON.stringify(api)).not.toContain("ipcRenderer");
     expect(JSON.stringify(api)).not.toContain("apiKey");
@@ -53,14 +56,16 @@ describe("preload api", () => {
     await api.projects.list();
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
-    await api.chat.send("p1", "你好", "req-1");
+    await api.skills.list();
+    await api.chat.send("p1", "你好", "req-1", CHAT_OPTIONS);
     await api.chat.listMessages("p1");
     expect(invokes).toEqual([
       { channel: IPC_CHANNELS.projectsCreate, args: [input] },
       { channel: IPC_CHANNELS.projectsList, args: [] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
-      { channel: IPC_CHANNELS.chatSend, args: ["p1", "你好", "req-1"] },
+      { channel: IPC_CHANNELS.skillsList, args: [] },
+      { channel: IPC_CHANNELS.chatSend, args: ["p1", "你好", "req-1", CHAT_OPTIONS] },
       { channel: IPC_CHANNELS.chatListMessages, args: ["p1"] },
     ]);
   });

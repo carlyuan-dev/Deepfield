@@ -1,9 +1,11 @@
 import type {
   AgentWorkerEvent,
   ChatMessage,
+  ChatRequestOptions,
   CreateProjectInput,
   Project,
   ProjectId,
+  SkillSummary,
 } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
@@ -107,8 +109,25 @@ export class FakeSecretSettings {
   }
 }
 
+export const DEFAULT_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
+
+export class FakeSkillList {
+  listCalls = 0;
+  summaries: SkillSummary[] = [];
+
+  list(): SkillSummary[] {
+    this.listCalls += 1;
+    return this.summaries;
+  }
+}
+
 export class FakeChatService {
-  sendCalls: Array<{ projectId: string; content: string; requestId: string }> = [];
+  sendCalls: Array<{
+    projectId: string;
+    content: string;
+    requestId: string;
+    options: ChatRequestOptions;
+  }> = [];
   listMessagesCalls: string[] = [];
   history: ChatMessage[] = [];
   private listeners: Array<(event: AgentWorkerEvent) => void> = [];
@@ -118,8 +137,9 @@ export class FakeChatService {
     content: string,
     requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
+    options: ChatRequestOptions,
   ) {
-    this.sendCalls.push({ projectId, content, requestId });
+    this.sendCalls.push({ projectId, content, requestId, options });
     this.listeners.push(onEvent);
     return Promise.resolve({ requestId });
   }
@@ -138,10 +158,11 @@ export function makeDeps() {
   const ipcMain = new FakeIpcMain();
   const projects = new FakeProjectService();
   const settings = new FakeSecretSettings();
+  const skills = new FakeSkillList();
   const chat = new FakeChatService();
-  const deps: IpcServiceDeps = { ipcMain, projects, settings, chat };
+  const deps: IpcServiceDeps = { ipcMain, projects, settings, skills, chat };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, projects, settings, chat, dispose };
+  return { ipcMain, projects, settings, skills, chat, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

@@ -5,6 +5,7 @@ import {
   type AgentWorkerEvent,
   type AgentWorkerRequest,
   type ChatMessage,
+  type ChatRequestOptions,
   type ConversationId,
   type ProjectId,
 } from "@deepfield/contracts";
@@ -31,6 +32,8 @@ export interface ChatServiceOptions {
 
 const FAILED_MESSAGE = "chat request failed";
 
+const DEFAULT_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
+
 export class ChatService {
   constructor(
     private readonly repositories: Repositories,
@@ -45,6 +48,7 @@ export class ChatService {
     content: string,
     requestId: string,
     onEvent: (event: AgentWorkerEvent) => void,
+    options: ChatRequestOptions = DEFAULT_CHAT_OPTIONS,
   ): Promise<ChatSendResult> {
     if (typeof content !== "string" || content.trim().length === 0) {
       throw new ChatServiceError("content must not be blank");
@@ -82,6 +86,7 @@ export class ChatService {
       kind: "chat.prompt",
       prompt: content,
       context,
+      options,
       apiKey,
       modelId: DEFAULT_DEEPSEEK_MODEL_ID,
     };

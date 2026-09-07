@@ -13,6 +13,8 @@ import {
 } from "./application-runtime.js";
 import { registerIpcHandlers, type IpcMainLike } from "./ipc.js";
 import { createWindow } from "./window.js";
+import { resolveSkillsDir } from "./skill-paths.js";
+import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
@@ -20,14 +22,19 @@ let toolHost: ToolWorkerHost | undefined;
 let appRuntime: ApplicationRuntime | undefined;
 let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
+let mainSkillCatalog: PiSkillCatalog | undefined;
 
 const ipcMainAdapter: IpcMainLike = {
   handle: (channel, listener) => ipcMain.handle(channel, listener),
   removeHandler: (channel) => ipcMain.removeHandler(channel),
 };
 
-function startAgentWorker(repositories: Repositories, secrets: SecretStore): AgentWorkerRuntime {
-  const child = utilityProcess.fork(join(__dirname, "agent-worker.js"), [], {
+function startAgentWorker(
+  repositories: Repositories,
+  secrets: SecretStore,
+  skillsDir: string,
+): AgentWorkerRuntime {
+  const child = utilityProcess.fork(join(__dirname, "agent-worker.js"), [skillsDir], {
     serviceName: "Deepfield Agent",
   });
   let runtimeRef!: AgentWorkerRuntime;
@@ -69,7 +76,23 @@ void app.whenReady().then(() => {
     decrypt: (value) => safeStorage.decryptString(value),
   });
 
-  agentRuntime = startAgentWorker(repositories, secrets);
+  const skillsDir = resolveSkillsDir({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+  });
+
+  agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
+  // One catalog backs skills.list in Main; the Utility Process lazily loads the
+  // same directory through the first non-secret worker argument (skillsDir).
+  void loadPiSkillCatalog(skillsDir)
+    .then(({ catalog }) => {
+      mainSkillCatalog = catalog;
+    })
+    .catch(() => {
+      // A missing/unreadable skills directory degrades to an empty skill list.
+      mainSkillCatalog = undefined;
+    });
   appRuntime = createApplicationRuntime({
     repositories,
     secrets,
@@ -87,6 +110,7 @@ void app.whenReady().then(() => {
     ipcMain: ipcMainAdapter,
     projects: appRuntime.projectService,
     settings: secrets,
+    skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
   });
 

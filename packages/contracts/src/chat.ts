@@ -24,12 +24,22 @@ export const AgentContextSnapshotSchema = Type.Object(
 );
 export type AgentContextSnapshot = Static<typeof AgentContextSnapshotSchema>;
 
+export const ChatRequestOptionsSchema = Type.Object(
+  {
+    webSearch: Type.Boolean(),
+    skillName: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+export type ChatRequestOptions = Static<typeof ChatRequestOptionsSchema>;
+
 export const AgentWorkerRequestSchema = Type.Object(
   {
     requestId: Type.String(),
     kind: Type.Literal("chat.prompt"),
     prompt: Type.String(),
     context: AgentContextSnapshotSchema,
+    options: ChatRequestOptionsSchema,
     apiKey: Type.String(),
     modelId: Type.Literal(DEFAULT_DEEPSEEK_MODEL_ID),
   },
@@ -39,7 +49,11 @@ export type AgentWorkerRequest = Static<typeof AgentWorkerRequestSchema>;
 
 export const AgentWorkerEventSchema = Type.Union([
   Type.Object(
-    { requestId: Type.String(), type: Type.Literal("started") },
+    {
+      requestId: Type.String(),
+      type: Type.Literal("started"),
+      skillName: Type.Optional(Type.String({ minLength: 1 })),
+    },
     { additionalProperties: false },
   ),
   Type.Object(

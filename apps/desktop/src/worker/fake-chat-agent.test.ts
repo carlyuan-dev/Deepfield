@@ -12,6 +12,7 @@ function request(): AgentWorkerRequest {
     kind: "chat.prompt",
     prompt: "当前问题",
     context: { projectId: "p1", conversationId: "c1", systemPrompt: "sys", messages: [] },
+    options: { webSearch: false },
     apiKey: "sk-fake-secret",
     modelId: DEFAULT_DEEPSEEK_MODEL_ID,
   };

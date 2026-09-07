@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
 import { DEFAULT_DEEPSEEK_MODEL_ID } from "@deepfield/contracts";
-import { createPiChatAgent, PiChatAgentError } from "./pi-chat-agent.js";
+import { createPiChatAgent, PiChatAgentError, type SkillCatalogProvider } from "./pi-chat-agent.js";
+import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import {
   agentEnd,
   assistant,
   capture,
   FakePiAgent,
   makeRuntime,
+  request,
   stubModel,
   textDelta,
   thinkingDelta,
@@ -107,6 +109,76 @@ describe("pi chat agent", () => {
   });
 });
 
+describe("pi chat agent skill invocation", () => {
+  const catalog: PiSkillCatalog = {
+    list: () => [],
+    formatInvocation: (name, instructions) => `[skill:${name}]\n${instructions}`,
+  };
+  const provider: SkillCatalogProvider = { get: async () => catalog };
+  const skillEvents = [
+    { type: "agent_start" as const },
+    textDelta("你"),
+    agentEnd([assistant("ok")]),
+  ];
+
+  it("formats the prompt through the injected catalog and reports the skill on started", async () => {
+    const fake = new FakePiAgent({ events: skillEvents });
+    const agent = createPiChatAgent(makeRuntime(fake, stubModel), [], provider);
+    const events: AgentWorkerEvent[] = [];
+    await agent.run(
+      request({ webSearch: false, skillName: "structured-brief" }),
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+    expect(fake.promptedWith).toBe("[skill:structured-brief]\n当前问题");
+    expect(events[0]).toEqual({
+      requestId: "req-1",
+      type: "started",
+      skillName: "structured-brief",
+    });
+    expect(events.some((event) => event.type === "completed")).toBe(true);
+  });
+
+  it("keeps the original prompt when no skill is selected, even with a provider present", async () => {
+    const fake = new FakePiAgent({ events: skillEvents });
+    const agent = createPiChatAgent(makeRuntime(fake, stubModel), [], provider);
+    const events: AgentWorkerEvent[] = [];
+    await agent.run(request(), (event) => events.push(event), new AbortController().signal);
+    expect(fake.promptedWith).toBe("当前问题");
+    expect(events[0]).toEqual({ requestId: "req-1", type: "started" });
+  });
+
+  it("maps an unknown skill to a fixed non-sensitive failure", async () => {
+    const unknownCatalog: PiSkillCatalog = {
+      list: () => [],
+      formatInvocation: () => {
+        throw new SkillNotFoundError("structured-brief");
+      },
+    };
+    const unknownProvider: SkillCatalogProvider = { get: async () => unknownCatalog };
+    const fake = new FakePiAgent({ events: skillEvents });
+    const agent = createPiChatAgent(makeRuntime(fake, stubModel), [], unknownProvider);
+    const events: AgentWorkerEvent[] = [];
+    let caught: unknown;
+    try {
+      await agent.run(
+        request({ webSearch: false, skillName: "structured-brief" }),
+        (event) => events.push(event),
+        new AbortController().signal,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(PiChatAgentError);
+    const message = caught instanceof Error ? caught.message : "";
+    expect(message).toBe("agent execution failed");
+    expect(message).not.toContain("structured-brief");
+    expect(message).not.toContain("当前问题");
+    expect(fake.promptCallCount).toBe(0);
+    expect(events.some((event) => event.type === "completed")).toBe(false);
+  });
+});
+
 const hasSmokeKey =
   typeof process.env.DEEPSEEK_API_KEY === "string" && process.env.DEEPSEEK_API_KEY.length > 0;
 
@@ -126,6 +198,7 @@ it.skipIf(!hasSmokeKey)(
         systemPrompt: "你是 Deepfield 的主 Agent",
         messages: [],
       },
+      options: { webSearch: false },
       apiKey: process.env.DEEPSEEK_API_KEY ?? "",
       modelId: DEFAULT_DEEPSEEK_MODEL_ID,
     };

@@ -5,6 +5,7 @@ import {
   AgentWorkerEventSchema,
   CreateProjectInputSchema,
   DEFAULT_DEEPSEEK_MODEL_ID,
+  SkillSummarySchema,
 } from "./index.js";
 
 describe("shared contracts", () => {
@@ -44,6 +45,7 @@ describe("agent worker request schema", () => {
         { role: "assistant", content: "你好", timestamp: 1700000001000 },
       ],
     },
+    options: { webSearch: false },
     apiKey: "sk-test-only",
     modelId: DEFAULT_DEEPSEEK_MODEL_ID,
   } as const;
@@ -124,5 +126,88 @@ describe("agent worker request schema", () => {
       }
     ).properties.modelId;
     expect(literal.const).toBe(DEFAULT_DEEPSEEK_MODEL_ID);
+  });
+
+  describe("chat request options and skill summaries", () => {
+    it("accepts chat request options with an optional non-blank skill name", () => {
+      expect(
+        Value.Check(AgentWorkerRequestSchema, {
+          ...validRequest,
+          options: { webSearch: false, skillName: "structured-brief" },
+        }),
+      ).toBe(true);
+      expect(
+        Value.Check(AgentWorkerRequestSchema, { ...validRequest, options: { webSearch: true } }),
+      ).toBe(true);
+    });
+
+    it("rejects malformed chat request options", () => {
+      expect(
+        Value.Check(AgentWorkerRequestSchema, { ...validRequest, options: {} }),
+      ).toBe(false);
+      expect(
+        Value.Check(AgentWorkerRequestSchema, {
+          ...validRequest,
+          options: { webSearch: false, skillName: "" },
+        }),
+      ).toBe(false);
+      expect(
+        Value.Check(AgentWorkerRequestSchema, {
+          ...validRequest,
+          options: { skillName: "structured-brief" },
+        }),
+      ).toBe(false);
+      expect(
+        Value.Check(AgentWorkerRequestSchema, {
+          ...validRequest,
+          options: { webSearch: false, extra: 1 },
+        }),
+      ).toBe(false);
+      expect(
+        Value.Check(AgentWorkerRequestSchema, {
+          requestId: "req",
+          kind: "chat.prompt",
+          prompt: "p",
+          context: validRequest.context,
+          apiKey: "sk-test-only",
+          modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+        }),
+      ).toBe(false);
+    });
+
+    it("accepts started events with an optional skill name and rejects extras", () => {
+      expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "started" })).toBe(true);
+      expect(
+        Value.Check(AgentWorkerEventSchema, {
+          requestId: "r",
+          type: "started",
+          skillName: "structured-brief",
+        }),
+      ).toBe(true);
+      expect(
+        Value.Check(AgentWorkerEventSchema, {
+          requestId: "r",
+          type: "started",
+          skillName: "",
+        }),
+      ).toBe(false);
+      expect(
+        Value.Check(AgentWorkerEventSchema, {
+          requestId: "r",
+          type: "started",
+          skillName: "x",
+          extra: 1,
+        }),
+      ).toBe(false);
+    });
+
+    it("validates the SkillSummary schema strictly", () => {
+      expect(Value.Check(SkillSummarySchema, { name: "a", description: "d" })).toBe(true);
+      expect(Value.Check(SkillSummarySchema, { name: "", description: "d" })).toBe(false);
+      expect(Value.Check(SkillSummarySchema, { name: "a", description: "d", content: "x" })).toBe(
+        false,
+      );
+      expect(Value.Check(SkillSummarySchema, { name: "a" })).toBe(false);
+    });
   });
 });

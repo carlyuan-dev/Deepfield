@@ -39,7 +39,7 @@ describe("app chat", () => {
     // local user message appears immediately and the composer is disabled
     expect(screen.getByText("你好")).toBeTruthy();
     await waitFor(() => expect(input.disabled).toBe(true));
-    expect(fake.chat.send).toHaveBeenCalledWith("p1", "你好", REQUEST_ID);
+    expect(fake.chat.send).toHaveBeenCalledWith("p1", "你好", REQUEST_ID, { webSearch: false });
 
     fake.emit(workerEvent(REQUEST_ID, "started"));
     fake.emit(workerEvent(REQUEST_ID, "text_delta", "测"));

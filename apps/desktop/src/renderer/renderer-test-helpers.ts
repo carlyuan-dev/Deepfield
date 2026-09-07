@@ -3,12 +3,14 @@ import { vi, type Mock } from "vitest";
 import type {
   AgentWorkerEvent,
   ChatMessage,
+  ChatRequestOptions,
   ConversationId,
   CreateProjectInput,
   DesktopApi,
   MessageId,
   Project,
   ProjectId,
+  SkillSummary,
 } from "@deepfield/contracts";
 
 export interface FakeDesktopApi extends DesktopApi {
@@ -20,8 +22,18 @@ export interface FakeDesktopApi extends DesktopApi {
     hasDeepSeekKey: Mock<() => Promise<boolean>>;
     setDeepSeekKey: Mock<(value: string) => Promise<void>>;
   };
+  skills: {
+    list: Mock<() => Promise<SkillSummary[]>>;
+  };
   chat: {
-    send: Mock<(projectId: string, content: string, requestId: string) => Promise<{ requestId: string }>>;
+    send: Mock<
+      (
+        projectId: string,
+        content: string,
+        requestId: string,
+        options: ChatRequestOptions,
+      ) => Promise<{ requestId: string }>
+    >;
     subscribe: Mock<(listener: (event: AgentWorkerEvent) => void) => () => void>;
     listMessages: Mock<(projectId: string) => Promise<ChatMessage[]>>;
   };
@@ -50,9 +62,17 @@ export function makeFakeApi(): FakeDesktopApi {
       hasDeepSeekKey: vi.fn(async (): Promise<boolean> => false),
       setDeepSeekKey: vi.fn(async (_value: string): Promise<void> => {}),
     },
+    skills: {
+      list: vi.fn(async (): Promise<SkillSummary[]> => []),
+    },
     chat: {
       send: vi.fn(
-        async (_projectId: string, _content: string, requestId: string): Promise<{ requestId: string }> => {
+        async (
+          _projectId: string,
+          _content: string,
+          requestId: string,
+          _options: ChatRequestOptions,
+        ): Promise<{ requestId: string }> => {
           return { requestId };
         },
       ),

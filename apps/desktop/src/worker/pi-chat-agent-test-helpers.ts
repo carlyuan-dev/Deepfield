@@ -4,6 +4,7 @@ import {
   DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
+  type ChatRequestOptions,
 } from "@deepfield/contracts";
 import type { PiAgentHandle, PiRuntime } from "./pi-chat-agent.js";
 import type { ChatAgent } from "./message-loop.js";
@@ -126,7 +127,7 @@ export function makeRuntime(agent: FakePiAgent, model?: Model<Api>): PiRuntime {
   };
 }
 
-export function request(): AgentWorkerRequest {
+export function request(options?: ChatRequestOptions): AgentWorkerRequest {
   return {
     requestId: "req-1",
     kind: "chat.prompt",
@@ -140,6 +141,7 @@ export function request(): AgentWorkerRequest {
         { role: "assistant", content: "历史助手", timestamp: 2 },
       ],
     },
+    options: options ?? { webSearch: false },
     apiKey: "sk-secret-test-key",
     modelId: DEFAULT_DEEPSEEK_MODEL_ID,
   };

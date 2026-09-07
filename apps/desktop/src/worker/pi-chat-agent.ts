@@ -10,12 +10,17 @@ import {
 } from "@deepfield/contracts";
 import type { ChatAgent } from "./message-loop.js";
 import { mapHistoryMessages } from "./pi-message-mapper.js";
+import type { PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 
 export class PiChatAgentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PiChatAgentError";
   }
+}
+
+export interface SkillCatalogProvider {
+  get(): Promise<PiSkillCatalog>;
 }
 
 export interface PiSession {
@@ -75,6 +80,7 @@ function hasProviderFailure(messages: unknown[]): boolean {
 export function createPiChatAgent(
   runtime: PiRuntime = defaultPiRuntime(),
   tools: AgentTool<any>[] = [],
+  skills?: SkillCatalogProvider,
 ): ChatAgent {
   return {
     async run(
@@ -85,6 +91,23 @@ export function createPiChatAgent(
       const session = runtime.createSession();
       if (!session) {
         throw new PiChatAgentError("deepseek model is not available");
+      }
+
+      const skillName = request.options.skillName;
+      let prompt: string;
+      if (skillName === undefined) {
+        prompt = request.prompt;
+      } else {
+        if (!skills) {
+          throw new PiChatAgentError("agent execution failed");
+        }
+        try {
+          prompt = (await skills.get()).formatInvocation(skillName, request.prompt);
+        } catch {
+          // Unknown skills and catalog load failures map to the same fixed,
+          // non-sensitive chat failure as any other agent execution error.
+          throw new PiChatAgentError("agent execution failed");
+        }
       }
 
       let finalText = "";
@@ -128,7 +151,11 @@ export function createPiChatAgent(
         if (event.type === "agent_start") {
           if (!startedEmitted) {
             startedEmitted = true;
-            emit({ requestId: request.requestId, type: "started" });
+            emit({
+              requestId: request.requestId,
+              type: "started",
+              ...(skillName !== undefined ? { skillName } : {}),
+            });
           }
           return;
         }
@@ -153,7 +180,7 @@ export function createPiChatAgent(
       });
 
       try {
-        await agent.prompt(request.prompt);
+        await agent.prompt(prompt);
       } catch {
         throw new PiChatAgentError("agent execution failed");
       } finally {

@@ -3,14 +3,17 @@ import type { ConversationId, MessageId } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
   channels,
+  DEFAULT_CHAT_OPTIONS,
   event,
   FakeWebContents,
   makeDeps,
   workerEvent,
 } from "./ipc-test-helpers.js";
 
+const SKILL_OPTIONS = { webSearch: false, skillName: "structured-brief" };
+
 describe("ipc handlers", () => {
-  it("registers exactly the six invoke channels and no chat.events handler", () => {
+  it("registers exactly the seven invoke channels and no chat.events handler", () => {
     const { ipcMain } = makeDeps();
     const registered = [...ipcMain.handlers.keys()].sort();
     expect(registered).toEqual(
@@ -19,6 +22,7 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.projectsList,
         IPC_CHANNELS.settingsHasDeepSeekKey,
         IPC_CHANNELS.settingsSetDeepSeekKey,
+        IPC_CHANNELS.skillsList,
         IPC_CHANNELS.chatSend,
         IPC_CHANNELS.chatListMessages,
       ].sort(),
@@ -80,7 +84,25 @@ describe("ipc handlers", () => {
     expect(settings.setCalls).toHaveLength(1);
   });
 
-  it("validates chat input and delegates to the service", async () => {
+  it("returns only summary metadata from skills.list and requires zero arguments", async () => {
+    const { ipcMain, skills } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const summaries = [
+      { name: "structured-brief", description: "Turn a topic or rough notes into a research brief." },
+    ];
+    skills.summaries = summaries;
+
+    const result = await ipcMain.invoke(IPC_CHANNELS.skillsList, event(sender));
+    expect(result).toEqual(summaries);
+    expect(skills.listCalls).toBe(1);
+
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.skillsList, event(sender), "extra"),
+    ).rejects.toThrow(/invalid list input/);
+    expect(skills.listCalls).toBe(1);
+  });
+
+  it("validates chat input and delegates options to the service", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(1);
     const result = await ipcMain.invoke(
@@ -89,18 +111,34 @@ describe("ipc handlers", () => {
       "p1",
       "你好",
       "req-1",
+      SKILL_OPTIONS,
     );
     expect(result).toEqual({ requestId: "req-1" });
-    expect(chat.sendCalls).toEqual([{ projectId: "p1", content: "你好", requestId: "req-1" }]);
+    expect(chat.sendCalls).toEqual([
+      { projectId: "p1", content: "你好", requestId: "req-1", options: SKILL_OPTIONS },
+    ]);
 
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "", "你好", "req-1"),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "", "你好", "req-1", SKILL_OPTIONS),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "   ", "req-1"),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "   ", "req-1", SKILL_OPTIONS),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", ""),
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "", SKILL_OPTIONS),
+    ).rejects.toThrow();
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1", {}),
+    ).rejects.toThrow();
+    await expect(
+      ipcMain.invoke(
+        IPC_CHANNELS.chatSend,
+        event(sender),
+        "p1",
+        "你好",
+        "req-1",
+        { webSearch: false, skillName: "" },
+      ),
     ).rejects.toThrow();
     expect(chat.sendCalls).toHaveLength(1);
   });
@@ -126,8 +164,22 @@ describe("ipc handlers", () => {
     const { ipcMain, chat } = makeDeps();
     const senderA = new FakeWebContents(10);
     const senderB = new FakeWebContents(11);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(senderA), "p1", "你好", "req-1");
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(senderB), "p1", "你好", "req-2");
+    await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(senderA),
+      "p1",
+      "你好",
+      "req-1",
+      DEFAULT_CHAT_OPTIONS,
+    );
+    await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(senderB),
+      "p1",
+      "你好",
+      "req-2",
+      DEFAULT_CHAT_OPTIONS,
+    );
 
     chat.emitToLast(workerEvent("req-2"));
     expect(senderA.sent).toEqual([]);
@@ -139,15 +191,36 @@ describe("ipc handlers", () => {
   it("keeps a single destroyed listener per sender across repeated sends", async () => {
     const { ipcMain } = makeDeps();
     const sender = new FakeWebContents(10);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "a", "req-1");
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "b", "req-2");
+    await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(sender),
+      "p1",
+      "a",
+      "req-1",
+      DEFAULT_CHAT_OPTIONS,
+    );
+    await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(sender),
+      "p1",
+      "b",
+      "req-2",
+      DEFAULT_CHAT_OPTIONS,
+    );
     expect(sender.destroyedListenerCount).toBe(1);
   });
 
   it("drops events silently after the sender is destroyed", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(10);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1");
+    await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(sender),
+      "p1",
+      "你好",
+      "req-1",
+      DEFAULT_CHAT_OPTIONS,
+    );
     sender.destroy();
     expect(sender.destroyedListenerCount).toBe(0);
 
@@ -158,7 +231,14 @@ describe("ipc handlers", () => {
   it("dispose removes all handlers, listeners and the registry", async () => {
     const { ipcMain, chat, dispose } = makeDeps();
     const sender = new FakeWebContents(10);
-    await ipcMain.invoke(IPC_CHANNELS.chatSend, event(sender), "p1", "你好", "req-1");
+    await ipcMain.invoke(
+      IPC_CHANNELS.chatSend,
+      event(sender),
+      "p1",
+      "你好",
+      "req-1",
+      DEFAULT_CHAT_OPTIONS,
+    );
     expect(sender.destroyedListenerCount).toBe(1);
 
     dispose();

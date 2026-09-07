@@ -9,3 +9,4 @@ playwright-report/
 *.tsbuildinfo
 /docs/架构图/
 benchmark-results/
+**/.DS_Store
