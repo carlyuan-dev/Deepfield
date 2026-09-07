@@ -57,6 +57,17 @@ const PROVIDER_FAILURE_CODES: Partial<Record<string, string>> = {
   invalid_request: "provider_invalid_request",
 };
 
+/**
+ * Hard bound on concurrent destination-link checks WITHIN one measurement's
+ * batch: maxResults is capped at 20, so one measurement can discover at most
+ * 20 fresh urls; checking them in a single bounded batch (<= this constant)
+ * instead of serially keeps one measurement worst case ~ 20s provider search
+ * + one 30s link batch instead of 20 x 30s serial batches. Provider searches
+ * across measurements stay strictly serial; this never raises provider call
+ * counts and never retries.
+ */
+export const MAX_LINK_CHECK_CONCURRENCY = 20;
+
 /** Stable sanitized failure label: never raw provider messages, queries, urls or keys. */
 function failureLabel(error: unknown): string {
   if (error instanceof SearchProviderError) {
@@ -156,14 +167,38 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
     };
   };
 
+  /**
+   * One bounded concurrent batch over this measurement's FRESH (uncached)
+   * urls. Workers launch up to min(20, freshCount) checks at once; every
+   * started check settles (observed via Promise.all, so no unhandled
+   * rejection). Resolution order never influences output: outcomes land in
+   * the global cache and evidence is projected later in first-seen run order.
+   * Abort stops new launches and, once in-flight checks settle, returns.
+   * An unexpected infrastructure error records ONE stable sanitized failure
+   * for the provider, stops new launches, but lets already-started checks
+   * settle so no promise is left unobserved.
+   */
   const checkNewUrls = async (provider: string, urls: readonly string[]): Promise<void> => {
+    const fresh: string[] = [];
+    const seen = new Set<string>();
     for (const url of urls) {
-      if (deps.signal?.aborted) {
-        return; // abort stops remaining link checks; the outer loop marks incomplete
+      if (!linkCache.has(url) && !seen.has(url)) {
+        seen.add(url);
+        fresh.push(url);
       }
-      if (linkCache.has(url)) {
-        continue; // already checked (possibly by another provider): reuse the outcome
+    }
+    if (fresh.length === 0) {
+      return;
+    }
+    let nextIndex = 0;
+    let stop = false;
+    const recordInfraFailure = (): void => {
+      if (!linkCheckFailures.has(provider)) {
+        failures.push(`${provider}: link_check_failed`); // stable sanitized; once per provider
+        linkCheckFailures.add(provider);
       }
+    };
+    const checkOne = async (url: string): Promise<void> => {
       try {
         const outcome = await deps.linkChecker.check(url, deps.signal ?? new AbortController().signal);
         if (outcome.url !== url) {
@@ -172,13 +207,27 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
         linkCache.set(url, outcome.accessible);
       } catch (error) {
         if (deps.signal?.aborted || (error instanceof SearchProviderError && error.code === "cancelled")) {
-          return; // cancellation: stop silently; benchmarkComplete stays false
+          stop = true; // cancellation: stop silently; the outer loop marks incomplete
+          return;
         }
-        failures.push(`${provider}: link_check_failed`); // stable sanitized
-        linkCheckFailures.add(provider);
-        return; // do not continue checking remaining urls for this provider
+        recordInfraFailure();
+        stop = true; // do not launch remaining urls for this provider this batch
       }
-    }
+    };
+    const workers = Array.from({ length: Math.min(MAX_LINK_CHECK_CONCURRENCY, fresh.length) }, async () => {
+      for (;;) {
+        if (stop || deps.signal?.aborted) {
+          return;
+        }
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= fresh.length) {
+          return;
+        }
+        await checkOne(fresh[index]!);
+      }
+    });
+    await Promise.all(workers); // every started check settles here
   };
 
   outer: for (const provider of deps.providers) {
@@ -191,6 +240,15 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
         const startedAt = performance.now();
         try {
           const response = await provider.search(query.query, deps.maxResults, deps.signal ?? new AbortController().signal);
+          if (deps.signal?.aborted) {
+            interrupted = true;
+            break outer; // cancelled while searching: keep no partial measurement
+          }
+          await checkNewUrls(provider.id, response.results.map((result) => result.url));
+          if (deps.signal?.aborted) {
+            interrupted = true;
+            break outer; // cancelled mid-link-check: the run is not recorded (evidence incomplete)
+          }
           runs.push({
             provider: provider.id,
             queryId: query.id,
@@ -200,7 +258,6 @@ export async function runBenchmark(deps: BenchmarkHarnessDeps): Promise<Benchmar
             latencyMs: performance.now() - startedAt,
             costUsd: pricingUsd[provider.id]!,
           });
-          await checkNewUrls(provider.id, response.results.map((result) => result.url));
         } catch (error) {
           if (deps.signal?.aborted) {
             interrupted = true;
