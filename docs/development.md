@@ -96,11 +96,18 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   `skills/**` 带入 Resources）。
 - 当前内置：`skills/structured-brief/SKILL.md`（Pi 标准 SKILL.md；打包后位于
   `Deepfield.app/Contents/Resources/skills/structured-brief/SKILL.md`）。
-- 手动测试一次 Skill 回复：启动应用（`DEEPFIELD_AGENT_MODE=fake npm run dev` 或
-  打包 app），进入项目 Chat；在输入区 Skill 下拉选择 `structured-brief`，输入一段
-  粗略研究笔记后发送。该次回复应按 Skill 指令输出
-  “核心结论 / 关键依据 / 待核实问题”三节；选择在发送后自动清除，下一条消息回到
-  普通对话。
+- 手动测试 Skill 交互，请区分两种模式：
+
+  - **Fake Agent（`DEEPFIELD_AGENT_MODE=fake`，含打包 app 冒烟）**：只验证 Skill
+    交互主路径，不验证 Skill 指令效果——Fake Agent 固定回复“测试回复”，不会执行
+    Pi Skill。检查项：Skill 下拉能看到 `structured-brief`；选择会随本次发送传递
+    （`chat.send` 携带 `{webSearch: false, skillName: "structured-brief"}`）；
+    发送后选择自动清空；界面收到固定“测试回复”，且 Assistant 消息上可见
+    `Skill: structured-brief` 标记。
+  - **真实 DeepSeek 模式**：用户已在设置页配置真实 Key 后，选择 `structured-brief`
+    并输入一段粗略研究笔记再发送，此时才应验证回复是否按 Skill 指令组织为
+    “核心结论 / 关键依据 / 待核实问题”三节。选择在发送后自动清除，下一条消息
+    回到普通对话。
 
 ## 本地打包（arm64）
 
