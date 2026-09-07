@@ -72,6 +72,13 @@ describe("live provider URL-bearing acceptance guard (focused revision)", () => 
   });
 
   it("keeps every rejection message fixed and free of distinctive input values", () => {
+    const FIXED_GUARD_MESSAGES = [
+      "live provider response provider mismatch",
+      "live provider response results are not an array",
+      "live provider response contained no clickable results",
+      "live provider response contained an unusable result url",
+    ];
+    const FORBIDDEN = ["sk-secret-host", "sk-live-secret", "sk-live-provider", "sk-live-results", "javascript:", "not a url"];
     const secretUrl = "https://sk-secret-host.example/path?token=sk-live-secret";
     const cases: Array<() => void> = [
       () => acceptLiveProviderResponse("baidu", response("other", [result({ url: secretUrl })])),
@@ -81,17 +88,20 @@ describe("live provider URL-bearing acceptance guard (focused revision)", () => 
       () => acceptLiveProviderResponse("baidu", { provider: "sk-live-provider", results: [result({ url: "https://example.com/" })] } as unknown as NormalizedSearchResponse),
     ];
     for (const attempt of cases) {
+      // capture ONLY what the guard threw; if it did NOT throw, `caught` stays
+      // undefined and the assertions below FAIL the test loudly — we never
+      // catch a sentinel that the test itself generated.
+      let caught: unknown;
       try {
         attempt();
-        throw new Error("unreachable");
       } catch (error) {
-        const message = String(error);
-        expect(message).not.toContain("sk-secret-host");
-        expect(message).not.toContain("sk-live-secret");
-        expect(message).not.toContain("sk-live-provider");
-        expect(message).not.toContain("sk-live-results");
-        expect(message).not.toContain("javascript:");
-        expect(message).not.toContain("not a url");
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = String((caught as Error).message);
+      expect(FIXED_GUARD_MESSAGES).toContain(message);
+      for (const forbidden of FORBIDDEN) {
+        expect(message).not.toContain(forbidden);
       }
     }
   });
