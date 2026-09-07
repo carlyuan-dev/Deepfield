@@ -59,7 +59,7 @@ function startAgentWorker(
   return runtime;
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   const userDataRoot = resolveUserDataRoot({
     defaultRoot: app.getPath("userData"),
     override: process.env.DEEPFIELD_USER_DATA_DIR,
@@ -83,16 +83,19 @@ void app.whenReady().then(() => {
   });
 
   agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
-  // One catalog backs skills.list in Main; the Utility Process lazily loads the
-  // same directory through the first non-secret worker argument (skillsDir).
-  void loadPiSkillCatalog(skillsDir)
-    .then(({ catalog }) => {
-      mainSkillCatalog = catalog;
-    })
-    .catch(() => {
-      // A missing/unreadable skills directory degrades to an empty skill list.
-      mainSkillCatalog = undefined;
-    });
+  // Finish loading the Main catalog before IPC registration and window
+  // creation: the renderer reads skills.list once on mount, so the first call
+  // must already see the bundled summary instead of a transient empty list.
+  // The Utility Process lazily loads the same directory through its first
+  // non-secret worker argument (skillsDir).
+  try {
+    const { catalog } = await loadPiSkillCatalog(skillsDir);
+    mainSkillCatalog = catalog;
+  } catch {
+    // A missing/unreadable skills directory degrades to an empty skill list
+    // without leaking the underlying error to the renderer.
+    mainSkillCatalog = undefined;
+  }
   appRuntime = createApplicationRuntime({
     repositories,
     secrets,
