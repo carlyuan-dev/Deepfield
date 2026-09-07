@@ -1,6 +1,11 @@
 # Deepfield Search Provider Candidate Expansion Design
 
-**Status:** Approved in chat on 2026-09-01; written specification awaiting final review
+> **Document status update (2026-09-07):** Historical provider-expansion and
+> benchmark design. Existing provider adapters remain available. Current product
+> sequencing and search-cost policy are defined by
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`.
+
+**Status:** Historical provider-expansion design
 
 **Extends:** `docs/superpowers/specs/2026-08-27-deepfield-tool-platform-design.md`
 

@@ -2,7 +2,13 @@
 
 日期：2026-08-27
 
-状态：已批准，等待实施
+状态：历史技术设计；已实现部分作为当前技术基线
+
+> **文档状态更新（2026-09-07）：** Tool Platform 已形成后续功能可复用的
+> 技术基线。本文保留为既有架构和实现依据；Provider Benchmark 退出门槛与后续
+> 产品顺序由
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`
+> 接替。
 
 ## 1. 目标
 

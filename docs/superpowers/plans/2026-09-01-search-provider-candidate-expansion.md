@@ -1,5 +1,9 @@
 # Search Provider Candidate Expansion — Phase 1 Implementation Plan
 
+> **Current planning pointer (2026-09-07):** Provider expansion is retained as
+> implementation history. Active product sequencing is defined in
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`.
+
 > **SUPERSEDED (2026-09-07):** this file is the historical implementation plan
 > for the Phase-1 expansion. It was executed as written (including Zhipu).
 > Current configuration removed Zhipu (no free quota; adapter/fixtures deleted,

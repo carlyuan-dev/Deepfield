@@ -1,7 +1,12 @@
 # Deepfield Agent-native 财经研究系统设计
 
 日期：2026-08-25  
-状态：已完成对话评审，等待书面规格复核
+状态：历史产品设计；P1 已实现部分继续有效
+
+> **文档状态更新（2026-09-07）：** 本文继续作为产品初始决策和 P1
+> 已实现基线的历史说明。尚未实施的 Capability A 流程与交付顺序由
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`
+> 接替。
 
 ## 1. 产品定义
 

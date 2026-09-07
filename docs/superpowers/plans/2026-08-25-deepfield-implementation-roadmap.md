@@ -1,6 +1,13 @@
 # Deepfield Implementation Roadmap
 
-**Spec:** `docs/superpowers/specs/2026-08-25-deepfield-agent-native-research-design.md`
+> **Roadmap status update (2026-09-07):** Plan 1 and the implemented Tool
+> Platform remain the project baseline. The sequence below is the original
+> roadmap; current delivery now follows the small, user-reviewed slices in
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`.
+
+**Current spec:** `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`
+
+**Historical source spec:** `docs/superpowers/specs/2026-08-25-deepfield-agent-native-research-design.md`
 
 ## Purpose
 

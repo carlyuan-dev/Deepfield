@@ -1,5 +1,10 @@
 # Deepfield Reusable Tool Platform Implementation Plan
 
+> **Plan status update (2026-09-07):** Historical implementation plan for the
+> Tool Platform baseline. Current product work proceeds from Chat-1 under
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`; the
+> benchmark sequence in this file is no longer a product-development gate.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a Pi-native, versioned and policy-controlled Tool execution platform, then validate it with safe public-web retrieval and a measured humanoid-robot search-provider benchmark.

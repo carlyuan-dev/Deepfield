@@ -1,5 +1,9 @@
 # Search Provider Candidate Expansion Phase 2 Implementation Plan
 
+> **Plan status update (2026-09-07):** Historical provider-expansion execution
+> record. Current product work begins with Chat-1 and follows
+> `docs/superpowers/specs/2026-09-07-deepfield-iterative-mvp-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 ## Current State (2026-09-07, operative)
