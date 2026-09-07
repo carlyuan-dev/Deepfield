@@ -200,7 +200,7 @@ h3,
 
 .chat-pane-toggle {
   flex: none;
-  align-self: flex-start;
+  align-self: flex-end;
   width: 28px;
   height: 28px;
   padding: 0;

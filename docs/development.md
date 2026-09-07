@@ -88,7 +88,11 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   应用从不把 key 写回 UI/日志/错误文案）
 - `attachments/` —— 附件目录
 
-## Chat Skill（Chat-1A）
+## 对话（Conversation-first）与 Chat Skill 手动检查
+
+应用打开即进入独立 Agent Chat：无需创建/选择 Project，左侧按
+`对话（＋ 新对话 + 最近标题）/ 工作流（行业研究）/ 设置` 组织；直接点“行业研究”
+会把 Chat 收为左侧窄条，箭头或会话点击可展开，收展不中断流式回复。
 
 - Skill 目录解析（`apps/desktop/src/main/skill-paths.ts`）：开发态为
   `app.getAppPath()/skills`（仓库根 `skills/`）；打包态为
@@ -96,18 +100,23 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   `skills/**` 带入 Resources）。
 - 当前内置：`skills/structured-brief/SKILL.md`（Pi 标准 SKILL.md；打包后位于
   `Deepfield.app/Contents/Resources/skills/structured-brief/SKILL.md`）。
-- 手动测试 Skill 交互，请区分两种模式：
 
-  - **Fake Agent（`DEEPFIELD_AGENT_MODE=fake`，含打包 app 冒烟）**：只验证 Skill
-    交互主路径，不验证 Skill 指令效果——Fake Agent 固定回复“测试回复”，不会执行
-    Pi Skill。检查项：Skill 下拉能看到 `structured-brief`；选择会随本次发送传递
-    （`chat.send` 携带 `{webSearch: false, skillName: "structured-brief"}`）；
-    发送后选择自动清空；界面收到固定“测试回复”，且 Assistant 消息上可见
-    `Skill: structured-brief` 标记。
-  - **真实 DeepSeek 模式**：用户已在设置页配置真实 Key 后，选择 `structured-brief`
-    并输入一段粗略研究笔记再发送，此时才应验证回复是否按 Skill 指令组织为
-    “核心结论 / 关键依据 / 待核实问题”三节。选择在发送后自动清除，下一条消息
-    回到普通对话。
+手动检查请区分两种模式：
+
+- **Fake Agent（`DEEPFIELD_AGENT_MODE=fake`，含打包 app 冒烟）**：只验证 UI 与
+  接线主路径，不验证答案或 Skill 指令效果——Fake Agent 固定回复“测试回复”。
+  检查项：启动即进入可输入 Chat；首条消息后其标题进入“对话”；“行业研究”
+  收展与箭头往返；重启恢复该 Conversation；Skill 下拉能看到 `structured-brief`，
+  选择随本次发送传递并发送后清空（界面收到固定“测试回复”，无 Skill 标记因 Fake
+  不回传 skillName）。
+- **真实 DeepSeek 模式**：用户先在设置页配置真实 Key，然后依次人工验证：
+  1. 普通问答（如把人形机器人行业研究目标整理成简短清单）；
+  2. Coding（如用 TypeScript 写公司名去重函数并解释思路）；
+  3. office 写作（粘贴一段粗略笔记，要求简洁内部邮件）；
+  4. 短期记忆（给出一条项目规则，隔两条消息后再询问）；
+  5. 手动 Skill：选择 `structured-brief` 并粘贴粗略研究笔记，回复应按
+     “核心结论 / 关键依据 / 待核实问题”三节组织；
+  6. 随后不选 Skill 发一条普通消息，确认三节约束消失。
 
 ## 本地打包（arm64）
 
