@@ -124,4 +124,44 @@ describe("app three-pane shell", () => {
     expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
 
   });
+
+  it("keeps the Chat top bar and assistant semantics stable across settings navigation", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c1", "对话甲", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([
+      chatMessage("m1", "user", "问题"),
+      chatMessage("m2", "assistant", "回答"),
+    ]);
+    const { user } = await renderApp(fake);
+
+    await chatReady();
+    expect(document.querySelector(".chat-pane-header")).toBeTruthy();
+    expect(document.querySelector(".chat-pane-title")?.textContent).toBe("对话甲");
+    expect(document.querySelector(".chat-header")).toBeNull();
+    expect(document.querySelector(".message.assistant")).toBeTruthy();
+    expect(document.querySelector(".message.assistant .assistant-content")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "行业研究" }));
+    expect(document.querySelector(".chat-pane-header")).toBeTruthy();
+    expect(document.querySelector(".chat-pane-header")?.className).toContain("collapsed");
+
+    await user.click(screen.getByRole("button", { name: "设置" }));
+    expect(screen.getByRole("navigation", { name: "设置导航" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "‹ 返回" })).toBeTruthy();
+    expect(screen.getByText("设置")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "模型与密钥" }).getAttribute("aria-current")).toBe(
+      "page",
+    );
+    expect(screen.getByRole("heading", { name: "模型与密钥" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "‹ 返回" }));
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
+    expect(document.querySelector(".chat-pane")?.className).toContain("collapsed");
+
+    await user.click(screen.getByRole("button", { name: "展开 Chat" }));
+    expect(document.querySelector(".chat-pane-header")?.className).toContain("expanded");
+    expect(document.querySelector(".chat-pane-title")?.textContent).toBe("对话甲");
+  });
 });

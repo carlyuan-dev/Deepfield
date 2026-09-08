@@ -77,20 +77,17 @@ export function ChatView({
 
   return (
     <section className="chat-view" aria-label="Chat">
-      <header className="chat-header">
-        <div className="chat-context">{conversation.title}</div>
-        {state.loadState === "error" && (
-          <div className="error" role="alert">
-            {state.loadError}
-            <button onClick={reload}>重新加载</button>
-          </div>
-        )}
-        {state.sendError !== undefined && (
-          <p className="error" role="alert">
-            {state.sendError}
-          </p>
-        )}
-      </header>
+      {state.loadState === "error" && (
+        <div className="chat-content-status error" role="alert">
+          {state.loadError}
+          <button onClick={reload}>重新加载</button>
+        </div>
+      )}
+      {state.sendError !== undefined && (
+        <p className="chat-content-status error" role="alert">
+          {state.sendError}
+        </p>
+      )}
       {state.loadState === "loading" ? (
         <p className="muted">加载消息…</p>
       ) : (

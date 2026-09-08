@@ -28,7 +28,13 @@ export function Messages({
           {message.role === "assistant" && message.skillName !== undefined && (
             <div className="skill-badge">Skill: {message.skillName}</div>
           )}
-          <div className="message-content">
+          <div
+            className={
+              message.role === "assistant"
+                ? "message-content assistant-content"
+                : "message-content"
+            }
+          >
             {message.content.length > 0 ? message.content : message.status === "streaming" ? "…" : ""}
           </div>
           {message.status === "failed" && (

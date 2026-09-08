@@ -9,6 +9,7 @@ import {
 } from "./state/workspace.js";
 import { useConversations } from "./state/use-conversations.js";
 import { Sidebar } from "./components/Sidebar.js";
+import { ChatPaneHeader } from "./components/ChatPaneHeader.js";
 import { ChatView } from "./components/ChatView.js";
 import { CapabilityView } from "./features/projects/CapabilityView.js";
 import { SettingsView } from "./features/settings/SettingsView.js";
@@ -72,6 +73,7 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
         activeConversationId={conversations.activeConversation?.id}
         connectionStatus={connectionStatus}
         active={active}
+        mode={settingsOpen ? "settings" : "main"}
         onNewConversation={() => {
           void conversations.newConversation();
           openConversation();
@@ -84,12 +86,12 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
           dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId: "industry-research" })
         }
         onOpenSettings={() => setSettingsOpen(true)}
+        onBackFromSettings={() => setSettingsOpen(false)}
       />
       <main className="workspace">
         {settingsOpen ? (
           <SettingsView
             api={api}
-            onBack={() => setSettingsOpen(false)}
             onKeySaved={checkConnection}
           />
         ) : (
@@ -98,15 +100,12 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
               className={`chat-pane ${chatPane}`}
               aria-label="Chat"
             >
-              {capabilityOpen && (
-                <button
-                  className="chat-pane-toggle"
-                  aria-label={chatPane === "expanded" ? "收起 Chat" : "展开 Chat"}
-                  onClick={toggleChatPane}
-                >
-                  {chatPane === "expanded" ? "‹" : "›"}
-                </button>
-              )}
+              <ChatPaneHeader
+                title={conversations.activeConversation?.title ?? "Chat"}
+                paneState={chatPane}
+                capabilityOpen={capabilityOpen}
+                onToggle={toggleChatPane}
+              />
               {conversations.loading ? (
                 <p className="muted pane-message">加载对话…</p>
               ) : conversations.error !== undefined ? (

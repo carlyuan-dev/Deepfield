@@ -3,11 +3,10 @@ import type { DesktopApi } from "@deepfield/contracts";
 
 export interface SettingsViewProps {
   api: DesktopApi;
-  onBack(): void;
   onKeySaved(): void;
 }
 
-export function SettingsView({ api, onBack, onKeySaved }: SettingsViewProps) {
+export function SettingsView({ api, onKeySaved }: SettingsViewProps) {
   const [configured, setConfigured] = useState<boolean>();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string>();
@@ -59,8 +58,7 @@ export function SettingsView({ api, onBack, onKeySaved }: SettingsViewProps) {
   return (
     <section className="settings-view" aria-label="设置">
       <header className="settings-header">
-        <h2>设置</h2>
-        <button onClick={onBack}>返回</button>
+        <h2>模型与密钥</h2>
       </header>
       <div className="setting-row">
         <div className="setting-label">DeepSeek API Key</div>

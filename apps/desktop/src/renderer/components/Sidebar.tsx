@@ -8,10 +8,12 @@ export interface SidebarProps {
   activeConversationId: string | undefined;
   connectionStatus: ConnectionStatus;
   active: SidebarActive;
+  mode?: "main" | "settings";
   onNewConversation(): void;
   onOpenConversation(conversationId: string): void;
   onOpenResearch(): void;
   onOpenSettings(): void;
+  onBackFromSettings(): void;
 }
 
 export function Sidebar({
@@ -19,11 +21,31 @@ export function Sidebar({
   activeConversationId,
   connectionStatus,
   active,
+  mode = "main",
   onNewConversation,
   onOpenConversation,
   onOpenResearch,
   onOpenSettings,
+  onBackFromSettings,
 }: SidebarProps) {
+  if (mode === "settings") {
+    return (
+      <nav className="sidebar settings-sidebar" aria-label="设置导航">
+        <button className="brand sidebar-back" onClick={onBackFromSettings}>
+          ‹ 返回
+        </button>
+        <div className="nav-section-title">设置</div>
+        <ul className="nav-primary">
+          <li>
+            <button className="active" aria-current="page">
+              模型与密钥
+            </button>
+          </li>
+        </ul>
+      </nav>
+    );
+  }
+
   return (
     <nav className="sidebar" aria-label="主导航">
       <div className="brand">

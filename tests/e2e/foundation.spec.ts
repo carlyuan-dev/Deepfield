@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const E2E_KEY = "sk-e2e-dummy-not-real-987654321";
-const SCREENSHOT_CHAT = "/private/tmp/deepfield-p3t8-chat.png";
-const SCREENSHOT_SPLIT = "/private/tmp/deepfield-p3t8-split.png";
+const SCREENSHOT_CHAT = "/private/tmp/deepfield-p3ux2-chat.png";
+const SCREENSHOT_SPLIT = "/private/tmp/deepfield-p3ux2-split.png";
+const SCREENSHOT_SETTINGS = "/private/tmp/deepfield-p3ux2-settings.png";
 
 interface RunningApp {
   app: ElectronApplication;
@@ -35,8 +36,8 @@ async function enterDummyKey(page: Page): Promise<void> {
   await keyInput.fill(E2E_KEY);
   await page.getByRole("button", { name: "保存" }).click();
   await expect(page.getByText("已配置")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "‹ 返回" }).click();
   await expect(page.getByLabel("DeepSeek 连接状态：未连接")).toBeVisible();
-  await page.getByRole("button", { name: "返回" }).click();
 }
 
 async function closeAppGracefully(running: RunningApp): Promise<void> {
@@ -74,7 +75,30 @@ test("agent-first chat shell main path survives a restart", async () => {
     }
     await expect(page.getByRole("button", { name: "你好" })).toBeVisible();
     await expect(page.locator(".message")).toHaveCount(6);
-    await expect(page.locator(".chat-context")).toHaveText("你好");
+    await expect(page.locator(".chat-pane-title")).toHaveText("你好");
+    const assistantContent = page.locator(".message.assistant .assistant-content").first();
+    await expect(assistantContent).toBeVisible();
+    const assistantStyles = await assistantContent.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderWidth: style.borderWidth,
+        borderStyle: style.borderStyle,
+        borderRadius: style.borderRadius,
+        boxShadow: style.boxShadow,
+      };
+    });
+    expect(assistantStyles.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(assistantStyles.borderWidth).toBe("0px");
+    expect(assistantStyles.borderStyle).toBe("none");
+    expect(assistantStyles.borderRadius).toBe("0px");
+    expect(assistantStyles.boxShadow).toBe("none");
+    const assistantBox = await assistantContent.boundingBox();
+    const composerBox = await page.locator(".composer").boundingBox();
+    expect(assistantBox).not.toBeNull();
+    expect(composerBox).not.toBeNull();
+    expect(Math.abs(assistantBox!.width - composerBox!.width)).toBeLessThanOrEqual(1);
+    const chatHeaderHeight = (await page.locator(".chat-pane-header").boundingBox())!.height;
     await page.screenshot({ path: SCREENSHOT_CHAT });
 
     // 3) direct Industry Research opens the Capability and collapses Chat to a
@@ -89,11 +113,31 @@ test("agent-first chat shell main path survives a restart", async () => {
     const capabilityBox = (await heading.boundingBox())!;
     expect(arrowBox.x).toBeLessThan(capabilityBox.x);
 
+    // Settings is a sidebar mode and must not discard the split state.
+    await page.getByRole("button", { name: "设置" }).click();
+    await expect(page.getByRole("navigation", { name: "设置导航" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "‹ 返回" })).toBeVisible();
+    await expect(page.getByText("设置")).toBeVisible();
+    await expect(page.getByRole("button", { name: "模型与密钥" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByRole("heading", { name: "模型与密钥" })).toBeVisible();
+    await page.screenshot({ path: SCREENSHOT_SETTINGS });
+
+    await page.getByRole("button", { name: "‹ 返回" }).click();
+    await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+    await expect(heading).toBeVisible();
+    await expect(page.locator(".workspace-panes")).toHaveClass(/collapsed/);
+    await expect(page.locator(".chat-pane-header")).toHaveClass(/collapsed/);
+
     // 4) the arrow expands Chat beside the still-mounted Capability
     await expandArrow.click();
     await expect(page.getByRole("button", { name: "收起 Chat" })).toBeVisible();
     await expect(page.locator(".workspace-panes")).toHaveClass(/expanded/);
     await expect(heading).toBeVisible();
+    const splitHeaderHeight = (await page.locator(".chat-pane-header").boundingBox())!.height;
+    expect(Math.abs(splitHeaderHeight - chatHeaderHeight)).toBeLessThanOrEqual(1);
     const collapseBox = (await page.getByRole("button", { name: "收起 Chat" }).boundingBox())!;
     const capabilityBoxAfter = (await heading.boundingBox())!;
     expect(collapseBox.x).toBeLessThan(capabilityBoxAfter.x);
