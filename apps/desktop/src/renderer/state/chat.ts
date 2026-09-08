@@ -59,6 +59,38 @@ function toView(message: ChatMessage): ChatMessageView {
   };
 }
 
+function finalizeDraft(
+  state: ChatState,
+  messages: ChatMessageView[],
+  requestConversations: Record<string, string>,
+  requestId: string,
+  draft: ChatMessageView,
+): ChatState {
+  const userIndex = messages.findIndex((message) => message.requestId === requestId);
+  if (userIndex < 0) {
+    return {
+      ...state,
+      messages,
+      requestConversations,
+      drafts: { ...state.drafts, [requestId]: draft },
+    };
+  }
+  const finalized = { ...draft, key: `assistant-${requestId}`, requestId: undefined };
+  const finalizedMessages = [...messages];
+  finalizedMessages.splice(userIndex + 1, 0, finalized);
+  const drafts = { ...state.drafts };
+  delete drafts[requestId];
+  const cleanedRequestConversations = { ...requestConversations };
+  delete cleanedRequestConversations[requestId];
+  return {
+    ...state,
+    messages: finalizedMessages,
+    requestConversations: cleanedRequestConversations,
+    draftOrder: state.draftOrder.filter((id) => id !== requestId),
+    drafts,
+  };
+}
+
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case "LOAD_START":
@@ -117,6 +149,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (existing !== undefined && (existing.status === "done" || existing.status === "failed")) {
         return state;
       }
+      if (existing === undefined && state.requestConversations[requestId] === undefined) {
+        const finalizedAssistantIndex = state.messages.findIndex(
+          (message) => message.key === `assistant-${requestId}`,
+        );
+        const latestRequestUserIndex = state.messages.findLastIndex(
+          (message) => message.role === "user" && message.requestId === requestId,
+        );
+        if (finalizedAssistantIndex > latestRequestUserIndex) {
+          return state;
+        }
+      }
       const requestConversations = { ...state.requestConversations };
       if (requestConversations[requestId] === undefined) {
         requestConversations[requestId] = conversationId;
@@ -150,11 +193,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         case "completed":
           draft = { ...draft, content: event.text, status: "done" };
           sending = false;
-          break;
+          return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
         case "failed":
           draft = { ...draft, status: "failed" };
           sending = false;
-          break;
+          return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
       }
       return {
         ...state,

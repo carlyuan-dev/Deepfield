@@ -12,7 +12,7 @@ import {
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { ContextBuilder } from "./context-builder.js";
-import type { AgentWorkerPort, SecretReader } from "./ports.js";
+import type { AgentWorkerPort, ConversationTitleGenerator, SecretReader } from "./ports.js";
 
 export const DEEPSEEK_KEY_NAME = "deepseek.apiKey";
 
@@ -27,6 +27,7 @@ export class ChatServiceError extends Error {
 
 export interface ChatServiceOptions {
   onConsumptionFinished?: (requestId: string) => void;
+  titleGenerator?: ConversationTitleGenerator;
 }
 
 const FAILED_MESSAGE = "chat request failed";
@@ -102,6 +103,19 @@ export class ChatService {
     void this.consume(request, conversation.id, onEvent).catch(() => {
       // Background consumption must never surface as an unhandled rejection.
     });
+    if (!conversation.hasUserMessage && this.options.titleGenerator !== undefined) {
+      try {
+        const generatedTitle = await this.options.titleGenerator.generateConversationTitle(content);
+        if (generatedTitle !== undefined && generatedTitle.trim().length > 0) {
+          updated = this.repositories.conversations.updateTitle(
+            conversation.id,
+            generatedTitle,
+          );
+        }
+      } catch {
+        // The deterministic title already returned by activation remains the fallback.
+      }
+    }
     return { requestId, conversation: updated };
   }
 

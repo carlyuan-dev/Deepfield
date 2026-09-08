@@ -112,7 +112,7 @@ conversations
 
 Messages 继续通过 `conversation_id` 关联 Conversation。
 
-第一条用户消息写入时，以清理空白后的消息开头生成标题；第一版使用确定性截取，不额外调用 LLM。最近对话只展示已有用户消息的 Conversation，并按 `updated_at` 倒序排列。
+第一条用户消息写入时，先以清理空白后的消息开头生成 deterministic fallback；随后由 Main 中可注入的 DeepSeek 标题服务异步生成一次轻量中文标题。标题请求失败、超时、为空或处于 Fake 模式时保留 fallback。最近对话只展示已有用户消息的 Conversation，并按 `updated_at` 倒序排列；标题回写只更新 title，不二次刷新排序时间。
 
 启动行为：
 
@@ -153,6 +153,8 @@ Chat API 以 `conversationId` 为主键，不再接收 `projectId`。Application
 - Capability 页面失败不影响当前 Chat；
 - Chat 收起或展开不改变正在进行的请求；
 - Skill 列表加载失败仍允许普通 Chat。
+- DeepSeek 连接检查只返回 connected/disconnected；Key 缺失、网络失败、超时、认证失败或模型不可用均显示 disconnected，不向 Renderer 暴露 Key、响应体或底层错误。
+- Fake Agent 模式禁用 DeepSeek 网络请求，连接灯显示 disconnected，首条标题使用 deterministic fallback。
 
 错误信息不得包含 API Key、完整 Skill 内容或内部文件路径。
 
@@ -177,6 +179,8 @@ Chat API 以 `conversationId` 为主键，不再接收 `projectId`。Application
 - 阶段结束时运行一次类型检查、构建、Electron E2E 和打包 Smoke；
 - 不以边界矩阵、覆盖率或测试数量作为本轮验收目标。
 
+本轮 UI 与行为收口继续采用有限功能测试策略：后端只用注入 fake fetch 覆盖连接成功/失败、标题规范化、Fake 禁用和输入限界；Renderer 主路径覆盖连接灯、首条标题回写、三轮消息顺序、历史滚动、Capability 收展/关闭及 Skill 单次选择。Fake/E2E/打包冒烟不访问真实 DeepSeek、网页搜索或付费 API。
+
 ## 11. 验收标准
 
 本轮完成时：
@@ -188,3 +192,12 @@ Chat API 以 `conversationId` 为主键，不再接收 `projectId`。Application
 5. 直接打开工作流会收起 Chat，箭头和对话入口可以重新展开 Chat；
 6. Chat 收展不打断正在生成的回复；
 7. 普通问答、Coding、办公写作、短期记忆和手动 Skill 可以进入真人测试。
+
+## 12. 阶段一至三落地约定
+
+- Capability 打开时壳层使用稳定分栏：Chat expanded 为 520px，Capability 使用剩余空间且至少保留 420px；Chat collapsed 为 38px 加 Capability；无 Capability 时 Chat 占满主体区域。桌面窗口最小宽度为 1240px。
+- Capability 由通用 Shell 管理。右上角关闭按钮执行 `CLOSE_CAPABILITY`，清空 activeCapability 并展开 Chat；关闭行为不写入 Industry Research 组件，也不绑定 Conversation 与研究条目。
+- Chat reducer 在 completed 或 failed 终态到达时，都把 Assistant 结果固化到对应用户消息之后，清理 draft/order/request 映射，同时保留失败态与重试提示；迟到事件被丢弃。
+- 打开或切换 Conversation 后滚动到最后一条；流式更新仅在用户此前接近底部时跟随，用户主动上翻后不强拉。左侧历史按钮使用稳定矩形选中态和 `aria-current="page"`，`＋ 新对话` 是普通动作按钮。
+- 品牌旁连接灯初始为 checking 灰色，成功为绿色，失败或 Fake 模式为红色，并提供中文 aria-label/title。设置页保存新 Key 成功后复用同一检查流程。
+- 首条消息启动主 Agent 后并行等待轻量标题生成；标题成功回写 Conversation，失败或 Fake 模式使用 deterministic fallback；后续消息不重复生成标题。

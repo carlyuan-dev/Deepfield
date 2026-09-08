@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ChatRequestOptions,
   Conversation,
@@ -32,7 +32,21 @@ export function ChatView({
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string | undefined>(undefined);
   const lastSubmitted = useRef("");
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const followOutput = useRef(true);
   const messages = visibleMessages(state);
+
+  useLayoutEffect(() => {
+    const element = messagesRef.current;
+    if (element !== null && followOutput.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [conversation.id, state.loadState, messages.length, messages.at(-1)?.content]);
+
+  const handleMessagesScroll = (element: HTMLDivElement): void => {
+    followOutput.current =
+      element.scrollHeight - element.scrollTop - element.clientHeight <= 40;
+  };
 
   // Load once on mount. A loading failure must leave ordinary Chat usable, so
   // it degrades to an empty Skill list.
@@ -81,7 +95,11 @@ export function ChatView({
         <p className="muted">加载消息…</p>
       ) : (
         <>
-          <Messages messages={messages} />
+          <Messages
+            messages={messages}
+            messagesRef={messagesRef}
+            onScroll={handleMessagesScroll}
+          />
           <Composer
             value={draft}
             onChange={setDraft}

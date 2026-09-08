@@ -10,6 +10,7 @@ import {
   type CreateProjectInput,
   type Project,
   type SkillSummary,
+  type LlmConnectionStatus,
 } from "@deepfield/contracts";
 import { DEEPSEEK_KEY_NAME } from "@deepfield/application";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
@@ -49,6 +50,10 @@ export interface SecretSettingsLike {
   set(name: string, value: string): void;
 }
 
+export interface LlmServiceLike {
+  checkConnection(): Promise<LlmConnectionStatus>;
+}
+
 export interface SkillListLike {
   list(): SkillSummary[];
 }
@@ -69,6 +74,7 @@ export interface IpcServiceDeps {
   conversations: ConversationServiceLike;
   projects: ProjectServiceLike;
   settings: SecretSettingsLike;
+  llm: LlmServiceLike;
   skills: SkillListLike;
   chat: ChatServiceLike;
 }
@@ -81,6 +87,7 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.conversationsListRecent,
   IPC_CHANNELS.settingsHasDeepSeekKey,
   IPC_CHANNELS.settingsSetDeepSeekKey,
+  IPC_CHANNELS.llmCheckConnection,
   IPC_CHANNELS.skillsList,
   IPC_CHANNELS.chatSend,
   IPC_CHANNELS.chatListMessages,
@@ -165,6 +172,13 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
       throw new Error("invalid settings input");
     }
     deps.settings.set(DEEPSEEK_KEY_NAME, value);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.llmCheckConnection, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid llm input");
+    }
+    return deps.llm.checkConnection();
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.skillsList, async (_event, ...args) => {

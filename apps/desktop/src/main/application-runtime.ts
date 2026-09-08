@@ -5,6 +5,7 @@ import {
   ConversationService,
   ProjectService,
   type AgentWorkerPort,
+  type ConversationTitleGenerator,
   type SecretReader,
 } from "@deepfield/application";
 
@@ -12,6 +13,7 @@ export interface ApplicationRuntimeDeps {
   repositories: Repositories;
   secrets: SecretReader;
   worker: AgentWorkerPort;
+  titleGenerator?: ConversationTitleGenerator;
 }
 
 export interface ApplicationRuntime {
@@ -30,6 +32,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     contextBuilder,
     deps.secrets,
     deps.worker,
+    deps.titleGenerator === undefined ? {} : { titleGenerator: deps.titleGenerator },
   );
   return { projectService, conversationService, contextBuilder, chatService };
 }

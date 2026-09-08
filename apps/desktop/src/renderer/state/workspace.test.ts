@@ -23,6 +23,16 @@ describe("workspace shell", () => {
     });
   });
 
+  it("closing a Capability clears it and expands Chat", () => {
+    const open = workspaceReducer(initialWorkspaceState, {
+      type: "OPEN_CAPABILITY_DIRECT",
+      capabilityId: "industry-research",
+    });
+    expect(workspaceReducer({ ...open, chatPane: "collapsed" }, { type: "CLOSE_CAPABILITY" })).toEqual(
+      initialWorkspaceState,
+    );
+  });
+
   it("a Conversation click expands Chat while the Capability stays mounted", () => {
     const collapsed = workspaceReducer(initialWorkspaceState, {
       type: "OPEN_CAPABILITY_DIRECT",

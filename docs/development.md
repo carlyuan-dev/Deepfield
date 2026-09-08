@@ -1,7 +1,7 @@
 # Deepfield 开发文档
 
-Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本文档覆盖本阶段（Foundation
-Plan P1）的开发、测试、E2E 与本地打包流程。
+Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本文档覆盖当前 Agent-first
+Chat、Capability 壳层、有限功能测试、E2E 与本地打包流程。
 
 ## 环境要求
 
@@ -67,8 +67,8 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
 ```
 
 - 配置：`playwright.config.ts`（串行 workers=1、retries=0）
-- 规格：`tests/e2e/foundation.spec.ts`——首启、设置 key、建项目、流式 Chat、
-  优雅退出、同一 userData 重启后项目/密钥/历史仍在、新对话、Chat Rail 收起/展开
+- 规格：`tests/e2e/foundation.spec.ts`——首启直入 Chat、Fake 连接灯、三轮消息顺序、
+  Capability 收展/关闭、历史底部定位、优雅退出与同一 userData 重启恢复
 - E2E 每次使用全新临时 userData（mkdtemp），结束时只清理自己的目录；
   E2E key 是测试专用假值，生产代码不含该值
 - 不访问 DeepSeek/搜索网络
@@ -101,15 +101,16 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
 - 当前内置：`skills/structured-brief/SKILL.md`（Pi 标准 SKILL.md；打包后位于
   `Deepfield.app/Contents/Resources/skills/structured-brief/SKILL.md`）。
 
-手动检查请区分两种模式：
+手动检查请区分两种模式，并优先确认消息时间线与滚动行为：
 
 - **Fake Agent（`DEEPFIELD_AGENT_MODE=fake`，含打包 app 冒烟）**：只验证 UI 与
   接线主路径，不验证答案或 Skill 指令效果——Fake Agent 固定回复“测试回复”。
-  检查项：启动即进入可输入 Chat；首条消息后其标题进入“对话”；“行业研究”
-  收展与箭头往返；重启恢复该 Conversation；Skill 下拉能看到 `structured-brief`，
+  检查项：启动即进入可输入 Chat；品牌旁连接灯为“未连接”；首条消息后其 deterministic
+  fallback 标题进入“对话”；连续发送三轮确认 user/assistant 交错；打开历史后位于底部，
+  用户上翻时流式回复不强拉；“行业研究”收展、关闭按钮与箭头往返；重启恢复该 Conversation；Skill 下拉能看到 `structured-brief`，
   选择随本次发送传递并发送后清空（界面收到固定“测试回复”，无 Skill 标记因 Fake
   不回传 skillName）。
-- **真实 DeepSeek 模式**：用户先在设置页配置真实 Key，然后依次人工验证：
+- **真实 DeepSeek 模式**：用户先在设置页配置真实 Key，确认连接灯变为“已连接”，然后依次人工验证：
   1. 普通问答（如把人形机器人行业研究目标整理成简短清单）；
   2. Coding（如用 TypeScript 写公司名去重函数并解释思路）；
   3. office 写作（粘贴一段粗略笔记，要求简洁内部邮件）；
@@ -117,6 +118,10 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   5. 手动 Skill：选择 `structured-brief` 并粘贴粗略研究笔记，回复应按
      “核心结论 / 关键依据 / 待核实问题”三节组织；
   6. 随后不选 Skill 发一条普通消息，确认三节约束消失。
+
+标题检查：真实模式首条消息应优先显示 DeepSeek 生成的短中文标题；若请求超时、失败或返回空结果，应保留 deterministic fallback，且后续消息不重新生成标题。Fake 模式只验证接线、离线 fallback 和界面状态，不验证答案、标题质量或 Skill 指令效果。
+
+有限功能测试策略：本阶段只运行与当前切片直接相关的聚焦测试、一次 typecheck、一次 E2E/build、一次 arm64 目录打包和一次 Fake 冒烟；不运行全量测试、覆盖率、重复构建或真实 DeepSeek/Web Search/付费 API。
 
 ## 本地打包（arm64）
 

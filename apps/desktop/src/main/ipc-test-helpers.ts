@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectId,
   SkillSummary,
+  LlmConnectionStatus,
 } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
@@ -147,6 +148,16 @@ export class FakeSecretSettings {
   }
 }
 
+export class FakeLlmService {
+  checkConnectionCalls = 0;
+  status: LlmConnectionStatus = "connected";
+
+  checkConnection(): Promise<LlmConnectionStatus> {
+    this.checkConnectionCalls += 1;
+    return Promise.resolve(this.status);
+  }
+}
+
 export const DEFAULT_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
 
 export class FakeSkillList {
@@ -206,11 +217,12 @@ export function makeDeps() {
   const conversations = new FakeConversationService();
   const projects = new FakeProjectService();
   const settings = new FakeSecretSettings();
+  const llm = new FakeLlmService();
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
-  const deps: IpcServiceDeps = { ipcMain, conversations, projects, settings, skills, chat };
+  const deps: IpcServiceDeps = { ipcMain, conversations, projects, settings, llm, skills, chat };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, projects, settings, skills, chat, dispose };
+  return { ipcMain, conversations, projects, settings, llm, skills, chat, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

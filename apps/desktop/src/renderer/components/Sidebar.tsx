@@ -1,9 +1,12 @@
 import type { Conversation } from "@deepfield/contracts";
 
 export type SidebarActive = "chat" | "capability" | "settings" | undefined;
+export type ConnectionStatus = "checking" | "connected" | "disconnected";
 
 export interface SidebarProps {
   conversations: Conversation[];
+  activeConversationId: string | undefined;
+  connectionStatus: ConnectionStatus;
   active: SidebarActive;
   onNewConversation(): void;
   onOpenConversation(conversationId: string): void;
@@ -13,6 +16,8 @@ export interface SidebarProps {
 
 export function Sidebar({
   conversations,
+  activeConversationId,
+  connectionStatus,
   active,
   onNewConversation,
   onOpenConversation,
@@ -21,10 +26,30 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <nav className="sidebar" aria-label="主导航">
-      <div className="brand">Deepfield</div>
+      <div className="brand">
+        <span>Deepfield</span>
+        <span
+          className={`connection-indicator ${connectionStatus}`}
+          role="status"
+          aria-label={
+            connectionStatus === "checking"
+              ? "DeepSeek 连接状态：检测中"
+              : connectionStatus === "connected"
+                ? "DeepSeek 连接状态：已连接"
+                : "DeepSeek 连接状态：未连接"
+          }
+          title={
+            connectionStatus === "checking"
+              ? "DeepSeek：检测中"
+              : connectionStatus === "connected"
+                ? "DeepSeek：已连接"
+                : "DeepSeek：未连接"
+          }
+        />
+      </div>
       <ul className="nav-primary">
         <li>
-          <button className={active === "chat" ? "active" : ""} onClick={onNewConversation}>
+          <button onClick={onNewConversation}>
             ＋ 新对话
           </button>
         </li>
@@ -33,7 +58,11 @@ export function Sidebar({
       <ul className="nav-projects">
         {conversations.map((conversation) => (
           <li key={conversation.id}>
-            <button onClick={() => onOpenConversation(conversation.id)}>
+            <button
+              className={activeConversationId === conversation.id ? "active" : ""}
+              aria-current={activeConversationId === conversation.id ? "page" : undefined}
+              onClick={() => onOpenConversation(conversation.id)}
+            >
               {conversation.title}
             </button>
           </li>

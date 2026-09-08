@@ -8,6 +8,10 @@ export interface AgentWorkerPort {
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent>;
 }
 
+export interface ConversationTitleGenerator {
+  generateConversationTitle(content: string): Promise<string | undefined>;
+}
+
 export type RequestIdFactory = () => string;
 
 /** Narrow provider-key reader: only the compiled allowlisted provider. */

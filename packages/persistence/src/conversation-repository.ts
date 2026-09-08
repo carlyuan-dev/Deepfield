@@ -82,5 +82,16 @@ export function createConversationRepository(db: DatabaseSync): ConversationRepo
       }
       return toConversation(updated);
     },
+
+    updateTitle(conversationId: ConversationId, title: string): Conversation {
+      db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(title, conversationId);
+      const updated = db
+        .prepare("SELECT * FROM conversations WHERE id = ?")
+        .get(conversationId) as unknown as ConversationRow | undefined;
+      if (!updated) {
+        throw new Error(`conversation not found: ${conversationId}`);
+      }
+      return toConversation(updated);
+    },
   };
 }

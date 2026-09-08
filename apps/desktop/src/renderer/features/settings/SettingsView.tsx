@@ -4,9 +4,10 @@ import type { DesktopApi } from "@deepfield/contracts";
 export interface SettingsViewProps {
   api: DesktopApi;
   onBack(): void;
+  onKeySaved(): void;
 }
 
-export function SettingsView({ api, onBack }: SettingsViewProps) {
+export function SettingsView({ api, onBack, onKeySaved }: SettingsViewProps) {
   const [configured, setConfigured] = useState<boolean>();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string>();
@@ -47,6 +48,7 @@ export function SettingsView({ api, onBack }: SettingsViewProps) {
       await api.settings.setDeepSeekKey(trimmed);
       setValue("");
       setConfigured(true);
+      onKeySaved();
     } catch {
       setError("保存失败，请重试");
     } finally {

@@ -13,6 +13,7 @@ import type {
   Project,
   ProjectId,
   SkillSummary,
+  LlmConnectionStatus,
 } from "@deepfield/contracts";
 
 export interface FakeDesktopApi extends DesktopApi {
@@ -28,6 +29,9 @@ export interface FakeDesktopApi extends DesktopApi {
   settings: {
     hasDeepSeekKey: Mock<() => Promise<boolean>>;
     setDeepSeekKey: Mock<(value: string) => Promise<void>>;
+  };
+  llm: {
+    checkConnection: Mock<() => Promise<LlmConnectionStatus>>;
   };
   skills: {
     list: Mock<() => Promise<SkillSummary[]>>;
@@ -113,6 +117,9 @@ export function makeFakeApi(): FakeDesktopApi {
     settings: {
       hasDeepSeekKey: vi.fn(async (): Promise<boolean> => false),
       setDeepSeekKey: vi.fn(async (_value: string): Promise<void> => {}),
+    },
+    llm: {
+      checkConnection: vi.fn(async (): Promise<LlmConnectionStatus> => "disconnected"),
     },
     skills: {
       list: vi.fn(async (): Promise<SkillSummary[]> => []),

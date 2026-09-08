@@ -32,6 +32,7 @@ async function chatVisible(): Promise<HTMLTextAreaElement> {
 describe("app conversation chat", () => {
   it("opens the newest recent Conversation ready to type, switches history and titles a new first message", async () => {
     const fake = makeFakeApi();
+    fake.llm.checkConnection.mockResolvedValue("connected");
     const older = conversation("c-older", "旧对话", true);
     const newer = conversation("c-newer", "最近对话", true);
     fake.conversations.openInitial.mockResolvedValue({ active: newer, recent: [newer, older] });
@@ -49,6 +50,7 @@ describe("app conversation chat", () => {
 
     // The newest recent Conversation is open immediately without selecting a Project.
     await waitFor(() => expect(screen.getByText("新项目回答")).toBeTruthy());
+    expect(screen.getByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
     expect(screen.queryByText("请先创建或选择一个项目")).toBeNull();
     const input = await chatVisible();
     await user.type(input, "再问一次");
@@ -66,7 +68,7 @@ describe("app conversation chat", () => {
 
     // ＋ 新对话 opens a blank usable Chat with no Project involvement.
     fake.conversations.create.mockResolvedValue(conversation("c-fresh", "新对话", false));
-    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c-fresh", "研究目标整理"));
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c-fresh", "智能标题"));
     fake.chat.listMessages.mockImplementation(async (conversationId) =>
       conversationId === "c-fresh" ? [] : [],
     );
@@ -80,9 +82,7 @@ describe("app conversation chat", () => {
     });
 
     // The first-message title appears in the 对话 sidebar after the send resolves.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "研究目标整理" })).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "智能标题" })).toBeTruthy());
   });
 
   it("keeps the ordinary Chat stream path after a selected Skill affects exactly one send", async () => {

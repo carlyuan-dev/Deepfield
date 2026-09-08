@@ -15,6 +15,7 @@ export type WorkspaceAction =
   | { type: "OPEN_CONVERSATION" }
   | { type: "OPEN_CAPABILITY_DIRECT"; capabilityId: CapabilityId }
   | { type: "OPEN_CAPABILITY_FROM_CHAT"; capabilityId: CapabilityId }
+  | { type: "CLOSE_CAPABILITY" }
   | { type: "COLLAPSE_CHAT" }
   | { type: "EXPAND_CHAT" };
 
@@ -31,6 +32,8 @@ export function workspaceReducer(
       return { activeCapability: action.capabilityId, chatPane: "collapsed" };
     case "OPEN_CAPABILITY_FROM_CHAT":
       return { activeCapability: action.capabilityId, chatPane: "expanded" };
+    case "CLOSE_CAPABILITY":
+      return { activeCapability: undefined, chatPane: "expanded" };
     case "COLLAPSE_CHAT":
       return { ...state, chatPane: "collapsed" };
     case "EXPAND_CHAT":

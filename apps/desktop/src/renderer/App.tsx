@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { DesktopApi, Project } from "@deepfield/contracts";
 import { createChatEventHub } from "./state/chat-event-hub.js";
 import { createRequestId } from "./request-id.js";
@@ -22,8 +22,23 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const conversations = useConversations(api);
   const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspaceState);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<"checking" | "connected" | "disconnected">(
+    "checking",
+  );
   const [researchItem, setResearchItem] = useState<Project | undefined>(undefined);
   const eventHub = useMemo(() => createChatEventHub(), []);
+
+  const checkConnection = useCallback((): void => {
+    setConnectionStatus("checking");
+    void api.llm.checkConnection().then(
+      (status) => setConnectionStatus(status),
+      () => setConnectionStatus("disconnected"),
+    );
+  }, [api]);
+
+  useEffect(() => {
+    checkConnection();
+  }, [checkConnection]);
 
   useEffect(() => {
     const unsubscribe = api.chat.subscribe((event) => eventHub.emit(event));
@@ -54,6 +69,8 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
     <div className="shell">
       <Sidebar
         conversations={conversations.conversations}
+        activeConversationId={conversations.activeConversation?.id}
+        connectionStatus={connectionStatus}
         active={active}
         onNewConversation={() => {
           void conversations.newConversation();
@@ -70,9 +87,13 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
       />
       <main className="workspace">
         {settingsOpen ? (
-          <SettingsView api={api} onBack={() => setSettingsOpen(false)} />
+          <SettingsView
+            api={api}
+            onBack={() => setSettingsOpen(false)}
+            onKeySaved={checkConnection}
+          />
         ) : (
-          <div className="workspace-panes">
+          <div className={`workspace-panes ${capabilityOpen ? "with-capability" : "chat-only"} ${chatPane}`}>
             <section
               className={`chat-pane ${chatPane}`}
               aria-label="Chat"
@@ -106,6 +127,15 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
             </section>
             {capabilityOpen && (
               <aside className="capability-pane" aria-label="Capability">
+                <div className="capability-pane-toolbar">
+                  <button
+                    className="capability-close"
+                    aria-label="关闭 Capability"
+                    onClick={() => dispatchWorkspace({ type: "CLOSE_CAPABILITY" })}
+                  >
+                    ×
+                  </button>
+                </div>
                 <CapabilityView
                   api={api}
                   projectId={researchItem?.id}

@@ -3,6 +3,8 @@ import type { Conversation } from "./conversations.js";
 import type { AgentWorkerEvent, ChatMessage, ChatRequestOptions, ChatSendResult } from "./chat.js";
 import type { SkillSummary } from "./skills.js";
 
+export type LlmConnectionStatus = "connected" | "disconnected";
+
 export interface DesktopApi {
   conversations: {
     create(): Promise<Conversation>;
@@ -16,6 +18,9 @@ export interface DesktopApi {
   settings: {
     hasDeepSeekKey(): Promise<boolean>;
     setDeepSeekKey(value: string): Promise<void>;
+  };
+  llm: {
+    checkConnection(): Promise<LlmConnectionStatus>;
   };
   skills: {
     list(): Promise<SkillSummary[]>;

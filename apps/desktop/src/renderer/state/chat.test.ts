@@ -129,7 +129,7 @@ describe("chat reducer", () => {
     expect(visibleMessages(state).at(-1)).toMatchObject({ role: "assistant", content: "测试回" });
   });
 
-  it("replaces the draft with the completed text and restores sending", () => {
+  it("finalizes the completed draft in place and restores sending", () => {
     let state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",
       content: "你好",
@@ -141,11 +141,12 @@ describe("chat reducer", () => {
       conversationId: "c1",
       event: event("r1", "completed", "测试回复"),
     });
-    expect(state.drafts["r1"]).toMatchObject({ status: "done", content: "测试回复" });
+    expect(state.drafts["r1"]).toBeUndefined();
+    expect(visibleMessages(state).map((message) => message.content)).toEqual(["你好", "测试回复"]);
     expect(state.sending).toBe(false);
   });
 
-  it("marks the draft failed and restores sending without a final text", () => {
+  it("finalizes a failed reply in place and restores sending without a final text", () => {
     let state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",
       content: "你好",
@@ -157,7 +158,11 @@ describe("chat reducer", () => {
       conversationId: "c1",
       event: event("r1", "failed", "provider_error"),
     });
-    expect(state.drafts["r1"]).toMatchObject({ status: "failed" });
+    expect(state.drafts["r1"]).toBeUndefined();
+    expect(visibleMessages(state)).toMatchObject([
+      { role: "user", content: "你好" },
+      { role: "assistant", status: "failed", content: "" },
+    ]);
     expect(state.sending).toBe(false);
   });
 
@@ -177,7 +182,8 @@ describe("chat reducer", () => {
       conversationId: "c1",
       event: event("r1", "text_delta", "晚到"),
     });
-    expect(state.drafts["r1"]).toMatchObject({ status: "done", content: "最终" });
+    expect(state.drafts["r1"]).toBeUndefined();
+    expect(visibleMessages(state).map((message) => message.content)).toEqual(["你好", "最终"]);
   });
 
   it("applies events before the send promise resolves via the request id", () => {
@@ -194,6 +200,63 @@ describe("chat reducer", () => {
     state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: event("r1", "started") });
     expect(state.drafts).toEqual(before.drafts);
     expect(state.drafts["r1"]).toBeUndefined();
+  });
+
+  it("keeps three sequential user and assistant turns interleaved without a reload", () => {
+    let state = loadedConversation("c1");
+    const submitTurn = (requestId: string, question: string, answer: string): void => {
+      state = chatReducer(state, {
+        type: "USER_SUBMIT",
+        content: question,
+        requestId,
+      });
+      state = chatReducer(state, {
+        type: "WORKER_EVENT",
+        conversationId: "c1",
+        event: event(requestId, "started"),
+      });
+      state = chatReducer(state, {
+        type: "WORKER_EVENT",
+        conversationId: "c1",
+        event: event(requestId, "completed", answer),
+      });
+    };
+
+    submitTurn("r1", "user1", "assistant1");
+    submitTurn("r2", "user2", "assistant2");
+    submitTurn("r3", "user3", "assistant3");
+
+    expect(visibleMessages(state).map((message) => message.content)).toEqual([
+      "user1",
+      "assistant1",
+      "user2",
+      "assistant2",
+      "user3",
+      "assistant3",
+    ]);
+  });
+
+  it("keeps a failed reply in place before the next user turn", () => {
+    let state = loadedConversation("c1");
+    state = chatReducer(state, { type: "USER_SUBMIT", content: "user1", requestId: "r1" });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "failed", "provider_error"),
+    });
+    state = chatReducer(state, { type: "USER_SUBMIT", content: "user2", requestId: "r2" });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r2", "completed", "assistant2"),
+    });
+
+    expect(visibleMessages(state).map((message) => [message.role, message.status, message.content])).toEqual([
+      ["user", "done", "user1"],
+      ["assistant", "failed", ""],
+      ["user", "done", "user2"],
+      ["assistant", "done", "assistant2"],
+    ]);
   });
 
   it("keeps other-conversation drafts out of the current conversation render", () => {

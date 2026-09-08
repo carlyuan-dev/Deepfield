@@ -8,6 +8,7 @@ import {
   type Conversation,
   type CreateProjectInput,
   type DesktopApi,
+  type LlmConnectionStatus,
   type Project,
   type SkillSummary,
 } from "@deepfield/contracts";
@@ -20,6 +21,7 @@ export const IPC_CHANNELS = {
   conversationsListRecent: "deepfield:conversations:listRecent",
   settingsHasDeepSeekKey: "deepfield:settings:hasDeepSeekKey",
   settingsSetDeepSeekKey: "deepfield:settings:setDeepSeekKey",
+  llmCheckConnection: "deepfield:llm:checkConnection",
   skillsList: "deepfield:skills:list",
   chatSend: "deepfield:chat:send",
   chatEvents: "deepfield:chat:events",
@@ -53,6 +55,10 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.settingsHasDeepSeekKey) as Promise<boolean>,
       setDeepSeekKey: (value: string) =>
         ipc.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, value) as Promise<void>,
+    },
+    llm: {
+      checkConnection: () =>
+        ipc.invoke(IPC_CHANNELS.llmCheckConnection) as Promise<LlmConnectionStatus>,
     },
     skills: {
       list: () => ipc.invoke(IPC_CHANNELS.skillsList) as Promise<SkillSummary[]>,

@@ -14,6 +14,7 @@ import {
 import { registerIpcHandlers, type IpcMainLike } from "./ipc.js";
 import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
+import { DeepSeekService } from "./deepseek-service.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 
 let mainWindow: BrowserWindow | undefined;
@@ -75,6 +76,9 @@ void app.whenReady().then(async () => {
     encrypt: (value) => safeStorage.encryptString(value),
     decrypt: (value) => safeStorage.decryptString(value),
   });
+  const deepSeekService = new DeepSeekService(secrets, {
+    enabled: process.env.DEEPFIELD_AGENT_MODE !== "fake",
+  });
 
   const skillsDir = resolveSkillsDir({
     appPath: app.getAppPath(),
@@ -108,12 +112,14 @@ void app.whenReady().then(async () => {
         return client.send(request);
       },
     },
+    titleGenerator: deepSeekService,
   });
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
     conversations: appRuntime.conversationService,
     projects: appRuntime.projectService,
     settings: secrets,
+    llm: deepSeekService,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
   });

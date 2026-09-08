@@ -1,13 +1,26 @@
+import type { RefObject } from "react";
 import type { ChatMessageView } from "../state/chat.js";
 
 export interface MessagesProps {
   messages: ChatMessageView[];
   emptyLabel?: string;
+  messagesRef?: RefObject<HTMLDivElement | null>;
+  onScroll?(element: HTMLDivElement): void;
 }
 
-export function Messages({ messages, emptyLabel = "还没有消息" }: MessagesProps) {
+export function Messages({
+  messages,
+  emptyLabel = "还没有消息",
+  messagesRef,
+  onScroll,
+}: MessagesProps) {
   return (
-    <div className="messages" aria-live="polite">
+    <div
+      ref={messagesRef}
+      className="messages"
+      aria-live="polite"
+      onScroll={(event) => onScroll?.(event.currentTarget)}
+    >
       {messages.length === 0 && <p className="messages-empty">{emptyLabel}</p>}
       {messages.map((message) => (
         <div key={message.key} className={`message ${message.role} ${message.status}`}>

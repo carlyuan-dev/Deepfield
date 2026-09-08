@@ -31,6 +31,7 @@ export interface ConversationRepository {
   getById(conversationId: ConversationId): Conversation | undefined;
   listRecent(): Conversation[];
   activate(conversationId: ConversationId, title: string): Conversation;
+  updateTitle(conversationId: ConversationId, title: string): Conversation;
 }
 
 export interface MessageRepository {

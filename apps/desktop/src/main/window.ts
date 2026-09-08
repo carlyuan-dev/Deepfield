@@ -6,7 +6,7 @@ export function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1100,
+    minWidth: 1240,
     minHeight: 700,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),

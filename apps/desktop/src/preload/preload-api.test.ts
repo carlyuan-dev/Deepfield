@@ -38,10 +38,11 @@ describe("preload api", () => {
   it("exposes only the DesktopApi shape without ipcRenderer or secrets", () => {
     const { ipc } = makeFakeIpc();
     const api: DesktopApi = createPreloadApi(ipc);
-    expect(Object.keys(api).sort()).toEqual(["chat", "conversations", "projects", "settings", "skills"]);
+    expect(Object.keys(api).sort()).toEqual(["chat", "conversations", "llm", "projects", "settings", "skills"]);
     expect(Object.keys(api.conversations).sort()).toEqual(["create", "listRecent", "openInitial"]);
     expect(Object.keys(api.projects).sort()).toEqual(["create", "list"]);
     expect(Object.keys(api.settings).sort()).toEqual(["hasDeepSeekKey", "setDeepSeekKey"]);
+    expect(Object.keys(api.llm).sort()).toEqual(["checkConnection"]);
     expect(Object.keys(api.skills).sort()).toEqual(["list"]);
     expect(Object.keys(api.chat).sort()).toEqual(["listMessages", "send", "subscribe"]);
     expect(JSON.stringify(api)).not.toContain("ipcRenderer");
@@ -57,6 +58,7 @@ describe("preload api", () => {
     await api.projects.list();
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
+    await api.llm.checkConnection();
     await api.conversations.create();
     await api.conversations.openInitial();
     await api.conversations.listRecent();
@@ -68,6 +70,7 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.projectsList, args: [] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
+      { channel: IPC_CHANNELS.llmCheckConnection, args: [] },
       { channel: IPC_CHANNELS.conversationsCreate, args: [] },
       { channel: IPC_CHANNELS.conversationsOpenInitial, args: [] },
       { channel: IPC_CHANNELS.conversationsListRecent, args: [] },
