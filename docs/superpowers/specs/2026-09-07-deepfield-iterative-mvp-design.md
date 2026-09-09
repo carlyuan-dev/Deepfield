@@ -2,7 +2,7 @@
 
 日期：2026-09-07
 
-状态：当前有效设计，已通过对话评审
+状态：当前有效设计，已通过对话评审；开发状态更新至 2026-09-09
 
 优先级：本文件取代早期规格中尚未实施的 Capability A 流程、Provider 选型门槛和后续开发顺序。P1 已验收实现与 P2 已落地的 Tool Platform 代码继续作为技术基线。
 
@@ -17,14 +17,21 @@ Deepfield 是供一名财经记者私人使用的 Apple Silicon macOS 桌面应�
 已实现能力包括：
 
 - Electron、React、TypeScript 桌面壳层及 Apple Silicon 本地打包；
-- 项目、会话和消息的 SQLite 持久化；
+- 独立 Conversation、消息、行业条目、全局公司及行业—公司关联的 SQLite 持久化；
 - macOS 加密密钥存储；
 - Electron Utility Process 中的 Pi Agent；
-- Chat、Capability 画布和收窄 Chat 栏三种界面形态；
+- Conversation-first Chat、Capability 画布和收窄 Chat 栏三种界面形态；
+- DeepSeek 联网搜索开关、手动 Pi Skill、流式 Tool 调用状态展示；
+- 主 Agent 的时间、计算、时区和 Conversation 读取工具；
+- 行业条目创建、编辑、批量删除，以及公司手动管理、长文本识别导入、跨行业复用和零引用清理；
 - 版本化 Tool Registry、Tool Runner、权限、预算、审计和 Pi Tool Adapter；
 - 安全网页访问、链接检查、HTML/PDF 解析及多个 Search Provider 适配器。
 
 这些是后续功能可按需调用的基础设施。当前产品进展以用户能否完成真实任务为主要判断标准。
+
+主 Agent 当前不暴露网页抓取、网页解析或链接检查 Tool；联网 Chat 统一走 DeepSeek
+联网搜索。网页访问与 Search Provider 基础设施继续保留给 Capability 的证据验证阶段。
+本地附件目录已预留，但拖入文件、附件读取和文件检索尚未形成可用的主 Agent 路径。
 
 ## 3. 通用主 Agent
 
@@ -103,16 +110,16 @@ Research Agent 以一次调研任务为上下文边界。运行结束后释放 A
 
 ## 6. 分阶段交付顺序
 
-当前交付顺序为：
+当前交付状态与顺序为：
 
-1. Chat-1：通用对话、短期记忆、历史恢复、DeepSeek 联网按钮、手动 Pi Skill、流式回答和可点击来源；
-2. Chat-2：少量实用 Tool 调用；
-3. Chat-3：拖入文件、项目资料库和最小文件检索；
-4. 行业创建与公司候选整理；
-5. 单家公司自主初步调研；
-6. 原子事实证据验证；
-7. 用户审核、首次报告和公司介绍；
-8. 增量调研、时间记录、介绍刷新和回滚。
+1. **已完成**：Chat-1 通用对话、短期记忆、历史恢复、DeepSeek 联网按钮、手动 Pi Skill 和流式回答；
+2. **已完成**：Chat-2 最小 Tool 集与客户端 Tool 调用状态展示；
+3. **已完成**：行业创建与公司候选整理；
+4. **当前下一切片**：单家公司自主初步调研；
+5. 原子事实证据验证；
+6. 用户审核、首次报告和公司介绍；
+7. 增量调研、时间记录、介绍刷新和回滚；
+8. Chat-3 拖入文件、资料库和最小文件检索作为独立切片按真实需要插入，不阻塞当前公司调研主路径。
 
 每个阶段在用户实际体验并验收后，才进入下一个阶段的详细设计和实施。
 
@@ -133,8 +140,10 @@ DSH 任务只描述当前切片的目标、用户路径、接口、最少验收�
 
 ## 8. 当前设计入口
 
-当前实施切片是 Agent-first Chat Shell 修正，详细设计见：
+最近完成的业务切片是行业条目与公司名单，详细设计见：
 
-`docs/superpowers/specs/2026-09-08-deepfield-agent-first-chat-shell-design.md`
+`docs/superpowers/specs/2026-09-08-deepfield-capability-a-company-list-design.md`
 
-原 Chat-1 规格中已经实现的手动 Pi Skill 继续有效；其中“Chat 依附项目”的内容已被上述修正规格取代。
+截至 2026-09-09，行业公司管理检查点为 `c491ee0`，Chat 联网、最小 Tools、Tool
+调用展示及主 Agent 网页 Tool 收权检查点为 `327a08a`。当前进入“单家公司自主初步调研”
+设计；旧规格中更重的固定工作流只作为历史参考，不直接成为本切片的实现要求。
