@@ -19,6 +19,7 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos,
       secrets: { get: (name) => (name === "deepseek.apiKey" ? "sk-runtime" : undefined) },
+      companyRecognizer: { recognize: async () => [] },
       worker: {
         send: (request) => {
           requests.push(request.requestId);
@@ -32,12 +33,8 @@ describe("application runtime composition", () => {
       },
     });
 
-    // Project creation stays isolated from standalone Conversations.
-    runtime.projectService.create({
-      industry: "人形机器人",
-      scope: {},
-      launchSource: "direct-ui",
-    });
+    // Capability storage stays isolated from standalone Conversations.
+    runtime.industryResearch.createItem({ industry: "人形机器人" });
     expect(db.repos.conversations.listRecent()).toEqual([]);
 
     const conversation = runtime.conversationService.create();
@@ -71,6 +68,7 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos,
       secrets: { get: () => undefined },
+      companyRecognizer: { recognize: async () => [] },
       worker: {
         send: () => ({
           async *[Symbol.asyncIterator]() {

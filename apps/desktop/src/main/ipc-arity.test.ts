@@ -8,32 +8,48 @@ import {
 } from "./ipc-test-helpers.js";
 
 describe("ipc handler arity", () => {
-  it("requires exactly one argument for projects.create", async () => {
-    const { ipcMain, projects } = makeDeps();
+  it("requires exactly one argument for industryResearch.createItem", async () => {
+    const { ipcMain, industryResearch } = makeDeps();
     const sender = new FakeWebContents(1);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.projectsCreate, event(sender)),
-    ).rejects.toThrow(/invalid project input/);
+      ipcMain.invoke(IPC_CHANNELS.industryResearchCreateItem, event(sender)),
+    ).rejects.toThrow(/invalid research item input/);
     await expect(
       ipcMain.invoke(
-        IPC_CHANNELS.projectsCreate,
+        IPC_CHANNELS.industryResearchCreateItem,
         event(sender),
-        { industry: "x", scope: {}, launchSource: "direct-ui" },
+        { industry: "x" },
         "extra",
       ),
-    ).rejects.toThrow(/invalid project input/);
-    expect(projects.createCalls).toHaveLength(0);
+    ).rejects.toThrow(/invalid research item input/);
+    expect(industryResearch.createItemCalls).toHaveLength(0);
   });
 
-  it("requires zero arguments for projects.list", async () => {
-    const { ipcMain, projects } = makeDeps();
+  it("requires zero arguments for industryResearch.listItems", async () => {
+    const { ipcMain, industryResearch } = makeDeps();
     const sender = new FakeWebContents(1);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.projectsList, event(sender), "extra"),
-    ).rejects.toThrow(/invalid list input/);
-    expect(projects.listCalls).toBe(0);
-    await ipcMain.invoke(IPC_CHANNELS.projectsList, event(sender));
-    expect(projects.listCalls).toBe(1);
+      ipcMain.invoke(IPC_CHANNELS.industryResearchListItems, event(sender), "extra"),
+    ).rejects.toThrow(/invalid research item input/);
+    expect(industryResearch.listItemsCalls).toBe(0);
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchListItems, event(sender));
+    expect(industryResearch.listItemsCalls).toBe(1);
+  });
+
+  it("requires exactly one non-empty id array for industryResearch.deleteItems", async () => {
+    const { ipcMain, industryResearch } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const channel = IPC_CHANNELS.industryResearchDeleteItems;
+    await expect(ipcMain.invoke(channel, event(sender), [])).rejects.toThrow(
+      /invalid research item input/,
+    );
+    await expect(ipcMain.invoke(channel, event(sender), ["item-1", ""])).rejects.toThrow(
+      /invalid research item input/,
+    );
+    await expect(ipcMain.invoke(channel, event(sender), ["item-1"], "extra")).rejects.toThrow(
+      /invalid research item input/,
+    );
+    expect(industryResearch.deleteItemsCalls).toHaveLength(0);
   });
 
   it("requires zero arguments for settings.has", async () => {

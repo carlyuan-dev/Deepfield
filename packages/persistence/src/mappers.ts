@@ -1,30 +1,48 @@
 import type {
   ChatMessage,
+  CapabilityItem,
+  Company,
   Conversation,
   ConversationId,
+  ItemCompany,
   MessageId,
-  Project,
-  ProjectId,
-  ProjectScope,
 } from "@deepfield/contracts";
 import type {
-  ActivityRow,
   ConversationRow,
   MessageRow,
-  ProjectActivityEvent,
-  ProjectRow,
+  CapabilityItemRow,
+  CompanyRow,
+  ItemCompanyRow,
 } from "./types.js";
 
-export function parseScope(scopeJson: string): ProjectScope {
-  return JSON.parse(scopeJson) as ProjectScope;
+export function toCapabilityItem(row: CapabilityItemRow): CapabilityItem {
+  return {
+    id: row.id as CapabilityItem["id"],
+    type: row.type,
+    industry: row.industry,
+    ...(row.research_scope !== null ? { researchScope: row.research_scope } : {}),
+    ...(row.notes !== null ? { notes: row.notes } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-export function toProject(row: ProjectRow): Project {
+export function toCompany(row: CompanyRow): Company {
   return {
-    id: row.id as ProjectId,
-    industry: row.industry,
-    scope: parseScope(row.scope_json),
-    status: row.status,
+    id: row.id as Company["id"],
+    name: row.name,
+    normalizedName: row.normalized_name,
+    ...(row.country_or_region !== null ? { countryOrRegion: row.country_or_region } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function toItemCompany(row: ItemCompanyRow): ItemCompany {
+  return {
+    itemId: row.item_id as ItemCompany["itemId"],
+    companyId: row.company_id as ItemCompany["companyId"],
+    ...(row.note !== null ? { note: row.note } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -48,20 +66,4 @@ export function toMessage(row: MessageRow): ChatMessage {
     content: row.content,
     createdAt: row.created_at,
   };
-}
-
-export function toActivity(row: ActivityRow): ProjectActivityEvent {
-  const base = {
-    id: row.id,
-    projectId: row.project_id,
-    type: row.type,
-    source: row.source,
-    importance: row.importance,
-    summary: row.summary,
-    createdAt: row.created_at,
-  };
-  if (row.payload_json === null) {
-    return base;
-  }
-  return { ...base, payload: JSON.parse(row.payload_json) };
 }

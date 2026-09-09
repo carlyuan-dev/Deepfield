@@ -1,7 +1,17 @@
 import {
+  CompanyDraftSchema,
   DEFAULT_DEEPSEEK_MODEL_ID,
+  RECOGNITION_CHUNK_MAX_CODE_POINTS,
+  countUnicodeCodePoints,
+  type CompanyDraft,
 } from "@deepfield/contracts";
-import type { ConversationTitleGenerator, SecretReader } from "@deepfield/application";
+import type {
+  CompanyRecognizer,
+  ConversationTitleGenerator,
+  SecretReader,
+} from "@deepfield/application";
+import { normalizeCompanyName } from "@deepfield/persistence";
+import { Value } from "typebox/value";
 
 export type DeepSeekConnectionStatus = "connected" | "disconnected";
 
@@ -13,7 +23,15 @@ interface DeepSeekServiceOptions {
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_TIMEOUT_MS = 7000;
+const COMPANY_RECOGNITION_TIMEOUT_MS = 20_000;
 const TITLE_MAX_LENGTH = 28;
+
+export class CompanyRecognitionError extends Error {
+  constructor() {
+    super("company recognition failed");
+    this.name = "CompanyRecognitionError";
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -39,7 +57,7 @@ export function normalizeConversationTitle(value: unknown): string | undefined {
     : `${characters.slice(0, TITLE_MAX_LENGTH).join("")}…`;
 }
 
-export class DeepSeekService implements ConversationTitleGenerator {
+export class DeepSeekService implements ConversationTitleGenerator, CompanyRecognizer {
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly timeoutMs: number;
   private readonly enabled: boolean;
@@ -106,7 +124,92 @@ export class DeepSeekService implements ConversationTitleGenerator {
     }
   }
 
-  private async request(path: string, init: RequestInit): Promise<Response | undefined> {
+  async recognize(text: string): Promise<CompanyDraft[]> {
+    if (countUnicodeCodePoints(text) > RECOGNITION_CHUNK_MAX_CODE_POINTS) {
+      throw new CompanyRecognitionError();
+    }
+    const response = await this.request("/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: DEFAULT_DEEPSEEK_MODEL_ID,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              '只提取输入中出现或明确指代的公司，不自行补充公司。note 仅保留一句极简候选备注。只返回 JSON，不要 Markdown 或解释，格式为 {"companies":[{"name":"公司名称","countryOrRegion":"可选","note":"可选的一句候选备注"}]}。',
+          },
+          { role: "user", content: text },
+        ],
+        stream: false,
+        max_tokens: 2048,
+      }),
+    }, COMPANY_RECOGNITION_TIMEOUT_MS);
+    if (response === undefined || response.status !== 200) {
+      throw new CompanyRecognitionError();
+    }
+
+    try {
+      const body: unknown = await response.json();
+      const message =
+        isRecord(body) && Array.isArray(body.choices) && isRecord(body.choices[0])
+          ? body.choices[0].message
+          : undefined;
+      const contentValue = isRecord(message) ? message.content : undefined;
+      if (typeof contentValue !== "string") {
+        throw new CompanyRecognitionError();
+      }
+      const parsed: unknown = JSON.parse(contentValue);
+      if (!isRecord(parsed) || !Array.isArray(parsed.companies)) {
+        throw new CompanyRecognitionError();
+      }
+      const seen = new Set<string>();
+      const drafts: CompanyDraft[] = [];
+      for (const candidate of parsed.companies) {
+        if (!isRecord(candidate) || typeof candidate.name !== "string") {
+          continue;
+        }
+        const name = candidate.name.trim();
+        if (name.length === 0) {
+          continue;
+        }
+        const countryOrRegion =
+          typeof candidate.countryOrRegion === "string"
+            ? candidate.countryOrRegion.trim()
+            : undefined;
+        const note = typeof candidate.note === "string" ? candidate.note.trim() : undefined;
+        const draft: CompanyDraft = {
+          name,
+          ...(countryOrRegion !== undefined && countryOrRegion.length > 0
+            ? { countryOrRegion }
+            : {}),
+          ...(note !== undefined && note.length > 0 ? { note } : {}),
+        };
+        if (!Value.Check(CompanyDraftSchema, draft)) {
+          continue;
+        }
+        const normalizedName = normalizeCompanyName(draft.name);
+        if (normalizedName.length === 0 || seen.has(normalizedName)) {
+          continue;
+        }
+        seen.add(normalizedName);
+        drafts.push(draft);
+      }
+      return drafts;
+    } catch (error) {
+      if (error instanceof CompanyRecognitionError) {
+        throw error;
+      }
+      throw new CompanyRecognitionError();
+    }
+  }
+
+  private async request(
+    path: string,
+    init: RequestInit,
+    timeoutMs = this.timeoutMs,
+  ): Promise<Response | undefined> {
     if (!this.enabled) {
       return undefined;
     }
@@ -120,7 +223,7 @@ export class DeepSeekService implements ConversationTitleGenerator {
       return undefined;
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await this.fetchImpl(`${DEEPSEEK_BASE_URL}${path}`, {
         ...init,

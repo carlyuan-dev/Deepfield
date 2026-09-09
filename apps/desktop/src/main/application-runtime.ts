@@ -3,8 +3,9 @@ import {
   ChatService,
   ContextBuilder,
   ConversationService,
-  ProjectService,
+  IndustryResearchService,
   type AgentWorkerPort,
+  type CompanyRecognizer,
   type ConversationTitleGenerator,
   type SecretReader,
 } from "@deepfield/application";
@@ -13,18 +14,22 @@ export interface ApplicationRuntimeDeps {
   repositories: Repositories;
   secrets: SecretReader;
   worker: AgentWorkerPort;
+  companyRecognizer: CompanyRecognizer;
   titleGenerator?: ConversationTitleGenerator;
 }
 
 export interface ApplicationRuntime {
-  projectService: ProjectService;
+  industryResearch: IndustryResearchService;
   conversationService: ConversationService;
   contextBuilder: ContextBuilder;
   chatService: ChatService;
 }
 
 export function createApplicationRuntime(deps: ApplicationRuntimeDeps): ApplicationRuntime {
-  const projectService = new ProjectService(deps.repositories);
+  const industryResearch = new IndustryResearchService(
+    deps.repositories,
+    deps.companyRecognizer,
+  );
   const conversationService = new ConversationService(deps.repositories);
   const contextBuilder = new ContextBuilder(deps.repositories);
   const chatService = new ChatService(
@@ -34,5 +39,5 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.worker,
     deps.titleGenerator === undefined ? {} : { titleGenerator: deps.titleGenerator },
   );
-  return { projectService, conversationService, contextBuilder, chatService };
+  return { industryResearch, conversationService, contextBuilder, chatService };
 }

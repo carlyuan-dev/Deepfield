@@ -3,19 +3,21 @@ import { Value } from "typebox/value";
 import {
   AgentWorkerRequestSchema,
   AgentWorkerEventSchema,
-  CreateProjectInputSchema,
+  CompanyDraftSchema,
+  CreateIndustryResearchItemInputSchema,
   DEFAULT_DEEPSEEK_MODEL_ID,
   SkillSummarySchema,
 } from "./index.js";
 
 describe("shared contracts", () => {
-  it("accepts a required industry and optional structured scope", () => {
-    expect(Value.Check(CreateProjectInputSchema, {
+  it("accepts closed research item and company inputs", () => {
+    expect(Value.Check(CreateIndustryResearchItemInputSchema, {
       industry: "人形机器人",
-      scope: { focus: "整机与核心零部件", exclusions: ["工业机械臂"] },
-      launchSource: "direct-ui",
+      researchScope: "整机与核心零部件",
+      notes: "重点关注上市公司",
     })).toBe(true);
-    expect(Value.Check(CreateProjectInputSchema, { scope: {} })).toBe(false);
+    expect(Value.Check(CreateIndustryResearchItemInputSchema, { industry: "x", extra: true })).toBe(false);
+    expect(Value.Check(CompanyDraftSchema, { name: "公司甲", note: "候选" })).toBe(true);
   });
 
   it("rejects malformed worker stream events", () => {

@@ -24,7 +24,9 @@ export function Messages({
       {messages.length === 0 && <p className="messages-empty">{emptyLabel}</p>}
       {messages.map((message) => (
         <div key={message.key} className={`message ${message.role} ${message.status}`}>
-          <div className="message-role">{message.role === "user" ? "我" : "Deepfield"}</div>
+          <div className={`message-role ${message.role === "user" ? "user-message-role" : ""}`}>
+            {message.role === "user" ? "我" : "Deepfield"}
+          </div>
           {message.role === "assistant" && message.skillName !== undefined && (
             <div className="skill-badge">Skill: {message.skillName}</div>
           )}

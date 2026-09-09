@@ -4,7 +4,7 @@ import {
   IPC_CHANNELS,
   type IpcBridge,
 } from "./preload-api.js";
-import type { AgentWorkerEvent, ChatRequestOptions, CreateProjectInput, DesktopApi } from "@deepfield/contracts";
+import type { AgentWorkerEvent, ChatRequestOptions, DesktopApi } from "@deepfield/contracts";
 
 const CHAT_OPTIONS: ChatRequestOptions = { webSearch: false, skillName: "structured-brief" };
 
@@ -38,9 +38,29 @@ describe("preload api", () => {
   it("exposes only the DesktopApi shape without ipcRenderer or secrets", () => {
     const { ipc } = makeFakeIpc();
     const api: DesktopApi = createPreloadApi(ipc);
-    expect(Object.keys(api).sort()).toEqual(["chat", "conversations", "llm", "projects", "settings", "skills"]);
+    expect(Object.keys(api).sort()).toEqual([
+      "chat",
+      "conversations",
+      "industryResearch",
+      "llm",
+      "settings",
+      "skills",
+    ]);
     expect(Object.keys(api.conversations).sort()).toEqual(["create", "listRecent", "openInitial"]);
-    expect(Object.keys(api.projects).sort()).toEqual(["create", "list"]);
+    expect(Object.keys(api.industryResearch).sort()).toEqual([
+      "addCompanies",
+      "addCompany",
+      "createItem",
+      "deleteItem",
+      "deleteItems",
+      "getItem",
+      "listCompanies",
+      "listItems",
+      "recognizeCompanies",
+      "removeCompanies",
+      "removeCompany",
+      "updateItem",
+    ]);
     expect(Object.keys(api.settings).sort()).toEqual(["hasDeepSeekKey", "setDeepSeekKey"]);
     expect(Object.keys(api.llm).sort()).toEqual(["checkConnection"]);
     expect(Object.keys(api.skills).sort()).toEqual(["list"]);
@@ -53,9 +73,23 @@ describe("preload api", () => {
   it("maps method calls to fixed channels", async () => {
     const { ipc, invokes } = makeFakeIpc();
     const api = createPreloadApi(ipc);
-    const input: CreateProjectInput = { industry: "人形机器人", scope: {}, launchSource: "direct-ui" };
-    await api.projects.create(input);
-    await api.projects.list();
+    const input = { industry: "人形机器人", researchScope: "整机" };
+    await api.industryResearch.createItem(input);
+    await api.industryResearch.updateItem("item-1", { industry: "具身智能" });
+    await api.industryResearch.deleteItem("item-1");
+    const deleteItems = Reflect.get(api.industryResearch, "deleteItems") as
+      | ((itemIds: string[]) => Promise<void>)
+      | undefined;
+    expect(deleteItems).toBeTypeOf("function");
+    await deleteItems!(["item-1", "item-2"]);
+    await api.industryResearch.listItems();
+    await api.industryResearch.getItem("item-1");
+    await api.industryResearch.listCompanies("item-1");
+    await api.industryResearch.addCompany("item-1", { name: "公司甲" });
+    await api.industryResearch.addCompanies("item-1", [{ name: "公司乙" }]);
+    await api.industryResearch.removeCompany("item-1", "company-1");
+    await api.industryResearch.removeCompanies("item-1", ["company-1", "company-2"]);
+    await api.industryResearch.recognizeCompanies("item-1", "公司甲");
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
     await api.llm.checkConnection();
@@ -66,8 +100,18 @@ describe("preload api", () => {
     await api.chat.send("conv-1", "你好", "req-1", CHAT_OPTIONS);
     await api.chat.listMessages("conv-1");
     expect(invokes).toEqual([
-      { channel: IPC_CHANNELS.projectsCreate, args: [input] },
-      { channel: IPC_CHANNELS.projectsList, args: [] },
+      { channel: IPC_CHANNELS.industryResearchCreateItem, args: [input] },
+      { channel: IPC_CHANNELS.industryResearchUpdateItem, args: ["item-1", { industry: "具身智能" }] },
+      { channel: IPC_CHANNELS.industryResearchDeleteItem, args: ["item-1"] },
+      { channel: IPC_CHANNELS.industryResearchDeleteItems, args: [["item-1", "item-2"]] },
+      { channel: IPC_CHANNELS.industryResearchListItems, args: [] },
+      { channel: IPC_CHANNELS.industryResearchGetItem, args: ["item-1"] },
+      { channel: IPC_CHANNELS.industryResearchListCompanies, args: ["item-1"] },
+      { channel: IPC_CHANNELS.industryResearchAddCompany, args: ["item-1", { name: "公司甲" }] },
+      { channel: IPC_CHANNELS.industryResearchAddCompanies, args: ["item-1", [{ name: "公司乙" }]] },
+      { channel: IPC_CHANNELS.industryResearchRemoveCompany, args: ["item-1", "company-1"] },
+      { channel: IPC_CHANNELS.industryResearchRemoveCompanies, args: ["item-1", ["company-1", "company-2"]] },
+      { channel: IPC_CHANNELS.industryResearchRecognizeCompanies, args: ["item-1", "公司甲"] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
       { channel: IPC_CHANNELS.llmCheckConnection, args: [] },

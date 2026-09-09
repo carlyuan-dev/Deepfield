@@ -1,12 +1,14 @@
 import type {
   AgentWorkerEvent,
+  CapabilityItem,
+  CapabilityItemId,
   ChatMessage,
   ChatRequestOptions,
+  CompanyDraft,
+  CompanyId,
   Conversation,
   ConversationId,
-  CreateProjectInput,
-  Project,
-  ProjectId,
+  ItemCompanyView,
   SkillSummary,
   LlmConnectionStatus,
 } from "@deepfield/contracts";
@@ -76,25 +78,108 @@ export class FakeIpcMain implements IpcMainLike {
   }
 }
 
-export class FakeProjectService {
-  createCalls: CreateProjectInput[] = [];
-  listCalls = 0;
+export class FakeIndustryResearchService {
+  createItemCalls: unknown[] = [];
+  updateItemCalls: Array<{ itemId: string; input: unknown }> = [];
+  deleteItemCalls: string[] = [];
+  deleteItemsCalls: string[][] = [];
+  listItemsCalls = 0;
+  getItemCalls: string[] = [];
+  listCompaniesCalls: string[] = [];
+  addCompanyCalls: Array<{ itemId: string; draft: CompanyDraft }> = [];
+  addCompaniesCalls: Array<{ itemId: string; drafts: CompanyDraft[] }> = [];
+  removeCompanyCalls: Array<{ itemId: string; companyId: string }> = [];
+  removeCompaniesCalls: Array<{ itemId: string; companyIds: string[] }> = [];
+  recognizeCompaniesCalls: Array<{ itemId: string; text: string }> = [];
+  recognizeCompaniesCallsResult: CompanyDraft[] = [];
 
-  create(input: CreateProjectInput): Project {
-    this.createCalls.push(input);
+  createItem(input: unknown): CapabilityItem {
+    this.createItemCalls.push(input);
+    const value = input as { industry: string; researchScope?: string; notes?: string };
     return {
-      id: "p1" as ProjectId,
-      industry: input.industry,
-      scope: input.scope,
-      status: "draft",
+      id: "item-1" as CapabilityItemId,
+      type: "industry-research",
+      industry: value.industry,
+      ...(value.researchScope !== undefined ? { researchScope: value.researchScope } : {}),
+      ...(value.notes !== undefined ? { notes: value.notes } : {}),
       createdAt: "",
       updatedAt: "",
     };
   }
 
-  list(): Project[] {
-    this.listCalls += 1;
+  updateItem(itemId: string, input: unknown): CapabilityItem {
+    this.updateItemCalls.push({ itemId, input });
+    const value = input as { industry: string; researchScope?: string; notes?: string };
+    return {
+      id: itemId as CapabilityItemId,
+      type: "industry-research",
+      industry: value.industry,
+      ...(value.researchScope !== undefined ? { researchScope: value.researchScope } : {}),
+      ...(value.notes !== undefined ? { notes: value.notes } : {}),
+      createdAt: "",
+      updatedAt: "",
+    };
+  }
+
+  deleteItem(itemId: string): void {
+    this.deleteItemCalls.push(itemId);
+  }
+
+  deleteItems(itemIds: string[]): void {
+    this.deleteItemsCalls.push(itemIds);
+  }
+
+  listItems(): CapabilityItem[] {
+    this.listItemsCalls += 1;
     return [];
+  }
+
+  getItem(itemId: string): CapabilityItem | undefined {
+    this.getItemCalls.push(itemId);
+    return undefined;
+  }
+
+  listCompanies(itemId: string): ItemCompanyView[] {
+    this.listCompaniesCalls.push(itemId);
+    return [];
+  }
+
+  addCompany(itemId: string, draft: CompanyDraft): ItemCompanyView {
+    this.addCompanyCalls.push({ itemId, draft });
+    return this.companyView(itemId, draft);
+  }
+
+  addCompanies(itemId: string, drafts: CompanyDraft[]): ItemCompanyView[] {
+    this.addCompaniesCalls.push({ itemId, drafts });
+    return drafts.map((draft) => this.companyView(itemId, draft));
+  }
+
+  removeCompany(itemId: string, companyId: string): void {
+    this.removeCompanyCalls.push({ itemId, companyId });
+  }
+
+  removeCompanies(itemId: string, companyIds: string[]): void {
+    this.removeCompaniesCalls.push({ itemId, companyIds });
+  }
+
+  recognizeCompanies(itemId: string, text: string): Promise<CompanyDraft[]> {
+    this.recognizeCompaniesCalls.push({ itemId, text });
+    return Promise.resolve(this.recognizeCompaniesCallsResult);
+  }
+
+  private companyView(itemId: string, draft: CompanyDraft): ItemCompanyView {
+    return {
+      id: "company-1" as CompanyId,
+      name: draft.name,
+      normalizedName: draft.name.toLowerCase(),
+      itemId: itemId as CapabilityItemId,
+      ...(draft.countryOrRegion !== undefined
+        ? { countryOrRegion: draft.countryOrRegion }
+        : {}),
+      ...(draft.note !== undefined ? { note: draft.note } : {}),
+      createdAt: "",
+      updatedAt: "",
+    };
   }
 }
 
@@ -215,14 +300,22 @@ export class FakeChatService {
 export function makeDeps() {
   const ipcMain = new FakeIpcMain();
   const conversations = new FakeConversationService();
-  const projects = new FakeProjectService();
+  const industryResearch = new FakeIndustryResearchService();
   const settings = new FakeSecretSettings();
   const llm = new FakeLlmService();
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
-  const deps: IpcServiceDeps = { ipcMain, conversations, projects, settings, llm, skills, chat };
+  const deps: IpcServiceDeps = {
+    ipcMain,
+    conversations,
+    industryResearch,
+    settings,
+    llm,
+    skills,
+    chat,
+  };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, projects, settings, llm, skills, chat, dispose };
+  return { ipcMain, conversations, industryResearch, settings, llm, skills, chat, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

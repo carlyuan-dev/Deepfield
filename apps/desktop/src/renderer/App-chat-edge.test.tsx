@@ -8,7 +8,7 @@ import {
   chatMessage,
   chatSendResult,
   makeFakeApi,
-  project,
+  capabilityItem,
   workerEvent,
   type FakeDesktopApi,
 } from "./renderer-test-helpers.js";
@@ -30,9 +30,9 @@ async function openProjectChat(user: ReturnType<typeof userEvent.setup>, label: 
 describe("app chat edge cases", () => {
   it("routes early events to the originating project even after switching", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([
-      project({ id: "p1", industry: "人形机器人" }),
-      project({ id: "p2", industry: "低空经济" }),
+    fake.industryResearch.listItems.mockResolvedValue([
+      capabilityItem({ id: "p1", industry: "人形机器人" }),
+      capabilityItem({ id: "p2", industry: "低空经济" }),
     ]);
     fake.chat.listMessages.mockImplementation(async (projectId: string) =>
       projectId === "p1"
@@ -75,7 +75,7 @@ describe("app chat edge cases", () => {
 
   it("removes the optimistic user and restores the composer when send is rejected", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    fake.industryResearch.listItems.mockResolvedValue([capabilityItem({ id: "p1" })]);
     fake.chat.send.mockRejectedValue(new Error("deepseek key missing"));
     const { user } = await renderApp(fake);
     await openProjectChat(user, "人形机器人");
@@ -91,7 +91,7 @@ describe("app chat edge cases", () => {
 
   it("treats a mismatched returned request id as a protocol error and cleans up", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    fake.industryResearch.listItems.mockResolvedValue([capabilityItem({ id: "p1" })]);
     fake.chat.send.mockResolvedValue(chatSendResult("different-id"));
     const { user } = await renderApp(fake);
     await openProjectChat(user, "人形机器人");
@@ -109,7 +109,7 @@ describe("app chat edge cases", () => {
 
   it("shows a load error with a working reload action", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([project({ id: "p1" })]);
+    fake.industryResearch.listItems.mockResolvedValue([capabilityItem({ id: "p1" })]);
     fake.chat.listMessages
       .mockRejectedValueOnce(new Error("db exploded"))
       .mockResolvedValueOnce([chatMessage("m1", "user", "历史问题")]);

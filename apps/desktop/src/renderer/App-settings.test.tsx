@@ -18,7 +18,7 @@ async function openSettings(fake: FakeDesktopApi, user: ReturnType<typeof userEv
 describe("settings view", () => {
   it("shows the configured state without echoing any existing key value", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
+    fake.industryResearch.listItems.mockResolvedValue([]);
     fake.settings.hasDeepSeekKey.mockResolvedValue(true);
     const { user } = await renderApp(fake);
 
@@ -29,7 +29,7 @@ describe("settings view", () => {
 
   it("clears the password input after saving and never renders the key", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
+    fake.industryResearch.listItems.mockResolvedValue([]);
     fake.settings.hasDeepSeekKey.mockResolvedValue(false);
     const { user } = await renderApp(fake);
 
@@ -48,7 +48,7 @@ describe("settings view", () => {
 
   it("rejects blank input on the front end without calling the api", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
+    fake.industryResearch.listItems.mockResolvedValue([]);
     const { user } = await renderApp(fake);
 
     await openSettings(fake, user);
@@ -59,7 +59,7 @@ describe("settings view", () => {
 
   it("shows a generic error on save failure without the key", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
+    fake.industryResearch.listItems.mockResolvedValue([]);
     fake.settings.setDeepSeekKey.mockRejectedValue(new Error("boom"));
     const { user } = await renderApp(fake);
 
@@ -73,7 +73,7 @@ describe("settings view", () => {
 
   it("shows a generic error when the key check fails instead of hanging", async () => {
     const fake = makeFakeApi();
-    fake.projects.list.mockResolvedValue([]);
+    fake.industryResearch.listItems.mockResolvedValue([]);
     fake.settings.hasDeepSeekKey.mockRejectedValue(new Error("store boom"));
     const { user } = await renderApp(fake);
 

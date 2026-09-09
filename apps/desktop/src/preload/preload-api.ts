@@ -2,20 +2,31 @@ import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
   type AgentWorkerEvent,
+  type CapabilityItem,
   type ChatMessage,
   type ChatRequestOptions,
   type ChatSendResult,
+  type CompanyDraft,
   type Conversation,
-  type CreateProjectInput,
   type DesktopApi,
+  type ItemCompanyView,
   type LlmConnectionStatus,
-  type Project,
   type SkillSummary,
 } from "@deepfield/contracts";
 
 export const IPC_CHANNELS = {
-  projectsCreate: "deepfield:projects:create",
-  projectsList: "deepfield:projects:list",
+  industryResearchCreateItem: "deepfield:industryResearch:createItem",
+  industryResearchUpdateItem: "deepfield:industryResearch:updateItem",
+  industryResearchDeleteItem: "deepfield:industryResearch:deleteItem",
+  industryResearchDeleteItems: "deepfield:industryResearch:deleteItems",
+  industryResearchListItems: "deepfield:industryResearch:listItems",
+  industryResearchGetItem: "deepfield:industryResearch:getItem",
+  industryResearchListCompanies: "deepfield:industryResearch:listCompanies",
+  industryResearchAddCompany: "deepfield:industryResearch:addCompany",
+  industryResearchAddCompanies: "deepfield:industryResearch:addCompanies",
+  industryResearchRemoveCompany: "deepfield:industryResearch:removeCompany",
+  industryResearchRemoveCompanies: "deepfield:industryResearch:removeCompanies",
+  industryResearchRecognizeCompanies: "deepfield:industryResearch:recognizeCompanies",
   conversationsCreate: "deepfield:conversations:create",
   conversationsOpenInitial: "deepfield:conversations:openInitial",
   conversationsListRecent: "deepfield:conversations:listRecent",
@@ -45,10 +56,41 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
       listRecent: () =>
         ipc.invoke(IPC_CHANNELS.conversationsListRecent) as Promise<Conversation[]>,
     },
-    projects: {
-      create: (input: CreateProjectInput) =>
-        ipc.invoke(IPC_CHANNELS.projectsCreate, input) as Promise<Project>,
-      list: () => ipc.invoke(IPC_CHANNELS.projectsList) as Promise<Project[]>,
+    industryResearch: {
+      createItem: (input) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchCreateItem, input) as Promise<CapabilityItem>,
+      updateItem: (itemId, input) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchUpdateItem, itemId, input) as Promise<CapabilityItem>,
+      deleteItem: (itemId) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchDeleteItem, itemId) as Promise<void>,
+      deleteItems: (itemIds) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchDeleteItems, itemIds) as Promise<void>,
+      listItems: () =>
+        ipc.invoke(IPC_CHANNELS.industryResearchListItems) as Promise<CapabilityItem[]>,
+      getItem: (itemId) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchGetItem, itemId) as Promise<
+          CapabilityItem | undefined
+        >,
+      listCompanies: (itemId) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchListCompanies, itemId) as Promise<
+          ItemCompanyView[]
+        >,
+      addCompany: (itemId, draft: CompanyDraft) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchAddCompany, itemId, draft) as Promise<
+          ItemCompanyView
+        >,
+      addCompanies: (itemId, drafts: CompanyDraft[]) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchAddCompanies, itemId, drafts) as Promise<
+          ItemCompanyView[]
+        >,
+      removeCompany: (itemId, companyId) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchRemoveCompany, itemId, companyId) as Promise<void>,
+      removeCompanies: (itemId, companyIds) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchRemoveCompanies, itemId, companyIds) as Promise<void>,
+      recognizeCompanies: (itemId, text) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchRecognizeCompanies, itemId, text) as Promise<
+          CompanyDraft[]
+        >,
     },
     settings: {
       hasDeepSeekKey: () =>

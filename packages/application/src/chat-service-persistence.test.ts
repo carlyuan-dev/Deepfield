@@ -48,10 +48,6 @@ describe("chat service persistence guarantees", () => {
       type: "completed",
       text: "测试回复",
     });
-    const activityCount = db.db
-      .prepare("SELECT count(*) AS n FROM project_activity_events")
-      .get() as unknown as { n: number };
-    expect(activityCount.n).toBe(0);
   });
 
   it("rolls back and emits chat_persistence_failed when the assistant insert fails", async () => {

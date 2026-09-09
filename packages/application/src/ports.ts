@@ -1,4 +1,8 @@
-import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
+import type {
+  AgentWorkerEvent,
+  AgentWorkerRequest,
+  CompanyDraft,
+} from "@deepfield/contracts";
 
 export interface SecretReader {
   get(name: string): string | undefined;
@@ -10,6 +14,10 @@ export interface AgentWorkerPort {
 
 export interface ConversationTitleGenerator {
   generateConversationTitle(content: string): Promise<string | undefined>;
+}
+
+export interface CompanyRecognizer {
+  recognize(text: string): Promise<CompanyDraft[]>;
 }
 
 export type RequestIdFactory = () => string;

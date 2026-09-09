@@ -68,6 +68,11 @@
   padding: 0 4px;
 }
 
+.user-message-role {
+  align-self: flex-end;
+  text-align: right;
+}
+
 .message-content {
   background: var(--panel);
   border: 1px solid var(--border);

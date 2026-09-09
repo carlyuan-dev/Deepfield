@@ -168,8 +168,7 @@ export class ChatService {
         }
         if (event.type === "completed") {
           try {
-            // Standalone Chat has no Project: persist the assistant reply only,
-            // without writing a Project activity event.
+            // Standalone Chat has no CapabilityItem: persist the assistant reply only.
             this.repositories.runInTransaction(() => {
               this.repositories.messages.append(conversationId, "assistant", event.text);
             });

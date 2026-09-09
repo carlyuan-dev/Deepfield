@@ -15,6 +15,7 @@ import { registerIpcHandlers, type IpcMainLike } from "./ipc.js";
 import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
 import { DeepSeekService } from "./deepseek-service.js";
+import { FakeCompanyRecognizer } from "./fake-company-recognizer.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 
 let mainWindow: BrowserWindow | undefined;
@@ -79,6 +80,10 @@ void app.whenReady().then(async () => {
   const deepSeekService = new DeepSeekService(secrets, {
     enabled: process.env.DEEPFIELD_AGENT_MODE !== "fake",
   });
+  const companyRecognizer =
+    process.env.DEEPFIELD_AGENT_MODE === "fake"
+      ? new FakeCompanyRecognizer()
+      : deepSeekService;
 
   const skillsDir = resolveSkillsDir({
     appPath: app.getAppPath(),
@@ -113,11 +118,12 @@ void app.whenReady().then(async () => {
       },
     },
     titleGenerator: deepSeekService,
+    companyRecognizer,
   });
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
     conversations: appRuntime.conversationService,
-    projects: appRuntime.projectService,
+    industryResearch: appRuntime.industryResearch,
     settings: secrets,
     llm: deepSeekService,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },

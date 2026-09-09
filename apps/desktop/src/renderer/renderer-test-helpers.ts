@@ -2,16 +2,17 @@
 import { vi, type Mock } from "vitest";
 import type {
   AgentWorkerEvent,
+  CapabilityItem,
+  CapabilityItemId,
   ChatMessage,
   ChatRequestOptions,
   ChatSendResult,
   Conversation,
   ConversationId,
-  CreateProjectInput,
   DesktopApi,
+  CompanyDraft,
+  ItemCompanyView,
   MessageId,
-  Project,
-  ProjectId,
   SkillSummary,
   LlmConnectionStatus,
 } from "@deepfield/contracts";
@@ -22,9 +23,19 @@ export interface FakeDesktopApi extends DesktopApi {
     openInitial: Mock<() => Promise<{ active: Conversation; recent: Conversation[] }>>;
     listRecent: Mock<() => Promise<Conversation[]>>;
   };
-  projects: {
-    create: Mock<(input: CreateProjectInput) => Promise<Project>>;
-    list: Mock<() => Promise<Project[]>>;
+  industryResearch: {
+    createItem: Mock<(input: { industry: string; researchScope?: string; notes?: string }) => Promise<CapabilityItem>>;
+    updateItem: Mock<(itemId: string, input: { industry: string; researchScope?: string; notes?: string }) => Promise<CapabilityItem>>;
+    deleteItem: Mock<(itemId: string) => Promise<void>>;
+    deleteItems: Mock<(itemIds: string[]) => Promise<void>>;
+    listItems: Mock<() => Promise<CapabilityItem[]>>;
+    getItem: Mock<(itemId: string) => Promise<CapabilityItem | undefined>>;
+    listCompanies: Mock<(itemId: string) => Promise<ItemCompanyView[]>>;
+    addCompany: Mock<(itemId: string, draft: CompanyDraft) => Promise<ItemCompanyView>>;
+    addCompanies: Mock<(itemId: string, drafts: CompanyDraft[]) => Promise<ItemCompanyView[]>>;
+    removeCompany: Mock<(itemId: string, companyId: string) => Promise<void>>;
+    removeCompanies: Mock<(itemId: string, companyIds: string[]) => Promise<void>>;
+    recognizeCompanies: Mock<(itemId: string, text: string) => Promise<CompanyDraft[]>>;
   };
   settings: {
     hasDeepSeekKey: Mock<() => Promise<boolean>>;
@@ -103,16 +114,37 @@ export function makeFakeApi(): FakeDesktopApi {
       ),
       listRecent: vi.fn(async (): Promise<Conversation[]> => []),
     },
-    projects: {
-      create: vi.fn(async (input: CreateProjectInput): Promise<Project> => ({
-        id: `p-${++sendSeq}` as ProjectId,
+    industryResearch: {
+      createItem: vi.fn(async (input: { industry: string; researchScope?: string; notes?: string }): Promise<CapabilityItem> => ({
+        id: `item-${++sendSeq}` as CapabilityItemId,
+        type: "industry-research",
         industry: input.industry,
-        scope: input.scope,
-        status: "draft",
+        ...(input.researchScope !== undefined ? { researchScope: input.researchScope } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       })),
-      list: vi.fn(async (): Promise<Project[]> => []),
+      updateItem: vi.fn(async (itemId: string, input: { industry: string; researchScope?: string; notes?: string }): Promise<CapabilityItem> => ({
+        id: itemId as CapabilityItemId,
+        type: "industry-research",
+        industry: input.industry,
+        ...(input.researchScope !== undefined ? { researchScope: input.researchScope } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      })),
+      deleteItem: vi.fn(async (): Promise<void> => {}),
+      deleteItems: vi.fn(async (): Promise<void> => {}),
+      listItems: vi.fn(async (): Promise<CapabilityItem[]> => []),
+      getItem: vi.fn(async (): Promise<CapabilityItem | undefined> => undefined),
+      listCompanies: vi.fn(async (): Promise<ItemCompanyView[]> => []),
+      addCompany: vi.fn(async (): Promise<ItemCompanyView> => {
+        throw new Error("not implemented");
+      }),
+      addCompanies: vi.fn(async (): Promise<ItemCompanyView[]> => []),
+      removeCompany: vi.fn(async (): Promise<void> => {}),
+      removeCompanies: vi.fn(async (): Promise<void> => {}),
+      recognizeCompanies: vi.fn(async (): Promise<CompanyDraft[]> => []),
     },
     settings: {
       hasDeepSeekKey: vi.fn(async (): Promise<boolean> => false),
@@ -161,13 +193,14 @@ export function makeFakeApi(): FakeDesktopApi {
   return api as unknown as FakeDesktopApi;
 }
 
-export function project(overrides: { id?: string } & Partial<Omit<Project, "id">> = {}): Project {
+export function capabilityItem(
+  overrides: { id?: string } & Partial<Omit<CapabilityItem, "id">> = {},
+): CapabilityItem {
   const { id, ...rest } = overrides;
   return {
-    id: (id ?? "p1") as ProjectId,
+    id: (id ?? "item-1") as CapabilityItemId,
+    type: "industry-research",
     industry: "人形机器人",
-    scope: {},
-    status: "draft",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...rest,

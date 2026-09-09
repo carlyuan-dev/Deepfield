@@ -120,7 +120,7 @@ describe("migration 2", () => {
     ).toBe(1);
     cleanup();
   });
-  it("upgrades a P1-version database without touching P1 tables", () => {
+  it("upgrades a P1-version database without losing conversation storage", () => {
     const { db, cleanup } = openRaw();
     migrate(db);
     db.exec("DROP TABLE tool_executions;");
@@ -132,7 +132,7 @@ describe("migration 2", () => {
         .get(),
     ).toBeDefined();
     expect(
-      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'").get(),
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'").get(),
     ).toBeDefined();
     expect(
       (db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version=2").get() as {

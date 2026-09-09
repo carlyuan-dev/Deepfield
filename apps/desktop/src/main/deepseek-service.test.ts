@@ -21,6 +21,108 @@ function secrets(value: string | undefined) {
 }
 
 describe("DeepSeekService", () => {
+  it("recognizes deduplicated company drafts and exposes only a fixed safe failure", async () => {
+    const chunk = "输入中出现的公司".repeat(400);
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      expect(input).toBe("https://api.deepseek.com/chat/completions");
+      const body = JSON.parse(String(init?.body)) as {
+        messages: Array<{ role: string; content: string }>;
+        response_format?: { type?: string };
+        max_tokens?: number;
+      };
+      expect(body.messages[0]?.content).toContain("只提取");
+      expect(body.messages[0]?.content).toContain("极简");
+      expect(body.messages[1]?.content).toBe(chunk);
+      expect(body.response_format).toEqual({ type: "json_object" });
+      expect(body.max_tokens).toBe(2048);
+      expect(String(init?.body)).not.toContain("sk-secret");
+      return response({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                companies: [
+                  { name: " ＡＣＭＥ  Corp ", countryOrRegion: "US", note: "候选" },
+                  { name: "acme corp", countryOrRegion: "US" },
+                  { name: "   " },
+                  { name: "Beta Labs", countryOrRegion: "UK" },
+                ],
+              }),
+            },
+          },
+        ],
+      });
+    });
+    const service = new DeepSeekService(secrets("sk-secret"), { fetch });
+
+    await expect(service.recognize(chunk)).resolves.toEqual([
+      { name: "ＡＣＭＥ  Corp", countryOrRegion: "US", note: "候选" },
+      { name: "Beta Labs", countryOrRegion: "UK" },
+    ]);
+
+    const failed = new DeepSeekService(secrets("sk-secret"), {
+      fetch: vi.fn<typeof globalThis.fetch>(async () => {
+        throw new Error("provider response contains sk-secret");
+      }),
+    });
+    const error = await failed.recognize("测试").catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("company recognition failed");
+    expect((error as Error).message).not.toContain("sk-secret");
+
+    await expect(service.recognize("字".repeat(4001))).rejects.toThrow(
+      "company recognition failed",
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the default recognition request alive beyond seven seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+        signal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        });
+      });
+      const service = new DeepSeekService(secrets("sk-test"), { fetch });
+      const result = expect(service.recognize("公司甲")).rejects.toThrow("company recognition failed");
+
+      await vi.advanceTimersByTimeAsync(7001);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(12999);
+      expect(signal?.aborted).toBe(true);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps ordinary requests on the seven-second default timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+        signal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        });
+      });
+      const result = expect(
+        new DeepSeekService(secrets("sk-test"), { fetch }).checkConnection(),
+      ).resolves.toBe("disconnected");
+
+      await vi.advanceTimersByTimeAsync(6999);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal?.aborted).toBe(true);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports connected only when the configured default model is available", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       expect(input).toBe("https://api.deepseek.com/models");

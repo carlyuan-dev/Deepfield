@@ -1,28 +1,36 @@
 import type {
   ChatMessage,
+  CapabilityItem,
+  CapabilityItemId,
+  Company,
+  CompanyDraft,
   Conversation,
   ConversationId,
-  CreateProjectInput,
+  CreateIndustryResearchItemInput,
   MessageId,
-  Project,
-  ProjectId,
+  ItemCompany,
+  UpdateIndustryResearchItemInput,
 } from "@deepfield/contracts";
 
-export interface ProjectActivityEvent {
-  id: string;
-  projectId: string;
-  type: string;
-  source: string;
-  importance: string;
-  summary: string;
-  payload?: unknown;
-  createdAt: string;
+export interface CapabilityItemRepository {
+  create(input: CreateIndustryResearchItemInput): CapabilityItem;
+  update(itemId: CapabilityItemId, input: UpdateIndustryResearchItemInput): CapabilityItem | undefined;
+  delete(itemId: CapabilityItemId): boolean;
+  list(): CapabilityItem[];
+  getById(itemId: CapabilityItemId): CapabilityItem | undefined;
 }
 
-export interface ProjectRepository {
-  create(input: CreateProjectInput): Project;
-  list(): Project[];
-  getById(projectId: ProjectId): Project | undefined;
+export interface CompanyRepository {
+  upsert(draft: CompanyDraft): Company;
+  list(): Company[];
+  getById(companyId: Company["id"]): Company | undefined;
+  deleteIfUnreferenced(companyId: Company["id"]): boolean;
+}
+
+export interface ItemCompanyRepository {
+  add(itemId: CapabilityItemId, companyId: Company["id"], note?: string): ItemCompany;
+  listByItem(itemId: CapabilityItemId): ItemCompany[];
+  remove(itemId: CapabilityItemId, companyId: Company["id"]): void;
 }
 
 export interface ConversationRepository {
@@ -37,18 +45,6 @@ export interface ConversationRepository {
 export interface MessageRepository {
   append(conversationId: ConversationId, role: "user" | "assistant", content: string): ChatMessage;
   listByConversation(conversationId: ConversationId, limit?: number): ChatMessage[];
-}
-
-export interface ActivityRepository {
-  append(
-    projectId: ProjectId,
-    type: string,
-    source: string,
-    importance: string,
-    summary: string,
-    payload?: unknown,
-  ): ProjectActivityEvent;
-  listByProject(projectId: ProjectId): ProjectActivityEvent[];
 }
 
 export type ToolExecutionStatus = "running" | "completed" | "failed" | "cancelled";
@@ -105,10 +101,11 @@ export interface ToolExecutionRepository {
 }
 
 export interface Repositories {
-  projects: ProjectRepository;
+  capabilityItems: CapabilityItemRepository;
+  companies: CompanyRepository;
+  itemCompanies: ItemCompanyRepository;
   conversations: ConversationRepository;
   messages: MessageRepository;
-  activities: ActivityRepository;
   toolExecutions: ToolExecutionRepository;
   runInTransaction<T>(work: () => T): T;
 }
@@ -121,11 +118,29 @@ export interface NewConversation {
   updatedAt: string;
 }
 
-export interface ProjectRow {
+export interface CapabilityItemRow {
   id: string;
+  type: "industry-research";
   industry: string;
-  scope_json: string;
-  status: "draft";
+  research_scope: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompanyRow {
+  id: string;
+  name: string;
+  normalized_name: string;
+  country_or_region: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ItemCompanyRow {
+  item_id: string;
+  company_id: string;
+  note: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -143,17 +158,6 @@ export interface MessageRow {
   conversation_id: string;
   role: "user" | "assistant";
   content: string;
-  created_at: string;
-}
-
-export interface ActivityRow {
-  id: string;
-  project_id: string;
-  type: string;
-  source: string;
-  importance: string;
-  summary: string;
-  payload_json: string | null;
   created_at: string;
 }
 

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 export interface ComposerProps {
   value: string;
@@ -18,6 +18,7 @@ export function Composer({
   placeholder = "输入消息…",
   actions,
 }: ComposerProps) {
+  const composing = useRef(false);
   const submit = (): void => {
     const trimmed = value.trim();
     if (trimmed.length === 0 || disabled) {
@@ -42,6 +43,18 @@ export function Composer({
         aria-label="消息输入"
         rows={3}
         disabled={disabled}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !composing.current) {
+            event.preventDefault();
+            submit();
+          }
+        }}
       />
       <div className="composer-actions">
         {actions !== undefined && <div className="composer-actions-leading">{actions}</div>}

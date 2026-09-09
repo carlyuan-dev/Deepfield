@@ -34,87 +34,6 @@ afterEach(() => {
   }
 });
 
-describe("project persistence", () => {
-  it("creates a project with one silent activity and no Conversation", () => {
-    const { db } = openTestDb();
-    const repos = createRepositories(db);
-
-    const project = repos.projects.create({
-      industry: "人形机器人",
-      scope: { focus: "整机与核心零部件" },
-      launchSource: "direct-ui",
-    });
-
-    expect(project.industry).toBe("人形机器人");
-    expect(project.scope).toEqual({ focus: "整机与核心零部件" });
-    expect(project.status).toBe("draft");
-
-    const conversationCount = db
-      .prepare("SELECT count(*) AS n FROM conversations")
-      .get() as unknown as { n: number };
-    expect(conversationCount.n).toBe(0);
-
-    const activities = repos.activities.listByProject(project.id);
-    expect(activities).toHaveLength(1);
-    expect(activities[0]).toMatchObject({
-      type: "project.created",
-      source: "direct-ui",
-      importance: "silent",
-      summary: "创建项目：人形机器人",
-    });
-
-    expect(repos.conversations.listRecent()).toEqual([]);
-  });
-
-  it("applies all migrations once and leaves conversations without a project column", () => {
-    const { db } = openTestDb();
-    migrate(db);
-    migrate(db);
-
-    const versions = db
-      .prepare("SELECT version FROM schema_migrations ORDER BY version")
-      .all() as unknown as Array<{ version: number }>;
-    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
-
-    for (const table of [
-      "projects",
-      "conversations",
-      "messages",
-      "project_activity_events",
-      "tool_executions",
-    ]) {
-      const row = db
-        .prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(table) as unknown as { n: number };
-      expect(row.n).toBe(1);
-    }
-
-    const conversationColumns = db
-      .prepare("PRAGMA table_info(conversations)")
-      .all() as unknown as Array<{ name: string }>;
-    const names = conversationColumns.map((column) => column.name);
-    expect(names).not.toContain("project_id");
-    expect(names).toEqual(
-      expect.arrayContaining(["id", "title", "has_user_message", "created_at", "updated_at"]),
-    );
-  });
-
-  it("rolls back the migration tracking table when migration 001 fails", () => {
-    const dir = mkdtempSync(join(tmpdir(), "deepfield-db-"));
-    const path = join(dir, "deepfield.sqlite");
-    const db = openDatabase(path);
-    openHandles.push({ dir, path, db });
-    db.exec("CREATE TABLE projects(id TEXT PRIMARY KEY);");
-
-    expect(() => migrate(db)).toThrow(/already exists/);
-
-    const tracking = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
-      .all();
-    expect(tracking).toEqual([]);
-  });
-});
-
 describe("standalone conversation persistence", () => {
   it("survives database reopen after activation and recent lists it first", () => {
     const { dir, path, db } = openTestDb();
@@ -209,31 +128,6 @@ describe("standalone conversation persistence", () => {
     expect(() => repos.messages.listByConversation(conversation.id, 2.5)).toThrow(/positive integer/);
   });
 
-  it("rolls back the whole project creation when the activity insert fails", () => {
-    const { db } = openTestDb();
-    db.exec(`
-      CREATE TRIGGER fail_activity_insert
-      BEFORE INSERT ON project_activity_events
-      BEGIN
-        SELECT RAISE(ABORT, 'forced activity insert failure');
-      END;
-    `);
-    const repos = createRepositories(db);
-
-    expect(() =>
-      repos.projects.create({
-        industry: "人形机器人",
-        scope: {},
-        launchSource: "direct-ui",
-      }),
-    ).toThrow(/forced activity insert failure/);
-
-    const count = (table: string): number =>
-      (db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as unknown as { n: number }).n;
-    expect(count("projects")).toBe(0);
-    expect(count("project_activity_events")).toBe(0);
-  });
-
   it("hides blank drafts from recent until activated", () => {
     const { db } = openTestDb();
     const repos = createRepositories(db);
@@ -272,15 +166,10 @@ describe("standalone conversation persistence", () => {
     const b = openTestDb();
     const reposA = createRepositories(a.db);
     createRepositories(b.db);
-
-    reposA.projects.create({
-      industry: "人形机器人",
-      scope: {},
-      launchSource: "chat",
-    });
+    reposA.conversations.create();
 
     const row = b.db
-      .prepare("SELECT count(*) AS n FROM projects")
+      .prepare("SELECT count(*) AS n FROM conversations")
       .get() as unknown as { n: number };
     expect(row.n).toBe(0);
   });

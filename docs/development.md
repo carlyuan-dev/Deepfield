@@ -67,8 +67,9 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
 ```
 
 - 配置：`playwright.config.ts`（串行 workers=1、retries=0）
-- 规格：`tests/e2e/foundation.spec.ts`——首启直入 Chat、Fake 连接灯、三轮消息顺序、
-  Capability 收展/关闭、历史底部定位、优雅退出与同一 userData 重启恢复
+- 规格：`tests/e2e/foundation.spec.ts`——首启直入 Chat、Enter 发送与 Shift+Enter 换行、
+  行业创建/列表编辑/批量删除、公司详情与单条/批量删除确认、Fake 识别导入、Capability 关闭，
+  以及优雅退出与同一 userData 重启恢复
 - E2E 每次使用全新临时 userData（mkdtemp），结束时只清理自己的目录；
   E2E key 是测试专用假值，生产代码不含该值
 - 不访问 DeepSeek/搜索网络
@@ -83,7 +84,7 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
 
 空白 override 视为未设置。数据全部位于 userData 根目录：
 
-- `deepfield.sqlite` —— 项目/对话/消息（SQLite，Node `node:sqlite`）
+- `deepfield.sqlite` —— Capability 条目、公司关联、对话、消息与 Tool 审计（SQLite，Node `node:sqlite`）
 - `secrets.json` —— 加密的 secrets（内容经 `safeStorage` 加密，对应 macOS Keychain；
   应用从不把 key 写回 UI/日志/错误文案）
 - `attachments/` —— 附件目录
@@ -105,11 +106,11 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
 
 - **Fake Agent（`DEEPFIELD_AGENT_MODE=fake`，含打包 app 冒烟）**：只验证 UI 与
   接线主路径，不验证答案或 Skill 指令效果——Fake Agent 固定回复“测试回复”。
-  检查项：启动即进入可输入 Chat；品牌旁连接灯为“未连接”；首条消息后其 deterministic
-  fallback 标题进入“对话”；连续发送三轮确认 user/assistant 交错；打开历史后位于底部，
-  用户上翻时流式回复不强拉；“行业研究”收展、关闭按钮与箭头往返；重启恢复该 Conversation；Skill 下拉能看到 `structured-brief`，
-  选择随本次发送传递并发送后清空（界面收到固定“测试回复”，无 Skill 标记因 Fake
-  不回传 skillName）。
+  检查项：启动即进入可输入 Chat；Enter 发送且 Shift+Enter 保留换行；“行业研究”列表中创建、
+  编辑行业，独立新增至少三家公司，进入公司详情并返回；公司单条删除和批量删除都先取消再确认；
+  用 Fake recognizer 识别、编辑并导入 `Deepfield 演示公司`；列表批量删除行业先取消再确认；关闭
+  Capability 后 Chat 仍可用，并在同一 userData 重启后恢复 Conversation。Fake 模式不验证
+  DeepSeek 返回质量，也不覆盖真实长文本请求。
 - **真实 DeepSeek 模式**：用户先在设置页配置真实 Key，确认连接灯变为“已连接”，然后依次人工验证：
   1. 普通问答（如把人形机器人行业研究目标整理成简短清单）；
   2. Coding（如用 TypeScript 写公司名去重函数并解释思路）；
@@ -118,6 +119,12 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   5. 手动 Skill：选择 `structured-brief` 并粘贴粗略研究笔记，回复应按
      “核心结论 / 关键依据 / 待核实问题”三节组织；
   6. 随后不选 Skill 发一条普通消息，确认三节约束消失。
+
+行业研究的真实 DeepSeek 长文本识别必须由用户手测：分别粘贴超过 4000 code points 的多块
+文本，确认界面只显示通用识别状态、失败时保留已成功候选且重试不重复成功请求；再输入超过 48000
+code points 的文本，确认在发出任何识别请求前显示长度错误。单次 DeepSeek 识别请求使用 2048 tokens
+输出预算和专用 20 秒超时；连接检查与标题生成仍为 7 秒。自动 E2E 只使用 Fake recognizer，
+不会调用真实 DeepSeek。
 
 标题检查：真实模式首条消息应优先显示 DeepSeek 生成的短中文标题；若请求超时、失败或返回空结果，应保留 deterministic fallback，且后续消息不重新生成标题。Fake 模式只验证接线、离线 fallback 和界面状态，不验证答案、标题质量或 Skill 指令效果。
 

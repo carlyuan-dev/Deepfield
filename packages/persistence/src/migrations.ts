@@ -92,6 +92,46 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    up(db) {
+      db.exec(`
+        DROP TABLE project_activity_events;
+        DROP TABLE projects;
+        CREATE TABLE capability_items(
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('industry-research')),
+          industry TEXT NOT NULL,
+          research_scope TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE companies(
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL UNIQUE,
+          country_or_region TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE capability_item_companies(
+          item_id TEXT NOT NULL,
+          company_id TEXT NOT NULL,
+          note TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(item_id, company_id),
+          FOREIGN KEY(item_id) REFERENCES capability_items(id) ON DELETE CASCADE,
+          FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_capability_items_updated_at
+          ON capability_items(updated_at, id);
+        CREATE INDEX idx_capability_item_companies_company_id
+          ON capability_item_companies(company_id, item_id);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

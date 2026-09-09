@@ -14,18 +14,29 @@ const SKILL_OPTIONS = { webSearch: false, skillName: "structured-brief" };
 const CONVERSATION_ID = "conv-1";
 
 describe("ipc handlers", () => {
-  it("registers exactly the ten invoke channels and no chat.events handler", () => {
+  it("registers the fixed invoke channels and no chat.events handler", () => {
     const { ipcMain } = makeDeps();
     const registered = [...ipcMain.handlers.keys()].sort();
     expect(registered).toEqual(
       [
-        IPC_CHANNELS.projectsCreate,
-        IPC_CHANNELS.projectsList,
+        IPC_CHANNELS.industryResearchCreateItem,
+        IPC_CHANNELS.industryResearchUpdateItem,
+        IPC_CHANNELS.industryResearchDeleteItem,
+        IPC_CHANNELS.industryResearchDeleteItems,
+        IPC_CHANNELS.industryResearchListItems,
+        IPC_CHANNELS.industryResearchGetItem,
+        IPC_CHANNELS.industryResearchListCompanies,
+        IPC_CHANNELS.industryResearchAddCompany,
+        IPC_CHANNELS.industryResearchAddCompanies,
+        IPC_CHANNELS.industryResearchRemoveCompany,
+        IPC_CHANNELS.industryResearchRemoveCompanies,
+        IPC_CHANNELS.industryResearchRecognizeCompanies,
         IPC_CHANNELS.conversationsCreate,
         IPC_CHANNELS.conversationsOpenInitial,
         IPC_CHANNELS.conversationsListRecent,
         IPC_CHANNELS.settingsHasDeepSeekKey,
         IPC_CHANNELS.settingsSetDeepSeekKey,
+        IPC_CHANNELS.llmCheckConnection,
         IPC_CHANNELS.skillsList,
         IPC_CHANNELS.chatSend,
         IPC_CHANNELS.chatListMessages,
@@ -34,35 +45,62 @@ describe("ipc handlers", () => {
     expect(ipcMain.handlers.has(IPC_CHANNELS.chatEvents)).toBe(false);
   });
 
-  it("validates project input before delegating", async () => {
-    const { ipcMain, projects } = makeDeps();
+  it("validates research item input before delegating", async () => {
+    const { ipcMain, industryResearch } = makeDeps();
     const sender = new FakeWebContents(1);
-    const valid = { industry: "人形机器人", scope: {}, launchSource: "direct-ui" };
-    await ipcMain.invoke(IPC_CHANNELS.projectsCreate, event(sender), valid);
-    expect(projects.createCalls).toEqual([valid]);
+    const valid = { industry: "人形机器人", researchScope: "整机" };
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchCreateItem, event(sender), valid);
+    expect(industryResearch.createItemCalls).toEqual([valid]);
 
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.projectsCreate, event(sender), {
+      ipcMain.invoke(IPC_CHANNELS.industryResearchCreateItem, event(sender), {
         industry: "   ",
-        scope: {},
-        launchSource: "direct-ui",
       }),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.projectsCreate, event(sender), {
+      ipcMain.invoke(IPC_CHANNELS.industryResearchCreateItem, event(sender), {
         industry: "x",
-        scope: { focus: 1 },
-        launchSource: "direct-ui",
+        extra: true,
       }),
     ).rejects.toThrow();
-    expect(projects.createCalls).toHaveLength(1);
+    expect(industryResearch.createItemCalls).toHaveLength(1);
+  });
+
+  it("validates and delegates item mutations and batch membership removal", async () => {
+    const { ipcMain, industryResearch } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const update = { industry: "具身智能", researchScope: "中国" };
+
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchUpdateItem, event(sender), "item-1", update);
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchRemoveCompanies, event(sender), "item-1", [
+      "company-1",
+      "company-1",
+      "company-2",
+    ]);
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchDeleteItem, event(sender), "item-1");
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchDeleteItems, event(sender), ["item-1", "item-2"]);
+
+    expect(industryResearch.updateItemCalls).toEqual([{ itemId: "item-1", input: update }]);
+    expect(industryResearch.removeCompaniesCalls).toEqual([
+      { itemId: "item-1", companyIds: ["company-1", "company-1", "company-2"] },
+    ]);
+    expect(industryResearch.deleteItemCalls).toEqual(["item-1"]);
+    expect(industryResearch.deleteItemsCalls).toEqual([["item-1", "item-2"]]);
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.industryResearchUpdateItem, event(sender), "item-1", {
+        industry: "  ",
+      }),
+    ).rejects.toThrow(/invalid research item input/);
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.industryResearchRemoveCompanies, event(sender), "item-1", [""]),
+    ).rejects.toThrow(/invalid company input/);
   });
 
   it("delegates list and key checks without extra business input", async () => {
-    const { ipcMain, projects, settings } = makeDeps();
+    const { ipcMain, industryResearch, settings } = makeDeps();
     const sender = new FakeWebContents(1);
-    await ipcMain.invoke(IPC_CHANNELS.projectsList, event(sender));
-    expect(projects.listCalls).toBe(1);
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchListItems, event(sender));
+    expect(industryResearch.listItemsCalls).toBe(1);
     const has = await ipcMain.invoke(IPC_CHANNELS.settingsHasDeepSeekKey, event(sender));
     expect(has).toBe(true);
     expect(settings.hasCalls).toEqual(["deepseek.apiKey"]);

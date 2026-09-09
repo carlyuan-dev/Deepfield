@@ -1,14 +1,18 @@
 import { Value } from "typebox/value";
 import {
   ChatRequestOptionsSchema,
-  CreateProjectInputSchema,
+  CompanyDraftSchema,
+  CreateIndustryResearchItemInputSchema,
+  UpdateIndustryResearchItemInputSchema,
+  type CapabilityItem,
+  type CompanyDraft,
+  type ItemCompanyView,
+  type UpdateIndustryResearchItemInput,
   type AgentWorkerEvent,
   type ChatMessage,
   type ChatRequestOptions,
   type ChatSendResult,
   type Conversation,
-  type CreateProjectInput,
-  type Project,
   type SkillSummary,
   type LlmConnectionStatus,
 } from "@deepfield/contracts";
@@ -34,9 +38,19 @@ export interface IpcMainLike {
   removeHandler(channel: string): void;
 }
 
-export interface ProjectServiceLike {
-  create(input: CreateProjectInput): Project;
-  list(): Project[];
+export interface IndustryResearchServiceLike {
+  createItem(input: unknown): CapabilityItem;
+  updateItem(itemId: string, input: UpdateIndustryResearchItemInput): CapabilityItem;
+  deleteItem(itemId: string): void;
+  deleteItems(itemIds: string[]): void;
+  listItems(): CapabilityItem[];
+  getItem(itemId: string): CapabilityItem | undefined;
+  listCompanies(itemId: string): ItemCompanyView[];
+  addCompany(itemId: string, draft: CompanyDraft): ItemCompanyView;
+  addCompanies(itemId: string, drafts: CompanyDraft[]): ItemCompanyView[];
+  removeCompany(itemId: string, companyId: string): void;
+  removeCompanies(itemId: string, companyIds: string[]): void;
+  recognizeCompanies(itemId: string, text: string): Promise<CompanyDraft[]>;
 }
 
 export interface ConversationServiceLike {
@@ -72,7 +86,7 @@ export interface ChatServiceLike {
 export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
   conversations: ConversationServiceLike;
-  projects: ProjectServiceLike;
+  industryResearch: IndustryResearchServiceLike;
   settings: SecretSettingsLike;
   llm: LlmServiceLike;
   skills: SkillListLike;
@@ -80,8 +94,18 @@ export interface IpcServiceDeps {
 }
 
 const INVOKE_CHANNELS = [
-  IPC_CHANNELS.projectsCreate,
-  IPC_CHANNELS.projectsList,
+  IPC_CHANNELS.industryResearchCreateItem,
+  IPC_CHANNELS.industryResearchUpdateItem,
+  IPC_CHANNELS.industryResearchDeleteItem,
+  IPC_CHANNELS.industryResearchDeleteItems,
+  IPC_CHANNELS.industryResearchListItems,
+  IPC_CHANNELS.industryResearchGetItem,
+  IPC_CHANNELS.industryResearchListCompanies,
+  IPC_CHANNELS.industryResearchAddCompany,
+  IPC_CHANNELS.industryResearchAddCompanies,
+  IPC_CHANNELS.industryResearchRemoveCompany,
+  IPC_CHANNELS.industryResearchRemoveCompanies,
+  IPC_CHANNELS.industryResearchRecognizeCompanies,
   IPC_CHANNELS.conversationsCreate,
   IPC_CHANNELS.conversationsOpenInitial,
   IPC_CHANNELS.conversationsListRecent,
@@ -118,24 +142,170 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     sender.send(IPC_CHANNELS.chatEvents, event);
   };
 
-  deps.ipcMain.handle(IPC_CHANNELS.projectsCreate, async (_event, ...args) => {
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchCreateItem, async (_event, ...args) => {
     const input = args[0];
     if (
       args.length !== 1 ||
       input === undefined ||
-      !Value.Check(CreateProjectInputSchema, input) ||
+      !Value.Check(CreateIndustryResearchItemInputSchema, input) ||
       input.industry.trim().length === 0
     ) {
-      throw new Error("invalid project input");
+      throw new Error("invalid research item input");
     }
-    return deps.projects.create(input);
+    return deps.industryResearch.createItem(input);
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.projectsList, async (_event, ...args) => {
-    if (args.length !== 0) {
-      throw new Error("invalid list input");
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchUpdateItem, async (_event, ...args) => {
+    const itemId = args[0];
+    const input = args[1];
+    if (
+      args.length !== 2 ||
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      !Value.Check(UpdateIndustryResearchItemInputSchema, input) ||
+      input.industry.trim().length === 0
+    ) {
+      throw new Error("invalid research item input");
     }
-    return deps.projects.list();
+    try {
+      return deps.industryResearch.updateItem(itemId, input);
+    } catch {
+      throw new Error("research item update failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchDeleteItem, async (_event, ...args) => {
+    const itemId = args[0];
+    if (args.length !== 1 || typeof itemId !== "string" || itemId.length === 0) {
+      throw new Error("invalid research item input");
+    }
+    try {
+      return deps.industryResearch.deleteItem(itemId);
+    } catch {
+      throw new Error("research item deletion failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchDeleteItems, async (_event, ...args) => {
+    const itemIds = args[0];
+    if (
+      args.length !== 1 ||
+      !Array.isArray(itemIds) ||
+      itemIds.length === 0 ||
+      !itemIds.every((itemId) => typeof itemId === "string" && itemId.length > 0)
+    ) {
+      throw new Error("invalid research item input");
+    }
+    try {
+      return deps.industryResearch.deleteItems(itemIds);
+    } catch {
+      throw new Error("research item deletion failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchListItems, async (_event, ...args) => {
+    if (args.length !== 0) {
+      throw new Error("invalid research item input");
+    }
+    return deps.industryResearch.listItems();
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchGetItem, async (_event, ...args) => {
+    const itemId = args[0];
+    if (args.length !== 1 || typeof itemId !== "string" || itemId.length === 0) {
+      throw new Error("invalid research item input");
+    }
+    return deps.industryResearch.getItem(itemId);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchListCompanies, async (_event, ...args) => {
+    const itemId = args[0];
+    if (args.length !== 1 || typeof itemId !== "string" || itemId.length === 0) {
+      throw new Error("invalid company input");
+    }
+    return deps.industryResearch.listCompanies(itemId);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchAddCompany, async (_event, ...args) => {
+    const itemId = args[0];
+    const draft = args[1];
+    if (
+      args.length !== 2 ||
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      !Value.Check(CompanyDraftSchema, draft)
+    ) {
+      throw new Error("invalid company input");
+    }
+    return deps.industryResearch.addCompany(itemId, draft);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchAddCompanies, async (_event, ...args) => {
+    const itemId = args[0];
+    const drafts = args[1];
+    if (
+      args.length !== 2 ||
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      !Array.isArray(drafts) ||
+      !drafts.every((draft) => Value.Check(CompanyDraftSchema, draft))
+    ) {
+      throw new Error("invalid company input");
+    }
+    return deps.industryResearch.addCompanies(itemId, drafts);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchRemoveCompany, async (_event, ...args) => {
+    const itemId = args[0];
+    const companyId = args[1];
+    if (
+      args.length !== 2 ||
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      typeof companyId !== "string" ||
+      companyId.length === 0
+    ) {
+      throw new Error("invalid company input");
+    }
+    try {
+      return deps.industryResearch.removeCompany(itemId, companyId);
+    } catch {
+      throw new Error("company removal failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchRemoveCompanies, async (_event, ...args) => {
+    const itemId = args[0];
+    const companyIds = args[1];
+    if (
+      args.length !== 2 ||
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      !Array.isArray(companyIds) ||
+      !companyIds.every((companyId) => typeof companyId === "string" && companyId.length > 0)
+    ) {
+      throw new Error("invalid company input");
+    }
+    try {
+      return deps.industryResearch.removeCompanies(itemId, companyIds);
+    } catch {
+      throw new Error("company removal failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchRecognizeCompanies, async (_event, ...args) => {
+    const itemId = args[0];
+    const text = args[1];
+    if (
+      args.length !== 2 ||
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      typeof text !== "string" ||
+      text.trim().length === 0
+    ) {
+      throw new Error("invalid company input");
+    }
+    return deps.industryResearch.recognizeCompanies(itemId, text);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.conversationsCreate, async (_event, ...args) => {

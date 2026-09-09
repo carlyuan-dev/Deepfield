@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import type { DesktopApi, Project } from "@deepfield/contracts";
+import type { DesktopApi } from "@deepfield/contracts";
 import { createChatEventHub } from "./state/chat-event-hub.js";
 import { createRequestId } from "./request-id.js";
 import {
@@ -11,7 +11,7 @@ import { useConversations } from "./state/use-conversations.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ChatPaneHeader } from "./components/ChatPaneHeader.js";
 import { ChatView } from "./components/ChatView.js";
-import { CapabilityView } from "./features/projects/CapabilityView.js";
+import { IndustryResearchCapability } from "./features/industry-research/IndustryResearchCapability.js";
 import { SettingsView } from "./features/settings/SettingsView.js";
 
 export interface AppProps {
@@ -26,7 +26,6 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "connected" | "disconnected">(
     "checking",
   );
-  const [researchItem, setResearchItem] = useState<Project | undefined>(undefined);
   const eventHub = useMemo(() => createChatEventHub(), []);
 
   const checkConnection = useCallback((): void => {
@@ -135,15 +134,7 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
                     ×
                   </button>
                 </div>
-                <CapabilityView
-                  api={api}
-                  projectId={researchItem?.id}
-                  project={researchItem}
-                  onCreated={(project) => {
-                    setResearchItem(project);
-                  }}
-                  onOpenProjectChat={() => openConversation()}
-                />
+                <IndustryResearchCapability api={api} />
               </aside>
             )}
           </div>
