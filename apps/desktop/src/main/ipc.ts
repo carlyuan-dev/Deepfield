@@ -1,11 +1,18 @@
 import { Value } from "typebox/value";
 import {
   ChatRequestOptionsSchema,
+  CompanyResearchCancelArgsSchema,
+  CompanyResearchStartArgsSchema,
+  CompanyResearchSubscribeArgsSchema,
+  CompanyResearchTargetArgsSchema,
+  CompanyResearchWorkerEventSchema,
   CompanyDraftSchema,
   CreateIndustryResearchItemInputSchema,
   UpdateIndustryResearchItemInputSchema,
   type CapabilityItem,
   type CompanyDraft,
+  type CompanyResearchState,
+  type CompanyResearchWorkerEvent,
   type ItemCompanyView,
   type UpdateIndustryResearchItemInput,
   type AgentWorkerEvent,
@@ -15,6 +22,8 @@ import {
   type Conversation,
   type SkillSummary,
   type LlmConnectionStatus,
+  type ResearchRun,
+  type StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import { DEEPSEEK_KEY_NAME } from "@deepfield/application";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
@@ -83,6 +92,14 @@ export interface ChatServiceLike {
   listMessages(conversationId: string): ChatMessage[];
 }
 
+export interface CompanyResearchServiceLike {
+  start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun;
+  cancel(runId: string): Promise<void>;
+  getState(itemId: string, companyId: string): CompanyResearchState;
+  listCompleted(itemId: string, companyId: string): ResearchRun[];
+  subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void;
+}
+
 export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
   conversations: ConversationServiceLike;
@@ -91,6 +108,7 @@ export interface IpcServiceDeps {
   llm: LlmServiceLike;
   skills: SkillListLike;
   chat: ChatServiceLike;
+  companyResearch: CompanyResearchServiceLike;
 }
 
 const INVOKE_CHANNELS = [
@@ -106,6 +124,11 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.industryResearchRemoveCompany,
   IPC_CHANNELS.industryResearchRemoveCompanies,
   IPC_CHANNELS.industryResearchRecognizeCompanies,
+  IPC_CHANNELS.companyResearchStart,
+  IPC_CHANNELS.companyResearchCancel,
+  IPC_CHANNELS.companyResearchGetState,
+  IPC_CHANNELS.companyResearchListCompleted,
+  IPC_CHANNELS.companyResearchSubscribe,
   IPC_CHANNELS.conversationsCreate,
   IPC_CHANNELS.conversationsOpenInitial,
   IPC_CHANNELS.conversationsListRecent,
@@ -141,6 +164,14 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
     sender.send(IPC_CHANNELS.chatEvents, event);
   };
+
+  const emitResearch = (event: CompanyResearchWorkerEvent): void => {
+    if (!Value.Check(CompanyResearchWorkerEventSchema, event)) return;
+    for (const sender of senders.values()) {
+      sender.send(IPC_CHANNELS.companyResearchEvents, event);
+    }
+  };
+  const unsubscribeResearch = deps.companyResearch.subscribe(emitResearch);
 
   deps.ipcMain.handle(IPC_CHANNELS.industryResearchCreateItem, async (_event, ...args) => {
     const input = args[0];
@@ -308,6 +339,61 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.industryResearch.recognizeCompanies(itemId, text);
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchStart, async (event, ...args) => {
+    if (!Value.Check(CompanyResearchStartArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return deps.companyResearch.start(args[0], args[1], args[2]);
+    } catch {
+      throw new Error("company research start failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchCancel, async (event, ...args) => {
+    if (!Value.Check(CompanyResearchCancelArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return await deps.companyResearch.cancel(args[0]);
+    } catch {
+      throw new Error("company research cancellation failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchGetState, async (event, ...args) => {
+    if (!Value.Check(CompanyResearchTargetArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return deps.companyResearch.getState(args[0], args[1]);
+    } catch {
+      throw new Error("company research read failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchListCompleted, async (event, ...args) => {
+    if (!Value.Check(CompanyResearchTargetArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return deps.companyResearch.listCompleted(args[0], args[1]);
+    } catch {
+      throw new Error("company research read failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchSubscribe, async (event, ...args) => {
+    if (!Value.Check(CompanyResearchSubscribeArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.conversationsCreate, async (_event, ...args) => {
     if (args.length !== 0) {
       throw new Error("invalid conversation input");
@@ -393,6 +479,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   });
 
   return () => {
+    unsubscribeResearch();
     for (const channel of INVOKE_CHANNELS) {
       deps.ipcMain.removeHandler(channel);
     }

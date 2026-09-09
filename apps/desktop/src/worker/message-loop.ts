@@ -2,10 +2,15 @@ import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
   AgentWorkerRequestSchema,
+  CompanyResearchCancelRequestSchema,
+  CompanyResearchWorkerEventSchema,
+  CompanyResearchWorkerRequestSchema,
   ToolExecutionEventSchema,
   ToolRunRequestSchema,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
+  type CompanyResearchWorkerEvent,
+  type CompanyResearchWorkerRequest,
   type ToolExecutionEvent,
   type ToolRunRequest,
 } from "@deepfield/contracts";
@@ -16,15 +21,17 @@ import {
   toolFailedEnvelope,
   type ActiveExecution,
   type ChatAgent,
+  type ResearchAgent,
   type ToolRuntime,
   type WorkerEndpoint,
   type WorkerLoop,
 } from "./message-loop-types.js";
 
-export type { ActiveExecution, ChatAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
+export type { ActiveExecution, ChatAgent, ResearchAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
 
 export interface WorkerMessageLoopOptions {
   toolRuntime?: ToolRuntime;
+  researchAgent?: ResearchAgent;
   hostReplyHandler?: (reply: unknown) => void;
   /** Called once when the loop is disposed (e.g. to dispose the HostClient). */
   onDispose?: () => void;
@@ -52,6 +59,14 @@ export function createWorkerMessageLoop(
       startChat(value);
       return;
     }
+    if (Value.Check(CompanyResearchWorkerRequestSchema, value)) {
+      startResearch(value);
+      return;
+    }
+    if (Value.Check(CompanyResearchCancelRequestSchema, value)) {
+      cancelResearch(value.requestId, value.runId);
+      return;
+    }
     if (Value.Check(ToolRunRequestSchema, value)) {
       startTool(value);
       return;
@@ -64,6 +79,54 @@ export function createWorkerMessageLoop(
         code: "invalid_request",
         message: "invalid agent worker request",
       } satisfies AgentWorkerEvent);
+    }
+  }
+
+  function startResearch(request: CompanyResearchWorkerRequest): void {
+    const agent = options.researchAgent;
+    if (!agent) {
+      endpoint.postMessage({
+        requestId: request.requestId,
+        runId: request.runId,
+        type: "failed",
+        code: "research_failed",
+        message: "company research failed",
+      } satisfies CompanyResearchWorkerEvent);
+      return;
+    }
+    const execution = begin(request.requestId, "research", undefined, request.runId);
+    if (!execution) return;
+    const emit = (event: unknown): void => {
+      if (disposed || execution.settled) return;
+      if (
+        !Value.Check(CompanyResearchWorkerEventSchema, event) ||
+        event.requestId !== request.requestId ||
+        event.runId !== request.runId
+      ) {
+        execution.settle("research_failed", "company research failed", true);
+        return;
+      }
+      if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
+        execution.finalize();
+        endpoint.postMessage(event);
+        return;
+      }
+      endpoint.postMessage(event);
+    };
+    void Promise.resolve()
+      .then(() => agent.run(request, emit, execution.controller.signal))
+      .then(() => {
+        if (!execution.settled && !disposed) {
+          execution.settle("research_failed", "company research failed", false);
+        }
+      })
+      .catch(() => execution.settle("research_failed", "company research failed", false));
+  }
+
+  function cancelResearch(requestId: string, runId: string): void {
+    const execution = active.get(requestId);
+    if (execution?.kind === "research" && execution.runId === runId) {
+      execution.controller.abort();
     }
   }
 
@@ -198,8 +261,9 @@ export function createWorkerMessageLoop(
   /** Registers an active execution; returns undefined on duplicate transport ids. */
   function begin(
     requestId: string,
-    kind: "chat" | "tool",
+    kind: "chat" | "research" | "tool",
     executionId?: string,
+    runId?: string,
   ): ActiveExecution | undefined {
     const existing = active.get(requestId);
     if (existing) {
@@ -211,6 +275,7 @@ export function createWorkerMessageLoop(
       kind,
       requestId,
       ...(executionId !== undefined ? { executionId } : {}),
+      ...(runId !== undefined ? { runId } : {}),
       controller,
       settled: false,
       settle: () => {},
@@ -254,6 +319,16 @@ export function createWorkerMessageLoop(
             Date.now(),
           ),
         );
+        return;
+      }
+      if (execution.kind === "research" && execution.runId !== undefined) {
+        endpoint.postMessage({
+          requestId,
+          runId: execution.runId,
+          type: "failed",
+          code: "research_failed",
+          message: "company research failed",
+        } satisfies CompanyResearchWorkerEvent);
         return;
       }
       endpoint.postMessage({

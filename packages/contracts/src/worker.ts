@@ -1,6 +1,10 @@
 import { Type, type Static } from "typebox";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
-import { CompanyResearchWorkerRequestSchema } from "./research.js";
+import {
+  CompanyResearchCancelRequestSchema,
+  CompanyResearchWorkerEventSchema,
+  CompanyResearchWorkerRequestSchema,
+} from "./research.js";
 import {
   JsonObjectSchema,
   ToolExecutionEventSchema,
@@ -66,6 +70,7 @@ export type ToolRunRequest = Static<typeof ToolRunRequestSchema>;
 export const UtilityWorkerRequestSchema = Type.Union([
   AgentWorkerRequestSchema,
   CompanyResearchWorkerRequestSchema,
+  CompanyResearchCancelRequestSchema,
   ToolRunRequestSchema,
 ]);
 export type UtilityWorkerRequest = Static<typeof UtilityWorkerRequestSchema>;
@@ -391,6 +396,7 @@ export type HostReply = Static<typeof HostReplySchema>;
 
 export const UtilityWorkerEventSchema = Type.Union([
   ...AgentWorkerEventSchema.anyOf,
+  ...CompanyResearchWorkerEventSchema.anyOf,
   ToolEventEnvelopeSchema,
   HostReplySchema,
 ]);

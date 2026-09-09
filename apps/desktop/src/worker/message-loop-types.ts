@@ -1,6 +1,8 @@
 import type {
   AgentWorkerEvent,
   AgentWorkerRequest,
+  CompanyResearchWorkerEvent,
+  CompanyResearchWorkerRequest,
   ToolExecutionEvent,
   ToolRunRequest,
 } from "@deepfield/contracts";
@@ -9,6 +11,14 @@ export interface ChatAgent {
   run(
     request: AgentWorkerRequest,
     emit: (event: AgentWorkerEvent) => void,
+    signal: AbortSignal,
+  ): Promise<void>;
+}
+
+export interface ResearchAgent {
+  run(
+    request: CompanyResearchWorkerRequest,
+    emit: (event: CompanyResearchWorkerEvent) => void,
     signal: AbortSignal,
   ): Promise<void>;
 }
@@ -33,8 +43,9 @@ export interface WorkerLoop {
 }
 
 export interface ActiveExecution {
-  kind: "chat" | "tool";
+  kind: "chat" | "research" | "tool";
   requestId: string;
+  runId?: string;
   executionId?: string;
   traceId?: string;
   tool?: { name: string; version: number };

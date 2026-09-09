@@ -120,10 +120,21 @@ void app.whenReady().then(async () => {
         }
         return client.send(request);
       },
+      sendResearch: (request) => {
+        const client = agentRuntime?.client;
+        if (!client) throw new Error("agent worker is not available");
+        return client.sendResearch(request);
+      },
+      cancelResearch: (requestId, runId) => {
+        const client = agentRuntime?.client;
+        if (!client) throw new Error("agent worker is not available");
+        client.cancelResearch(requestId, runId);
+      },
     },
     titleGenerator: deepSeekService,
     companyRecognizer,
   });
+  appRuntime.companyResearch.cleanupAbandoned();
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
     conversations: appRuntime.conversationService,
@@ -132,6 +143,7 @@ void app.whenReady().then(async () => {
     llm: deepSeekService,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
+    companyResearch: appRuntime.companyResearch,
   });
 
   mainWindow = createWindow();

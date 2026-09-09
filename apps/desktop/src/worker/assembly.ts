@@ -15,6 +15,7 @@ import {
   createDeepSeekWebSearchAgent,
   routeWebSearchChatAgent,
 } from "./deepseek-web-search-agent.js";
+import { createCompanyResearchAgent } from "./company-research-agent.js";
 
 export interface UtilityAssemblyDeps {
   endpoint: WorkerEndpoint;
@@ -66,6 +67,7 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
   });
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     toolRuntime,
+    researchAgent: createCompanyResearchAgent(),
     hostReplyHandler: (reply) => deps.hostClient.handleReply(reply),
     onDispose: () => deps.hostClient.dispose(),
   });

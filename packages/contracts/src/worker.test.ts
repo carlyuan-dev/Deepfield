@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
+import {
+  CompanyResearchCancelRequestSchema,
+  CompanyResearchWorkerEventSchema,
+  CompanyResearchWorkerRequestSchema,
+} from "./research.js";
 import { ToolExecutionEventSchema } from "./tools.js";
 import {
   HostReplySchema,
@@ -83,11 +88,33 @@ describe("utility worker protocol", () => {
     ).toBe(false);
   });
 
-  it("keeps chat requests valid and adds tool.run to the union", () => {
+  it("keeps chat requests valid and adds tool and research requests to the union", () => {
+    const researchRequest = {
+      requestId: "research-1",
+      kind: "company-research.run",
+      runId: "run-1",
+      apiKey: "sk-test-key",
+      modelId: "deepseek-v4-flash",
+      context: {
+        currentDate: "2026-09-09",
+        companyName: "小米",
+        industry: "智能眼镜",
+        timeScope: "近一年",
+      },
+    };
+    const cancelRequest = {
+      requestId: "research-1",
+      kind: "company-research.cancel",
+      runId: "run-1",
+    };
     expect(Value.Check(AgentWorkerRequestSchema, chatRequest)).toBe(true);
     expect(Value.Check(ToolRunRequestSchema, toolRequest)).toBe(true);
     expect(Value.Check(UtilityWorkerRequestSchema, chatRequest)).toBe(true);
     expect(Value.Check(UtilityWorkerRequestSchema, toolRequest)).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerRequestSchema, researchRequest)).toBe(true);
+    expect(Value.Check(CompanyResearchCancelRequestSchema, cancelRequest)).toBe(true);
+    expect(Value.Check(UtilityWorkerRequestSchema, researchRequest)).toBe(true);
+    expect(Value.Check(UtilityWorkerRequestSchema, cancelRequest)).toBe(true);
   });
 
   it("rejects blank IDs, extra properties and malformed tool.run kinds", () => {
@@ -124,11 +151,14 @@ describe("utility worker protocol", () => {
       type: "started",
     };
     const envelope = { kind: "tool.event", requestId: "r2", event: toolEvent };
+    const researchEvent = { requestId: "research-1", runId: "run-1", type: "started" };
     expect(Value.Check(AgentWorkerEventSchema, chatEvent)).toBe(true);
     expect(Value.Check(ToolExecutionEventSchema, toolEvent)).toBe(true);
     expect(Value.Check(UtilityWorkerEventSchema, chatEvent)).toBe(true);
     expect(Value.Check(ToolEventEnvelopeSchema, envelope)).toBe(true);
     expect(Value.Check(UtilityWorkerEventSchema, envelope)).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, researchEvent)).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, researchEvent)).toBe(true);
     // raw tool events are no longer part of the Utility event union: the
     // envelope with its transport generation id is the only tool carrier.
     expect(Value.Check(UtilityWorkerEventSchema, toolEvent)).toBe(false);

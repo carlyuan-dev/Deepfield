@@ -5,12 +5,17 @@ import type {
   ChatMessage,
   ChatRequestOptions,
   CompanyDraft,
+  CompanyResearchState,
+  CompanyResearchWorkerEvent,
   CompanyId,
   Conversation,
   ConversationId,
   ItemCompanyView,
   SkillSummary,
   LlmConnectionStatus,
+  ResearchRun,
+  ResearchRunId,
+  StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
@@ -297,6 +302,49 @@ export class FakeChatService {
   }
 }
 
+export class FakeCompanyResearchService {
+  startCalls: Array<{ itemId: string; companyId: string; input: StartCompanyResearchInput }> = [];
+  cancelCalls: string[] = [];
+  getStateCalls: Array<{ itemId: string; companyId: string }> = [];
+  listCompletedCalls: Array<{ itemId: string; companyId: string }> = [];
+  private listeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
+
+  start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun {
+    this.startCalls.push({ itemId, companyId, input });
+    return {
+      id: "run-1" as ResearchRunId,
+      itemId: itemId as CapabilityItemId,
+      companyId: companyId as CompanyId,
+      status: "running",
+      timeScope: input.timeScope,
+      createdAt: "2026-09-09T00:00:00.000Z",
+    };
+  }
+
+  async cancel(runId: string): Promise<void> {
+    this.cancelCalls.push(runId);
+  }
+
+  getState(itemId: string, companyId: string): CompanyResearchState {
+    this.getStateCalls.push({ itemId, companyId });
+    return { completed: [] };
+  }
+
+  listCompleted(itemId: string, companyId: string): ResearchRun[] {
+    this.listCompletedCalls.push({ itemId, companyId });
+    return [];
+  }
+
+  subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(event: CompanyResearchWorkerEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+}
+
 export function makeDeps() {
   const ipcMain = new FakeIpcMain();
   const conversations = new FakeConversationService();
@@ -305,6 +353,7 @@ export function makeDeps() {
   const llm = new FakeLlmService();
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
+  const companyResearch = new FakeCompanyResearchService();
   const deps: IpcServiceDeps = {
     ipcMain,
     conversations,
@@ -313,9 +362,10 @@ export function makeDeps() {
     llm,
     skills,
     chat,
+    companyResearch,
   };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, industryResearch, settings, llm, skills, chat, dispose };
+  return { ipcMain, conversations, industryResearch, settings, llm, skills, chat, companyResearch, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

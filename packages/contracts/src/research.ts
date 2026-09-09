@@ -56,6 +56,16 @@ export const CompanyResearchWorkerRequestSchema = Type.Object(
 );
 export type CompanyResearchWorkerRequest = Static<typeof CompanyResearchWorkerRequestSchema>;
 
+export const CompanyResearchCancelRequestSchema = Type.Object(
+  {
+    requestId: Type.String({ minLength: 1 }),
+    kind: Type.Literal("company-research.cancel"),
+    runId: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type CompanyResearchCancelRequest = Static<typeof CompanyResearchCancelRequestSchema>;
+
 const CompanyResearchEventIdentitySchema = {
   requestId: Type.String({ minLength: 1 }),
   runId: Type.String({ minLength: 1 }),

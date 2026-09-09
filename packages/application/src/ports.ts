@@ -1,6 +1,8 @@
 import type {
   AgentWorkerEvent,
   AgentWorkerRequest,
+  CompanyResearchWorkerEvent,
+  CompanyResearchWorkerRequest,
   CompanyDraft,
 } from "@deepfield/contracts";
 
@@ -10,6 +12,11 @@ export interface SecretReader {
 
 export interface AgentWorkerPort {
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent>;
+}
+
+export interface CompanyResearchWorkerPort {
+  sendResearch(request: CompanyResearchWorkerRequest): AsyncIterable<CompanyResearchWorkerEvent>;
+  cancelResearch(requestId: string, runId: string): void;
 }
 
 export interface ConversationTitleGenerator {

@@ -11,10 +11,16 @@ export {
   titleFromFirstMessage,
 } from "./chat-service.js";
 export { SqliteToolAudit, SqliteToolAuditError } from "./tool-audit.js";
+export {
+  CompanyResearchService,
+  CompanyResearchServiceError,
+} from "./company-research-service.js";
+export type { CompanyResearchServiceOptions } from "./company-research-service.js";
 export type { ChatSendResult, ChatServiceOptions } from "./chat-service.js";
 export type { ItemCompanyView } from "./industry-research-service.js";
 export type {
   AgentWorkerPort,
+  CompanyResearchWorkerPort,
   ConversationTitleGenerator,
   CompanyRecognizer,
   ProviderKeyReader,

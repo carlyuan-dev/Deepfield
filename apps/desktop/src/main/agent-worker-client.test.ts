@@ -1,4 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type {
+  CompanyResearchWorkerEvent,
+  CompanyResearchWorkerRequest,
+} from "@deepfield/contracts";
+import { createWorkerMessageLoop } from "../worker/message-loop.js";
+import {
+  echoAgent,
+  flushPending,
+  InMemoryEndpoint,
+} from "../worker/message-loop-test-helpers.js";
 import {
   AgentProtocolError,
   AgentWorkerClient,
@@ -20,6 +30,76 @@ import {
 } from "./agent-worker-client-test-helpers.js";
 
 describe("agent worker client", () => {
+  it("cancels only the matching research while chat stays usable and drops late research events", async () => {
+    const clientEndpoint = new FakeEndpoint();
+    const workerEndpoint = new InMemoryEndpoint();
+    clientEndpoint.postMessage = (value) => workerEndpoint.emit(value);
+    workerEndpoint.postMessage = (value) => clientEndpoint.emit(value);
+    let aborted = false;
+    const loop = createWorkerMessageLoop(workerEndpoint, echoAgent, {
+      researchAgent: {
+        async run(workerRequest, emit, signal) {
+          emit({
+            requestId: workerRequest.requestId,
+            runId: workerRequest.runId,
+            type: "started",
+          });
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => {
+              aborted = true;
+              resolve();
+            });
+          });
+          emit({
+            requestId: workerRequest.requestId,
+            runId: workerRequest.runId,
+            type: "cancelled",
+          });
+          emit({
+            requestId: workerRequest.requestId,
+            runId: workerRequest.runId,
+            type: "text_delta",
+            delta: "late",
+          });
+        },
+      },
+    });
+    const client = new AgentWorkerClient(clientEndpoint);
+    const researchRequest: CompanyResearchWorkerRequest = {
+      requestId: "research-1",
+      kind: "company-research.run",
+      runId: "run-1",
+      apiKey: "sk-test",
+      modelId: "deepseek-v4-flash",
+      context: {
+        currentDate: "2026-09-09",
+        companyName: "小米",
+        industry: "智能眼镜",
+        timeScope: "近一年",
+      },
+    };
+    const research = client.sendResearch(researchRequest);
+    await flushPending();
+    client.cancelResearch("other-request", "run-1");
+    await flushPending();
+
+    const chat = client.send(request("chat-during-research"));
+    await flushPending();
+    client.cancelResearch("research-1", "run-1");
+
+    const researchTypes: string[] = [];
+    for await (const event of research as AsyncIterable<CompanyResearchWorkerEvent>) {
+      researchTypes.push(event.type);
+    }
+    expect(await collect(chat)).toEqual(["started", "你好", "completed:你好"]);
+    expect({ aborted, researchTypes, pending: client.pendingCount(), active: loop.activeCount() }).toEqual({
+      aborted: true,
+      researchTypes: ["started", "cancelled"],
+      pending: 0,
+      active: 0,
+    });
+  });
+
   it("delivers interleaved streams in per-request order and consumes terminal events", async () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);

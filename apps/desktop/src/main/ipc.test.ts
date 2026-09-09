@@ -31,6 +31,11 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.industryResearchRemoveCompany,
         IPC_CHANNELS.industryResearchRemoveCompanies,
         IPC_CHANNELS.industryResearchRecognizeCompanies,
+        IPC_CHANNELS.companyResearchStart,
+        IPC_CHANNELS.companyResearchCancel,
+        IPC_CHANNELS.companyResearchGetState,
+        IPC_CHANNELS.companyResearchListCompleted,
+        IPC_CHANNELS.companyResearchSubscribe,
         IPC_CHANNELS.conversationsCreate,
         IPC_CHANNELS.conversationsOpenInitial,
         IPC_CHANNELS.conversationsListRecent,
@@ -43,6 +48,7 @@ describe("ipc handlers", () => {
       ].sort(),
     );
     expect(ipcMain.handlers.has(IPC_CHANNELS.chatEvents)).toBe(false);
+    expect(ipcMain.handlers.has(IPC_CHANNELS.companyResearchEvents)).toBe(false);
   });
 
   it("validates research item input before delegating", async () => {
@@ -96,14 +102,44 @@ describe("ipc handlers", () => {
     ).rejects.toThrow(/invalid company input/);
   });
 
-  it("delegates list and key checks without extra business input", async () => {
-    const { ipcMain, industryResearch, settings } = makeDeps();
+  it("delegates list, research lifecycle, and key checks with strict arguments", async () => {
+    const { ipcMain, industryResearch, companyResearch, settings } = makeDeps();
     const sender = new FakeWebContents(1);
     await ipcMain.invoke(IPC_CHANNELS.industryResearchListItems, event(sender));
     expect(industryResearch.listItemsCalls).toBe(1);
     const has = await ipcMain.invoke(IPC_CHANNELS.settingsHasDeepSeekKey, event(sender));
     expect(has).toBe(true);
     expect(settings.hasCalls).toEqual(["deepseek.apiKey"]);
+    const started = await ipcMain.invoke(
+      IPC_CHANNELS.companyResearchStart,
+      event(sender),
+      "item-1",
+      "company-1",
+      { timeScope: "近一年" },
+    );
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1");
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchListCompleted, event(sender), "item-1", "company-1");
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchCancel, event(sender), "run-1");
+    expect(started).toMatchObject({ id: "run-1", status: "running" });
+    expect(companyResearch.startCalls).toEqual([
+      { itemId: "item-1", companyId: "company-1", input: { timeScope: "近一年" } },
+    ]);
+    await expect(
+      ipcMain.invoke(
+        IPC_CHANNELS.companyResearchStart,
+        event(sender),
+        "item-1",
+        "company-1",
+        { timeScope: " ", extra: true },
+      ),
+    ).rejects.toThrow(/invalid company research input/);
+
+    const researchEvent = { requestId: "request-1", runId: "run-1", type: "started" } as const;
+    companyResearch.emit(researchEvent);
+    expect(sender.sent).toContainEqual({
+      channel: IPC_CHANNELS.companyResearchEvents,
+      payload: researchEvent,
+    });
   });
 
   it("requires a non-blank string when setting the key and never returns the secret", async () => {

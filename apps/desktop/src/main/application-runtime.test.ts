@@ -30,6 +30,8 @@ describe("application runtime composition", () => {
             },
           };
         },
+        sendResearch: () => ({ async *[Symbol.asyncIterator]() {} }),
+        cancelResearch: () => {},
       },
     });
 
@@ -75,6 +77,8 @@ describe("application runtime composition", () => {
             /* no events */
           },
         }),
+        sendResearch: () => ({ async *[Symbol.asyncIterator]() {} }),
+        cancelResearch: () => {},
       },
     });
 

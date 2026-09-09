@@ -1,9 +1,12 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
+  CompanyResearchWorkerEventSchema,
   ToolEventEnvelopeSchema,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
+  type CompanyResearchWorkerEvent,
+  type CompanyResearchWorkerRequest,
   type ToolExecutionEvent,
   type ToolRunRequest,
 } from "@deepfield/contracts";
@@ -14,9 +17,11 @@ import {
   AgentWorkerTransportReuseError,
   isChatTerminal,
   isHostRequest,
+  isResearchTerminal,
   isToolEventEnvelope,
   isToolTerminal,
   MAX_PENDING_CHAT_EVENTS,
+  MAX_PENDING_RESEARCH_EVENTS,
   MAX_PENDING_TOOL_EVENTS,
   safeCorrelationId,
   ToolTransportTombstones,
@@ -30,6 +35,7 @@ export {
   AgentWorkerQueueOverflowError,
   AgentWorkerTransportReuseError,
   MAX_PENDING_CHAT_EVENTS,
+  MAX_PENDING_RESEARCH_EVENTS,
   MAX_PENDING_TOOL_EVENTS,
 } from "./agent-worker-protocol.js";
 
@@ -87,9 +93,25 @@ export class AgentWorkerClient {
     });
   }
 
+  sendResearch(request: CompanyResearchWorkerRequest): AsyncIterable<CompanyResearchWorkerEvent> {
+    return this.sendStream<CompanyResearchWorkerEvent>({
+      kind: "research",
+      id: request.requestId,
+      runId: request.runId,
+      request,
+    });
+  }
+
+  cancelResearch(requestId: string, runId: string): void {
+    if (this.disposed) throw new Error("agent worker client is disposed");
+    if (this.exited) throw new AgentWorkerExitedError(this.exitCode);
+    this.endpoint.postMessage({ requestId, kind: "company-research.cancel", runId });
+  }
+
   private sendStream<T extends StreamEvent>(spec: {
-    kind: "chat" | "tool";
+    kind: "chat" | "research" | "tool";
     id: string;
+    runId?: string;
     executionId?: string;
     traceId?: string;
     request: unknown;
@@ -107,6 +129,7 @@ export class AgentWorkerClient {
       kind: spec.kind,
       id: spec.id,
       ...(spec.executionId !== undefined ? { executionId: spec.executionId } : {}),
+      ...(spec.runId !== undefined ? { runId: spec.runId } : {}),
       ...(spec.traceId !== undefined ? { traceId: spec.traceId } : {}),
       queue: [],
       waiters: [],
@@ -171,6 +194,10 @@ export class AgentWorkerClient {
       this.routeChat(value);
       return;
     }
+    if (Value.Check(CompanyResearchWorkerEventSchema, value)) {
+      this.routeResearch(value);
+      return;
+    }
     if (isToolEventEnvelope(value) && Value.Check(ToolEventEnvelopeSchema, value)) {
       this.routeToolEnvelope(value);
       return;
@@ -195,6 +222,15 @@ export class AgentWorkerClient {
     }
     this.push(stream.id, stream, event);
   }
+  private routeResearch(event: CompanyResearchWorkerEvent): void {
+    const stream = this.pending.get(event.requestId);
+    if (!stream) return;
+    if (stream.kind !== "research" || stream.runId !== event.runId) {
+      this.close(stream.id, stream, new AgentProtocolError());
+      return;
+    }
+    this.push(stream.id, stream, event);
+  }
   private routeToolEnvelope(envelope: { requestId: string; event: ToolExecutionEvent }): void {
     const stream = this.pending.get(envelope.requestId);
     if (!stream) {
@@ -214,8 +250,11 @@ export class AgentWorkerClient {
     if (stream.error || stream.terminalSeen) {
       return;
     }
-    const terminal =
-      stream.kind === "chat" ? isChatTerminal(event) : isToolTerminal(event);
+    const terminal = stream.kind === "chat"
+      ? isChatTerminal(event)
+      : stream.kind === "research"
+        ? isResearchTerminal(event)
+        : isToolTerminal(event);
     const waiter = stream.waiters.shift();
     if (waiter) {
       waiter.resolve({ value: event, done: false });
@@ -228,7 +267,11 @@ export class AgentWorkerClient {
       }
       return;
     }
-    const max = stream.kind === "chat" ? MAX_PENDING_CHAT_EVENTS : MAX_PENDING_TOOL_EVENTS;
+    const max = stream.kind === "chat"
+      ? MAX_PENDING_CHAT_EVENTS
+      : stream.kind === "research"
+        ? MAX_PENDING_RESEARCH_EVENTS
+        : MAX_PENDING_TOOL_EVENTS;
     if (stream.queue.length >= max) {
       this.close(id, stream, new AgentWorkerQueueOverflowError());
       return;

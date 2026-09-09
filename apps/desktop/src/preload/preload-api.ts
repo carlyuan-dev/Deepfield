@@ -1,8 +1,11 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
+  CompanyResearchWorkerEventSchema,
   type AgentWorkerEvent,
   type CapabilityItem,
+  type CompanyResearchState,
+  type CompanyResearchWorkerEvent,
   type ChatMessage,
   type ChatRequestOptions,
   type ChatSendResult,
@@ -11,6 +14,7 @@ import {
   type DesktopApi,
   type ItemCompanyView,
   type LlmConnectionStatus,
+  type ResearchRun,
   type SkillSummary,
 } from "@deepfield/contracts";
 
@@ -27,6 +31,12 @@ export const IPC_CHANNELS = {
   industryResearchRemoveCompany: "deepfield:industryResearch:removeCompany",
   industryResearchRemoveCompanies: "deepfield:industryResearch:removeCompanies",
   industryResearchRecognizeCompanies: "deepfield:industryResearch:recognizeCompanies",
+  companyResearchStart: "deepfield:companyResearch:start",
+  companyResearchCancel: "deepfield:companyResearch:cancel",
+  companyResearchGetState: "deepfield:companyResearch:getState",
+  companyResearchListCompleted: "deepfield:companyResearch:listCompleted",
+  companyResearchSubscribe: "deepfield:companyResearch:subscribe",
+  companyResearchEvents: "deepfield:companyResearch:events",
   conversationsCreate: "deepfield:conversations:create",
   conversationsOpenInitial: "deepfield:conversations:openInitial",
   conversationsListRecent: "deepfield:conversations:listRecent",
@@ -91,6 +101,22 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.industryResearchRecognizeCompanies, itemId, text) as Promise<
           CompanyDraft[]
         >,
+    },
+    companyResearch: {
+      start: (itemId, companyId, input) =>
+        ipc.invoke(IPC_CHANNELS.companyResearchStart, itemId, companyId, input) as Promise<ResearchRun>,
+      cancel: (runId) =>
+        ipc.invoke(IPC_CHANNELS.companyResearchCancel, runId) as Promise<void>,
+      getState: (itemId, companyId) =>
+        ipc.invoke(IPC_CHANNELS.companyResearchGetState, itemId, companyId) as Promise<CompanyResearchState>,
+      listCompleted: (itemId, companyId) =>
+        ipc.invoke(IPC_CHANNELS.companyResearchListCompleted, itemId, companyId) as Promise<ResearchRun[]>,
+      subscribe: (listener: (event: CompanyResearchWorkerEvent) => void) => {
+        void ipc.invoke(IPC_CHANNELS.companyResearchSubscribe).catch(() => {});
+        return ipc.on(IPC_CHANNELS.companyResearchEvents, (_event, value) => {
+          if (Value.Check(CompanyResearchWorkerEventSchema, value)) listener(value);
+        });
+      },
     },
     settings: {
       hasDeepSeekKey: () =>

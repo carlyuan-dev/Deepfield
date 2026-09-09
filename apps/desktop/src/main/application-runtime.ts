@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
 import type { Repositories } from "@deepfield/persistence";
 import {
   ChatService,
+  CompanyResearchService,
   ContextBuilder,
   ConversationService,
   IndustryResearchService,
   type AgentWorkerPort,
+  type CompanyResearchWorkerPort,
   type CompanyRecognizer,
   type ConversationTitleGenerator,
   type SecretReader,
@@ -13,7 +16,7 @@ import {
 export interface ApplicationRuntimeDeps {
   repositories: Repositories;
   secrets: SecretReader;
-  worker: AgentWorkerPort;
+  worker: AgentWorkerPort & CompanyResearchWorkerPort;
   companyRecognizer: CompanyRecognizer;
   titleGenerator?: ConversationTitleGenerator;
 }
@@ -23,6 +26,7 @@ export interface ApplicationRuntime {
   conversationService: ConversationService;
   contextBuilder: ContextBuilder;
   chatService: ChatService;
+  companyResearch: CompanyResearchService;
 }
 
 export function createApplicationRuntime(deps: ApplicationRuntimeDeps): ApplicationRuntime {
@@ -39,5 +43,11 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.worker,
     deps.titleGenerator === undefined ? {} : { titleGenerator: deps.titleGenerator },
   );
-  return { industryResearch, conversationService, contextBuilder, chatService };
+  const companyResearch = new CompanyResearchService(
+    deps.repositories,
+    deps.secrets,
+    deps.worker,
+    { requestIdFactory: randomUUID },
+  );
+  return { industryResearch, conversationService, contextBuilder, chatService, companyResearch };
 }

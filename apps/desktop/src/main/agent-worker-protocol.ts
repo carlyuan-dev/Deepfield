@@ -1,6 +1,12 @@
-import type { AgentWorkerEvent, ToolEventEnvelope, ToolExecutionEvent } from "@deepfield/contracts";
+import type {
+  AgentWorkerEvent,
+  CompanyResearchWorkerEvent,
+  ToolEventEnvelope,
+  ToolExecutionEvent,
+} from "@deepfield/contracts";
 
 export const MAX_PENDING_CHAT_EVENTS = 1000;
+export const MAX_PENDING_RESEARCH_EVENTS = 1000;
 export const MAX_PENDING_TOOL_EVENTS = 1000;
 export const MAX_RECENT_TRANSPORT_IDS = 256;
 
@@ -51,11 +57,12 @@ export class ToolTransportTombstones {
   }
 }
 
-export type StreamEvent = AgentWorkerEvent | ToolExecutionEvent;
+export type StreamEvent = AgentWorkerEvent | CompanyResearchWorkerEvent | ToolExecutionEvent;
 
 export interface PendingStream {
-  kind: "chat" | "tool";
+  kind: "chat" | "research" | "tool";
   id: string;
+  runId?: string;
   executionId?: string;
   traceId?: string;
   queue: StreamEvent[];
@@ -72,6 +79,10 @@ export function isChatTerminal(event: StreamEvent): boolean {
 }
 
 export function isToolTerminal(event: StreamEvent): boolean {
+  return event.type === "completed" || event.type === "failed" || event.type === "cancelled";
+}
+
+export function isResearchTerminal(event: StreamEvent): boolean {
   return event.type === "completed" || event.type === "failed" || event.type === "cancelled";
 }
 

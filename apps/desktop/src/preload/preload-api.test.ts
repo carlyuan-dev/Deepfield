@@ -4,7 +4,12 @@ import {
   IPC_CHANNELS,
   type IpcBridge,
 } from "./preload-api.js";
-import type { AgentWorkerEvent, ChatRequestOptions, DesktopApi } from "@deepfield/contracts";
+import type {
+  AgentWorkerEvent,
+  ChatRequestOptions,
+  CompanyResearchWorkerEvent,
+  DesktopApi,
+} from "@deepfield/contracts";
 
 const CHAT_OPTIONS: ChatRequestOptions = { webSearch: false, skillName: "structured-brief" };
 
@@ -40,6 +45,7 @@ describe("preload api", () => {
     const api: DesktopApi = createPreloadApi(ipc);
     expect(Object.keys(api).sort()).toEqual([
       "chat",
+      "companyResearch",
       "conversations",
       "industryResearch",
       "llm",
@@ -65,6 +71,13 @@ describe("preload api", () => {
     expect(Object.keys(api.llm).sort()).toEqual(["checkConnection"]);
     expect(Object.keys(api.skills).sort()).toEqual(["list"]);
     expect(Object.keys(api.chat).sort()).toEqual(["listMessages", "send", "subscribe"]);
+    expect(Object.keys(api.companyResearch).sort()).toEqual([
+      "cancel",
+      "getState",
+      "listCompleted",
+      "start",
+      "subscribe",
+    ]);
     expect(JSON.stringify(api)).not.toContain("ipcRenderer");
     expect(JSON.stringify(api)).not.toContain("apiKey");
     expect(JSON.stringify(api)).not.toContain("deepseek");
@@ -90,6 +103,10 @@ describe("preload api", () => {
     await api.industryResearch.removeCompany("item-1", "company-1");
     await api.industryResearch.removeCompanies("item-1", ["company-1", "company-2"]);
     await api.industryResearch.recognizeCompanies("item-1", "公司甲");
+    await api.companyResearch.start("item-1", "company-1", { timeScope: "近一年" });
+    await api.companyResearch.cancel("run-1");
+    await api.companyResearch.getState("item-1", "company-1");
+    await api.companyResearch.listCompleted("item-1", "company-1");
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
     await api.llm.checkConnection();
@@ -112,6 +129,10 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.industryResearchRemoveCompany, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.industryResearchRemoveCompanies, args: ["item-1", ["company-1", "company-2"]] },
       { channel: IPC_CHANNELS.industryResearchRecognizeCompanies, args: ["item-1", "公司甲"] },
+      { channel: IPC_CHANNELS.companyResearchStart, args: ["item-1", "company-1", { timeScope: "近一年" }] },
+      { channel: IPC_CHANNELS.companyResearchCancel, args: ["run-1"] },
+      { channel: IPC_CHANNELS.companyResearchGetState, args: ["item-1", "company-1"] },
+      { channel: IPC_CHANNELS.companyResearchListCompleted, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
       { channel: IPC_CHANNELS.llmCheckConnection, args: [] },
@@ -144,5 +165,22 @@ describe("preload api", () => {
 
     unsubscribe();
     expect(set?.size).toBe(0);
+
+    const researchReceived: CompanyResearchWorkerEvent[] = [];
+    const unsubscribeResearch = api.companyResearch.subscribe((event) => researchReceived.push(event));
+    const researchSet = listeners.get(IPC_CHANNELS.companyResearchEvents);
+    const validResearch: CompanyResearchWorkerEvent = {
+      requestId: "rr",
+      runId: "run-1",
+      type: "started",
+    };
+    for (const listener of [...(researchSet ?? [])]) {
+      listener({}, validResearch);
+      listener({}, { ...validResearch, type: "text_delta" });
+      listener({}, valid);
+    }
+    expect(researchReceived).toEqual([validResearch]);
+    unsubscribeResearch();
+    expect(researchSet?.size).toBe(0);
   });
 });
