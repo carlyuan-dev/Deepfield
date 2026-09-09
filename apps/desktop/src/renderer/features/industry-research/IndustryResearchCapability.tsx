@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CapabilityItem, DesktopApi, ItemCompanyView } from "@deepfield/contracts";
 import { AddCompaniesModal } from "./AddCompaniesModal.js";
 import { ConfirmModal } from "./ConfirmModal.js";
+import { CompanyResearchPanel } from "./CompanyResearchPanel.js";
 import { ImportCompaniesModal } from "./ImportCompaniesModal.js";
 import { ResearchItemModal } from "./ResearchItemModal.js";
 
@@ -215,7 +216,12 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
             <div className="scope-row"><dt>国籍/地区</dt><dd>{selectedCompany.countryOrRegion ?? "未填写"}</dd></div>
             <div className="scope-row"><dt>候选备注</dt><dd>{selectedCompany.note ?? "未填写"}</dd></div>
           </dl>
-          <div className="capability-empty"><p>公司调研内容将在下一阶段生成</p></div>
+          <CompanyResearchPanel
+            key={`${selectedItem.id}:${selectedCompany.id}`}
+            api={api}
+            itemId={selectedItem.id}
+            companyId={selectedCompany.id}
+          />
         </>
       ) : (
         <>

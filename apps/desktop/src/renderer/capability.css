@@ -121,6 +121,21 @@
 .company-list p { color: var(--muted); }
 .company-list p { margin: 3px 0 0; }
 .company-detail { margin: 0; display: grid; gap: 10px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.company-research-panel { display: grid; gap: 14px; min-height: 220px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.company-research-heading,
+.company-research-status { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.company-research-heading h2,
+.company-research-heading p { margin: 0; }
+.company-research-heading p { margin-top: 4px; }
+.company-research-status > div { display: grid; gap: 4px; }
+.company-research-status span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.company-research-active,
+.company-research-completed { display: grid; gap: 14px; min-width: 0; }
+.company-report-version { display: grid; gap: 6px; max-width: 520px; color: var(--muted); }
+.company-report-version select { width: 100%; }
+.company-report-text { min-height: 120px; padding: 16px; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.75; border-radius: 9px; background: var(--panel-alt); }
+.company-report-text a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.company-research-empty { margin: 0; }
 .confirmation-modal > p { margin: 0; line-height: 1.6; }
 
 .modal-backdrop {

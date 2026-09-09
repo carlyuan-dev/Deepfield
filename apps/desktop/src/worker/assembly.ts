@@ -16,6 +16,21 @@ import {
   routeWebSearchChatAgent,
 } from "./deepseek-web-search-agent.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
+import type { ResearchAgent } from "./message-loop.js";
+
+const fakeCompanyResearchAgent: ResearchAgent = {
+  async run(request, emit, signal) {
+    const identity = { requestId: request.requestId, runId: request.runId };
+    emit({ ...identity, type: "started" });
+    if (signal.aborted) {
+      emit({ ...identity, type: "cancelled" });
+      return;
+    }
+    const text = "Fake 公司调研报告\n来源：https://example.com/deepfield-research";
+    emit({ ...identity, type: "text_delta", delta: text });
+    emit({ ...identity, type: "completed", text });
+  },
+};
 
 export interface UtilityAssemblyDeps {
   endpoint: WorkerEndpoint;
@@ -67,7 +82,9 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
   });
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     toolRuntime,
-    researchAgent: createCompanyResearchAgent(),
+    researchAgent: deps.agentMode === "fake"
+      ? fakeCompanyResearchAgent
+      : createCompanyResearchAgent(),
     hostReplyHandler: (reply) => deps.hostClient.handleReply(reply),
     onDispose: () => deps.hostClient.dispose(),
   });

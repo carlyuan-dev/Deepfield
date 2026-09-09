@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type {
   CapabilityItem,
   CapabilityItemId,
   CompanyId,
   ItemCompanyView,
+  ResearchRun,
+  ResearchRunId,
 } from "@deepfield/contracts";
 import { App } from "./App.js";
 import {
@@ -272,7 +274,7 @@ describe("app three-pane shell", () => {
 
     await user.click(screen.getByRole("button", { name: "查看 优必选" }));
     expect(screen.getByRole("heading", { name: "优必选" })).toBeTruthy();
-    expect(screen.getByText("公司调研内容将在下一阶段生成")).toBeTruthy();
+    expect(await screen.findByText("还没有调研报告。")).toBeTruthy();
     expect(screen.getByRole("button", { name: "删除公司" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /返回公司列表/ }));
 
@@ -433,5 +435,127 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "展开 Chat" }));
     expect(document.querySelector(".chat-pane-header")?.className).toContain("expanded");
     expect(document.querySelector(".chat-pane-title")?.textContent).toBe("对话甲");
+  });
+
+  it("streams a company report and retains two selectable rerun versions", async () => {
+    const fake = makeFakeApi();
+    const activeConversation = conversation("c-research", "调研对话", true);
+    const item = capabilityItem({ id: "item-research", industry: "智能眼镜" });
+    const company: ItemCompanyView = {
+      id: "company-research" as CompanyId,
+      itemId: item.id,
+      name: "小米",
+      normalizedName: "小米",
+      countryOrRegion: "中国",
+      note: "重点候选",
+      createdAt: "2026-09-09T08:00:00.000Z",
+      updatedAt: "2026-09-09T08:00:00.000Z",
+    };
+    let state = { completed: [] } as { active?: { run: ResearchRun; draftText: string }; completed: ResearchRun[] };
+    let sequence = 0;
+    fake.conversations.openInitial.mockResolvedValue({
+      active: activeConversation,
+      recent: [activeConversation],
+    });
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockResolvedValue([company]);
+    fake.companyResearch.getState.mockImplementation(async () => state);
+    fake.companyResearch.listCompleted.mockImplementation(async () => state.completed);
+    fake.companyResearch.start.mockImplementation(async (_itemId, _companyId, input) => {
+      const run: ResearchRun = {
+        id: `run-${++sequence}` as ResearchRunId,
+        itemId: item.id,
+        companyId: company.id,
+        status: "running",
+        timeScope: input.timeScope,
+        ...(input.customRequirements !== undefined
+          ? { customRequirements: input.customRequirements }
+          : {}),
+        createdAt: `2026-09-09T0${sequence + 8}:00:00.000Z`,
+      };
+      state = { active: { run, draftText: "" }, completed: state.completed };
+      return run;
+    });
+
+    const { user } = await renderApp(fake);
+    const chatInput = await chatReady();
+    await user.click(screen.getByRole("button", { name: "行业研究" }));
+    await user.click(await screen.findByRole("button", { name: /^智能眼镜/ }));
+    await user.click(screen.getByRole("button", { name: "查看 小米" }));
+    await user.click(await screen.findByRole("button", { name: "开始调研" }));
+
+    const timeScope = screen.getByLabelText("调研时间范围") as HTMLInputElement;
+    expect(timeScope.value).toBe("重点调研近一年，必要的公司背景不限时间");
+    await user.clear(timeScope);
+    await user.type(timeScope, "近一年");
+    await user.type(screen.getByLabelText("补充要求（可选）"), "关注新品");
+    await user.click(within(screen.getByRole("dialog", { name: "公司调研" })).getByRole(
+      "button",
+      { name: "开始调研" },
+    ));
+    const firstRun = state.active!.run;
+    act(() => {
+      fake.emitResearch({
+        requestId: "request-1",
+        runId: firstRun.id,
+        type: "text_delta",
+        delta: "第一版报告\n来源：https://example.com/one",
+      });
+    });
+    await waitFor(() => expect(screen.getByText(/第一版报告/)).toBeTruthy());
+    expect(screen.queryByText(/%/)).toBeNull();
+
+    await user.type(chatInput, "同时整理采访提纲");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(fake.chat.send).toHaveBeenCalledTimes(1);
+
+    const firstCompleted: ResearchRun = {
+      ...firstRun,
+      status: "completed",
+      reportText: "第一版报告\n来源：https://example.com/one",
+      completedAt: "2026-09-09T09:30:00.000Z",
+    };
+    state = { completed: [firstCompleted] };
+    act(() => {
+      fake.emitResearch({
+        requestId: "request-1",
+        runId: firstRun.id,
+        type: "completed",
+        text: firstCompleted.reportText!,
+      });
+    });
+    const firstLink = await screen.findByRole("link", { name: "https://example.com/one" });
+    expect(firstLink.getAttribute("rel")).toContain("noopener");
+
+    await user.click(screen.getByRole("button", { name: "重新调研" }));
+    expect((screen.getByLabelText("调研时间范围") as HTMLInputElement).value).toBe("近一年");
+    await user.clear(screen.getByLabelText("调研时间范围"));
+    await user.type(screen.getByLabelText("调研时间范围"), "近三个月");
+    await user.click(within(screen.getByRole("dialog", { name: "公司调研" })).getByRole(
+      "button",
+      { name: "开始调研" },
+    ));
+    const secondRun = state.active!.run;
+    const secondCompleted: ResearchRun = {
+      ...secondRun,
+      status: "completed",
+      reportText: "第二版报告",
+      completedAt: "2026-09-09T10:30:00.000Z",
+    };
+    state = { completed: [secondCompleted, firstCompleted] };
+    act(() => {
+      fake.emitResearch({
+        requestId: "request-2",
+        runId: secondRun.id,
+        type: "completed",
+        text: secondCompleted.reportText!,
+      });
+    });
+
+    expect(await screen.findByText("第二版报告")).toBeTruthy();
+    const history = screen.getByLabelText("报告版本") as HTMLSelectElement;
+    expect(history.options).toHaveLength(2);
+    await user.selectOptions(history, firstCompleted.id);
+    expect(screen.getByText(/第一版报告/)).toBeTruthy();
   });
 });

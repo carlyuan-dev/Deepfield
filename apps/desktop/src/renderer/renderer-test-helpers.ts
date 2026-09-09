@@ -11,10 +11,14 @@ import type {
   ConversationId,
   DesktopApi,
   CompanyDraft,
+  CompanyResearchState,
+  CompanyResearchWorkerEvent,
   ItemCompanyView,
   MessageId,
   SkillSummary,
   LlmConnectionStatus,
+  ResearchRun,
+  StartCompanyResearchInput,
 } from "@deepfield/contracts";
 
 export interface FakeDesktopApi extends DesktopApi {
@@ -36,6 +40,13 @@ export interface FakeDesktopApi extends DesktopApi {
     removeCompany: Mock<(itemId: string, companyId: string) => Promise<void>>;
     removeCompanies: Mock<(itemId: string, companyIds: string[]) => Promise<void>>;
     recognizeCompanies: Mock<(itemId: string, text: string) => Promise<CompanyDraft[]>>;
+  };
+  companyResearch: {
+    start: Mock<(itemId: string, companyId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
+    cancel: Mock<(runId: string) => Promise<void>>;
+    getState: Mock<(itemId: string, companyId: string) => Promise<CompanyResearchState>>;
+    listCompleted: Mock<(itemId: string, companyId: string) => Promise<ResearchRun[]>>;
+    subscribe: Mock<(listener: (event: CompanyResearchWorkerEvent) => void) => () => void>;
   };
   settings: {
     hasDeepSeekKey: Mock<() => Promise<boolean>>;
@@ -60,7 +71,9 @@ export interface FakeDesktopApi extends DesktopApi {
     listMessages: Mock<(conversationId: string) => Promise<ChatMessage[]>>;
   };
   listeners: Set<(event: AgentWorkerEvent) => void>;
+  researchListeners: Set<(event: CompanyResearchWorkerEvent) => void>;
   emit(event: AgentWorkerEvent): void;
+  emitResearch(event: CompanyResearchWorkerEvent): void;
   nextRequestId(): string;
 }
 
@@ -103,6 +116,7 @@ export function chatSendResult(
 
 export function makeFakeApi(): FakeDesktopApi {
   const listeners = new Set<(event: AgentWorkerEvent) => void>();
+  const researchListeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
   const api = {
     conversations: {
       create: vi.fn(async (): Promise<Conversation> => conversationFixture()),
@@ -146,6 +160,20 @@ export function makeFakeApi(): FakeDesktopApi {
       removeCompanies: vi.fn(async (): Promise<void> => {}),
       recognizeCompanies: vi.fn(async (): Promise<CompanyDraft[]> => []),
     },
+    companyResearch: {
+      start: vi.fn(async (): Promise<ResearchRun> => {
+        throw new Error("not implemented");
+      }),
+      cancel: vi.fn(async (): Promise<void> => {}),
+      getState: vi.fn(async (): Promise<CompanyResearchState> => ({ completed: [] })),
+      listCompleted: vi.fn(async (): Promise<ResearchRun[]> => []),
+      subscribe: vi.fn(
+        (listener: (event: CompanyResearchWorkerEvent) => void): (() => void) => {
+          researchListeners.add(listener);
+          return () => researchListeners.delete(listener);
+        },
+      ),
+    },
     settings: {
       hasDeepSeekKey: vi.fn(async (): Promise<boolean> => false),
       setDeepSeekKey: vi.fn(async (_value: string): Promise<void> => {}),
@@ -183,10 +211,14 @@ export function makeFakeApi(): FakeDesktopApi {
       listMessages: vi.fn(async (_projectId: string): Promise<ChatMessage[]> => []),
     },
     listeners,
+    researchListeners,
     emit: (event: AgentWorkerEvent): void => {
       for (const listener of [...listeners]) {
         listener(event);
       }
+    },
+    emitResearch: (event: CompanyResearchWorkerEvent): void => {
+      for (const listener of [...researchListeners]) listener(event);
     },
     nextRequestId: (): string => `req-${++sendSeq}`,
   };
