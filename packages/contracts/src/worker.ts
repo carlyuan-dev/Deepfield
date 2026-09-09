@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
+import { CompanyResearchWorkerRequestSchema } from "./research.js";
 import {
   JsonObjectSchema,
   ToolExecutionEventSchema,
@@ -64,6 +65,7 @@ export type ToolRunRequest = Static<typeof ToolRunRequestSchema>;
 
 export const UtilityWorkerRequestSchema = Type.Union([
   AgentWorkerRequestSchema,
+  CompanyResearchWorkerRequestSchema,
   ToolRunRequestSchema,
 ]);
 export type UtilityWorkerRequest = Static<typeof UtilityWorkerRequestSchema>;
