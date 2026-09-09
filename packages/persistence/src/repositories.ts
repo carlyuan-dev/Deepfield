@@ -5,6 +5,7 @@ import { createConversationRepository } from "./conversation-repository.js";
 import { createMessageRepository } from "./message-repository.js";
 import { createItemCompanyRepository } from "./item-company-repository.js";
 import { createToolExecutionRepository } from "./tool-execution-repository.js";
+import { createCompanyResearchRunRepository } from "./company-research-run-repository.js";
 import { runInTransaction } from "./transactions.js";
 import type { Repositories } from "./types.js";
 
@@ -13,6 +14,7 @@ export function createRepositories(db: DatabaseSync): Repositories {
     capabilityItems: createCapabilityItemRepository(db),
     companies: createCompanyRepository(db),
     itemCompanies: createItemCompanyRepository(db),
+    companyResearchRuns: createCompanyResearchRunRepository(db),
     conversations: createConversationRepository(db),
     messages: createMessageRepository(db),
     toolExecutions: createToolExecutionRepository(db),

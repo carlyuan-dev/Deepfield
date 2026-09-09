@@ -3,11 +3,15 @@ import type {
   CapabilityItem,
   CapabilityItemId,
   Company,
+  CompanyId,
   CompanyDraft,
   Conversation,
   ConversationId,
   CreateIndustryResearchItemInput,
   MessageId,
+  ResearchRun,
+  ResearchRunId,
+  StartCompanyResearchInput,
   ItemCompany,
   UpdateIndustryResearchItemInput,
 } from "@deepfield/contracts";
@@ -31,6 +35,20 @@ export interface ItemCompanyRepository {
   add(itemId: CapabilityItemId, companyId: Company["id"], note?: string): ItemCompany;
   listByItem(itemId: CapabilityItemId): ItemCompany[];
   remove(itemId: CapabilityItemId, companyId: Company["id"]): void;
+}
+
+export interface CompanyResearchRunRepository {
+  createRunning(
+    itemId: CapabilityItemId,
+    companyId: CompanyId,
+    input: StartCompanyResearchInput,
+  ): ResearchRun;
+  complete(runId: ResearchRunId, reportText: string): ResearchRun;
+  delete(runId: ResearchRunId): boolean;
+  deleteAllRunning(): number;
+  getById(runId: ResearchRunId): ResearchRun | undefined;
+  getRunning(): ResearchRun | undefined;
+  listCompleted(itemId: CapabilityItemId, companyId: CompanyId): ResearchRun[];
 }
 
 export interface ConversationRepository {
@@ -104,6 +122,7 @@ export interface Repositories {
   capabilityItems: CapabilityItemRepository;
   companies: CompanyRepository;
   itemCompanies: ItemCompanyRepository;
+  companyResearchRuns: CompanyResearchRunRepository;
   conversations: ConversationRepository;
   messages: MessageRepository;
   toolExecutions: ToolExecutionRepository;
@@ -179,4 +198,16 @@ export interface ToolExecutionRow {
   started_at: string;
   finished_at: string | null;
   duration_ms: number | null;
+}
+
+export interface CompanyResearchRunRow {
+  id: string;
+  item_id: string;
+  company_id: string;
+  status: "running" | "completed";
+  time_scope: string;
+  custom_requirements: string | null;
+  report_text: string | null;
+  created_at: string;
+  completed_at: string | null;
 }

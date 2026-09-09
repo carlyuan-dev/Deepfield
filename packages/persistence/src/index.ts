@@ -5,9 +5,11 @@ export { createToolExecutionRepository, ToolExecutionError } from "./tool-execut
 export { createCapabilityItemRepository } from "./capability-item-repository.js";
 export { createCompanyRepository, normalizeCompanyName } from "./company-repository.js";
 export { createItemCompanyRepository } from "./item-company-repository.js";
+export { createCompanyResearchRunRepository } from "./company-research-run-repository.js";
 export type {
   CapabilityItemRepository,
   CompanyRepository,
+  CompanyResearchRunRepository,
   ConversationRepository,
   MessageRepository,
   ItemCompanyRepository,

@@ -7,3 +7,4 @@ export * from "./ipc.js";
 export * from "./tools.js";
 export * from "./worker.js";
 export * from "./skills.js";
+export * from "./research.js";

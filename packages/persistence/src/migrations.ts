@@ -132,6 +132,38 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    up(db) {
+      db.exec(`
+        CREATE TABLE company_research_runs(
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          company_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('running','completed')),
+          time_scope TEXT NOT NULL CHECK(length(trim(time_scope)) > 0 AND length(time_scope) <= 300),
+          custom_requirements TEXT CHECK(custom_requirements IS NULL OR length(custom_requirements) <= 4000),
+          report_text TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          FOREIGN KEY(item_id, company_id)
+            REFERENCES capability_item_companies(item_id, company_id)
+            ON DELETE CASCADE,
+          CHECK(
+            (status = 'running' AND report_text IS NULL AND completed_at IS NULL)
+            OR
+            (status = 'completed' AND length(trim(report_text)) > 0 AND completed_at IS NOT NULL)
+          )
+        );
+        CREATE UNIQUE INDEX idx_company_research_one_running
+          ON company_research_runs(status)
+          WHERE status = 'running';
+        CREATE INDEX idx_company_research_completed_history
+          ON company_research_runs(item_id, company_id, completed_at DESC, id DESC)
+          WHERE status = 'completed';
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {
