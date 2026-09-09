@@ -139,7 +139,64 @@ export const HostSecretRequestPayloadSchema = Type.Object(
 );
 export type HostSecretRequestPayload = Static<typeof HostSecretRequestPayloadSchema>;
 
-/** Narrow host RPC requests: exactly three compile-time kinds, no generic secrets. */
+const HostConversationIdSchema = Type.String({ minLength: 1, maxLength: 200 });
+const HostConversationTitleSchema = Type.String({ maxLength: 200 });
+const HostConversationTimestampSchema = Type.String({ minLength: 1, maxLength: 64 });
+
+export const HostConversationSummarySchema = Type.Object(
+  {
+    id: HostConversationIdSchema,
+    title: HostConversationTitleSchema,
+    updatedAt: HostConversationTimestampSchema,
+  },
+  { additionalProperties: false },
+);
+export type HostConversationSummary = Static<typeof HostConversationSummarySchema>;
+
+export const HostConversationMessageSchema = Type.Object(
+  {
+    role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+    content: Type.String({ maxLength: 4000 }),
+  },
+  { additionalProperties: false },
+);
+export type HostConversationMessage = Static<typeof HostConversationMessageSchema>;
+
+export const HostConversationDetailSchema = Type.Object(
+  {
+    conversationId: HostConversationIdSchema,
+    title: HostConversationTitleSchema,
+    messages: Type.Array(HostConversationMessageSchema, { maxItems: 100 }),
+  },
+  { additionalProperties: false },
+);
+export type HostConversationDetail = Static<typeof HostConversationDetailSchema>;
+
+export const HostConversationSearchResultSchema = Type.Object(
+  {
+    conversationId: HostConversationIdSchema,
+    title: HostConversationTitleSchema,
+    snippet: Type.Optional(Type.String({ maxLength: 240 })),
+    updatedAt: HostConversationTimestampSchema,
+  },
+  { additionalProperties: false },
+);
+export type HostConversationSearchResult = Static<typeof HostConversationSearchResultSchema>;
+
+export const HostConversationListPayloadSchema = Type.Object(
+  { conversations: Type.Array(HostConversationSummarySchema, { maxItems: 30 }) },
+  { additionalProperties: false },
+);
+export const HostConversationReadPayloadSchema = Type.Object(
+  { conversation: Type.Union([HostConversationDetailSchema, Type.Null()]) },
+  { additionalProperties: false },
+);
+export const HostConversationSearchPayloadSchema = Type.Object(
+  { results: Type.Array(HostConversationSearchResultSchema, { maxItems: 30 }) },
+  { additionalProperties: false },
+);
+
+/** Narrow host RPC requests: explicit audit, secret and read-only conversation methods. */
 export const HostRequestSchema = Type.Union([
   Type.Object(
     {
@@ -168,6 +225,48 @@ export const HostRequestSchema = Type.Union([
     },
     { additionalProperties: false },
   ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.request"),
+      method: Type.Literal("conversation.listRecent"),
+      payload: Type.Object(
+        { limit: Type.Integer({ minimum: 1, maximum: 30 }) },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.request"),
+      method: Type.Literal("conversation.read"),
+      payload: Type.Object(
+        {
+          conversationId: HostConversationIdSchema,
+          limit: Type.Integer({ minimum: 1, maximum: 100 }),
+        },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.request"),
+      method: Type.Literal("conversation.search"),
+      payload: Type.Object(
+        {
+          query: Type.String({ minLength: 1, maxLength: 200 }),
+          maxResults: Type.Integer({ minimum: 1, maximum: 30 }),
+        },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
 ]);
 export type HostRequest = Static<typeof HostRequestSchema>;
 
@@ -175,6 +274,9 @@ export const HostRpcMethodSchema = Type.Union([
   Type.Literal("audit.start"),
   Type.Literal("audit.finish"),
   Type.Literal("secret.getProviderKey"),
+  Type.Literal("conversation.listRecent"),
+  Type.Literal("conversation.read"),
+  Type.Literal("conversation.search"),
 ]);
 export type HostRpcMethod = Static<typeof HostRpcMethodSchema>;
 
@@ -182,14 +284,15 @@ export type HostRpcMethod = Static<typeof HostRpcMethodSchema>;
 export const HostErrorCodeSchema = Type.Union([
   Type.Literal("audit_failed"),
   Type.Literal("secret_unavailable"),
+  Type.Literal("conversation_unavailable"),
   Type.Literal("invalid_request"),
   Type.Literal("host_disposed"),
   Type.Literal("host_protocol_error"),
 ]);
 
 /**
- * Method-discriminated replies: an audit success can only carry
- * { acknowledged: true } and a secret success can only carry { apiKey }.
+ * Method-discriminated replies: every success payload is fixed to its method;
+ * cross-method data and generic database responses are rejected.
  */
 export const HostReplySchema = Type.Union([
   Type.Object(
@@ -222,6 +325,36 @@ export const HostReplySchema = Type.Union([
         { apiKey: Type.Union([Type.String(), Type.Null()]) },
         { additionalProperties: false },
       ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: Type.Literal("conversation.listRecent"),
+      ok: Type.Literal(true),
+      payload: HostConversationListPayloadSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: Type.Literal("conversation.read"),
+      ok: Type.Literal(true),
+      payload: HostConversationReadPayloadSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: Type.Literal("conversation.search"),
+      ok: Type.Literal(true),
+      payload: HostConversationSearchPayloadSchema,
     },
     { additionalProperties: false },
   ),

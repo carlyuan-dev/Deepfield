@@ -17,6 +17,9 @@ interface ToolIdentityLike {
 
 const TOOL_EFFECTS = new Set([
   "network.read.public",
+  "system.read",
+  "local.compute",
+  "conversation.read",
   "project.read",
   "imported_file.read",
   "external.open",

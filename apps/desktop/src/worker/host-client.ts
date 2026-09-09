@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto";
 import { Value } from "typebox/value";
 import {
   HostReplySchema,
+  type HostConversationDetail,
+  type HostConversationSearchResult,
+  type HostConversationSummary,
   type HostReply,
   type HostRpcMethod,
 } from "@deepfield/contracts";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
+import type { ConversationReader } from "@deepfield/utility-tools";
 
 export class HostRpcError extends Error {
   readonly code: string;
@@ -225,6 +229,32 @@ export function createHostSecretClient(client: HostClient): ProviderKeyClient {
       const reply = await client.request("secret.getProviderKey", { provider });
       const payload = reply as { apiKey: string | null };
       return payload.apiKey === null ? undefined : payload.apiKey;
+    },
+  };
+}
+
+/** Typed read-only conversation client; no SQL or generic database method is exposed. */
+export function createHostConversationReader(client: HostClient): ConversationReader {
+  return {
+    async listRecent(limit): Promise<HostConversationSummary[]> {
+      const payload = (await client.request("conversation.listRecent", { limit })) as {
+        conversations: HostConversationSummary[];
+      };
+      return payload.conversations;
+    },
+    async read(conversationId, limit): Promise<HostConversationDetail | undefined> {
+      const payload = (await client.request("conversation.read", {
+        conversationId,
+        limit,
+      })) as { conversation: HostConversationDetail | null };
+      return payload.conversation ?? undefined;
+    },
+    async search(query, maxResults): Promise<HostConversationSearchResult[]> {
+      const payload = (await client.request("conversation.search", {
+        query,
+        maxResults,
+      })) as { results: HostConversationSearchResult[] };
+      return payload.results;
     },
   };
 }

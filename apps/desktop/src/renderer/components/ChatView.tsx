@@ -11,6 +11,7 @@ import { visibleMessages } from "../state/chat.js";
 import { Composer } from "./Composer.js";
 import { Messages } from "./Messages.js";
 import { SkillPicker } from "./SkillPicker.js";
+import { WebSearchToggle } from "./WebSearchToggle.js";
 
 export interface ChatViewProps {
   api: DesktopApi;
@@ -31,6 +32,7 @@ export function ChatView({
   const [draft, setDraft] = useState("");
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string | undefined>(undefined);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const lastSubmitted = useRef("");
   const messagesRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
@@ -103,6 +105,11 @@ export function ChatView({
             disabled={state.sending || state.loadState !== "ready"}
             actions={
               <>
+                <WebSearchToggle
+                  enabled={webSearchEnabled}
+                  disabled={state.sending}
+                  onChange={setWebSearchEnabled}
+                />
                 <SkillPicker
                   skills={skills}
                   value={selectedSkillName}
@@ -118,7 +125,7 @@ export function ChatView({
               lastSubmitted.current = content;
               setDraft("");
               const options: ChatRequestOptions = {
-                webSearch: false,
+                webSearch: webSearchEnabled,
                 ...(selectedSkillName !== undefined ? { skillName: selectedSkillName } : {}),
               };
               const sendResult = submit(content, options);

@@ -1,5 +1,7 @@
 import type { RefObject } from "react";
 import type { ChatMessageView } from "../state/chat.js";
+import { LinkifiedText } from "./LinkifiedText.js";
+import { ToolActivity } from "./ToolActivity.js";
 
 export interface MessagesProps {
   messages: ChatMessageView[];
@@ -27,8 +29,22 @@ export function Messages({
           <div className={`message-role ${message.role === "user" ? "user-message-role" : ""}`}>
             {message.role === "user" ? "我" : "Deepfield"}
           </div>
-          {message.role === "assistant" && message.skillName !== undefined && (
-            <div className="skill-badge">Skill: {message.skillName}</div>
+          {message.role === "assistant" &&
+            (message.skillName !== undefined || message.webSearch === true) && (
+              <div className="message-badges">
+                {message.webSearch === true && (
+                  <span className="web-search-badge">联网搜索</span>
+                )}
+                {message.skillName !== undefined && (
+                  <span className="skill-badge">Skill: {message.skillName}</span>
+                )}
+              </div>
+            )}
+          {message.role === "assistant" && message.toolActivities.length > 0 && (
+            <ToolActivity
+              activities={message.toolActivities}
+              terminal={message.status !== "streaming"}
+            />
           )}
           <div
             className={
@@ -37,7 +53,13 @@ export function Messages({
                 : "message-content"
             }
           >
-            {message.content.length > 0 ? message.content : message.status === "streaming" ? "…" : ""}
+            {message.content.length > 0 ? (
+              <LinkifiedText text={message.content} />
+            ) : message.status === "streaming" ? (
+              "…"
+            ) : (
+              ""
+            )}
           </div>
           {message.status === "failed" && (
             <p className="message-error" role="alert">

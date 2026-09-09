@@ -1,6 +1,6 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, shell } from "electron";
 import { join } from "node:path";
-import { isAllowedNavigation } from "./navigation.js";
+import { isAllowedExternalUrl, isAllowedNavigation } from "./navigation.js";
 
 export function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -18,7 +18,12 @@ export function createWindow(): BrowserWindow {
     },
   });
 
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url).catch(() => undefined);
+    }
+    return { action: "deny" };
+  });
 
   window.webContents.on("will-navigate", (event, url) => {
     if (!isAllowedNavigation(window.webContents.getURL(), url)) {

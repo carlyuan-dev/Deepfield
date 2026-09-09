@@ -43,6 +43,10 @@ function startAgentWorker(
   const host = createToolWorkerHost({
     audit: new SqliteToolAudit(repositories.toolExecutions),
     secrets: { get: (name) => secrets.get(name) },
+    conversationRepositories: {
+      conversations: repositories.conversations,
+      messages: repositories.messages,
+    },
     postMessage: (value) => runtimeRef.postMessage(value),
   });
   toolHost = host;

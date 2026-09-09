@@ -10,7 +10,18 @@ import {
 } from "@deepfield/contracts";
 import type { ChatAgent } from "./message-loop.js";
 import { mapHistoryMessages } from "./pi-message-mapper.js";
+import {
+  buildRuntimeSystemContext,
+  type RuntimeSystemContextOptions,
+} from "./runtime-system-context.js";
 import type { PiSkillCatalog } from "../shared/pi-skill-catalog.js";
+import { safeToolActivity, type SafeToolActivity } from "./tool-activity.js";
+
+const OFFLINE_SYSTEM_PROMPT = [
+  "本轮未启用联网搜索，不能访问用户提供的网页，也不能获取最新或实时信息。",
+  "如需网页内容或最新信息，提示用户打开输入区的“联网搜索”后重新发送。",
+  "不要据此声称本地文件不可处理；本地附件能力不属于本轮联网状态说明。",
+].join("\n");
 
 export class PiChatAgentError extends Error {
   constructor(message: string) {
@@ -39,6 +50,14 @@ export interface PiAgentHandle {
 export interface PiRuntime {
   createSession(): PiSession | undefined;
   createAgent(options: AgentOptions): PiAgentHandle;
+}
+
+export interface PiToolSessionProvider {
+  createAgentTools(context: {
+    traceId: string;
+    actor: "main_agent";
+  }): AgentTool<any>[];
+  releaseTrace(traceId: string): boolean;
 }
 
 export function defaultPiRuntime(): PiRuntime {
@@ -81,6 +100,8 @@ export function createPiChatAgent(
   runtime: PiRuntime = defaultPiRuntime(),
   tools: AgentTool<any>[] = [],
   skills?: SkillCatalogProvider,
+  runtimeContext: RuntimeSystemContextOptions = {},
+  toolSessions?: PiToolSessionProvider,
 ): ChatAgent {
   return {
     async run(
@@ -110,91 +131,157 @@ export function createPiChatAgent(
         }
       }
 
-      let finalText = "";
-      let startedEmitted = false;
-      let sawAgentEnd = false;
-      let providerFailure = false;
-      let adapterSettled = false;
+      try {
+        const requestTools =
+          toolSessions === undefined
+            ? tools
+            : [
+                ...tools,
+                ...toolSessions.createAgentTools({
+                  traceId: request.requestId,
+                  actor: "main_agent",
+                }),
+              ];
+        let finalText = "";
+        let startedEmitted = false;
+        let sawAgentEnd = false;
+        let providerFailure = false;
+        let adapterSettled = false;
+        let activitySequence = 0;
+        const activeActivities = new Map<
+          string,
+          SafeToolActivity & { callKey: string }
+        >();
 
-      const emitTerminal = (event: AgentWorkerEvent): void => {
-        if (adapterSettled) {
-          return;
-        }
-        adapterSettled = true;
-        emit(event);
-      };
-
-      const agent = runtime.createAgent({
-        initialState: {
-          systemPrompt: request.context.systemPrompt,
-          model: session.model,
-          messages: mapHistoryMessages(request.context.messages, session.model),
-          tools,
-          thinkingLevel: "off",
-        },
-        streamFn: session.streamFn,
-        getApiKey: (provider) => (provider === "deepseek" ? request.apiKey : undefined),
-        sessionId: request.context.conversationId,
-        toolExecution: "sequential",
-      });
-
-      const abort = (): void => agent.abort();
-      if (signal.aborted) {
-        // Pi's abort() is a no-op before an active run exists; never start a
-        // prompt that is already meant to be cancelled.
-        abort();
-        throw new PiChatAgentError("agent execution aborted before start");
-      }
-      signal.addEventListener("abort", abort, { once: true });
-
-      const unsubscribe = agent.subscribe((event) => {
-        if (event.type === "agent_start") {
-          if (!startedEmitted) {
-            startedEmitted = true;
-            emit({
-              requestId: request.requestId,
-              type: "started",
-              ...(skillName !== undefined ? { skillName } : {}),
-            });
-          }
-          return;
-        }
-        if (
-          event.type === "message_update" &&
-          event.assistantMessageEvent.type === "text_delta"
-        ) {
-          finalText += event.assistantMessageEvent.delta;
+        const emitActivity = (
+          activity: SafeToolActivity & { callKey: string },
+          status: "running" | "completed" | "failed",
+        ): void => {
           emit({
             requestId: request.requestId,
-            type: "text_delta",
-            delta: event.assistantMessageEvent.delta,
+            type: "tool_activity",
+            callKey: activity.callKey,
+            name: activity.name,
+            status,
+            ...(activity.summary === undefined ? {} : { summary: activity.summary }),
           });
-          return;
-        }
-        if (event.type === "agent_end") {
-          sawAgentEnd = true;
-          if (hasProviderFailure(event.messages)) {
-            providerFailure = true;
+        };
+
+        const failActiveActivities = (): void => {
+          for (const activity of activeActivities.values()) {
+            emitActivity(activity, "failed");
           }
+          activeActivities.clear();
+        };
+
+        const emitTerminal = (event: AgentWorkerEvent): void => {
+          if (adapterSettled) {
+            return;
+          }
+          adapterSettled = true;
+          emit(event);
+        };
+
+        const agent = runtime.createAgent({
+          initialState: {
+            systemPrompt: [
+              request.context.systemPrompt,
+              buildRuntimeSystemContext(runtimeContext),
+              OFFLINE_SYSTEM_PROMPT,
+            ].join("\n"),
+            model: session.model,
+            messages: mapHistoryMessages(request.context.messages, session.model),
+            tools: requestTools,
+            thinkingLevel: "off",
+          },
+          streamFn: session.streamFn,
+          getApiKey: (provider) => (provider === "deepseek" ? request.apiKey : undefined),
+          sessionId: request.context.conversationId,
+          toolExecution: "sequential",
+        });
+
+        const abort = (): void => agent.abort();
+        if (signal.aborted) {
+          // Pi's abort() is a no-op before an active run exists; never start a
+          // prompt that is already meant to be cancelled.
+          abort();
+          throw new PiChatAgentError("agent execution aborted before start");
         }
-      });
+        signal.addEventListener("abort", abort, { once: true });
 
-      try {
-        await agent.prompt(prompt);
-      } catch {
-        throw new PiChatAgentError("agent execution failed");
+        const unsubscribe = agent.subscribe((event) => {
+          if (event.type === "agent_start") {
+            if (!startedEmitted) {
+              startedEmitted = true;
+              emit({
+                requestId: request.requestId,
+                type: "started",
+                ...(skillName !== undefined ? { skillName } : {}),
+              });
+            }
+            return;
+          }
+          if (
+            event.type === "message_update" &&
+            event.assistantMessageEvent.type === "text_delta"
+          ) {
+            finalText += event.assistantMessageEvent.delta;
+            emit({
+              requestId: request.requestId,
+              type: "text_delta",
+              delta: event.assistantMessageEvent.delta,
+            });
+            return;
+          }
+          if (event.type === "tool_execution_start") {
+            if (activeActivities.has(event.toolCallId)) return;
+            activitySequence += 1;
+            const activity = {
+              callKey: `activity-${activitySequence}`,
+              ...safeToolActivity(event.toolName, event.args),
+            };
+            activeActivities.set(event.toolCallId, activity);
+            emitActivity(activity, "running");
+            return;
+          }
+          if (event.type === "tool_execution_end") {
+            const activity = activeActivities.get(event.toolCallId);
+            if (activity === undefined) return;
+            emitActivity(activity, event.isError ? "failed" : "completed");
+            activeActivities.delete(event.toolCallId);
+            return;
+          }
+          if (event.type === "agent_end") {
+            sawAgentEnd = true;
+            if (hasProviderFailure(event.messages)) {
+              providerFailure = true;
+            }
+          }
+        });
+
+        try {
+          await agent.prompt(prompt);
+        } catch {
+          failActiveActivities();
+          throw new PiChatAgentError("agent execution failed");
+        } finally {
+          signal.removeEventListener("abort", abort);
+          unsubscribe();
+        }
+
+        if (providerFailure) {
+          failActiveActivities();
+          throw new PiChatAgentError("agent execution failed");
+        }
+        if (!startedEmitted || !sawAgentEnd) {
+          failActiveActivities();
+          throw new PiChatAgentError("agent finished without a complete start/end sequence");
+        }
+        failActiveActivities();
+        emitTerminal({ requestId: request.requestId, type: "completed", text: finalText });
       } finally {
-        signal.removeEventListener("abort", abort);
-        unsubscribe();
+        toolSessions?.releaseTrace(request.requestId);
       }
-
-      if (providerFailure) {
-        throw new PiChatAgentError("agent execution failed");
-      }
-      if (!startedEmitted || !sawAgentEnd) {
-        throw new PiChatAgentError("agent finished without a complete start/end sequence");
-      }
-      emitTerminal({ requestId: request.requestId, type: "completed", text: finalText });
     },
   };
 }

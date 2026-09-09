@@ -1,16 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { FakeAuditSink, FakeRetryClock, ToolRunner, ToolSet } from "@deepfield/tool-platform";
 import { ToolBudgetLedger } from "@deepfield/tool-platform";
+import { ResourceStore } from "@deepfield/retrieval";
 import { createToolRuntime, TraceBudgetPool } from "./tool-runtime.js";
 
 function makeRuntime(registerProbe = true) {
   return createToolRuntime({ audit: new FakeAuditSink(), registerProbe });
 }
 
+function retrievalContext(traceId: string) {
+  const actor = "capability" as const;
+  return {
+    traceId,
+    actor,
+    toolSet: new ToolSet([
+      {
+        identity: { name: "fetch_url", version: 1 },
+        actor,
+        effect: "network.read.public",
+      },
+      {
+        identity: { name: "parse_html", version: 1 },
+        actor,
+        effect: "project.read",
+      },
+    ]),
+  };
+}
+
 describe("utility tool runtime assembly (focused revision)", () => {
   it("constructs without duplicate grants and freezes the registry", () => {
     const runtime = makeRuntime();
-    expect(runtime.registry.list()).toHaveLength(1);
+    expect(runtime.registry.list()).toHaveLength(9);
     expect(() =>
       runtime.registry.register({
         identity: { name: "echo_probe", version: 1 },
@@ -30,8 +51,19 @@ describe("utility tool runtime assembly (focused revision)", () => {
 
   it("does not register probe tools by default", () => {
     const runtime = makeRuntime(false);
-    expect(runtime.registry.list()).toHaveLength(0);
-    expect(runtime.registry.manifest()).toEqual([]);
+    expect(runtime.registry.list().map((definition) => definition.identity.name)).toEqual([
+      "get_current_datetime",
+      "calculator",
+      "convert_timezone",
+      "fetch_url",
+      "fetch_pdf",
+      "parse_html",
+      "parse_pdf",
+      "check_link_accessibility",
+    ]);
+    expect(runtime.registry.manifest().some((entry) => entry.identity.name === "echo_probe")).toBe(
+      false,
+    );
   });
 
   it("runs echo_probe directly when explicitly registered", async () => {
@@ -64,8 +96,101 @@ describe("utility tool runtime assembly (focused revision)", () => {
     const runtime = makeRuntime();
     const mainTools = runtime.createAgentTools({ traceId: "t1", actor: "main_agent", projectId: "p1" });
     const probeTools = runtime.createAgentTools({ traceId: "t2", actor: "developer_probe" });
-    expect(mainTools.map((tool) => tool.name)).toEqual(["echo_probe"]);
+    const directTools = runtime.createAgentTools({ traceId: "t3", actor: "direct_ui" });
+    expect(mainTools.map((tool) => tool.name)).toEqual([
+      "get_current_datetime",
+      "calculator",
+      "convert_timezone",
+      "echo_probe",
+    ]);
+    expect(runtime.registry.list().map((definition) => definition.identity.name)).toEqual(
+      expect.arrayContaining([
+        "fetch_url",
+        "fetch_pdf",
+        "parse_html",
+        "parse_pdf",
+        "check_link_accessibility",
+      ]),
+    );
     expect(probeTools.map((tool) => tool.name)).toEqual(["echo_probe"]);
+    expect(directTools).toEqual([]);
+  });
+
+  it("shares one scoped resource store across fetch_url and parse_html", async () => {
+    const store = new ResourceStore({ idFactory: () => "resource-1" });
+    const html = Buffer.from("<html><head><title>Fixture</title></head><body><p>Shared trace body</p></body></html>");
+    const transport = {
+      async fetch() {
+        return {
+          statusCode: 200,
+          finalUrl: "https://example.com/page",
+          contentType: "text/html",
+          body: Buffer.from(html),
+          decompressedBytes: html.length,
+          sha256: "fixture-sha",
+        };
+      },
+    };
+    const runtime = createToolRuntime({
+      audit: new FakeAuditSink(),
+      retrieval: { store, transport },
+    });
+    const fetchUrl = runtime.registry.resolve({ name: "fetch_url", version: 1 });
+    const parseHtml = runtime.registry.resolve({ name: "parse_html", version: 1 });
+    const context = retrievalContext("request-1");
+    const fetched = (await fetchUrl.execute(
+      { url: "https://example.com/page" },
+      context,
+      new AbortController().signal,
+      () => undefined,
+    )) as { resourceId: string };
+    const parsed = (await parseHtml.execute(
+      { resourceId: fetched.resourceId },
+      context,
+      new AbortController().signal,
+      () => undefined,
+    )) as { text: string };
+    expect(parsed.text).toContain("Shared trace body");
+    expect(store.size()).toBe(0);
+  });
+
+  it("clears an unconsumed fetched resource only after the trace ledger releases", async () => {
+    const store = new ResourceStore({ idFactory: () => "resource-unconsumed" });
+    const body = Buffer.from("<html><body>must not survive</body></html>");
+    const runtime = createToolRuntime({
+      audit: new FakeAuditSink(),
+      retrieval: {
+        store,
+        transport: {
+          async fetch() {
+            return {
+              statusCode: 200,
+              finalUrl: "https://example.com/unconsumed",
+              contentType: "text/html",
+              body: Buffer.from(body),
+              decompressedBytes: body.length,
+              sha256: "fixture-sha",
+            };
+          },
+        },
+      },
+    });
+    const ledger = runtime.tracePool.ledgerFor("request-2");
+    const heldToken = ledger.reserve({ name: "held", version: 1 }, "none");
+    const fetchUrl = runtime.registry.resolve({ name: "fetch_url", version: 1 });
+    await fetchUrl.execute(
+      { url: "https://example.com/unconsumed" },
+      retrievalContext("request-2"),
+      new AbortController().signal,
+      () => undefined,
+    );
+    expect(store.size()).toBe(1);
+
+    expect(runtime.releaseTrace("request-2")).toBe(false);
+    expect(store.size()).toBe(1);
+    ledger.complete(heldToken);
+    expect(runtime.releaseTrace("request-2")).toBe(true);
+    expect(store.size()).toBe(0);
   });
 });
 

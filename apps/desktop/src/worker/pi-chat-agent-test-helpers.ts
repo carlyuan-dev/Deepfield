@@ -77,7 +77,12 @@ export class FakePiAgent implements PiAgentHandle {
   private resolvePending: (() => void) | undefined;
 
   constructor(
-    private readonly script: { events: AgentEvent[]; pending?: boolean; reject?: Error },
+    private readonly script: {
+      events: AgentEvent[];
+      pending?: boolean;
+      reject?: Error;
+      beforeEvents?: () => Promise<void> | void;
+    },
   ) {}
 
   subscribe(listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void): () => void {
@@ -100,6 +105,7 @@ export class FakePiAgent implements PiAgentHandle {
   async prompt(input: string): Promise<void> {
     this.promptCallCount += 1;
     this.promptedWith = input;
+    await this.script.beforeEvents?.();
     if (this.script.pending) {
       await new Promise<void>((resolve) => {
         this.resolvePending = resolve;

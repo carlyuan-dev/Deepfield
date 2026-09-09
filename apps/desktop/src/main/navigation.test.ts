@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedNavigation } from "./navigation.js";
+import { isAllowedExternalUrl, isAllowedNavigation } from "./navigation.js";
 
 describe("isAllowedNavigation", () => {
   it("allows the initial load when the current url is empty", () => {
@@ -60,5 +60,15 @@ describe("isAllowedNavigation", () => {
   it("rejects unparseable urls", () => {
     expect(isAllowedNavigation("file:///tmp/app/index.html", "not a url")).toBe(false);
     expect(isAllowedNavigation("not a url", "file:///tmp/app/index.html")).toBe(false);
+  });
+});
+
+describe("isAllowedExternalUrl", () => {
+  it("allows only http and https links to leave the app", () => {
+    expect(isAllowedExternalUrl("https://example.com/source")).toBe(true);
+    expect(isAllowedExternalUrl("http://example.com/source")).toBe(true);
+    expect(isAllowedExternalUrl("file:///etc/passwd")).toBe(false);
+    expect(isAllowedExternalUrl("javascript:alert(1)")).toBe(false);
+    expect(isAllowedExternalUrl("not a url")).toBe(false);
   });
 });

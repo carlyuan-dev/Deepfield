@@ -6,10 +6,13 @@ import {
   type HostRpcMethod,
 } from "@deepfield/contracts";
 import { TOOL_FAILURE_MESSAGES, type ToolAuditSink } from "@deepfield/tool-platform";
+import type { ConversationRepositories } from "./conversation-reader.js";
+import { createRepositoryConversationReader } from "./conversation-reader.js";
 
 export interface ToolWorkerHostOptions {
   audit: ToolAuditSink;
   secrets: { get(name: string): string | undefined };
+  conversationRepositories?: ConversationRepositories;
   postMessage(value: unknown): void;
   /** Bounded tombstone size for completed/late-duplicate host request ids. */
   maxCompletedIds?: number;
@@ -24,6 +27,9 @@ const HOST_RPC_METHODS = new Set<HostRpcMethod>([
   "audit.start",
   "audit.finish",
   "secret.getProviderKey",
+  "conversation.listRecent",
+  "conversation.read",
+  "conversation.search",
 ]);
 
 function isRpcMethod(value: unknown): value is HostRpcMethod {
@@ -57,8 +63,8 @@ function safeMethod(value: unknown): unknown {
 }
 
 /**
- * Main-side narrow host RPC. Only three compile-time methods exist:
- * audit.start, audit.finish and secret.getProviderKey (deepseek only).
+ * Main-side narrow host RPC. Conversation access is read-only and limited to
+ * list/read/search; no generic database or SQL method crosses this boundary.
  * Every reply is schema-valid: valid pending methods receive same-method
  * replies; malformed/unknown-method inputs receive the host.protocol variant.
  */
@@ -67,6 +73,10 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
   const active = new Set<string>();
   const completed = new Set<string>();
   const maxCompletedIds = options.maxCompletedIds ?? 256;
+  const conversations =
+    options.conversationRepositories === undefined
+      ? undefined
+      : createRepositoryConversationReader(options.conversationRepositories);
 
   function rememberCompleted(hostRequestId: string): void {
     completed.add(hostRequestId);
@@ -144,6 +154,54 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
         }
         return;
       }
+      if (method === "conversation.listRecent") {
+        if (conversations === undefined) throw new Error("conversation reader unavailable");
+        const result = await conversations.listRecent(request.payload.limit);
+        if (!disposed) {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method,
+            ok: true,
+            payload: { conversations: result },
+          });
+        }
+        return;
+      }
+      if (method === "conversation.read") {
+        if (conversations === undefined) throw new Error("conversation reader unavailable");
+        const conversation = await conversations.read(
+          request.payload.conversationId,
+          request.payload.limit,
+        );
+        if (!disposed) {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method,
+            ok: true,
+            payload: { conversation: conversation ?? null },
+          });
+        }
+        return;
+      }
+      if (method === "conversation.search") {
+        if (conversations === undefined) throw new Error("conversation reader unavailable");
+        const results = await conversations.search(
+          request.payload.query,
+          request.payload.maxResults,
+        );
+        if (!disposed) {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method,
+            ok: true,
+            payload: { results },
+          });
+        }
+        return;
+      }
       let apiKey: string | null = null;
       try {
         apiKey = options.secrets.get("deepseek.apiKey") ?? null;
@@ -175,7 +233,9 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           kind: "host.reply",
           method,
           ok: false,
-          code: "audit_failed",
+          code: method.startsWith("conversation.")
+            ? "conversation_unavailable"
+            : "audit_failed",
         });
       }
     }

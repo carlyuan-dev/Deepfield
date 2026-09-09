@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
 import { DEFAULT_DEEPSEEK_MODEL_ID } from "@deepfield/contracts";
+import { MAIN_AGENT_SYSTEM_PROMPT } from "@deepfield/application";
 import { createPiChatAgent, PiChatAgentError, type SkillCatalogProvider } from "./pi-chat-agent.js";
 import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import {
@@ -17,7 +18,32 @@ import {
 } from "./pi-chat-agent-test-helpers.js";
 
 describe("pi chat agent", () => {
-  it("emits exactly one started, ordered deltas and one completed", async () => {
+  it("adds non-persisted offline and local-date context to each Pi session", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+    });
+    const agent = createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {
+      clock: () => new Date("2026-09-08T16:30:00.000Z"),
+      timeZone: "Asia/Shanghai",
+    });
+    const workerRequest = request({ webSearch: false });
+    workerRequest.context.systemPrompt = MAIN_AGENT_SYSTEM_PROMPT;
+
+    await agent.run(workerRequest, () => undefined, new AbortController().signal);
+
+    const systemPrompt = fake.receivedOptions?.initialState?.systemPrompt;
+    expect(systemPrompt).toContain(MAIN_AGENT_SYSTEM_PROMPT);
+    expect(systemPrompt).toContain("当前日期：2026-09-09");
+    expect(systemPrompt).toContain("本机时区：Asia/Shanghai");
+    expect(systemPrompt).toContain("本轮未启用联网搜索");
+    expect(systemPrompt).toContain("不能访问用户提供的网页");
+    expect(systemPrompt).toContain("打开输入区的“联网搜索”");
+    expect(systemPrompt).not.toContain("不能处理本地文件");
+    expect(workerRequest.context.systemPrompt).toBe(MAIN_AGENT_SYSTEM_PROMPT);
+    expect(fake.promptedWith).toBe("当前问题");
+  });
+
+  it("maps real tool start/end events to ordered safe chat activity events", async () => {
     const fake = new FakePiAgent({
       events: [
         { type: "agent_start" },
@@ -25,7 +51,26 @@ describe("pi chat agent", () => {
         thinkingDelta(),
         textDelta("好"),
         { type: "agent_start" },
-        { type: "tool_execution_start", toolCallId: "t1", toolName: "x", args: {} },
+        {
+          type: "tool_execution_start",
+          toolCallId: "provider-secret-id",
+          toolName: "fetch_url",
+          args: { url: "https://example.com/private?q=secret", apiKey: "sk-never-render" },
+        },
+        {
+          type: "tool_execution_update",
+          toolCallId: "provider-secret-id",
+          toolName: "fetch_url",
+          args: { url: "https://example.com/private?q=secret" },
+          partialResult: { body: "never render this body" },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "provider-secret-id",
+          toolName: "fetch_url",
+          result: { content: [{ type: "text", text: "full private page body" }] },
+          isError: false,
+        },
         { type: "message_end", message: assistant("你好") },
         agentEnd([assistant("你好")]),
       ],
@@ -37,9 +82,59 @@ describe("pi chat agent", () => {
       { requestId: "req-1", type: "started" },
       { requestId: "req-1", type: "text_delta", delta: "你" },
       { requestId: "req-1", type: "text_delta", delta: "好" },
+      {
+        requestId: "req-1",
+        type: "tool_activity",
+        callKey: "activity-1",
+        name: "fetch_url",
+        status: "running",
+        summary: "example.com",
+      },
+      {
+        requestId: "req-1",
+        type: "tool_activity",
+        callKey: "activity-1",
+        name: "fetch_url",
+        status: "completed",
+        summary: "example.com",
+      },
       { requestId: "req-1", type: "completed", text: "你好" },
     ]);
-    expect(JSON.stringify(result.events)).not.toContain("sk-secret-test-key");
+    const serialized = JSON.stringify(result.events);
+    expect(serialized).not.toContain("provider-secret-id");
+    expect(serialized).not.toContain("sk-never-render");
+    expect(serialized).not.toContain("private");
+    expect(serialized).not.toContain("full private page body");
+    expect(serialized).not.toContain("never render this body");
+    expect(serialized).not.toContain("sk-secret-test-key");
+  });
+
+  it("marks an in-flight tool failed with no raw exception when the run rejects", async () => {
+    const fake = new FakePiAgent({
+      events: [
+        { type: "agent_start" },
+        {
+          type: "tool_execution_start",
+          toolCallId: "internal-t2",
+          toolName: "read_conversation",
+          args: { conversationId: "internal-c1", limit: 20 },
+        },
+      ],
+      reject: new Error("raw stack and sk-secret-test-key"),
+    });
+
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect(result.events.at(-1)).toEqual({
+      requestId: "req-1",
+      type: "tool_activity",
+      callKey: "activity-1",
+      name: "read_conversation",
+      status: "failed",
+      summary: "指定对话",
+    });
+    expect(JSON.stringify(result.events)).not.toContain("internal-c1");
   });
 
   it("throws a sanitized error when agent_end carries an error assistant message", async () => {

@@ -20,6 +20,7 @@
       "@deepfield/contracts": ["./packages/contracts/src/index.ts"],
       "@deepfield/persistence": ["./packages/persistence/src/index.ts"],
       "@deepfield/tool-platform": ["./packages/tool-platform/src/index.ts"],
+      "@deepfield/utility-tools": ["./packages/utility-tools/src/index.ts"],
       "@deepfield/application": ["./packages/application/src/index.ts"],
       "@deepfield/retrieval": ["./packages/retrieval/src/index.ts"]
     }

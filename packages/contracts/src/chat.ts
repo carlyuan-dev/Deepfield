@@ -47,17 +47,36 @@ export const AgentWorkerRequestSchema = Type.Object(
 );
 export type AgentWorkerRequest = Static<typeof AgentWorkerRequestSchema>;
 
+export const ToolActivityStatusSchema = Type.Union([
+  Type.Literal("running"),
+  Type.Literal("completed"),
+  Type.Literal("failed"),
+]);
+export type ToolActivityStatus = Static<typeof ToolActivityStatusSchema>;
+
 export const AgentWorkerEventSchema = Type.Union([
   Type.Object(
     {
       requestId: Type.String(),
       type: Type.Literal("started"),
       skillName: Type.Optional(Type.String({ minLength: 1 })),
+      webSearch: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
   ),
   Type.Object(
     { requestId: Type.String(), type: Type.Literal("text_delta"), delta: Type.String() },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      requestId: Type.String(),
+      type: Type.Literal("tool_activity"),
+      callKey: Type.String({ minLength: 1, maxLength: 64 }),
+      name: Type.String({ minLength: 1, maxLength: 48 }),
+      status: ToolActivityStatusSchema,
+      summary: Type.Optional(Type.String({ maxLength: 96 })),
+    },
     { additionalProperties: false },
   ),
   Type.Object(

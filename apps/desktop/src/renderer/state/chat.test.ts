@@ -9,7 +9,7 @@ import {
 
 function event(
   requestId: string,
-  type: AgentWorkerEvent["type"],
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity">,
   payload?: string,
 ): AgentWorkerEvent {
   switch (type) {

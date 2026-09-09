@@ -59,7 +59,7 @@ export function request(requestId: string): AgentWorkerRequest {
 
 export function event(
   requestId: string,
-  type: AgentWorkerEvent["type"],
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity">,
   text?: string,
 ): AgentWorkerEvent {
   switch (type) {
@@ -80,6 +80,8 @@ export function label(item: AgentWorkerEvent): string {
       return "started";
     case "text_delta":
       return item.delta;
+    case "tool_activity":
+      return `tool:${item.status}:${item.name}`;
     case "completed":
       return `completed:${item.text}`;
     case "failed":

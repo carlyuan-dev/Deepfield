@@ -4,9 +4,17 @@ import { createWorkerMessageLoop } from "./message-loop.js";
 import { createFakeChatAgent } from "./fake-chat-agent.js";
 import { createPiChatAgent } from "./pi-chat-agent.js";
 import { selectChatAgent } from "./select-chat-agent.js";
-import { RemoteToolAuditSink, type HostClient } from "./host-client.js";
+import {
+  createHostConversationReader,
+  RemoteToolAuditSink,
+  type HostClient,
+} from "./host-client.js";
 import { createToolRuntime, type UtilityToolRuntime } from "./tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
+import {
+  createDeepSeekWebSearchAgent,
+  routeWebSearchChatAgent,
+} from "./deepseek-web-search-agent.js";
 
 export interface UtilityAssemblyDeps {
   endpoint: WorkerEndpoint;
@@ -36,23 +44,24 @@ function cachedSkillCatalogProvider(skillsDir: string): SkillCatalogProvider {
 }
 
 /**
- * Production Utility assembly: normal Pi Chat always keeps tools: [] (P1
- * behavior). The tool runtime exists for explicit direct tool.run traffic and
- * for opt-in Capability/dev assemblies that call createAgentTools with a
- * trusted per-call trace context.
+ * Production Utility assembly: ordinary Pi Chat receives an actor-scoped tool
+ * session for each request. Direct tool.run traffic and Pi calls share the
+ * same registry, policy, budget and audit pipeline.
  */
 export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembly {
   const toolRuntime = createToolRuntime({
     audit: new RemoteToolAuditSink(deps.hostClient),
+    conversationReader: createHostConversationReader(deps.hostClient),
     registerProbe: deps.registerProbe === true,
   });
+  const skills =
+    deps.skillsDir !== undefined ? cachedSkillCatalogProvider(deps.skillsDir) : undefined;
   const agent = selectChatAgent(deps.agentMode, {
     fake: () => createFakeChatAgent(),
     pi: () =>
-      createPiChatAgent(
-        deps.piRuntime,
-        [],
-        deps.skillsDir !== undefined ? cachedSkillCatalogProvider(deps.skillsDir) : undefined,
+      routeWebSearchChatAgent(
+        createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
+        createDeepSeekWebSearchAgent(skills === undefined ? {} : { skills }),
       ),
   });
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {

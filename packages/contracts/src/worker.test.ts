@@ -41,6 +41,48 @@ const auditStartPayload = {
 };
 
 describe("utility worker protocol", () => {
+  it("allows only strict conversation read RPC payloads and replies", () => {
+    const requests = [
+      { method: "conversation.listRecent", payload: { limit: 10 } },
+      { method: "conversation.read", payload: { conversationId: "c1", limit: 40 } },
+      { method: "conversation.search", payload: { query: "alpha", maxResults: 10 } },
+    ].map((request, index) => ({
+      hostRequestId: `conversation-${index}`,
+      kind: "host.request",
+      ...request,
+    }));
+    for (const request of requests) {
+      expect(Value.Check(HostRequestSchema, request)).toBe(true);
+      expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, sql: "SELECT *" } })).toBe(false);
+    }
+    expect(
+      Value.Check(HostRequestSchema, {
+        ...requests[0],
+        payload: { limit: 31 },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(HostReplySchema, {
+        hostRequestId: "conversation-0",
+        kind: "host.reply",
+        method: "conversation.listRecent",
+        ok: true,
+        payload: {
+          conversations: [{ id: "c1", title: "Alpha", updatedAt: "2026-09-09T00:00:00.000Z" }],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(HostReplySchema, {
+        hostRequestId: "conversation-1",
+        kind: "host.reply",
+        method: "conversation.read",
+        ok: true,
+        payload: { conversation: null, sql: "SELECT *" },
+      }),
+    ).toBe(false);
+  });
+
   it("keeps chat requests valid and adds tool.run to the union", () => {
     expect(Value.Check(AgentWorkerRequestSchema, chatRequest)).toBe(true);
     expect(Value.Check(ToolRunRequestSchema, toolRequest)).toBe(true);

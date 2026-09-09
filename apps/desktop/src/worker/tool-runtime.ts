@@ -14,8 +14,28 @@ import type {
   ToolAuditSink,
   ToolBudgetLimits,
   ToolDefinition,
+  ToolGrant,
 } from "@deepfield/tool-platform";
 import type { ToolExecutionEvent, ToolExecutionResult, ToolRunRequest } from "@deepfield/contracts";
+import {
+  MAX_PDF_BYTES,
+  ResourceStore,
+  SafeHttpTransport,
+  UrlPolicy,
+  createCheckLinkAccessibilityDefinition,
+  createFetchPdfDefinition,
+  createFetchUrlDefinition,
+  createNodeHttpAdapter,
+  createParseHtmlDefinition,
+  createParsePdfDefinition,
+} from "@deepfield/retrieval";
+import {
+  createCalculatorDefinition,
+  createConversationToolDefinitions,
+  createConvertTimezoneDefinition,
+  createCurrentDatetimeDefinition,
+  type ConversationReader,
+} from "@deepfield/utility-tools";
 import type { ToolRuntime } from "./message-loop.js";
 import { createPiAgentTools } from "./pi-tool-adapter.js";
 
@@ -83,12 +103,49 @@ const PROBE_GRANTS: Record<ToolActor, boolean> = {
 
 /** Actor-scoped trusted ToolSet: one grant per identity, never mixed actors. */
 export function createTrustedToolSet(actor: ToolActor): ToolSet {
-  if (!PROBE_GRANTS[actor]) {
-    return new ToolSet([]);
+  const grants: ToolGrant[] = [];
+  if (actor === "main_agent") {
+    grants.push(
+      {
+        identity: { name: "get_current_datetime", version: 1 },
+        actor,
+        effect: "system.read",
+      },
+      {
+        identity: { name: "calculator", version: 1 },
+        actor,
+        effect: "local.compute",
+      },
+      {
+        identity: { name: "convert_timezone", version: 1 },
+        actor,
+        effect: "local.compute",
+      },
+      {
+        identity: { name: "list_conversations", version: 1 },
+        actor,
+        effect: "conversation.read",
+      },
+      {
+        identity: { name: "read_conversation", version: 1 },
+        actor,
+        effect: "conversation.read",
+      },
+      {
+        identity: { name: "search_conversations", version: 1 },
+        actor,
+        effect: "conversation.read",
+      },
+    );
   }
-  return new ToolSet([
-    { identity: { name: "echo_probe", version: 1 }, actor, effect: "project.read" },
-  ]);
+  if (PROBE_GRANTS[actor]) {
+    grants.push({
+      identity: { name: "echo_probe", version: 1 },
+      actor,
+      effect: "project.read",
+    });
+  }
+  return new ToolSet(grants);
 }
 
 export interface TraceBudgetPoolOptions {
@@ -163,6 +220,11 @@ export const TRACE_BUDGET_LIMITS: ToolBudgetLimits = {
 
 export interface ToolRuntimeOptions {
   audit: ToolAuditSink;
+  conversationReader?: ConversationReader;
+  retrieval?: {
+    store?: ResourceStore;
+    transport?: Pick<SafeHttpTransport, "fetch">;
+  };
   registerProbe?: boolean;
   maxTraces?: number;
 }
@@ -192,6 +254,29 @@ export interface UtilityToolRuntime extends ToolRuntime {
 
 export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRuntime {
   const registry = new ToolRegistry();
+  const resourceStore = options.retrieval?.store ?? new ResourceStore();
+  const transport =
+    options.retrieval?.transport ??
+    new SafeHttpTransport({
+      policy: new UrlPolicy(),
+      adapter: createNodeHttpAdapter(),
+      maxBodyBytes: MAX_PDF_BYTES,
+    });
+  registry.register(createCurrentDatetimeDefinition());
+  registry.register(createCalculatorDefinition());
+  registry.register(createConvertTimezoneDefinition());
+  if (options.conversationReader !== undefined) {
+    const [listConversations, readConversation, searchConversations] =
+      createConversationToolDefinitions(options.conversationReader);
+    registry.register(listConversations);
+    registry.register(readConversation);
+    registry.register(searchConversations);
+  }
+  registry.register(createFetchUrlDefinition({ transport, store: resourceStore }));
+  registry.register(createFetchPdfDefinition({ transport, store: resourceStore }));
+  registry.register(createParseHtmlDefinition({ store: resourceStore }));
+  registry.register(createParsePdfDefinition({ store: resourceStore }));
+  registry.register(createCheckLinkAccessibilityDefinition({ transport }));
   if (options.registerProbe === true) {
     registry.register(echoProbeDefinition());
   }
@@ -224,7 +309,13 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
     audit: options.audit,
     tracePool,
     traceLedgerCount: () => tracePool.size(),
-    releaseTrace: (traceId) => tracePool.releaseTrace(traceId),
+    releaseTrace(traceId) {
+      const released = tracePool.releaseTrace(traceId);
+      if (released) {
+        resourceStore.releaseTrace(traceId);
+      }
+      return released;
+    },
     async run(request, emit, signal): Promise<ToolExecutionResult> {
       return runner.execute(
         {

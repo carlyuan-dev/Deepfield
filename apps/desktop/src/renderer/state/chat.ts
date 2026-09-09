@@ -2,6 +2,13 @@ import type { AgentWorkerEvent, ChatMessage } from "@deepfield/contracts";
 
 export type DraftStatus = "streaming" | "done" | "failed";
 
+export interface ToolActivityView {
+  callKey: string;
+  name: string;
+  status: "running" | "completed" | "failed";
+  summary?: string;
+}
+
 export interface ChatMessageView {
   key: string;
   role: "user" | "assistant";
@@ -11,6 +18,10 @@ export interface ChatMessageView {
   pending: boolean;
   /** Display-only skill used for this assistant reply; not persisted. */
   skillName?: string;
+  /** Display-only marker for a reply generated with server-side web search. */
+  webSearch?: boolean;
+  /** Display-only tool activity for this reply; never persisted. */
+  toolActivities: ToolActivityView[];
 }
 
 export interface ChatState {
@@ -56,6 +67,7 @@ function toView(message: ChatMessage): ChatMessageView {
     status: "done",
     requestId: undefined,
     pending: false,
+    toolActivities: [],
   };
 }
 
@@ -127,6 +139,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             status: "done",
             requestId: action.requestId,
             pending: true,
+            toolActivities: [],
           },
         ],
       };
@@ -175,6 +188,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           status: "streaming",
           requestId,
           pending: false,
+          toolActivities: [],
         };
       const draftOrder =
         existing === undefined ? [...state.draftOrder, requestId] : state.draftOrder;
@@ -185,17 +199,50 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ...draft,
             status: "streaming",
             ...(event.skillName !== undefined ? { skillName: event.skillName } : {}),
+            ...(event.webSearch === true ? { webSearch: true } : {}),
           };
           break;
         case "text_delta":
           draft = { ...draft, content: draft.content + event.delta };
           break;
+        case "tool_activity": {
+          const activityIndex = draft.toolActivities.findIndex(
+            (activity) => activity.callKey === event.callKey,
+          );
+          const activity: ToolActivityView = {
+            callKey: event.callKey,
+            name: event.name,
+            status: event.status,
+            ...(event.summary === undefined ? {} : { summary: event.summary }),
+          };
+          if (activityIndex < 0) {
+            draft = { ...draft, toolActivities: [...draft.toolActivities, activity] };
+          } else {
+            const toolActivities = [...draft.toolActivities];
+            toolActivities[activityIndex] = activity;
+            draft = { ...draft, toolActivities };
+          }
+          break;
+        }
         case "completed":
-          draft = { ...draft, content: event.text, status: "done" };
+          draft = {
+            ...draft,
+            content: event.text,
+            status: "done",
+            toolActivities: draft.toolActivities.map((activity) =>
+              activity.status === "running" ? { ...activity, status: "completed" } : activity,
+            ),
+          };
           sending = false;
           return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
         case "failed":
-          draft = { ...draft, status: "failed" };
+          draft = {
+            ...draft,
+            status: "failed",
+            toolActivities: draft.toolActivities.map((activity) =>
+              activity.status === "running" ? { ...activity, status: "failed" } : activity,
+            ),
+          };
           sending = false;
           return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
       }

@@ -21,6 +21,11 @@ describe("context builder", () => {
     const snapshot = builder.build(conversation.id);
     expect(snapshot.systemPrompt).toBe(MAIN_AGENT_SYSTEM_PROMPT);
     expect(snapshot.systemPrompt).toContain("你是 Deepfield 的主 Agent");
+    expect(snapshot.systemPrompt).not.toContain("联网");
+    expect(snapshot.systemPrompt).not.toContain("开关");
+    expect(snapshot.systemPrompt).not.toContain("当前日期");
+    expect(snapshot.systemPrompt).not.toContain("本机时区");
+    expect(snapshot.systemPrompt).not.toContain("使用左侧“工作流”");
     expect(snapshot.systemPrompt).not.toContain("当前项目");
     expect(snapshot).not.toHaveProperty("projectId");
     expect(snapshot.conversationId).toBe(conversation.id);

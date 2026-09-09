@@ -5,6 +5,11 @@ import { join } from "node:path";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
 import { SqliteToolAudit } from "@deepfield/application";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import {
+  createConversationToolDefinitions,
+  type ConversationToolName,
+} from "@deepfield/utility-tools";
+import { HostClient, createHostConversationReader } from "../worker/host-client.js";
 import { createToolWorkerHost, type ToolWorkerHost } from "./tool-worker-host.js";
 
 interface FakeAuditOptions {
@@ -69,6 +74,73 @@ const auditFinish = {
 };
 
 describe("tool worker host", () => {
+  it("lists, reads and searches bounded conversation data over the narrow host RPC", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "df-conversations-"));
+    const db = openDatabase(join(dir, "t.sqlite"));
+    migrate(db);
+    const repositories = createRepositories(db);
+    const first = repositories.conversations.create();
+    repositories.conversations.activate(first.id, "Alpha plan");
+    repositories.messages.append(first.id, "user", "Alpha   launch\nnotes");
+    repositories.messages.append(first.id, "assistant", "First answer");
+    const second = repositories.conversations.create();
+    repositories.conversations.activate(second.id, "Recent discussion");
+    repositories.messages.append(second.id, "user", "We mention ALPHA later");
+
+    const { audit } = fakeAudit();
+    let client!: HostClient;
+    const host = createToolWorkerHost({
+      audit,
+      secrets: { get: () => undefined },
+      conversationRepositories: {
+        conversations: repositories.conversations,
+        messages: repositories.messages,
+      },
+      postMessage: (value) => client.handleReply(value),
+    });
+    client = new HostClient({ postMessage: (value) => host.handleRequest(value) });
+    const definitions = createConversationToolDefinitions(createHostConversationReader(client));
+    const execute = (name: ConversationToolName, input: Record<string, unknown>) => {
+      const definition = definitions.find((candidate) => candidate.identity.name === name);
+      if (definition === undefined) throw new Error(`missing definition ${name}`);
+      return definition.execute(
+        input as never,
+        { traceId: "trace-1", actor: "main_agent" },
+        new AbortController().signal,
+      );
+    };
+
+    const listed = await execute("list_conversations", {});
+    expect(listed).toMatchObject({
+      conversations: [{ id: second.id }, { id: first.id }],
+    });
+    const read = await execute("read_conversation", { conversationId: first.id });
+    expect(read).toEqual({
+      conversationId: first.id,
+      title: "Alpha plan",
+      messages: [
+        { role: "user", content: "Alpha   launch\nnotes" },
+        { role: "assistant", content: "First answer" },
+      ],
+    });
+    const searched = await execute("search_conversations", { query: "alpha" });
+    expect(searched).toMatchObject({
+      results: [
+        { conversationId: second.id, title: "Recent discussion", snippet: "We mention ALPHA later" },
+        { conversationId: first.id, title: "Alpha plan", snippet: "Alpha plan" },
+      ],
+    });
+    expect(JSON.stringify(searched)).not.toContain("  ");
+    await expect(
+      execute("read_conversation", { conversationId: "missing" }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+
+    client.dispose();
+    host.dispose();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("persists audit start and acknowledges", async () => {
     const { audit, starts } = fakeAudit();
     const { host, posted } = createHost(audit);

@@ -25,6 +25,9 @@ export interface ToolRunContext {
 
 export type ToolEffect =
   | "network.read.public"
+  | "system.read"
+  | "local.compute"
+  | "conversation.read"
   | "project.read"
   | "imported_file.read"
   | "external.open"

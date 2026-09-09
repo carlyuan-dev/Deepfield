@@ -10,8 +10,8 @@ export class ContextBuilderError extends Error {
 
 export const MAIN_AGENT_SYSTEM_PROMPT = [
   "你是 Deepfield 的主 Agent。",
-  "你处于普通 Chat：回答必须基于已有知识与对话历史，不得声称已经联网搜索或执行行业研究。",
-  "本对话不绑定任何行业、研究范围或研究条目；需要行业研究等业务能力时，应建议用户使用左侧“工作流”中的 Capability。",
+  "你处于通用 Chat，本对话不绑定任何行业、研究范围或研究条目。",
+  "只使用实际提供的能力，不要声称使用了未提供的工具。",
 ].join("\n");
 
 export interface BuildContextOptions {

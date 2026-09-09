@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
 import {
@@ -127,6 +127,115 @@ describe("app conversation chat", () => {
     expect(fake.chat.send).toHaveBeenCalledWith("c1", "普通问题", REQUEST_ID, {
       webSearch: false,
     });
+  });
+
+  it("sends with web search enabled and renders returned source urls as links", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c1", "对话一", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([]);
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c1", "对话一"));
+    const { user } = await renderApp(fake);
+
+    const input = await chatVisible();
+    const toggle = screen.getByRole("button", { name: "联网搜索" });
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    await user.type(input, "搜索近期进展");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(fake.chat.send).toHaveBeenCalledWith("c1", "搜索近期进展", REQUEST_ID, {
+      webSearch: true,
+    });
+
+    fake.emit({ requestId: REQUEST_ID, type: "started", webSearch: true });
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "来源：https://example.com/report"));
+    fake.emit(workerEvent(REQUEST_ID, "completed", "来源：https://example.com/report"));
+
+    const link = await screen.findByRole("link", { name: "https://example.com/report" });
+    expect(link.getAttribute("href")).toBe("https://example.com/report");
+    expect(screen.getByText("联网搜索", { selector: ".web-search-badge" })).toBeTruthy();
+  });
+
+  it("expands ordered tool activity while running and collapses it on completion", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c1", "对话一", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([]);
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c1", "对话一"));
+    const { user } = await renderApp(fake);
+
+    const input = await chatVisible();
+    await user.type(input, "查资料");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    act(() => {
+      fake.emit(workerEvent(REQUEST_ID, "started"));
+      fake.emit({
+        requestId: REQUEST_ID,
+        type: "tool_activity",
+        callKey: "activity-1",
+        name: "fetch_url",
+        status: "running",
+        summary: "example.com",
+      });
+      fake.emit({
+        requestId: REQUEST_ID,
+        type: "tool_activity",
+        callKey: "activity-2",
+        name: "calculator",
+        status: "running",
+        summary: "2 + 2",
+      });
+    });
+
+    const runningToggle = await screen.findByRole("button", { name: "正在调用 2 个工具" });
+    expect(runningToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(runningToggle.querySelector(".tool-activity-arrow")?.textContent).toBe("↑");
+    expect(screen.getByText("读取网页")).toBeTruthy();
+    expect(screen.getByText("计算器")).toBeTruthy();
+    expect(screen.getAllByText("调用中")).toHaveLength(2);
+    expect(
+      within(screen.getByLabelText("工具调用"))
+        .getAllByRole("listitem")
+        .map((row) => row.textContent),
+    ).toEqual(["读取网页example.com调用中", "计算器2 + 2调用中"]);
+
+    act(() => {
+      fake.emit({
+        requestId: REQUEST_ID,
+        type: "tool_activity",
+        callKey: "activity-1",
+        name: "fetch_url",
+        status: "completed",
+        summary: "example.com",
+      });
+      fake.emit({
+        requestId: REQUEST_ID,
+        type: "tool_activity",
+        callKey: "activity-2",
+        name: "calculator",
+        status: "failed",
+        summary: "2 + 2",
+      });
+      fake.emit(workerEvent(REQUEST_ID, "completed", "完成"));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "已调用 2 个工具" })
+          .getAttribute("aria-expanded"),
+      ).toBe("false"),
+    );
+    const completedToggle = screen.getByRole("button", { name: "已调用 2 个工具" });
+    expect(completedToggle.querySelector(".tool-activity-arrow")?.textContent).toBe("↓");
+    expect(screen.queryByText("example.com")).toBeNull();
+
+    await user.click(completedToggle);
+    expect(completedToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(completedToggle.querySelector(".tool-activity-arrow")?.textContent).toBe("↑");
+    expect(screen.getByText("example.com")).toBeTruthy();
+    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.getByText("调用失败")).toBeTruthy();
   });
 
   it("restores the composer when a send is rejected", async () => {
