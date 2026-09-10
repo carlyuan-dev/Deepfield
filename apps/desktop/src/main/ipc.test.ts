@@ -26,11 +26,14 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.industryResearchListItems,
         IPC_CHANNELS.industryResearchGetItem,
         IPC_CHANNELS.industryResearchListCompanies,
+        IPC_CHANNELS.industryResearchUpdateCompany,
         IPC_CHANNELS.industryResearchAddCompany,
         IPC_CHANNELS.industryResearchAddCompanies,
         IPC_CHANNELS.industryResearchRemoveCompany,
         IPC_CHANNELS.industryResearchRemoveCompanies,
         IPC_CHANNELS.industryResearchRecognizeCompanies,
+        IPC_CHANNELS.industryResearchRetryCompanyProfile,
+        IPC_CHANNELS.industryResearchSubscribeCompanyProfiles,
         IPC_CHANNELS.companyResearchStart,
         IPC_CHANNELS.companyResearchCancel,
         IPC_CHANNELS.companyResearchGetState,
@@ -85,6 +88,18 @@ describe("ipc handlers", () => {
     ]);
     await ipcMain.invoke(IPC_CHANNELS.industryResearchDeleteItem, event(sender), "item-1");
     await ipcMain.invoke(IPC_CHANNELS.industryResearchDeleteItems, event(sender), ["item-1", "item-2"]);
+    const profile = { name: "ACME", aliases: [], officialWebsite: null, stockListings: [] };
+    await ipcMain.invoke(
+      IPC_CHANNELS.industryResearchUpdateCompany,
+      event(sender),
+      "company-1",
+      profile,
+    );
+    await ipcMain.invoke(
+      IPC_CHANNELS.industryResearchRetryCompanyProfile,
+      event(sender),
+      "company-1",
+    );
 
     expect(industryResearch.updateItemCalls).toEqual([{ itemId: "item-1", input: update }]);
     expect(industryResearch.removeCompaniesCalls).toEqual([
@@ -92,6 +107,8 @@ describe("ipc handlers", () => {
     ]);
     expect(industryResearch.deleteItemCalls).toEqual(["item-1"]);
     expect(industryResearch.deleteItemsCalls).toEqual([["item-1", "item-2"]]);
+    expect(industryResearch.updateCompanyCalls).toEqual([{ companyId: "company-1", input: profile }]);
+    expect(industryResearch.retryCompanyProfileCalls).toEqual(["company-1"]);
     await expect(
       ipcMain.invoke(IPC_CHANNELS.industryResearchUpdateItem, event(sender), "item-1", {
         industry: "  ",
@@ -100,10 +117,22 @@ describe("ipc handlers", () => {
     await expect(
       ipcMain.invoke(IPC_CHANNELS.industryResearchRemoveCompanies, event(sender), "item-1", [""]),
     ).rejects.toThrow(/invalid company input/);
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.industryResearchUpdateCompany, event(sender), "company-1", {
+        name: "ACME",
+        businessTags: [],
+      }),
+    ).rejects.toThrow(/invalid company profile/);
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.industryResearchAddCompany, event(sender), "item-1", {
+        name: "x".repeat(301),
+      }),
+    ).rejects.toThrow(/invalid company input/);
+    expect(industryResearch.addCompanyCalls).toHaveLength(0);
   });
 
   it("delegates list, research lifecycle, and key checks with strict arguments", async () => {
-    const { ipcMain, industryResearch, companyResearch, settings } = makeDeps();
+    const { ipcMain, industryResearch, companyResearch, companyProfiles, settings } = makeDeps();
     const sender = new FakeWebContents(1);
     await ipcMain.invoke(IPC_CHANNELS.industryResearchListItems, event(sender));
     expect(industryResearch.listItemsCalls).toBe(1);
@@ -139,6 +168,13 @@ describe("ipc handlers", () => {
     expect(sender.sent).toContainEqual({
       channel: IPC_CHANNELS.companyResearchEvents,
       payload: researchEvent,
+    });
+    await ipcMain.invoke(IPC_CHANNELS.industryResearchSubscribeCompanyProfiles, event(sender));
+    const profileEvent = { companyId: "company-1", status: "ready" } as const;
+    companyProfiles.emit(profileEvent);
+    expect(sender.sent).toContainEqual({
+      channel: IPC_CHANNELS.industryResearchCompanyProfileEvents,
+      payload: profileEvent,
     });
   });
 

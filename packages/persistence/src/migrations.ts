@@ -164,6 +164,34 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    up(db) {
+      db.exec(`
+        ALTER TABLE companies ADD COLUMN legal_name TEXT;
+        ALTER TABLE companies ADD COLUMN aliases_json TEXT;
+        ALTER TABLE companies ADD COLUMN headquarters TEXT;
+        ALTER TABLE companies ADD COLUMN founded_at TEXT;
+        ALTER TABLE companies ADD COLUMN official_website_json TEXT;
+        ALTER TABLE companies ADD COLUMN stock_listings_json TEXT;
+        ALTER TABLE companies ADD COLUMN business_tags_json TEXT;
+        UPDATE companies
+          SET headquarters = country_or_region
+          WHERE country_or_region IS NOT NULL AND headquarters IS NULL;
+      `);
+    },
+  },
+  {
+    version: 7,
+    up(db) {
+      db.exec(`
+        ALTER TABLE companies ADD COLUMN profile_status TEXT NOT NULL DEFAULT 'ready'
+          CHECK(profile_status IN ('pending', 'enriching', 'ready', 'failed'));
+        CREATE INDEX idx_companies_profile_queue
+          ON companies(profile_status, created_at, id);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

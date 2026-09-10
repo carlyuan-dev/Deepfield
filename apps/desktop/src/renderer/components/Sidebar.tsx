@@ -95,7 +95,7 @@ export function Sidebar({
       <ul className="nav-primary">
         <li>
           <button className={active === "capability" ? "active" : ""} onClick={onOpenResearch}>
-            行业研究
+            研究主题
           </button>
         </li>
       </ul>

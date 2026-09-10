@@ -20,6 +20,7 @@ describe("application runtime composition", () => {
       repositories: db.repos,
       secrets: { get: (name) => (name === "deepseek.apiKey" ? "sk-runtime" : undefined) },
       companyRecognizer: { recognize: async () => [] },
+      companyCompleter: { complete: async () => ({}) },
       worker: {
         send: (request) => {
           requests.push(request.requestId);
@@ -71,6 +72,7 @@ describe("application runtime composition", () => {
       repositories: db.repos,
       secrets: { get: () => undefined },
       companyRecognizer: { recognize: async () => [] },
+      companyCompleter: { complete: async () => ({}) },
       worker: {
         send: () => ({
           async *[Symbol.asyncIterator]() {
@@ -88,5 +90,33 @@ describe("application runtime composition", () => {
     expect(initial.active.id).toBe(created.id);
     expect(initial.recent).toEqual([]);
     expect(runtime.conversationService.listRecent()).toEqual([]);
+  });
+
+  it("recovers a pending company's persisted research topics for profile disambiguation", async () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const contexts: unknown[] = [];
+    const runtime = createApplicationRuntime({
+      repositories: db.repos,
+      secrets: { get: () => undefined },
+      companyRecognizer: { recognize: async () => [] },
+      companyCompleter: {
+        complete: async (_name, context) => {
+          contexts.push(context);
+          return { headquarters: "深圳，中国", businessTags: ["人形机器人"] };
+        },
+      },
+      worker: {
+        send: () => ({ async *[Symbol.asyncIterator]() {} }),
+        sendResearch: () => ({ async *[Symbol.asyncIterator]() {} }),
+        cancelResearch: () => {},
+      },
+    });
+    const topic = runtime.industryResearch.createItem({ industry: "人形机器人" });
+
+    runtime.industryResearch.addCompany(topic.id, { name: "乐奇" });
+    await runtime.companyProfiles.whenIdle();
+
+    expect(contexts).toEqual([{ researchTopics: ["人形机器人"] }]);
   });
 });

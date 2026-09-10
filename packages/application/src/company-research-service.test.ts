@@ -21,10 +21,19 @@ function fixture() {
   });
   const company = db.repos.companies.upsert({
     name: "小米",
-    countryOrRegion: "中国",
   });
+  const profiledCompany = db.repos.companies.update(company.id, {
+    name: "小米",
+    legalName: "小米集团",
+    aliases: ["Xiaomi"],
+    headquarters: "中国北京",
+    foundedAt: "2010-04-06",
+    officialWebsite: "https://www.mi.com",
+    stockListings: [{ exchange: "HKEX", ticker: "1810" }],
+    businessTags: ["消费电子", "智能硬件"],
+  })!;
   db.repos.itemCompanies.add(item.id, company.id, "重点候选");
-  return { db, item, company };
+  return { db, item, company: profiledCompany };
 }
 
 function serviceWith(
@@ -79,7 +88,13 @@ describe("CompanyResearchService", () => {
     expect(captured?.context).toEqual({
       currentDate: "2026-09-09",
       companyName: "小米",
-      countryOrRegion: "中国",
+      legalName: "小米集团",
+      aliases: ["Xiaomi"],
+      headquarters: "中国北京",
+      foundedAt: "2010-04-06",
+      officialWebsite: "https://www.mi.com",
+      stockListings: [{ exchange: "HKEX", ticker: "1810" }],
+      businessTags: ["消费电子", "智能硬件"],
       industry: "智能眼镜",
       researchScope: "中国消费级市场",
       companyNote: "重点候选",
@@ -89,6 +104,7 @@ describe("CompanyResearchService", () => {
     expect(service.getState(item.id, company.id)).toEqual({
       completed: [expect.objectContaining({ id: run.id, status: "completed", reportText: "完整报告" })],
     });
+    expect(db.repos.companies.getById(company.id)).toEqual(company);
   });
 
   it("removes every non-success run and rejects a global second start", async () => {

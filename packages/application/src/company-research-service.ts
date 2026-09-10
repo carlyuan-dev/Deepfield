@@ -44,13 +44,17 @@ interface ActiveResearch {
   done: Promise<void>;
 }
 
+type CompanyResearchRepositories = Omit<Repositories, "companies"> & {
+  companies: Pick<Repositories["companies"], "getById">;
+};
+
 export class CompanyResearchService {
   private active: ActiveResearch | undefined;
   private readonly listeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
   private readonly now: () => Date;
 
   constructor(
-    private readonly repositories: Repositories,
+    private readonly repositories: CompanyResearchRepositories,
     private readonly secrets: SecretReader,
     private readonly worker: CompanyResearchWorkerPort,
     private readonly options: CompanyResearchServiceOptions,
@@ -94,8 +98,20 @@ export class CompanyResearchService {
       context: {
         currentDate: formatLocalDate(this.now()),
         companyName: company.name,
-        ...(company.countryOrRegion !== undefined
-          ? { countryOrRegion: company.countryOrRegion }
+        ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
+        ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
+        ...(company.headquarters !== undefined
+          ? { headquarters: company.headquarters }
+          : {}),
+        ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
+        ...(company.officialWebsite !== undefined
+          ? { officialWebsite: company.officialWebsite }
+          : {}),
+        ...(company.stockListings !== undefined
+          ? { stockListings: company.stockListings }
+          : {}),
+        ...(company.businessTags !== undefined
+          ? { businessTags: company.businessTags }
           : {}),
         industry: item.industry,
         ...(item.researchScope !== undefined ? { researchScope: item.researchScope } : {}),
@@ -159,6 +175,10 @@ export class CompanyResearchService {
   subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  isRunning(): boolean {
+    return this.active !== undefined || this.repositories.companyResearchRuns.getRunning() !== undefined;
   }
 
   private async consume(

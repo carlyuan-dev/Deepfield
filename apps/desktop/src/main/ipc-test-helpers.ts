@@ -5,8 +5,10 @@ import type {
   ChatMessage,
   ChatRequestOptions,
   CompanyDraft,
+  Company,
   CompanyResearchState,
   CompanyResearchWorkerEvent,
+  CompanyProfileEvent,
   CompanyId,
   Conversation,
   ConversationId,
@@ -91,12 +93,14 @@ export class FakeIndustryResearchService {
   listItemsCalls = 0;
   getItemCalls: string[] = [];
   listCompaniesCalls: string[] = [];
+  updateCompanyCalls: Array<{ companyId: string; input: unknown }> = [];
   addCompanyCalls: Array<{ itemId: string; draft: CompanyDraft }> = [];
   addCompaniesCalls: Array<{ itemId: string; drafts: CompanyDraft[] }> = [];
   removeCompanyCalls: Array<{ itemId: string; companyId: string }> = [];
   removeCompaniesCalls: Array<{ itemId: string; companyIds: string[] }> = [];
   recognizeCompaniesCalls: Array<{ itemId: string; text: string }> = [];
   recognizeCompaniesCallsResult: CompanyDraft[] = [];
+  retryCompanyProfileCalls: string[] = [];
 
   createItem(input: unknown): CapabilityItem {
     this.createItemCalls.push(input);
@@ -149,6 +153,20 @@ export class FakeIndustryResearchService {
     return [];
   }
 
+  updateCompany(companyId: string, input: unknown): Company {
+    this.updateCompanyCalls.push({ companyId, input });
+    const value = input as { name: string; headquarters?: string };
+    return {
+      id: companyId as CompanyId,
+      name: value.name,
+      normalizedName: value.name.toLowerCase(),
+      profileStatus: "ready",
+      ...(value.headquarters !== undefined ? { headquarters: value.headquarters } : {}),
+      createdAt: "",
+      updatedAt: "",
+    };
+  }
+
   addCompany(itemId: string, draft: CompanyDraft): ItemCompanyView {
     this.addCompanyCalls.push({ itemId, draft });
     return this.companyView(itemId, draft);
@@ -172,15 +190,18 @@ export class FakeIndustryResearchService {
     return Promise.resolve(this.recognizeCompaniesCallsResult);
   }
 
+  retryCompanyProfile(companyId: string): boolean {
+    this.retryCompanyProfileCalls.push(companyId);
+    return true;
+  }
+
   private companyView(itemId: string, draft: CompanyDraft): ItemCompanyView {
     return {
       id: "company-1" as CompanyId,
       name: draft.name,
       normalizedName: draft.name.toLowerCase(),
+      profileStatus: "ready",
       itemId: itemId as CapabilityItemId,
-      ...(draft.countryOrRegion !== undefined
-        ? { countryOrRegion: draft.countryOrRegion }
-        : {}),
       ...(draft.note !== undefined ? { note: draft.note } : {}),
       createdAt: "",
       updatedAt: "",
@@ -345,6 +366,17 @@ export class FakeCompanyResearchService {
   }
 }
 
+export class FakeCompanyProfileEventSource {
+  listeners = new Set<(event: CompanyProfileEvent) => void>();
+  subscribe(listener: (event: CompanyProfileEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  emit(event: CompanyProfileEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+}
+
 export function makeDeps() {
   const ipcMain = new FakeIpcMain();
   const conversations = new FakeConversationService();
@@ -354,6 +386,7 @@ export function makeDeps() {
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
   const companyResearch = new FakeCompanyResearchService();
+  const companyProfiles = new FakeCompanyProfileEventSource();
   const deps: IpcServiceDeps = {
     ipcMain,
     conversations,
@@ -363,9 +396,10 @@ export function makeDeps() {
     skills,
     chat,
     companyResearch,
+    companyProfiles,
   };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, industryResearch, settings, llm, skills, chat, companyResearch, dispose };
+  return { ipcMain, conversations, industryResearch, settings, llm, skills, chat, companyResearch, companyProfiles, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

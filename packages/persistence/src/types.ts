@@ -5,6 +5,9 @@ import type {
   Company,
   CompanyId,
   CompanyDraft,
+  CompanyProfileInput,
+  CompanyProfileFields,
+  CompanyProfileStatus,
   Conversation,
   ConversationId,
   CreateIndustryResearchItemInput,
@@ -26,6 +29,12 @@ export interface CapabilityItemRepository {
 
 export interface CompanyRepository {
   upsert(draft: CompanyDraft): Company;
+  update(companyId: Company["id"], input: CompanyProfileInput): Company | undefined;
+  completeProfile(companyId: Company["id"], fields: CompanyProfileFields): Company | undefined;
+  setProfileStatus(companyId: Company["id"], status: CompanyProfileStatus): Company | undefined;
+  getNextPendingProfile(): Company | undefined;
+  resetEnrichingProfiles(): number;
+  getByNormalizedName(normalizedName: string): Company | undefined;
   list(): Company[];
   getById(companyId: Company["id"]): Company | undefined;
   deleteIfUnreferenced(companyId: Company["id"]): boolean;
@@ -152,6 +161,14 @@ export interface CompanyRow {
   name: string;
   normalized_name: string;
   country_or_region: string | null;
+  legal_name: string | null;
+  aliases_json: string | null;
+  headquarters: string | null;
+  founded_at: string | null;
+  official_website_json: string | null;
+  stock_listings_json: string | null;
+  business_tags_json: string | null;
+  profile_status: CompanyProfileStatus;
   created_at: string;
   updated_at: string;
 }

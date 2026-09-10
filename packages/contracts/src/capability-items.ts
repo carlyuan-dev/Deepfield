@@ -33,19 +33,77 @@ export interface CapabilityItem {
 
 export const CompanyDraftSchema = Type.Object(
   {
-    name: Type.String({ minLength: 1 }),
-    countryOrRegion: Type.Optional(Type.String()),
+    name: Type.String({ minLength: 1, maxLength: 300 }),
     note: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
 export type CompanyDraft = Static<typeof CompanyDraftSchema>;
 
+export const StockListingSchema = Type.Object(
+  {
+    exchange: Type.String({ minLength: 1, maxLength: 100 }),
+    ticker: Type.String({ minLength: 1, maxLength: 100 }),
+  },
+  { additionalProperties: false },
+);
+export type StockListing = Static<typeof StockListingSchema>;
+
+export const CompanyProfileInputSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1, maxLength: 300 }),
+    legalName: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    aliases: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 300 }), { maxItems: 100 }),
+    ),
+    headquarters: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    foundedAt: Type.Optional(
+      Type.String({ pattern: "^[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?$" }),
+    ),
+    officialWebsite: Type.Optional(
+      Type.Union([Type.String({ minLength: 1, maxLength: 2000 }), Type.Null()]),
+    ),
+    stockListings: Type.Optional(Type.Array(StockListingSchema, { maxItems: 100 })),
+    businessTags: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
+        minItems: 1,
+        maxItems: 5,
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type CompanyProfileInput = Static<typeof CompanyProfileInputSchema>;
+export const CompanyProfileFieldsSchema = Type.Omit(CompanyProfileInputSchema, ["name"]);
+export type CompanyProfileFields = Static<typeof CompanyProfileFieldsSchema>;
+export type CompanyProfileStatus = "pending" | "enriching" | "ready" | "failed";
+
+export const CompanyProfileEventSchema = Type.Object(
+  {
+    companyId: Type.String({ minLength: 1 }),
+    status: Type.Union([
+      Type.Literal("pending"),
+      Type.Literal("enriching"),
+      Type.Literal("ready"),
+      Type.Literal("failed"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+export type CompanyProfileEvent = Static<typeof CompanyProfileEventSchema>;
+
 export interface Company {
   id: CompanyId;
   name: string;
   normalizedName: string;
-  countryOrRegion?: string;
+  profileStatus: CompanyProfileStatus;
+  legalName?: string;
+  aliases?: string[];
+  headquarters?: string;
+  foundedAt?: string;
+  officialWebsite?: string | null;
+  stockListings?: StockListing[];
+  businessTags?: string[];
   createdAt: string;
   updatedAt: string;
 }

@@ -3,12 +3,14 @@ import type { Repositories } from "@deepfield/persistence";
 import {
   ChatService,
   CompanyResearchService,
+  CompanyProfileEnrichmentService,
   ContextBuilder,
   ConversationService,
   IndustryResearchService,
   type AgentWorkerPort,
   type CompanyResearchWorkerPort,
   type CompanyRecognizer,
+  type CompanyCompleter,
   type ConversationTitleGenerator,
   type SecretReader,
 } from "@deepfield/application";
@@ -18,6 +20,7 @@ export interface ApplicationRuntimeDeps {
   secrets: SecretReader;
   worker: AgentWorkerPort & CompanyResearchWorkerPort;
   companyRecognizer: CompanyRecognizer;
+  companyCompleter: CompanyCompleter;
   titleGenerator?: ConversationTitleGenerator;
 }
 
@@ -27,13 +30,10 @@ export interface ApplicationRuntime {
   contextBuilder: ContextBuilder;
   chatService: ChatService;
   companyResearch: CompanyResearchService;
+  companyProfiles: CompanyProfileEnrichmentService;
 }
 
 export function createApplicationRuntime(deps: ApplicationRuntimeDeps): ApplicationRuntime {
-  const industryResearch = new IndustryResearchService(
-    deps.repositories,
-    deps.companyRecognizer,
-  );
   const conversationService = new ConversationService(deps.repositories);
   const contextBuilder = new ContextBuilder(deps.repositories);
   const chatService = new ChatService(
@@ -49,5 +49,27 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.worker,
     { requestIdFactory: randomUUID },
   );
-  return { industryResearch, conversationService, contextBuilder, chatService, companyResearch };
+  const companyProfiles = new CompanyProfileEnrichmentService(
+    deps.repositories.companies,
+    deps.companyCompleter,
+    {
+      isForegroundBusy: () => companyResearch.isRunning(),
+      getResearchTopics: (companyId) => deps.repositories.capabilityItems.list()
+        .filter((item) => deps.repositories.itemCompanies.listByItem(item.id)
+          .some((membership) => membership.companyId === companyId))
+        .map((item) => item.industry),
+    },
+  );
+  const industryResearch = new IndustryResearchService(
+    deps.repositories,
+    deps.companyRecognizer,
+    companyProfiles,
+  );
+  companyResearch.subscribe((event) => {
+    if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
+      companyProfiles.resume();
+    }
+  });
+  companyProfiles.start();
+  return { industryResearch, conversationService, contextBuilder, chatService, companyResearch, companyProfiles };
 }

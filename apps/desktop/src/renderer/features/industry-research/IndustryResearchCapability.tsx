@@ -3,6 +3,7 @@ import type { CapabilityItem, DesktopApi, ItemCompanyView } from "@deepfield/con
 import { AddCompaniesModal } from "./AddCompaniesModal.js";
 import { ConfirmModal } from "./ConfirmModal.js";
 import { CompanyResearchPanel } from "./CompanyResearchPanel.js";
+import { CompanyProfileForm } from "./CompanyProfileModal.js";
 import { ImportCompaniesModal } from "./ImportCompaniesModal.js";
 import { ResearchItemModal } from "./ResearchItemModal.js";
 
@@ -40,7 +41,9 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<string>>(new Set());
   const [selectingItems, setSelectingItems] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [editingCompanyProfile, setEditingCompanyProfile] = useState(false);
   const companyRequest = useRef(0);
+  const companyProfileStatuses = useRef(new Map<string, ItemCompanyView["profileStatus"]>());
 
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId);
   const sortedItems = useMemo(() => newestFirst(items), [items]);
@@ -59,7 +62,10 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
     setCompanyError(undefined);
     try {
       const loaded = await api.industryResearch.listCompanies(item.id);
-      if (companyRequest.current === request) setCompanies(companiesByName(loaded));
+      if (companyRequest.current === request) {
+        for (const company of loaded) companyProfileStatuses.current.delete(company.id);
+        setCompanies(companiesByName(loaded));
+      }
     } catch {
       if (companyRequest.current === request) setCompanyError("加载公司列表失败，请重试");
     } finally {
@@ -68,6 +74,19 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
   }, [api]);
 
   useEffect(() => { void loadItems(); }, [loadItems]);
+  useEffect(() => api.industryResearch.subscribeCompanyProfiles((event) => {
+    companyProfileStatuses.current.set(event.companyId, event.status);
+    setCompanies((current) => {
+      const exists = current.some((company) => company.id === event.companyId);
+      if (exists) companyProfileStatuses.current.delete(event.companyId);
+      return current.map((company) =>
+        company.id === event.companyId ? { ...company, profileStatus: event.status } : company,
+      );
+    });
+    if ((event.status === "ready" || event.status === "failed") && selectedItem !== undefined) {
+      void loadCompanies(selectedItem);
+    }
+  }), [api, loadCompanies, selectedItem?.id]);
   useEffect(() => {
     if (selectedItem === undefined) {
       companyRequest.current += 1;
@@ -101,9 +120,36 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
     setCompanyError(undefined);
     setCompanies((current) => {
       const byId = new Map(current.map((company) => [company.id, company]));
-      for (const company of added) byId.set(company.id, company);
+      for (const company of added) {
+        const status = companyProfileStatuses.current.get(company.id);
+        byId.set(company.id, status === undefined ? company : { ...company, profileStatus: status });
+        companyProfileStatuses.current.delete(company.id);
+      }
       return companiesByName([...byId.values()]);
     });
+  };
+
+  const handleCompanySaved = (saved: ItemCompanyView): void => {
+    setCompanies((current) => companiesByName(current.map((company) =>
+      company.id === saved.id ? { ...saved, itemId: company.itemId, ...(company.note !== undefined ? { note: company.note } : {}) } : company,
+    )));
+    setEditingCompanyProfile(false);
+  };
+
+  const retryCompanyProfile = async (company: ItemCompanyView): Promise<void> => {
+    setCompanyError(undefined);
+    setCompanies((current) => current.map((entry) =>
+      entry.id === company.id ? { ...entry, profileStatus: "pending" } : entry,
+    ));
+    try {
+      const accepted = await api.industryResearch.retryCompanyProfile(company.id);
+      if (!accepted && selectedItem !== undefined) await loadCompanies(selectedItem);
+    } catch {
+      setCompanies((current) => current.map((entry) =>
+        entry.id === company.id ? { ...entry, profileStatus: "failed" } : entry,
+      ));
+      setCompanyError(`“${company.name}”重试失败，请稍后再试`);
+    }
   };
 
   const beginConfirmation = (value: Exclude<Confirmation, undefined>): void => {
@@ -163,19 +209,19 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
 
   const confirmationProps = confirmation === undefined ? undefined
     : confirmation.kind === "delete-items"
-      ? { title: "删除行业", message: `确认删除${confirmation.items.map((item) => `“${item.industry}”`).join("、")}吗？`, confirmLabel: `确认删除 ${confirmation.items.length} 个行业` }
+      ? { title: "删除主题", message: `确认删除${confirmation.items.map((item) => `“${item.industry}”`).join("、")}吗？`, confirmLabel: `确认删除 ${confirmation.items.length} 个主题` }
       : confirmation.kind === "remove-company"
-        ? { title: "移除公司", message: `确认从“${selectedItem?.industry ?? ""}”行业删除“${confirmation.company.name}”吗？`, confirmLabel: "确认移除" }
-        : { title: "批量移除公司", message: `确认从“${selectedItem?.industry ?? ""}”行业删除已选的 ${selectedCompanyIds.size} 家公司吗？`, confirmLabel: `确认移除 ${selectedCompanyIds.size} 家公司` };
+        ? { title: "移除公司", message: `确认从“${selectedItem?.industry ?? ""}”主题移除“${confirmation.company.name}”吗？`, confirmLabel: "确认移除" }
+        : { title: "批量移除公司", message: `确认从“${selectedItem?.industry ?? ""}”主题移除已选的 ${selectedCompanyIds.size} 家公司吗？`, confirmLabel: `确认移除 ${selectedCompanyIds.size} 家公司` };
 
   return (
-    <section className="capability" aria-label="行业研究">
-      <header className="capability-header"><span className="breadcrumb">能力 / 行业研究{selectedItem !== undefined ? ` / ${selectedItem.industry}` : ""}{selectedCompany !== undefined ? ` / ${selectedCompany.name}` : ""}</span></header>
+    <section className="capability" aria-label="研究主题">
+      <header className="capability-header"><span className="breadcrumb">能力 / 研究主题{selectedItem !== undefined ? ` / ${selectedItem.industry}` : ""}{selectedCompany !== undefined ? ` / ${selectedCompany.name}` : ""}</span></header>
 
       {selectedItem === undefined ? (
         <>
           <div className="capability-page-heading">
-            <div><h1 className="capability-title">行业研究</h1><p className="muted">管理行业与候选公司。</p></div>
+            <div><h1 className="capability-title">研究主题</h1><p className="muted">管理研究主题与候选公司。</p></div>
             <div className="capability-actions">
               {selectingItems ? <>
                 <button
@@ -185,14 +231,14 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
                 >确认删除（{selectedItemIds.size}）</button>
                 <button onClick={() => { setSelectingItems(false); setSelectedItemIds(new Set()); }}>取消</button>
               </> : <>
-                <button className="primary-button" onClick={() => setOpenModal("create")}>添加行业</button>
-                <button disabled={sortedItems.length === 0} onClick={() => setSelectingItems(true)}>删除行业</button>
+                <button className="primary-button" onClick={() => setOpenModal("create")}>新建主题</button>
+                <button disabled={sortedItems.length === 0} onClick={() => setSelectingItems(true)}>删除主题</button>
               </>}
             </div>
           </div>
           {itemError !== undefined && <p className="error" role="alert">{itemError}</p>}
           {loadingItems ? <p className="muted">加载调研列表…</p> : sortedItems.length === 0 ? (
-            <div className="capability-empty"><p>还没有行业研究条目</p><span className="muted">添加一项调研，开始整理目标公司。</span></div>
+            <div className="capability-empty"><p>还没有研究主题</p><span className="muted">新建一个主题，开始整理目标公司。</span></div>
           ) : (
             <div className="research-item-list">{sortedItems.map((item) => selectingItems ? (
               <label className="research-item-select-row" key={item.id}>
@@ -210,12 +256,18 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
       ) : selectedCompany !== undefined ? (
         <>
           <button className="back-button" onClick={() => setSelectedCompanyId(undefined)}>‹ 返回公司列表</button>
-          <div className="capability-page-heading"><div><h1 className="capability-title">{selectedCompany.name}</h1></div><button className="danger-button" onClick={() => beginConfirmation({ kind: "remove-company", company: selectedCompany })}>删除公司</button></div>
-          <dl className="company-detail">
+          <div className="capability-page-heading"><div><h1 className="capability-title">{selectedCompany.name}</h1></div><div className="capability-actions">{!editingCompanyProfile && <button onClick={() => setEditingCompanyProfile(true)}>编辑基本信息</button>}<button className="danger-button" onClick={() => beginConfirmation({ kind: "remove-company", company: selectedCompany })}>删除公司</button></div></div>
+          {editingCompanyProfile ? <CompanyProfileForm api={api} company={selectedCompany} onCancel={() => setEditingCompanyProfile(false)} onSaved={(saved) => handleCompanySaved({ ...saved, itemId: selectedCompany.itemId, ...(selectedCompany.note !== undefined ? { note: selectedCompany.note } : {}) })} /> : <dl className="company-detail">
             <div className="scope-row"><dt>公司名称</dt><dd>{selectedCompany.name}</dd></div>
-            <div className="scope-row"><dt>国籍/地区</dt><dd>{selectedCompany.countryOrRegion ?? "未填写"}</dd></div>
+            <div className="scope-row"><dt>法定名称</dt><dd>{selectedCompany.legalName ?? "未知"}</dd></div>
+            <div className="scope-row"><dt>别名</dt><dd>{selectedCompany.aliases === undefined ? "未知" : selectedCompany.aliases.length === 0 ? "无" : selectedCompany.aliases.join("、")}</dd></div>
+            <div className="scope-row"><dt>总部</dt><dd>{selectedCompany.headquarters ?? "未知"}</dd></div>
+            <div className="scope-row"><dt>成立时间</dt><dd>{selectedCompany.foundedAt ?? "未知"}</dd></div>
+            <div className="scope-row"><dt>官方网站</dt><dd>{selectedCompany.officialWebsite === undefined ? "未知" : selectedCompany.officialWebsite === null ? "无" : <a href={selectedCompany.officialWebsite} target="_blank" rel="noreferrer">{selectedCompany.officialWebsite}</a>}</dd></div>
+            <div className="scope-row"><dt>上市信息</dt><dd>{selectedCompany.stockListings === undefined ? "未知" : selectedCompany.stockListings.length === 0 ? "未上市" : selectedCompany.stockListings.map((listing) => `${listing.exchange}:${listing.ticker}`).join("、")}</dd></div>
+            <div className="scope-row"><dt>业务标签</dt><dd>{selectedCompany.businessTags?.join("、") ?? "未知"}</dd></div>
             <div className="scope-row"><dt>候选备注</dt><dd>{selectedCompany.note ?? "未填写"}</dd></div>
-          </dl>
+          </dl>}
           <CompanyResearchPanel
             key={`${selectedItem.id}:${selectedCompany.id}`}
             api={api}
@@ -237,7 +289,7 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
             <h2 id="company-list-title">当前公司</h2>
             {loadingCompanies ? <p className="muted">加载公司列表…</p> : companies.length === 0 ? <p className="muted">暂无公司，可手动添加或从文本识别。</p> : (
               <ul className="company-list">{companies.map((company) => <li key={company.id}>
-                {selecting ? <label className="company-select-row"><input type="checkbox" aria-label={`选择 ${company.name}`} checked={selectedCompanyIds.has(company.id)} onChange={() => toggleCompany(company.id)} /><span><strong>{company.name}</strong>{company.countryOrRegion !== undefined && <> · {company.countryOrRegion}</>}</span></label> : <div className="company-list-row"><button className="company-row-button" aria-label={`查看 ${company.name}`} onClick={() => setSelectedCompanyId(company.id)}><strong>{company.name}</strong>{company.countryOrRegion !== undefined && <span>{company.countryOrRegion}</span>}{company.note !== undefined && <small>{company.note}</small>}</button><button className="company-remove-button" aria-label={`删除公司 ${company.name}`} onClick={(event) => { event.stopPropagation(); beginConfirmation({ kind: "remove-company", company }); }}>×</button></div>}
+                {selecting ? <label className="company-select-row"><input type="checkbox" aria-label={`选择 ${company.name}`} checked={selectedCompanyIds.has(company.id)} onChange={() => toggleCompany(company.id)} /><span><strong>{company.name}</strong>{company.profileStatus === "ready" && company.headquarters !== undefined && <> · {company.headquarters}</>}</span></label> : <div className={`company-list-row profile-${company.profileStatus}`}><button className="company-row-button" disabled={company.profileStatus === "pending" || company.profileStatus === "enriching"} aria-label={`查看 ${company.name}`} onClick={() => { setEditingCompanyProfile(false); setSelectedCompanyId(company.id); }}><strong>{company.name}</strong>{company.profileStatus === "ready" && company.headquarters !== undefined && <span>{company.headquarters}</span>}{company.profileStatus === "ready" && company.note !== undefined && <small>{company.note}</small>}</button>{company.profileStatus === "enriching" && <span className="company-profile-spinner" role="status" aria-label={`${company.name} 基本信息补全中`} />}{company.profileStatus === "failed" && <><button className="company-profile-retry" aria-label={`重试补全 ${company.name}`} onClick={() => void retryCompanyProfile(company)}>重试</button><span className="company-profile-failed" role="img" aria-label={`${company.name} 基本信息补全失败`}>!</span></>}<button className="company-remove-button" aria-label={`删除公司 ${company.name}`} onClick={(event) => { event.stopPropagation(); beginConfirmation({ kind: "remove-company", company }); }}>×</button></div>}
               </li>)}</ul>
             )}
           </section>

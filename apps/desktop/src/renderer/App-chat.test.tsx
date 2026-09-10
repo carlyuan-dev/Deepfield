@@ -30,6 +30,35 @@ async function chatVisible(): Promise<HTMLTextAreaElement> {
 }
 
 describe("app conversation chat", () => {
+  it("rechecks a stale disconnected indicator when the window regains focus", async () => {
+    const fake = makeFakeApi();
+    fake.llm.checkConnection
+      .mockResolvedValueOnce("disconnected")
+      .mockResolvedValueOnce("connected");
+    render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
+
+    expect(await screen.findByLabelText("DeepSeek 连接状态：未连接")).toBeTruthy();
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    expect(await screen.findByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
+    expect(fake.llm.checkConnection).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores an older connection result that finishes after a newer successful check", async () => {
+    const fake = makeFakeApi();
+    let resolveInitial!: (status: "disconnected") => void;
+    fake.llm.checkConnection
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockResolvedValueOnce("connected");
+    render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(await screen.findByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
+    await act(async () => resolveInitial("disconnected"));
+
+    expect(screen.getByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
+  });
+
   it("opens the newest recent Conversation ready to type, switches history and titles a new first message", async () => {
     const fake = makeFakeApi();
     fake.llm.checkConnection.mockResolvedValue("connected");

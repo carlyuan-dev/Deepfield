@@ -9,15 +9,8 @@ export interface AddCompaniesModalProps {
   onCompaniesAdded(companies: ItemCompanyView[]): void;
 }
 
-function optionalValue(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 export function AddCompaniesModal({ api, itemId, onClose, onCompaniesAdded }: AddCompaniesModalProps) {
   const [name, setName] = useState("");
-  const [countryOrRegion, setCountryOrRegion] = useState("");
-  const [note, setNote] = useState("");
   const [drafts, setDrafts] = useState<CompanyDraft[]>([]);
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
@@ -28,16 +21,8 @@ export function AddCompaniesModal({ api, itemId, onClose, onCompaniesAdded }: Ad
       setError("请填写公司名称");
       return;
     }
-    const normalizedCountry = optionalValue(countryOrRegion);
-    const normalizedNote = optionalValue(note);
-    setDrafts((current) => [...current, {
-      name: trimmedName,
-      ...(normalizedCountry !== undefined ? { countryOrRegion: normalizedCountry } : {}),
-      ...(normalizedNote !== undefined ? { note: normalizedNote } : {}),
-    }]);
+    setDrafts((current) => [...current, { name: trimmedName }]);
     setName("");
-    setCountryOrRegion("");
-    setNote("");
     setError(undefined);
   };
 
@@ -59,9 +44,7 @@ export function AddCompaniesModal({ api, itemId, onClose, onCompaniesAdded }: Ad
       <div className="modal-body company-manager">
         {error !== undefined && <p className="error" role="alert">{error}</p>}
         <section className="draft-entry">
-          <label>公司名称<input value={name} disabled={submitting} onChange={(event) => setName(event.target.value)} /></label>
-          <label>国籍/地区（可选）<input value={countryOrRegion} disabled={submitting} onChange={(event) => setCountryOrRegion(event.target.value)} /></label>
-          <label>候选备注（可选）<textarea value={note} disabled={submitting} onChange={(event) => setNote(event.target.value)} rows={2} /></label>
+          <label>公司名称<input value={name} disabled={submitting} onChange={(event) => setName(event.target.value)} autoFocus /></label>
           <button type="button" disabled={submitting} onClick={addDraft}>添加到待确认</button>
         </section>
         {drafts.length > 0 && (

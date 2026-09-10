@@ -36,6 +36,18 @@ async function chatReady(): Promise<HTMLTextAreaElement> {
   return input as HTMLTextAreaElement;
 }
 
+function companyViewFixture(id: string, name: string, itemId: CapabilityItemId): ItemCompanyView {
+  return {
+    id: id as CompanyId,
+    itemId,
+    name,
+    normalizedName: name.toLocaleLowerCase(),
+    profileStatus: "ready",
+    createdAt: "2026-09-10T00:00:00.000Z",
+    updatedAt: "2026-09-10T00:00:00.000Z",
+  };
+}
+
 describe("app three-pane shell", () => {
   it("submits with Enter, keeps Shift+Enter and IME input, and aligns the user label", async () => {
     const fake = makeFakeApi();
@@ -82,7 +94,7 @@ describe("app three-pane shell", () => {
 
     // 1) Initial state: no Capability, Chat fills the workspace.
     const input = await chatReady();
-    expect(screen.queryByRole("heading", { name: "行业研究" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "研究主题" })).toBeNull();
     expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
     expect(document.querySelector(".capability-pane")).toBeNull();
 
@@ -102,10 +114,10 @@ describe("app three-pane shell", () => {
     messages.scrollTop = 400;
     fireEvent.scroll(messages);
 
-    // 2) Direct 行业研究 click opens the Capability and collapses Chat.
-    await user.click(screen.getByRole("button", { name: "行业研究" }));
-    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
-    expect(await screen.findByRole("button", { name: "添加行业" })).toBeTruthy();
+    // 2) Direct 研究主题 click opens the Capability and collapses Chat.
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    expect(screen.getByRole("heading", { name: "研究主题" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "新建主题" })).toBeTruthy();
     expect(document.querySelector(".workspace-panes")?.className).toContain("with-capability");
     expect(document.querySelector(".workspace-panes")?.className).toContain("collapsed");
     expect(document.querySelector(".chat-pane")?.className).toContain("collapsed");
@@ -119,7 +131,7 @@ describe("app three-pane shell", () => {
 
     // 4) Very long messages stay inside the Chat scroll container.
     expect(document.querySelector(".messages")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "研究主题" })).toBeTruthy();
 
     // 5) Stream a reply, collapse mid-flight, keep streaming, re-expand: the draft survives.
     await user.type(input, "研究目标");
@@ -143,7 +155,7 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "展开 Chat" }));
     fake.emit({ requestId: REQUEST_ID, type: "completed", text: "测试回复" });
     await waitFor(() => expect(screen.getByText("测试回复")).toBeTruthy());
-    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "研究主题" })).toBeTruthy();
 
     // 6) A Conversation click re-expands Chat while the Capability remains mounted.
     await user.click(screen.getByRole("button", { name: "收起 Chat" }));
@@ -151,7 +163,7 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "对话乙" }));
     expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
     expect(screen.getByRole("button", { name: "收起 Chat" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "研究主题" })).toBeTruthy();
     // the switched Conversation is usable and open beside the Capability
     expect(screen.getByLabelText("消息输入")).toBeTruthy();
 
@@ -176,12 +188,13 @@ describe("app three-pane shell", () => {
     const items: CapabilityItem[] = [];
     let companies: ItemCompanyView[] = [];
     let companySequence = 0;
-    const companyView = (name: string, countryOrRegion?: string, note?: string): ItemCompanyView => ({
+    const companyView = (name: string, headquarters?: string, note?: string): ItemCompanyView => ({
       id: `company-${++companySequence}` as CompanyId,
       itemId: createdItem.id as CapabilityItemId,
       name,
       normalizedName: name.toLocaleLowerCase(),
-      ...(countryOrRegion !== undefined ? { countryOrRegion } : {}),
+      profileStatus: "ready",
+      ...(headquarters !== undefined ? { headquarters } : {}),
       ...(note !== undefined ? { note } : {}),
       createdAt: "2026-09-08T08:00:00.000Z",
       updatedAt: "2026-09-08T08:00:00.000Z",
@@ -221,9 +234,14 @@ describe("app three-pane shell", () => {
     fake.industryResearch.listCompanies.mockImplementation(async () => [...companies]);
     fake.industryResearch.addCompanies.mockImplementation(async (_itemId, drafts) => {
       const added = drafts.map((draft) =>
-        companyView(draft.name, draft.countryOrRegion, draft.note),
+        companyView(draft.name, undefined, draft.note),
       );
       companies = [...companies, ...added];
+      return added;
+    });
+    fake.industryResearch.addCompany.mockImplementation(async (_itemId, draft) => {
+      const added = companyView(draft.name);
+      companies = [...companies, added];
       return added;
     });
     fake.industryResearch.removeCompany.mockImplementation(async (_itemId, companyId) => {
@@ -235,12 +253,12 @@ describe("app three-pane shell", () => {
     const { user } = await renderApp(fake);
     await chatReady();
 
-    await user.click(screen.getByRole("button", { name: "行业研究" }));
-    expect(await screen.findByText("还没有行业研究条目")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "添加行业" }));
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    expect(await screen.findByText("还没有研究主题")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "新建主题" }));
 
-    const createDialog = screen.getByRole("dialog", { name: "添加行业" });
-    await user.type(screen.getByLabelText("行业"), "人形机器人");
+    const createDialog = screen.getByRole("dialog", { name: "新建主题" });
+    await user.type(screen.getByLabelText("主题名称"), "人形机器人");
     await user.type(screen.getByLabelText("研究范围（可选）"), "中国市场");
     await user.type(screen.getByLabelText("备注（可选）"), "关注量产进度");
     await user.click(createDialog.querySelector('button[type="submit"]') as HTMLButtonElement);
@@ -251,9 +269,9 @@ describe("app three-pane shell", () => {
 
     await user.click(screen.getByRole("button", { name: /返回调研列表/ }));
     await user.click(screen.getByRole("button", { name: "编辑 人形机器人" }));
-    const editDialog = screen.getByRole("dialog", { name: "编辑行业" });
-    await user.clear(screen.getByLabelText("行业"));
-    await user.type(screen.getByLabelText("行业"), "具身智能");
+    const editDialog = screen.getByRole("dialog", { name: "编辑主题" });
+    await user.clear(screen.getByLabelText("主题名称"));
+    await user.type(screen.getByLabelText("主题名称"), "具身智能");
     await user.clear(screen.getByLabelText("研究范围（可选）"));
     await user.type(screen.getByLabelText("研究范围（可选）"), "全球市场");
     await user.click(editDialog.querySelector('button[type="submit"]') as HTMLButtonElement);
@@ -266,8 +284,7 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "添加公司" }));
     expect(screen.getByRole("dialog", { name: "添加公司" })).toBeTruthy();
     await user.type(screen.getByLabelText("公司名称"), "优必选");
-    await user.type(screen.getByLabelText("国籍/地区（可选）"), "中国");
-    await user.type(screen.getByLabelText("候选备注（可选）"), "重点跟踪");
+    expect(screen.queryByLabelText(/国籍|备注/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "添加到待确认" }));
     await user.click(screen.getByRole("button", { name: "确认新增" }));
     expect(await screen.findByText("优必选")).toBeTruthy();
@@ -281,7 +298,7 @@ describe("app three-pane shell", () => {
     const removeCompany = screen.getByRole("button", { name: "删除公司 优必选" });
     expect(removeCompany.className).not.toContain("danger-button");
     await user.click(removeCompany);
-    expect(screen.getByRole("dialog", { name: "移除公司" }).textContent).toContain("确认从“具身智能”行业删除“优必选”吗？");
+    expect(screen.getByRole("dialog", { name: "移除公司" }).textContent).toContain("确认从“具身智能”主题移除“优必选”吗？");
     await user.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.getByText("优必选")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "删除公司 优必选" }));
@@ -301,7 +318,7 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "全选" }));
     expect(screen.getByRole("button", { name: "删除已选（2）" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "删除已选（2）" }));
-    expect(screen.getByRole("dialog", { name: "批量移除公司" }).textContent).toContain("确认从“具身智能”行业删除已选的 2 家公司吗？");
+    expect(screen.getByRole("dialog", { name: "批量移除公司" }).textContent).toContain("确认从“具身智能”主题移除已选的 2 家公司吗？");
     await user.click(within(screen.getByRole("dialog", { name: "批量移除公司" })).getByRole("button", { name: "取消" }));
     expect(screen.getByRole("button", { name: "删除已选（2）" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "删除已选（2）" }));
@@ -309,15 +326,15 @@ describe("app three-pane shell", () => {
     await waitFor(() => expect(screen.getByText("暂无公司，可手动添加或从文本识别。")).toBeTruthy());
 
     await user.click(screen.getByRole("button", { name: /返回调研列表/ }));
-    await user.click(screen.getByRole("button", { name: "删除行业" }));
+    await user.click(screen.getByRole("button", { name: "删除主题" }));
     await user.click(screen.getByRole("checkbox", { name: "选择 具身智能" }));
     await user.click(screen.getByRole("button", { name: "确认删除（1）" }));
-    expect(screen.getByRole("dialog", { name: "删除行业" }).textContent).toContain("具身智能");
-    await user.click(within(screen.getByRole("dialog", { name: "删除行业" })).getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("dialog", { name: "删除主题" }).textContent).toContain("具身智能");
+    await user.click(within(screen.getByRole("dialog", { name: "删除主题" })).getByRole("button", { name: "取消" }));
     expect(screen.getByRole("button", { name: "确认删除（1）" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "确认删除（1）" }));
-    await user.click(screen.getByRole("button", { name: "确认删除 1 个行业" }));
-    expect(await screen.findByText("还没有行业研究条目")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "确认删除 1 个主题" }));
+    expect(await screen.findByText("还没有研究主题")).toBeTruthy();
     expect(fake.industryResearch.removeCompanies).toHaveBeenCalledTimes(1);
     expect(fake.industryResearch.deleteItems).toHaveBeenCalledWith([createdItem.id]);
     expect(fake.industryResearch.deleteItem).not.toHaveBeenCalled();
@@ -335,11 +352,11 @@ describe("app three-pane shell", () => {
     fake.industryResearch.listItems.mockResolvedValue([item]);
     fake.industryResearch.listCompanies.mockImplementation(async () => [...companies]);
     fake.industryResearch.recognizeCompanies
-      .mockResolvedValueOnce([{ name: "公司甲", countryOrRegion: "中国", note: "首块" }])
+      .mockResolvedValueOnce([{ name: "公司甲" }])
       .mockRejectedValueOnce(new Error("temporary failure"))
       .mockResolvedValueOnce([
-        { name: "公司甲", countryOrRegion: "美国", note: "重复项" },
-        { name: "公司乙", countryOrRegion: "日本", note: "次块" },
+        { name: "公司甲" },
+        { name: "公司乙" },
       ]);
     fake.industryResearch.addCompanies.mockImplementation(async (_itemId, drafts) => {
       companies = drafts.map((draft, index) => ({
@@ -348,13 +365,14 @@ describe("app three-pane shell", () => {
         normalizedName: draft.name.toLocaleLowerCase(),
         createdAt: "2026-09-08T10:00:00.000Z",
         updatedAt: "2026-09-08T10:00:00.000Z",
+        profileStatus: "ready",
         ...draft,
       }));
       return companies;
     });
     const { user } = await renderApp(fake);
     await chatReady();
-    await user.click(screen.getByRole("button", { name: "行业研究" }));
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
     await user.click(await screen.findByRole("button", { name: /^AI 芯片/ }));
     await user.click(screen.getByRole("button", { name: "一键导入公司" }));
     const source = screen.getByLabelText("公司文本") as HTMLTextAreaElement;
@@ -379,7 +397,7 @@ describe("app three-pane shell", () => {
       secondChunk,
       secondChunk,
     ]);
-    expect((screen.getAllByLabelText("国籍/地区")[0] as HTMLInputElement).value).toBe("中国");
+    expect(screen.queryByLabelText(/国籍|备注/)).toBeNull();
     expect((screen.getByRole("button", { name: "确认导入" }) as HTMLButtonElement).disabled).toBe(false);
     const firstCandidateName = screen.getAllByLabelText("公司名称")[0]!;
     await user.clear(firstCandidateName);
@@ -395,6 +413,129 @@ describe("app three-pane shell", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("文本过长，请缩短至 48000 个字符以内");
     expect(fake.industryResearch.recognizeCompanies).toHaveBeenCalledTimes(3);
 
+  });
+
+  it("renders persisted per-company completion states and refreshes one ready profile", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c-profile", "资料状态", true);
+    const item = capabilityItem({ id: "item-profile", industry: "机器人" });
+    let companies: ItemCompanyView[] = [
+      { ...companyViewFixture("pending", "待处理公司", item.id), profileStatus: "pending" },
+      { ...companyViewFixture("enriching", "补全中公司", item.id), profileStatus: "enriching" },
+      { ...companyViewFixture("failed", "失败公司", item.id), profileStatus: "failed" },
+      { ...companyViewFixture("ready", "已有公司", item.id), profileStatus: "ready", headquarters: "北京" },
+    ];
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockImplementation(async () => [...companies]);
+    const { user } = await renderApp(fake);
+    await chatReady();
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    await user.click(await screen.findByRole("button", { name: /^机器人/ }));
+
+    expect((screen.getByRole("button", { name: "查看 待处理公司" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "查看 补全中公司" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("待处理公司 基本信息补全中")).toBeNull();
+    const activeSpinner = screen.getByLabelText("补全中公司 基本信息补全中");
+    expect(activeSpinner).toBeTruthy();
+    expect(screen.getByLabelText("失败公司 基本信息补全失败")).toBeTruthy();
+    const retryButton = screen.getByRole("button", { name: "重试补全 失败公司" });
+    expect(retryButton.compareDocumentPosition(screen.getByLabelText("失败公司 基本信息补全失败")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((screen.getByRole("button", { name: "查看 失败公司" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(document.body.textContent).not.toMatch(/正在补全\s*\d+\s*\/\s*\d+/u);
+
+    fake.industryResearch.retryCompanyProfile.mockImplementation(async (companyId) => {
+      companies = companies.map((company) => company.id === companyId
+        ? { ...company, profileStatus: "pending" }
+        : company);
+      await fake.emitProfile({ companyId: companyId as CompanyId, status: "pending" });
+      return true;
+    });
+    await user.click(retryButton);
+    expect(screen.queryByLabelText("失败公司 基本信息补全中")).toBeNull();
+    await act(async () => fake.emitProfile({ companyId: "failed", status: "enriching" }));
+    expect(screen.getByLabelText("失败公司 基本信息补全中")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重试补全 失败公司" })).toBeNull();
+
+    companies = companies.map((company) => company.name === "待处理公司"
+      ? { ...company, profileStatus: "ready", headquarters: "上海" }
+      : company);
+    await act(async () => fake.emitProfile({ companyId: "pending", status: "ready" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "查看 待处理公司" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByText("上海")).toBeTruthy();
+  });
+
+  it("keeps an early enrichment event and shows a spinner only for the active queued company", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c-profile-race", "队列状态", true);
+    const item = capabilityItem({ id: "item-profile-race", industry: "智能眼镜" });
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockResolvedValue([]);
+    fake.industryResearch.addCompanies.mockImplementation(async (_itemId, drafts) => {
+      const added = drafts.map((draft, index) => ({
+        ...companyViewFixture(`queued-${index}`, draft.name, item.id),
+        profileStatus: "pending" as const,
+      }));
+      fake.emitProfile({ companyId: added[0]!.id, status: "enriching" });
+      return added;
+    });
+    const { user } = await renderApp(fake);
+    await chatReady();
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    await user.click(await screen.findByRole("button", { name: /^智能眼镜/ }));
+    await user.click(screen.getByRole("button", { name: "添加公司" }));
+    await user.type(screen.getByLabelText("公司名称"), "公司甲");
+    await user.click(screen.getByRole("button", { name: "添加到待确认" }));
+    await user.type(screen.getByLabelText("公司名称"), "公司乙");
+    await user.click(screen.getByRole("button", { name: "添加到待确认" }));
+    await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+    expect(await screen.findByLabelText("公司甲 基本信息补全中")).toBeTruthy();
+    expect(screen.queryByLabelText("公司乙 基本信息补全中")).toBeNull();
+    expect((screen.getByRole("button", { name: "查看 公司甲" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "查看 公司乙" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("edits company basic information inline without opening a modal", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c-profile-edit", "公司资料", true);
+    const item = capabilityItem({ id: "item-profile-edit", industry: "智能眼镜" });
+    let company = {
+      ...companyViewFixture("company-inline", "Google", item.id),
+      profileStatus: "ready" as const,
+      headquarters: "Mountain View, California, USA",
+      businessTags: ["人工智能"],
+    };
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockImplementation(async () => [company]);
+    fake.industryResearch.updateCompany.mockImplementation(async (_companyId, input) => {
+      company = { ...company, ...input, profileStatus: "ready" };
+      return company;
+    });
+    const { user } = await renderApp(fake);
+    await chatReady();
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    await user.click(await screen.findByRole("button", { name: /^智能眼镜/ }));
+    await act(async () => fake.emitProfile({ companyId: company.id, status: "failed" }));
+    await user.click(screen.getByRole("button", { name: "查看 Google" }));
+
+    await user.click(screen.getByRole("button", { name: "编辑基本信息" }));
+    expect(screen.queryByRole("dialog", { name: "编辑公司基本信息" })).toBeNull();
+    const headquarters = screen.getByLabelText("总部（可选）");
+    await user.clear(headquarters);
+    await user.type(headquarters, "山景城，美国");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("山景城，美国")).toBeTruthy();
+    expect(screen.queryByLabelText("总部（可选）")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /返回公司列表/ }));
+    await user.click(screen.getByRole("button", { name: /返回调研列表/ }));
+    await user.click(screen.getByRole("button", { name: /^智能眼镜/ }));
+    expect(await screen.findByRole("button", { name: "查看 Google" })).toBeTruthy();
+    expect(screen.queryByLabelText("Google 基本信息补全失败")).toBeNull();
   });
 
   it("keeps the Chat top bar and assistant semantics stable across settings navigation", async () => {
@@ -414,7 +555,7 @@ describe("app three-pane shell", () => {
     expect(document.querySelector(".message.assistant")).toBeTruthy();
     expect(document.querySelector(".message.assistant .assistant-content")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "行业研究" }));
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
     expect(document.querySelector(".chat-pane-header")).toBeTruthy();
     expect(document.querySelector(".chat-pane-header")?.className).toContain("collapsed");
 
@@ -429,7 +570,7 @@ describe("app three-pane shell", () => {
 
     await user.click(screen.getByRole("button", { name: "‹ 返回" }));
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "行业研究" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "研究主题" })).toBeTruthy();
     expect(document.querySelector(".chat-pane")?.className).toContain("collapsed");
 
     await user.click(screen.getByRole("button", { name: "展开 Chat" }));
@@ -446,7 +587,8 @@ describe("app three-pane shell", () => {
       itemId: item.id,
       name: "小米",
       normalizedName: "小米",
-      countryOrRegion: "中国",
+      profileStatus: "ready",
+      headquarters: "中国",
       note: "重点候选",
       createdAt: "2026-09-09T08:00:00.000Z",
       updatedAt: "2026-09-09T08:00:00.000Z",
@@ -479,7 +621,7 @@ describe("app three-pane shell", () => {
 
     const { user } = await renderApp(fake);
     const chatInput = await chatReady();
-    await user.click(screen.getByRole("button", { name: "行业研究" }));
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
     await user.click(await screen.findByRole("button", { name: /^智能眼镜/ }));
     await user.click(screen.getByRole("button", { name: "查看 小米" }));
     await user.click(await screen.findByRole("button", { name: "开始调研" }));

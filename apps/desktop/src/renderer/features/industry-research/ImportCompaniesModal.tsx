@@ -16,7 +16,6 @@ export interface ImportCompaniesModalProps {
   onCompaniesAdded(companies: ItemCompanyView[]): void;
 }
 
-type DraftField = keyof Pick<CompanyDraft, "name" | "countryOrRegion" | "note">;
 interface RecognitionRun { chunks: string[]; nextIndex: number; }
 
 function normalizedCompanyName(name: string): string {
@@ -107,8 +106,8 @@ export function ImportCompaniesModal({ api, itemId, onClose, onCompaniesAdded }:
     }
   };
 
-  const updateDraft = (index: number, field: DraftField, value: string): void => {
-    setDrafts((current) => current?.map((draft, draftIndex) => draftIndex === index ? { ...draft, [field]: value } : draft));
+  const updateDraft = (index: number, value: string): void => {
+    setDrafts((current) => current?.map((draft, draftIndex) => draftIndex === index ? { name: value } : draft));
   };
 
   const confirm = async (): Promise<void> => {
@@ -118,11 +117,7 @@ export function ImportCompaniesModal({ api, itemId, onClose, onCompaniesAdded }:
       drafts.length === 0 ||
       (run !== undefined && run.nextIndex < run.chunks.length)
     ) return;
-    const cleaned = drafts.map((draft) => ({
-      name: draft.name.trim(),
-      ...(draft.countryOrRegion?.trim() ? { countryOrRegion: draft.countryOrRegion.trim() } : {}),
-      ...(draft.note?.trim() ? { note: draft.note.trim() } : {}),
-    }));
+    const cleaned = drafts.map((draft) => ({ name: draft.name.trim() }));
     if (cleaned.some((draft) => draft.name.length === 0)) {
       setError("请填写公司名称");
       return;
@@ -160,9 +155,7 @@ export function ImportCompaniesModal({ api, itemId, onClose, onCompaniesAdded }:
               {drafts.map((draft, index) => (
                 <div className="candidate-row" key={index}>
                   <div className="candidate-row-header"><strong>公司{index + 1}</strong><button disabled={recognizing || submitting} aria-label={`删除公司 ${index + 1}`} onClick={() => setDrafts((current) => current?.filter((_, draftIndex) => draftIndex !== index))}>删除</button></div>
-                  <label>公司名称<input disabled={recognizing || submitting} value={draft.name} onChange={(event) => updateDraft(index, "name", event.target.value)} /></label>
-                  <label>国籍/地区<input disabled={recognizing || submitting} value={draft.countryOrRegion ?? ""} onChange={(event) => updateDraft(index, "countryOrRegion", event.target.value)} /></label>
-                  <label>备注<textarea disabled={recognizing || submitting} value={draft.note ?? ""} onChange={(event) => updateDraft(index, "note", event.target.value)} rows={2} /></label>
+                  <label>公司名称<input disabled={recognizing || submitting} value={draft.name} onChange={(event) => updateDraft(index, event.target.value)} /></label>
                 </div>
               ))}
             </div>

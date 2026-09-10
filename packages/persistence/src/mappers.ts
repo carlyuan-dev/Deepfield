@@ -28,11 +28,29 @@ export function toCapabilityItem(row: CapabilityItemRow): CapabilityItem {
 }
 
 export function toCompany(row: CompanyRow): Company {
+  const aliases = row.aliases_json === null ? undefined : JSON.parse(row.aliases_json);
+  const officialWebsite =
+    row.official_website_json === null ? undefined : JSON.parse(row.official_website_json);
+  const stockListings =
+    row.stock_listings_json === null ? undefined : JSON.parse(row.stock_listings_json);
+  const businessTags =
+    row.business_tags_json === null ? undefined : JSON.parse(row.business_tags_json);
   return {
     id: row.id as Company["id"],
     name: row.name,
     normalizedName: row.normalized_name,
-    ...(row.country_or_region !== null ? { countryOrRegion: row.country_or_region } : {}),
+    profileStatus: row.profile_status,
+    ...(row.legal_name !== null ? { legalName: row.legal_name } : {}),
+    ...(aliases !== undefined ? { aliases } : {}),
+    ...(row.headquarters !== null
+      ? { headquarters: row.headquarters }
+      : row.country_or_region !== null
+        ? { headquarters: row.country_or_region }
+        : {}),
+    ...(row.founded_at !== null ? { foundedAt: row.founded_at } : {}),
+    ...(officialWebsite !== undefined ? { officialWebsite } : {}),
+    ...(stockListings !== undefined ? { stockListings } : {}),
+    ...(businessTags !== undefined ? { businessTags } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

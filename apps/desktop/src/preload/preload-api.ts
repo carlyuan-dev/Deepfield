@@ -2,14 +2,18 @@ import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
   CompanyResearchWorkerEventSchema,
+  CompanyProfileEventSchema,
   type AgentWorkerEvent,
   type CapabilityItem,
+  type Company,
   type CompanyResearchState,
   type CompanyResearchWorkerEvent,
   type ChatMessage,
   type ChatRequestOptions,
   type ChatSendResult,
   type CompanyDraft,
+  type CompanyProfileInput,
+  type CompanyProfileEvent,
   type Conversation,
   type DesktopApi,
   type ItemCompanyView,
@@ -26,11 +30,15 @@ export const IPC_CHANNELS = {
   industryResearchListItems: "deepfield:industryResearch:listItems",
   industryResearchGetItem: "deepfield:industryResearch:getItem",
   industryResearchListCompanies: "deepfield:industryResearch:listCompanies",
+  industryResearchUpdateCompany: "deepfield:industryResearch:updateCompany",
   industryResearchAddCompany: "deepfield:industryResearch:addCompany",
   industryResearchAddCompanies: "deepfield:industryResearch:addCompanies",
   industryResearchRemoveCompany: "deepfield:industryResearch:removeCompany",
   industryResearchRemoveCompanies: "deepfield:industryResearch:removeCompanies",
   industryResearchRecognizeCompanies: "deepfield:industryResearch:recognizeCompanies",
+  industryResearchRetryCompanyProfile: "deepfield:industryResearch:retryCompanyProfile",
+  industryResearchSubscribeCompanyProfiles: "deepfield:industryResearch:subscribeCompanyProfiles",
+  industryResearchCompanyProfileEvents: "deepfield:industryResearch:companyProfileEvents",
   companyResearchStart: "deepfield:companyResearch:start",
   companyResearchCancel: "deepfield:companyResearch:cancel",
   companyResearchGetState: "deepfield:companyResearch:getState",
@@ -85,6 +93,8 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.industryResearchListCompanies, itemId) as Promise<
           ItemCompanyView[]
         >,
+      updateCompany: (companyId, input: CompanyProfileInput) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchUpdateCompany, companyId, input) as Promise<Company>,
       addCompany: (itemId, draft: CompanyDraft) =>
         ipc.invoke(IPC_CHANNELS.industryResearchAddCompany, itemId, draft) as Promise<
           ItemCompanyView
@@ -101,6 +111,14 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.industryResearchRecognizeCompanies, itemId, text) as Promise<
           CompanyDraft[]
         >,
+      retryCompanyProfile: (companyId) =>
+        ipc.invoke(IPC_CHANNELS.industryResearchRetryCompanyProfile, companyId) as Promise<boolean>,
+      subscribeCompanyProfiles: (listener: (event: CompanyProfileEvent) => void) => {
+        void ipc.invoke(IPC_CHANNELS.industryResearchSubscribeCompanyProfiles).catch(() => {});
+        return ipc.on(IPC_CHANNELS.industryResearchCompanyProfileEvents, (_event, value) => {
+          if (Value.Check(CompanyProfileEventSchema, value)) listener(value);
+        });
+      },
     },
     companyResearch: {
       start: (itemId, companyId, input) =>

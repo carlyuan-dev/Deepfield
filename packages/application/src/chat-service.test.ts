@@ -142,11 +142,11 @@ describe("chat service", () => {
     expect(messages[0]).toMatchObject({ role: "user", content });
     expect(messages[1]).toMatchObject({ role: "assistant", content: "测试回复" });
 
-    // Standalone Chat writes no Project activity.
-    const activityCount = db.db
-      .prepare("SELECT count(*) AS n FROM project_activity_events")
-      .get() as unknown as { n: number };
-    expect(activityCount.n).toBe(0);
+    // Standalone Chat has no Project activity table or Project foreign key.
+    const legacyActivityTable = db.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_activity_events'")
+      .get();
+    expect(legacyActivityTable).toBeUndefined();
 
     const recent = db.repos.conversations.listRecent();
     expect(recent).toHaveLength(1);

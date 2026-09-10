@@ -9,6 +9,7 @@ import {
   type CapabilityItemId,
   type Company,
   type CompanyDraft,
+  type CompanyProfileInput,
   type ItemCompany,
   type ItemCompanyView as ContractItemCompanyView,
   type UpdateIndustryResearchItemInput,
@@ -16,6 +17,7 @@ import {
 import type { Repositories } from "@deepfield/persistence";
 import { normalizeCompanyName } from "@deepfield/persistence";
 import type { CompanyRecognizer } from "./ports.js";
+import { normalizeCompanyProfile } from "./company-profile-validation.js";
 
 export type ItemCompanyView = ContractItemCompanyView;
 
@@ -50,13 +52,19 @@ function validateDraft(draft: CompanyDraft): CompanyDraft {
   if (name.length === 0) {
     throw new IndustryResearchServiceError("company name must not be blank");
   }
-  const countryOrRegion = trimOptional(draft.countryOrRegion);
   const note = trimOptional(draft.note);
   return {
     name,
-    ...(countryOrRegion !== undefined ? { countryOrRegion } : {}),
     ...(note !== undefined ? { note } : {}),
   };
+}
+
+function normalizeProfile(input: unknown): CompanyProfileInput {
+  try {
+    return normalizeCompanyProfile(input);
+  } catch {
+    throw new IndustryResearchServiceError("invalid company profile");
+  }
 }
 
 function toView(
@@ -70,10 +78,27 @@ function toView(
   };
 }
 
+function findCompanyByNameOrAlias(
+  repositories: Repositories,
+  name: string,
+): Company | undefined {
+  const normalizedName = normalizeCompanyName(name);
+  const exact = repositories.companies.getByNormalizedName(normalizedName);
+  if (exact !== undefined) return exact;
+  const aliasMatches = repositories.companies.list().filter((company) =>
+    company.aliases?.some((alias) => normalizeCompanyName(alias) === normalizedName) === true,
+  );
+  return aliasMatches.length === 1 ? aliasMatches[0] : undefined;
+}
+
 export class IndustryResearchService {
   constructor(
     private readonly repositories: Repositories,
     private readonly companyRecognizer: CompanyRecognizer,
+    private readonly companyEnrichment?: {
+      enqueue(companyId: Company["id"]): void;
+      retry?(companyId: Company["id"]): boolean;
+    },
   ) {}
 
   createItem(input: unknown): CapabilityItem {
@@ -170,6 +195,23 @@ export class IndustryResearchService {
     });
   }
 
+  updateCompany(companyId: Company["id"], input: unknown): Company {
+    const normalized = normalizeProfile(input);
+    try {
+      const updated = this.repositories.companies.update(companyId, normalized);
+      if (updated === undefined) {
+        throw new IndustryResearchServiceError("company not found");
+      }
+      return updated;
+    } catch (error) {
+      if (error instanceof IndustryResearchServiceError) throw error;
+      if (error instanceof Error && /already exists/i.test(error.message)) {
+        throw new IndustryResearchServiceError("company name already exists");
+      }
+      throw new IndustryResearchServiceError("company profile update failed");
+    }
+  }
+
   addCompany(itemId: CapabilityItemId, draft: CompanyDraft): ItemCompanyView {
     return this.addCompanies(itemId, [draft])[0]!;
   }
@@ -185,17 +227,25 @@ export class IndustryResearchService {
       seen.add(normalizedName);
       return true;
     });
-    return this.repositories.runInTransaction(() => {
-      return validated.map((draft) => {
-        const company = this.repositories.companies.upsert(draft);
+    const newlyCreated: Company["id"][] = [];
+    const added = this.repositories.runInTransaction(() => {
+      const addedCompanyIds = new Set<Company["id"]>();
+      return validated.flatMap((draft) => {
+        const existing = findCompanyByNameOrAlias(this.repositories, draft.name);
+        const company = existing ?? this.repositories.companies.upsert(draft);
+        if (existing === undefined) newlyCreated.push(company.id);
+        if (addedCompanyIds.has(company.id)) return [];
+        addedCompanyIds.add(company.id);
         const membership = this.repositories.itemCompanies.add(
           itemId,
           company.id,
           draft.note,
         );
-        return toView(company, membership);
+        return [toView(company, membership)];
       });
     });
+    for (const companyId of newlyCreated) this.companyEnrichment?.enqueue(companyId);
+    return added;
   }
 
   removeCompany(itemId: CapabilityItemId, companyId: Company["id"]): void {
@@ -218,6 +268,13 @@ export class IndustryResearchService {
     }
   }
 
+  retryCompanyProfile(companyId: Company["id"]): boolean {
+    if (this.repositories.companies.getById(companyId) === undefined) {
+      throw new IndustryResearchServiceError("company not found");
+    }
+    return this.companyEnrichment?.retry?.(companyId) ?? false;
+  }
+
   async recognizeCompanies(itemId: CapabilityItemId, text: string): Promise<CompanyDraft[]> {
     requireItem(this.repositories, itemId);
     if (text.trim().length === 0) {
@@ -235,7 +292,7 @@ export class IndustryResearchService {
           return [];
         }
         seen.add(normalizedName);
-        return [normalized];
+        return [{ name: normalized.name }];
       });
     } catch {
       throw new IndustryResearchServiceError("company recognition failed");

@@ -7,10 +7,15 @@ import {
   CompanyResearchTargetArgsSchema,
   CompanyResearchWorkerEventSchema,
   CompanyDraftSchema,
+  CompanyProfileInputSchema,
+  CompanyProfileEventSchema,
   CreateIndustryResearchItemInputSchema,
   UpdateIndustryResearchItemInputSchema,
   type CapabilityItem,
+  type Company,
   type CompanyDraft,
+  type CompanyProfileInput,
+  type CompanyProfileEvent,
   type CompanyResearchState,
   type CompanyResearchWorkerEvent,
   type ItemCompanyView,
@@ -55,11 +60,13 @@ export interface IndustryResearchServiceLike {
   listItems(): CapabilityItem[];
   getItem(itemId: string): CapabilityItem | undefined;
   listCompanies(itemId: string): ItemCompanyView[];
+  updateCompany(companyId: string, input: CompanyProfileInput): Company;
   addCompany(itemId: string, draft: CompanyDraft): ItemCompanyView;
   addCompanies(itemId: string, drafts: CompanyDraft[]): ItemCompanyView[];
   removeCompany(itemId: string, companyId: string): void;
   removeCompanies(itemId: string, companyIds: string[]): void;
   recognizeCompanies(itemId: string, text: string): Promise<CompanyDraft[]>;
+  retryCompanyProfile(companyId: string): boolean;
 }
 
 export interface ConversationServiceLike {
@@ -100,6 +107,10 @@ export interface CompanyResearchServiceLike {
   subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void;
 }
 
+export interface CompanyProfileEventSource {
+  subscribe(listener: (event: CompanyProfileEvent) => void): () => void;
+}
+
 export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
   conversations: ConversationServiceLike;
@@ -109,6 +120,7 @@ export interface IpcServiceDeps {
   skills: SkillListLike;
   chat: ChatServiceLike;
   companyResearch: CompanyResearchServiceLike;
+  companyProfiles: CompanyProfileEventSource;
 }
 
 const INVOKE_CHANNELS = [
@@ -119,11 +131,14 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.industryResearchListItems,
   IPC_CHANNELS.industryResearchGetItem,
   IPC_CHANNELS.industryResearchListCompanies,
+  IPC_CHANNELS.industryResearchUpdateCompany,
   IPC_CHANNELS.industryResearchAddCompany,
   IPC_CHANNELS.industryResearchAddCompanies,
   IPC_CHANNELS.industryResearchRemoveCompany,
   IPC_CHANNELS.industryResearchRemoveCompanies,
   IPC_CHANNELS.industryResearchRecognizeCompanies,
+  IPC_CHANNELS.industryResearchRetryCompanyProfile,
+  IPC_CHANNELS.industryResearchSubscribeCompanyProfiles,
   IPC_CHANNELS.companyResearchStart,
   IPC_CHANNELS.companyResearchCancel,
   IPC_CHANNELS.companyResearchGetState,
@@ -172,6 +187,12 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
   };
   const unsubscribeResearch = deps.companyResearch.subscribe(emitResearch);
+  const unsubscribeProfiles = deps.companyProfiles.subscribe((event) => {
+    if (!Value.Check(CompanyProfileEventSchema, event)) return;
+    for (const sender of senders.values()) {
+      sender.send(IPC_CHANNELS.industryResearchCompanyProfileEvents, event);
+    }
+  });
 
   deps.ipcMain.handle(IPC_CHANNELS.industryResearchCreateItem, async (_event, ...args) => {
     const input = args[0];
@@ -257,6 +278,28 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.industryResearch.listCompanies(itemId);
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchUpdateCompany, async (_event, ...args) => {
+    const companyId = args[0];
+    const input = args[1];
+    if (
+      args.length !== 2 ||
+      typeof companyId !== "string" ||
+      companyId.length === 0 ||
+      !Value.Check(CompanyProfileInputSchema, input) ||
+      input.name.trim().length === 0
+    ) {
+      throw new Error("invalid company profile");
+    }
+    try {
+      return deps.industryResearch.updateCompany(companyId, input);
+    } catch (error) {
+      if (error instanceof Error && /already exists/i.test(error.message)) {
+        throw new Error("company name already exists");
+      }
+      throw new Error("company profile update failed");
+    }
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.industryResearchAddCompany, async (_event, ...args) => {
     const itemId = args[0];
     const draft = args[1];
@@ -337,6 +380,23 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
       throw new Error("invalid company input");
     }
     return deps.industryResearch.recognizeCompanies(itemId, text);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchRetryCompanyProfile, (_event, ...args) => {
+    const companyId = args[0];
+    if (args.length !== 1 || typeof companyId !== "string" || companyId.length === 0) {
+      throw new Error("invalid company input");
+    }
+    try {
+      return deps.industryResearch.retryCompanyProfile(companyId);
+    } catch {
+      throw new Error("company profile retry failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchSubscribeCompanyProfiles, async (event, ...args) => {
+    if (args.length !== 0) throw new Error("invalid company profile subscription");
+    trackSender(event.sender);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchStart, async (event, ...args) => {
@@ -480,6 +540,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
 
   return () => {
     unsubscribeResearch();
+    unsubscribeProfiles();
     for (const channel of INVOKE_CHANNELS) {
       deps.ipcMain.removeHandler(channel);
     }

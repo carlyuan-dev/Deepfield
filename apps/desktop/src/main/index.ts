@@ -133,8 +133,10 @@ void app.whenReady().then(async () => {
     },
     titleGenerator: deepSeekService,
     companyRecognizer,
+    companyCompleter: deepSeekService,
   });
   appRuntime.companyResearch.cleanupAbandoned();
+  appRuntime.companyProfiles.resume();
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
     conversations: appRuntime.conversationService,
@@ -144,6 +146,7 @@ void app.whenReady().then(async () => {
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
     companyResearch: appRuntime.companyResearch,
+    companyProfiles: appRuntime.companyProfiles,
   });
 
   mainWindow = createWindow();
@@ -169,6 +172,7 @@ app.on("before-quit", () => {
   toolHost = undefined;
   agentRuntime?.dispose();
   agentRuntime = undefined;
+  appRuntime?.companyProfiles.dispose();
   appRuntime = undefined;
   if (database) {
     try {

@@ -4,6 +4,9 @@ import type {
   AgentWorkerEvent,
   CapabilityItem,
   CapabilityItemId,
+  Company,
+  CompanyProfileInput,
+  CompanyProfileEvent,
   ChatMessage,
   ChatRequestOptions,
   ChatSendResult,
@@ -35,11 +38,14 @@ export interface FakeDesktopApi extends DesktopApi {
     listItems: Mock<() => Promise<CapabilityItem[]>>;
     getItem: Mock<(itemId: string) => Promise<CapabilityItem | undefined>>;
     listCompanies: Mock<(itemId: string) => Promise<ItemCompanyView[]>>;
+    updateCompany: Mock<(companyId: string, input: CompanyProfileInput) => Promise<Company>>;
     addCompany: Mock<(itemId: string, draft: CompanyDraft) => Promise<ItemCompanyView>>;
     addCompanies: Mock<(itemId: string, drafts: CompanyDraft[]) => Promise<ItemCompanyView[]>>;
     removeCompany: Mock<(itemId: string, companyId: string) => Promise<void>>;
     removeCompanies: Mock<(itemId: string, companyIds: string[]) => Promise<void>>;
     recognizeCompanies: Mock<(itemId: string, text: string) => Promise<CompanyDraft[]>>;
+    retryCompanyProfile: Mock<(companyId: string) => Promise<boolean>>;
+    subscribeCompanyProfiles: Mock<(listener: (event: CompanyProfileEvent) => void) => () => void>;
   };
   companyResearch: {
     start: Mock<(itemId: string, companyId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
@@ -74,6 +80,7 @@ export interface FakeDesktopApi extends DesktopApi {
   researchListeners: Set<(event: CompanyResearchWorkerEvent) => void>;
   emit(event: AgentWorkerEvent): void;
   emitResearch(event: CompanyResearchWorkerEvent): void;
+  emitProfile(event: CompanyProfileEvent): void;
   nextRequestId(): string;
 }
 
@@ -117,6 +124,7 @@ export function chatSendResult(
 export function makeFakeApi(): FakeDesktopApi {
   const listeners = new Set<(event: AgentWorkerEvent) => void>();
   const researchListeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
+  const profileListeners = new Set<(event: CompanyProfileEvent) => void>();
   const api = {
     conversations: {
       create: vi.fn(async (): Promise<Conversation> => conversationFixture()),
@@ -152,6 +160,9 @@ export function makeFakeApi(): FakeDesktopApi {
       listItems: vi.fn(async (): Promise<CapabilityItem[]> => []),
       getItem: vi.fn(async (): Promise<CapabilityItem | undefined> => undefined),
       listCompanies: vi.fn(async (): Promise<ItemCompanyView[]> => []),
+      updateCompany: vi.fn(async (): Promise<Company> => {
+        throw new Error("not implemented");
+      }),
       addCompany: vi.fn(async (): Promise<ItemCompanyView> => {
         throw new Error("not implemented");
       }),
@@ -159,6 +170,11 @@ export function makeFakeApi(): FakeDesktopApi {
       removeCompany: vi.fn(async (): Promise<void> => {}),
       removeCompanies: vi.fn(async (): Promise<void> => {}),
       recognizeCompanies: vi.fn(async (): Promise<CompanyDraft[]> => []),
+      retryCompanyProfile: vi.fn(async (): Promise<boolean> => true),
+      subscribeCompanyProfiles: vi.fn((listener: (event: CompanyProfileEvent) => void) => {
+        profileListeners.add(listener);
+        return () => profileListeners.delete(listener);
+      }),
     },
     companyResearch: {
       start: vi.fn(async (): Promise<ResearchRun> => {
@@ -219,6 +235,9 @@ export function makeFakeApi(): FakeDesktopApi {
     },
     emitResearch: (event: CompanyResearchWorkerEvent): void => {
       for (const listener of [...researchListeners]) listener(event);
+    },
+    emitProfile: (event: CompanyProfileEvent): void => {
+      for (const listener of [...profileListeners]) listener(event);
     },
     nextRequestId: (): string => `req-${++sendSeq}`,
   };

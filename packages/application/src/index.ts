@@ -15,6 +15,11 @@ export {
   CompanyResearchService,
   CompanyResearchServiceError,
 } from "./company-research-service.js";
+export { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
+export type {
+  CompanyProfileEnrichmentOptions,
+  CompanyProfileFailureDiagnostic,
+} from "./company-profile-enrichment-service.js";
 export type { CompanyResearchServiceOptions } from "./company-research-service.js";
 export type { ChatSendResult, ChatServiceOptions } from "./chat-service.js";
 export type { ItemCompanyView } from "./industry-research-service.js";
@@ -23,6 +28,8 @@ export type {
   CompanyResearchWorkerPort,
   ConversationTitleGenerator,
   CompanyRecognizer,
+  CompanyCompleter,
+  CompanyCompletionContext,
   ProviderKeyReader,
   RequestIdFactory,
   SecretReader,

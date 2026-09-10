@@ -27,7 +27,7 @@ export function ResearchItemModal({ api, item, onClose, onSaved }: ResearchItemM
     if (submitting) return;
     const trimmedIndustry = industry.trim();
     if (trimmedIndustry.length === 0) {
-      setError("请填写行业");
+      setError("请填写主题名称");
       return;
     }
     setSubmitting(true);
@@ -51,10 +51,10 @@ export function ResearchItemModal({ api, item, onClose, onSaved }: ResearchItemM
   };
 
   return (
-    <Modal title={editing ? "编辑行业" : "添加行业"} onClose={onClose}>
+    <Modal title={editing ? "编辑主题" : "新建主题"} onClose={onClose}>
       <form className="modal-form" onSubmit={handleSubmit}>
         {error !== undefined && <p className="error" role="alert">{error}</p>}
-        <label>行业<input value={industry} onChange={(event) => setIndustry(event.target.value)} required /></label>
+        <label>主题名称<input value={industry} onChange={(event) => setIndustry(event.target.value)} required /></label>
         <label>研究范围（可选）<textarea value={researchScope} onChange={(event) => setResearchScope(event.target.value)} rows={3} /></label>
         <label>备注（可选）<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} /></label>
         <div className="modal-actions">

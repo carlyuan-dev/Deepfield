@@ -19,7 +19,13 @@ function request(): CompanyResearchWorkerRequest {
     context: {
       currentDate: "2026-09-09",
       companyName: "Unitree Robotics",
-      countryOrRegion: "China",
+      legalName: "Hangzhou Yushu Technology Co., Ltd.",
+      aliases: ["Unitree"],
+      headquarters: "Hangzhou, China",
+      foundedAt: "2016",
+      officialWebsite: "https://www.unitree.com",
+      stockListings: [],
+      businessTags: ["Robotics", "Embodied AI"],
       industry: "Humanoid Robotics",
       researchScope: "Commercialization and core components",
       companyNote: "Candidate note for this industry only",
@@ -66,7 +72,9 @@ describe("company research agent", () => {
       max_output_tokens: 32768,
     });
     expect(body).not.toHaveProperty("messages");
-    expect(body.instructions).toEqual(expect.stringContaining("company-research-v1"));
+    expect(body.instructions).toEqual(expect.stringContaining("company-research-v2"));
+    expect(body.instructions).toEqual(expect.stringContaining("仅用于识别调研对象"));
+    expect(body.instructions).toEqual(expect.stringContaining("不得把补全、纠正或更新"));
     expect(body.instructions).toEqual(expect.stringContaining("中文调研报告"));
     expect(body.instructions).toEqual(expect.stringContaining("每项重要结论只保留一个最合适的来源"));
     expect(body.instructions).toEqual(expect.stringContaining("完整的 http/https 网址"));
@@ -78,7 +86,13 @@ describe("company research agent", () => {
     for (const expected of [
       "2026-09-09",
       "Unitree Robotics",
-      "China",
+      "Hangzhou Yushu Technology Co., Ltd.",
+      "Unitree",
+      "Hangzhou, China",
+      "2016",
+      "https://www.unitree.com",
+      "已确认未上市",
+      "Robotics、Embodied AI",
       "Humanoid Robotics",
       "Commercialization and core components",
       "Candidate note for this industry only",

@@ -103,6 +103,7 @@
 .company-row-button small { display: block; margin-left: auto; color: var(--muted); }
 .company-remove-button {
   flex: none;
+  align-self: center;
   width: 34px;
   padding: 0;
   color: var(--muted);
@@ -188,6 +189,58 @@
   padding: 7px 10px;
   background: var(--panel);
 }
+.modal-form select { width: 100%; }
+.modal-form .inline-check { flex-direction: row; align-items: center; }
+.modal-form .inline-check input { width: auto; }
+.company-list-row.profile-pending,
+.company-list-row.profile-enriching { opacity: 0.55; }
+.company-profile-spinner {
+  flex: none;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: company-profile-spin 0.8s linear infinite;
+}
+.company-profile-retry { flex: none; align-self: center; padding: 4px 9px; }
+.company-profile-failed {
+  flex: none;
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #c9342f;
+  border: 2px solid #c9342f;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 800;
+}
+@keyframes company-profile-spin { to { transform: rotate(360deg); } }
+.company-profile-form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.company-profile-form label { display: flex; flex-direction: column; gap: 5px; }
+.company-profile-form input,
+.company-profile-form textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: var(--panel);
+}
+.company-profile-form select { width: 100%; }
+.company-profile-form .inline-check { flex-direction: row; align-items: center; }
+.company-profile-form .inline-check input { width: auto; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .modal-footer {
   flex: none;

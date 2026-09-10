@@ -32,7 +32,26 @@ export const CompanyResearchContextSchema = Type.Object(
   {
     currentDate: Type.String({ minLength: 1, maxLength: 64 }),
     companyName: Type.String({ minLength: 1, maxLength: 300 }),
-    countryOrRegion: Type.Optional(Type.String({ maxLength: 200 })),
+    legalName: Type.Optional(Type.String({ maxLength: 500 })),
+    aliases: Type.Optional(Type.Array(Type.String({ maxLength: 300 }), { maxItems: 100 })),
+    headquarters: Type.Optional(Type.String({ maxLength: 500 })),
+    foundedAt: Type.Optional(Type.String({ maxLength: 10 })),
+    officialWebsite: Type.Optional(Type.Union([Type.String({ maxLength: 2000 }), Type.Null()])),
+    stockListings: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            exchange: Type.String({ maxLength: 100 }),
+            ticker: Type.String({ maxLength: 100 }),
+          },
+          { additionalProperties: false },
+        ),
+        { maxItems: 100 },
+      ),
+    ),
+    businessTags: Type.Optional(
+      Type.Array(Type.String({ maxLength: 100 }), { minItems: 1, maxItems: 5 }),
+    ),
     industry: Type.String({ minLength: 1, maxLength: 300 }),
     researchScope: Type.Optional(Type.String({ maxLength: 4000 })),
     companyNote: Type.Optional(Type.String({ maxLength: 4000 })),

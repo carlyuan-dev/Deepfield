@@ -17,20 +17,20 @@ describe("IndustryResearchService", () => {
     dbs.push(db);
     const recognizer = {
       recognize: async (): Promise<CompanyDraft[]> => [
-        { name: "  Beta Labs  ", countryOrRegion: " \t", note: "  " },
+        { name: "  Beta Labs  ", note: "recognizer metadata must be discarded" },
       ],
     };
     const service = new IndustryResearchService(db.repos, recognizer);
     const item = service.createItem({ industry: " 人形机器人 ", researchScope: " \t", notes: " " });
 
     const added = service.addCompanies(item.id, [
-      { name: " ＡＣＭＥ  Corp ", countryOrRegion: " ", note: " " },
-      { name: "acme corp", countryOrRegion: "US", note: "后出现，不覆盖首项" },
+      { name: " ＡＣＭＥ  Corp ", note: " " },
+      { name: "acme corp", note: "后出现，不覆盖首项" },
     ]);
 
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({ name: "ＡＣＭＥ  Corp", normalizedName: "acme corp" });
-    expect(added[0]?.countryOrRegion).toBeUndefined();
+    expect(added[0]?.headquarters).toBeUndefined();
     expect(added[0]?.note).toBeUndefined();
     expect(item.researchScope).toBeUndefined();
     expect(item.notes).toBeUndefined();
@@ -131,5 +131,143 @@ describe("IndustryResearchService", () => {
     expect(service.getItem(secondItem.id)).toBeUndefined();
     expect(db.repos.companies.getById(firstCompany.id)).toBeUndefined();
     expect(db.repos.companies.getById(secondCompany.id)).toBeUndefined();
+  });
+
+  it("validates and replaces the global company profile across industry memberships", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] });
+    const firstItem = service.createItem({ industry: "机器人" });
+    const secondItem = service.createItem({ industry: "智能制造" });
+    const company = service.addCompany(firstItem.id, { name: "ACME" });
+    service.addCompany(secondItem.id, { name: "ACME" });
+
+    const updated = service.updateCompany(company.id, {
+      name: " ACME Corporation ",
+      legalName: " ACME Corporation Ltd. ",
+      aliases: [],
+      headquarters: " Boston, US ",
+      foundedAt: "1998",
+      officialWebsite: null,
+      stockListings: [],
+      businessTags: [" 工业机器人 ", "机器视觉"],
+    });
+    expect(updated).toMatchObject({
+      name: "ACME Corporation",
+      legalName: "ACME Corporation Ltd.",
+      headquarters: "Boston, US",
+      businessTags: ["工业机器人", "机器视觉"],
+    });
+    expect(service.listCompanies(firstItem.id)[0]).toMatchObject(updated);
+    expect(service.listCompanies(secondItem.id)[0]).toMatchObject(updated);
+
+    expect(() => service.updateCompany(company.id, { name: "ACME", foundedAt: "1998-13" }))
+      .toThrow("invalid company profile");
+    expect(() => service.updateCompany(company.id, {
+      name: "ACME",
+      officialWebsite: "ftp://example.com",
+    })).toThrow("invalid company profile");
+    expect(() => service.updateCompany(company.id, {
+      name: "ACME",
+      businessTags: [],
+    })).toThrow("invalid company profile");
+  });
+
+  it("enqueues only newly-created global companies after their memberships are saved", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const enqueued: string[] = [];
+    const service = new IndustryResearchService(
+      db.repos,
+      { recognize: async () => [] },
+      { enqueue: (companyId) => enqueued.push(companyId) },
+    );
+    const firstItem = service.createItem({ industry: "机器人" });
+    const secondItem = service.createItem({ industry: "工业软件" });
+
+    const [first, second] = service.addCompanies(firstItem.id, [
+      { name: "First" },
+      { name: "Second" },
+    ]);
+    expect(enqueued).toEqual([first!.id, second!.id]);
+    expect(first?.profileStatus).toBe("pending");
+
+    service.addCompany(secondItem.id, { name: " first " });
+    expect(enqueued).toEqual([first!.id, second!.id]);
+    expect(service.listCompanies(secondItem.id)[0]?.id).toBe(first!.id);
+  });
+
+  it("reuses a global company when an imported name matches its primary name or confirmed alias", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const enqueued: string[] = [];
+    const service = new IndustryResearchService(
+      db.repos,
+      { recognize: async () => [] },
+      { enqueue: (companyId) => enqueued.push(companyId) },
+    );
+    const firstItem = service.createItem({ industry: "搜索引擎" });
+    const secondItem = service.createItem({ industry: "人工智能" });
+    const google = service.addCompany(firstItem.id, { name: "google" });
+    service.updateCompany(google.id, {
+      name: "google",
+      aliases: ["Google Inc.", "谷歌"],
+    });
+
+    const added = service.addCompanies(secondItem.id, [
+      { name: "谷歌" },
+      { name: "Google" },
+      { name: "GooGle" },
+    ]);
+
+    expect(added).toHaveLength(1);
+    expect(added[0]?.id).toBe(google.id);
+    expect(service.listCompanies(secondItem.id).map((company) => company.id)).toEqual([google.id]);
+    expect(db.repos.companies.list()).toHaveLength(1);
+    expect(enqueued).toEqual([google.id]);
+  });
+
+  it("prefers an exact primary name and does not merge an ambiguous alias", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] });
+    const sourceItem = service.createItem({ industry: "来源" });
+    const targetItem = service.createItem({ industry: "目标" });
+    const google = service.addCompany(sourceItem.id, { name: "google" });
+    service.updateCompany(google.id, { name: "google", aliases: ["谷歌", "共同别名"] });
+    const chineseGoogle = db.repos.companies.upsert({ name: "谷歌" });
+    const another = db.repos.companies.upsert({ name: "另一家公司" });
+    db.repos.companies.update(another.id, { name: "另一家公司", aliases: ["共同别名"] });
+
+    const exact = service.addCompany(targetItem.id, { name: "谷歌" });
+    const ambiguous = service.addCompany(targetItem.id, { name: "共同别名" });
+
+    expect(exact.id).toBe(chineseGoogle.id);
+    expect(exact.id).not.toBe(google.id);
+    expect(ambiguous.id).not.toBe(google.id);
+    expect(ambiguous.id).not.toBe(another.id);
+    expect(ambiguous.name).toBe("共同别名");
+  });
+
+  it("delegates an explicit failed-profile retry to the enrichment queue", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const retried: string[] = [];
+    const service = new IndustryResearchService(
+      db.repos,
+      { recognize: async () => [] },
+      {
+        enqueue: () => {},
+        retry: (companyId) => {
+          retried.push(companyId);
+          return true;
+        },
+      },
+    );
+    const item = service.createItem({ industry: "智能眼镜" });
+    const company = service.addCompany(item.id, { name: "乐奇" });
+
+    expect(service.retryCompanyProfile(company.id)).toBe(true);
+    expect(retried).toEqual([company.id]);
   });
 });

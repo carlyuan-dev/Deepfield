@@ -6,6 +6,6 @@ export class FakeCompanyRecognizer implements CompanyRecognizer {
     if (text.trim().length === 0) {
       return [];
     }
-    return [{ name: "Deepfield 演示公司", countryOrRegion: "中国", note: "fake recognizer" }];
+    return [{ name: "Deepfield 演示公司" }];
   }
 }

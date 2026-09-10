@@ -4,6 +4,7 @@ import type {
   CompanyResearchWorkerEvent,
   CompanyResearchWorkerRequest,
   CompanyDraft,
+  CompanyProfileFields,
 } from "@deepfield/contracts";
 
 export interface SecretReader {
@@ -25,6 +26,14 @@ export interface ConversationTitleGenerator {
 
 export interface CompanyRecognizer {
   recognize(text: string): Promise<CompanyDraft[]>;
+}
+
+export interface CompanyCompletionContext {
+  researchTopics?: string[];
+}
+
+export interface CompanyCompleter {
+  complete(name: string, context?: CompanyCompletionContext): Promise<CompanyProfileFields>;
 }
 
 export type RequestIdFactory = () => string;

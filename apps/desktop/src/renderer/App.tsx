@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { DesktopApi } from "@deepfield/contracts";
 import { createChatEventHub } from "./state/chat-event-hub.js";
 import { createRequestId } from "./request-id.js";
@@ -26,18 +26,30 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "connected" | "disconnected">(
     "checking",
   );
+  const connectionCheckSequence = useRef(0);
   const eventHub = useMemo(() => createChatEventHub(), []);
 
   const checkConnection = useCallback((): void => {
+    const sequence = ++connectionCheckSequence.current;
     setConnectionStatus("checking");
     void api.llm.checkConnection().then(
-      (status) => setConnectionStatus(status),
-      () => setConnectionStatus("disconnected"),
+      (status) => {
+        if (sequence === connectionCheckSequence.current) setConnectionStatus(status);
+      },
+      () => {
+        if (sequence === connectionCheckSequence.current) setConnectionStatus("disconnected");
+      },
     );
   }, [api]);
 
   useEffect(() => {
     checkConnection();
+    const interval = window.setInterval(checkConnection, 30_000);
+    window.addEventListener("focus", checkConnection);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", checkConnection);
+    };
   }, [checkConnection]);
 
   useEffect(() => {

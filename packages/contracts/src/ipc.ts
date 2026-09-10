@@ -1,7 +1,10 @@
 import { Type } from "typebox";
 import type {
   CapabilityItem,
+  Company,
   CompanyDraft,
+  CompanyProfileInput,
+  CompanyProfileEvent,
   CreateIndustryResearchItemInput,
   ItemCompanyView,
   UpdateIndustryResearchItemInput,
@@ -46,11 +49,14 @@ export interface DesktopApi {
     listItems(): Promise<CapabilityItem[]>;
     getItem(itemId: string): Promise<CapabilityItem | undefined>;
     listCompanies(itemId: string): Promise<ItemCompanyView[]>;
+    updateCompany(companyId: string, input: CompanyProfileInput): Promise<Company>;
     addCompany(itemId: string, draft: CompanyDraft): Promise<ItemCompanyView>;
     addCompanies(itemId: string, drafts: CompanyDraft[]): Promise<ItemCompanyView[]>;
     removeCompany(itemId: string, companyId: string): Promise<void>;
     removeCompanies(itemId: string, companyIds: string[]): Promise<void>;
     recognizeCompanies(itemId: string, text: string): Promise<CompanyDraft[]>;
+    retryCompanyProfile(companyId: string): Promise<boolean>;
+    subscribeCompanyProfiles(listener: (event: CompanyProfileEvent) => void): () => void;
   };
   companyResearch: {
     start(

@@ -8,6 +8,7 @@ import type {
   AgentWorkerEvent,
   ChatRequestOptions,
   CompanyResearchWorkerEvent,
+  CompanyProfileEvent,
   DesktopApi,
 } from "@deepfield/contracts";
 
@@ -65,6 +66,9 @@ describe("preload api", () => {
       "recognizeCompanies",
       "removeCompanies",
       "removeCompany",
+      "retryCompanyProfile",
+      "subscribeCompanyProfiles",
+      "updateCompany",
       "updateItem",
     ]);
     expect(Object.keys(api.settings).sort()).toEqual(["hasDeepSeekKey", "setDeepSeekKey"]);
@@ -98,11 +102,14 @@ describe("preload api", () => {
     await api.industryResearch.listItems();
     await api.industryResearch.getItem("item-1");
     await api.industryResearch.listCompanies("item-1");
+    await api.industryResearch.updateCompany("company-1", { name: "公司甲", aliases: [] });
     await api.industryResearch.addCompany("item-1", { name: "公司甲" });
     await api.industryResearch.addCompanies("item-1", [{ name: "公司乙" }]);
     await api.industryResearch.removeCompany("item-1", "company-1");
     await api.industryResearch.removeCompanies("item-1", ["company-1", "company-2"]);
     await api.industryResearch.recognizeCompanies("item-1", "公司甲");
+    await api.industryResearch.retryCompanyProfile("company-1");
+    api.industryResearch.subscribeCompanyProfiles(() => {});
     await api.companyResearch.start("item-1", "company-1", { timeScope: "近一年" });
     await api.companyResearch.cancel("run-1");
     await api.companyResearch.getState("item-1", "company-1");
@@ -124,11 +131,14 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.industryResearchListItems, args: [] },
       { channel: IPC_CHANNELS.industryResearchGetItem, args: ["item-1"] },
       { channel: IPC_CHANNELS.industryResearchListCompanies, args: ["item-1"] },
+      { channel: IPC_CHANNELS.industryResearchUpdateCompany, args: ["company-1", { name: "公司甲", aliases: [] }] },
       { channel: IPC_CHANNELS.industryResearchAddCompany, args: ["item-1", { name: "公司甲" }] },
       { channel: IPC_CHANNELS.industryResearchAddCompanies, args: ["item-1", [{ name: "公司乙" }]] },
       { channel: IPC_CHANNELS.industryResearchRemoveCompany, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.industryResearchRemoveCompanies, args: ["item-1", ["company-1", "company-2"]] },
       { channel: IPC_CHANNELS.industryResearchRecognizeCompanies, args: ["item-1", "公司甲"] },
+      { channel: IPC_CHANNELS.industryResearchRetryCompanyProfile, args: ["company-1"] },
+      { channel: IPC_CHANNELS.industryResearchSubscribeCompanyProfiles, args: [] },
       { channel: IPC_CHANNELS.companyResearchStart, args: ["item-1", "company-1", { timeScope: "近一年" }] },
       { channel: IPC_CHANNELS.companyResearchCancel, args: ["run-1"] },
       { channel: IPC_CHANNELS.companyResearchGetState, args: ["item-1", "company-1"] },
@@ -182,5 +192,17 @@ describe("preload api", () => {
     expect(researchReceived).toEqual([validResearch]);
     unsubscribeResearch();
     expect(researchSet?.size).toBe(0);
+
+    const profileReceived: CompanyProfileEvent[] = [];
+    const unsubscribeProfile = api.industryResearch.subscribeCompanyProfiles((event) => profileReceived.push(event));
+    const profileSet = listeners.get(IPC_CHANNELS.industryResearchCompanyProfileEvents);
+    const validProfile: CompanyProfileEvent = { companyId: "company-1", status: "ready" };
+    for (const listener of [...(profileSet ?? [])]) {
+      listener({}, validProfile);
+      listener({}, { companyId: "company-1", status: "bogus" });
+    }
+    expect(profileReceived).toEqual([validProfile]);
+    unsubscribeProfile();
+    expect(profileSet?.size).toBe(0);
   });
 });
