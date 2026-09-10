@@ -41,6 +41,24 @@ function makeFakeIpc(): FakeIpc {
 }
 
 describe("preload api", () => {
+  it("forwards safe transient state outcomes without admitting Worker failures", () => {
+    const { ipc, listeners } = makeFakeIpc();
+    const api = createPreloadApi(ipc);
+    const received: CompanyResearchEvent[] = [];
+    api.companyResearch.subscribe((event) => received.push(event));
+    const changed = { type: "state_changed", itemId: "item-1", companyId: "company-1", runId: "run-1" };
+    const failed = { ...changed, outcome: "research_failed" };
+    const cancelled = { ...changed, outcome: "cancelled" };
+    for (const listener of listeners.get(IPC_CHANNELS.companyResearchEvents) ?? []) {
+      listener({}, failed);
+      listener({}, cancelled);
+      listener({}, { ...changed, outcome: "provider-error sk-secret" });
+      listener({}, { ...changed, outcome: "research_failed", message: "provider secret" });
+      listener({}, { requestId: "rr", runId: "run-1", stage: "raw", type: "failed", code: "research_failed", message: "company research failed" });
+    }
+    expect(received).toEqual([failed, cancelled]);
+  });
+
   it("exposes only the DesktopApi shape without ipcRenderer or secrets", () => {
     const { ipc } = makeFakeIpc();
     const api: DesktopApi = createPreloadApi(ipc);

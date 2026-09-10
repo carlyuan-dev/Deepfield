@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from "electron";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
 import type { Repositories } from "@deepfield/persistence";
 import { SqliteToolAudit } from "@deepfield/application";
@@ -11,7 +12,8 @@ import {
   createApplicationRuntime,
   type ApplicationRuntime,
 } from "./application-runtime.js";
-import { registerIpcHandlers, type IpcMainLike } from "./ipc.js";
+import { registerIpcHandlers } from "./ipc.js";
+import { createTrustedIpcMainAdapter } from "./ipc-trusted-adapter.js";
 import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
 import { DeepSeekService } from "./deepseek-service.js";
@@ -26,10 +28,11 @@ let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
 let mainSkillCatalog: PiSkillCatalog | undefined;
 
-const ipcMainAdapter: IpcMainLike = {
-  handle: (channel, listener) => ipcMain.handle(channel, listener),
-  removeHandler: (channel) => ipcMain.removeHandler(channel),
-};
+const ipcMainAdapter = createTrustedIpcMainAdapter(
+  ipcMain,
+  () => mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
+  process.env.ELECTRON_RENDERER_URL || pathToFileURL(join(__dirname, "../renderer/index.html")).href,
+);
 
 function startAgentWorker(
   repositories: Repositories,

@@ -22,6 +22,7 @@ import type {
   StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import { getCompanyResearchTemplate } from "@deepfield/contracts";
+import { vi } from "vitest";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
   registerIpcHandlers,
@@ -29,6 +30,10 @@ import {
   type IpcServiceDeps,
   type WebContentsLike,
 } from "./ipc.js";
+
+// IPC only imports the setting name. Application services are supplied below,
+// so focused boundary tests do not need to load the Application barrel.
+vi.mock("@deepfield/application", () => ({ DEEPSEEK_KEY_NAME: "deepseek.apiKey" }));
 
 export class FakeWebContents implements WebContentsLike {
   sent: Array<{ channel: string; payload: unknown }> = [];

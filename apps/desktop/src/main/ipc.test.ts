@@ -262,6 +262,24 @@ describe("ipc handlers", () => {
     expect(b.destroyedListenerCount).toBe(0);
   });
 
+  it("forwards only the safe transient outcomes on public state changes", async () => {
+    const { ipcMain, companyResearch } = makeDeps();
+    const sender = new FakeWebContents(1);
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchSubscribe, event(sender));
+    const changed = { type: "state_changed", itemId: "item-1", companyId: "company-1", runId: "run-1" };
+    const failed = { ...changed, outcome: "research_failed" };
+    const cancelled = { ...changed, outcome: "cancelled" };
+    companyResearch.emit(failed);
+    companyResearch.emit(cancelled);
+    companyResearch.emit({ ...changed, outcome: "provider-error sk-secret" });
+    companyResearch.emit({ ...changed, outcome: "research_failed", message: "provider secret" });
+    companyResearch.emit({ requestId: "rr", runId: "run-1", stage: "raw", type: "failed", code: "research_failed", message: "company research failed" });
+    expect(sender.sent).toEqual([
+      { channel: IPC_CHANNELS.companyResearchEvents, payload: failed },
+      { channel: IPC_CHANNELS.companyResearchEvents, payload: cancelled },
+    ]);
+  });
+
   it("requires a non-blank string when setting the key and never returns the secret", async () => {
     const { ipcMain, settings } = makeDeps();
     const sender = new FakeWebContents(1);
