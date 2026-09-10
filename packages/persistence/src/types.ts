@@ -13,6 +13,12 @@ import type {
   CreateIndustryResearchItemInput,
   MessageId,
   ResearchRun,
+  ActiveResearchRunSummary,
+  CompanyResearchContext,
+  CompanyResearchTemplateSnapshot,
+  KeyResearchRun,
+  ResearchRunSummary,
+  StructuredResearchContent,
   ResearchRunId,
   StartCompanyResearchInput,
   ItemCompany,
@@ -47,17 +53,25 @@ export interface ItemCompanyRepository {
 }
 
 export interface CompanyResearchRunRepository {
-  createRunning(
+  createResearching(
     itemId: CapabilityItemId,
     companyId: CompanyId,
     input: StartCompanyResearchInput,
-  ): ResearchRun;
-  complete(runId: ResearchRunId, reportText: string): ResearchRun;
-  delete(runId: ResearchRunId): boolean;
-  deleteAllRunning(): number;
-  getById(runId: ResearchRunId): ResearchRun | undefined;
-  getRunning(): ResearchRun | undefined;
-  listCompleted(itemId: CapabilityItemId, companyId: CompanyId): ResearchRun[];
+    context: CompanyResearchContext,
+    template: CompanyResearchTemplateSnapshot,
+  ): KeyResearchRun;
+  completeRaw(runId: ResearchRunId, rawReportText: string): KeyResearchRun;
+  failStructuring(runId: ResearchRunId): KeyResearchRun;
+  retryStructuring(runId: ResearchRunId): KeyResearchRun;
+  completeStructured(runId: ResearchRunId, content: StructuredResearchContent): KeyResearchRun;
+  /** Throws unless the run is still researching. */
+  deleteResearching(runId: ResearchRunId): boolean;
+  recoverAbandoned(): { deletedResearching: number; failedStructuring: number };
+  getByIdForTarget(itemId: CapabilityItemId, companyId: CompanyId, runId: ResearchRunId): ResearchRun | undefined;
+  /** Global occupancy, excluding report bodies and snapshots. */
+  getActive(): ActiveResearchRunSummary | undefined;
+  /** Completed and structure_failed summaries, newest terminal artifact first. */
+  listRuns(itemId: CapabilityItemId, companyId: CompanyId): ResearchRunSummary[];
 }
 
 export interface ConversationRepository {
@@ -221,10 +235,24 @@ export interface CompanyResearchRunRow {
   id: string;
   item_id: string;
   company_id: string;
-  status: "running" | "completed";
-  time_scope: string;
-  custom_requirements: string | null;
-  report_text: string | null;
+  schema_version: string;
+  status: string;
+  research_direction: string | null;
+  focus_scope: string | null;
+  as_of_date: string | null;
+  research_context_json: string | null;
+  template_id: string | null;
+  template_version: number | null;
+  template_snapshot_json: string | null;
+  harness_version: number | null;
+  raw_report_text: string | null;
+  raw_completed_at: string | null;
+  structured_content_json: string | null;
+  structuring_attempts: number;
+  last_failure_code: string | null;
+  legacy_time_scope: string | null;
+  legacy_custom_requirements: string | null;
+  legacy_report_text: string | null;
   created_at: string;
   completed_at: string | null;
 }

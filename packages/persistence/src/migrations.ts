@@ -192,6 +192,55 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 8,
+    up(db) {
+      db.exec(`
+        CREATE TABLE company_research_runs_v8(
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          company_id TEXT NOT NULL,
+          schema_version TEXT NOT NULL CHECK(schema_version IN ('legacy-freeform-v1', 'company-research-report-v1')),
+          status TEXT NOT NULL CHECK(status IN ('researching', 'structuring', 'structure_failed', 'completed')),
+          research_direction TEXT,
+          focus_scope TEXT,
+          as_of_date TEXT,
+          research_context_json TEXT,
+          template_id TEXT,
+          template_version INTEGER,
+          template_snapshot_json TEXT,
+          harness_version INTEGER,
+          raw_report_text TEXT,
+          raw_completed_at TEXT,
+          structured_content_json TEXT,
+          structuring_attempts INTEGER NOT NULL DEFAULT 0 CHECK(structuring_attempts >= 0),
+          last_failure_code TEXT CHECK(last_failure_code IS NULL OR last_failure_code = 'structuring_failed'),
+          legacy_time_scope TEXT,
+          legacy_custom_requirements TEXT,
+          legacy_report_text TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          FOREIGN KEY(item_id, company_id)
+            REFERENCES capability_item_companies(item_id, company_id) ON DELETE CASCADE
+        );
+        INSERT INTO company_research_runs_v8(
+          id, item_id, company_id, schema_version, status,
+          legacy_time_scope, legacy_custom_requirements, legacy_report_text,
+          created_at, completed_at
+        )
+        SELECT id, item_id, company_id, 'legacy-freeform-v1', 'completed',
+          time_scope, custom_requirements, report_text, created_at, completed_at
+        FROM company_research_runs WHERE status = 'completed';
+        DROP TABLE company_research_runs;
+        ALTER TABLE company_research_runs_v8 RENAME TO company_research_runs;
+        CREATE UNIQUE INDEX idx_company_research_one_active
+          ON company_research_runs((1)) WHERE status IN ('researching', 'structuring');
+        CREATE INDEX idx_company_research_completed_history
+          ON company_research_runs(item_id, company_id, completed_at DESC, id DESC)
+          WHERE status IN ('completed', 'structure_failed');
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

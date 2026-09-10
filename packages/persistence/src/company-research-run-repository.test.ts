@@ -2,115 +2,259 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  getCompanyResearchTemplate, type CompanyResearchContext,
+  type StartCompanyResearchInput, type StructuredResearchContent,
+} from "@deepfield/contracts";
 import { createRepositories, migrate, openDatabase } from "./index.js";
 
 const cleanups: Array<() => void> = [];
+afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
+const input: StartCompanyResearchInput = {
+  direction: "product_and_technology", focusScope: "海外业务", asOfDate: "2026-09-11",
+};
+const context: CompanyResearchContext = {
+  ...input, companyName: "ACME", topicName: "Robotics", currentDate: "2026-09-11",
+  aliases: ["ACME Robotics"], topicScope: "整机", companyNote: "首选",
+};
+const template = getCompanyResearchTemplate(input.direction);
+const content: StructuredResearchContent = {
+  coreSummary: ["暂无足够信息"],
+  sections: template.sections.map(({ sectionId }) => ({
+    sectionId, status: "not_found", summary: null, facts: [],
+  })),
+};
+const rawText = "# 原始报告\n[来源](https://example.com/a)";
 
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
-});
-
-function openFixture() {
+function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "deepfield-research-runs-"));
   const path = join(directory, "deepfield.sqlite");
   const db = openDatabase(path);
   migrate(db);
   cleanups.push(() => {
-    try {
-      db.close();
-    } catch {
-      // already closed
-    }
+    try { db.close(); } catch { /* already closed */ }
     rmSync(directory, { recursive: true, force: true });
   });
-  return { db, path, repos: createRepositories(db) };
-}
-
-function addMembership(repos: ReturnType<typeof createRepositories>, industry: string) {
-  const item = repos.capabilityItems.create({ industry });
-  const company = repos.companies.upsert({ name: `${industry} Company` });
+  const repos = createRepositories(db);
+  const item = repos.capabilityItems.create({ industry: "Robotics" });
+  const company = repos.companies.upsert({ name: "ACME" });
   repos.itemCompanies.add(item.id, company.id);
-  return { item, company };
+  const repo = repos.companyResearchRuns;
+  const create = () => repo.createResearching(item.id, company.id, input, context, template);
+  return { db, path, repos, repo, item, company, create };
 }
 
 describe("company research run repository", () => {
-  it("persists multiple completed versions newest-first across repository reconstruction", () => {
-    const fixture = openFixture();
-    const { item, company } = addMembership(fixture.repos, "Robotics");
-
-    const first = fixture.repos.companyResearchRuns.createRunning(item.id, company.id, {
-      timeScope: "  近一年  ",
-      customRequirements: "  关注海外业务  ",
+  it("stores detached context and template snapshots before raw output, across reopen", () => {
+    const f = fixture();
+    const supplied = structuredClone(context);
+    const run = f.repo.createResearching(f.item.id, f.company.id, input, supplied, template);
+    supplied.companyName = "changed";
+    expect(run).toMatchObject({
+      status: "researching", schemaVersion: "company-research-report-v1",
+      researchContext: { companyName: "ACME" }, template, harnessVersion: 1, structuringAttempts: 0,
     });
-    expect(first).toMatchObject({
-      itemId: item.id,
-      companyId: company.id,
-      status: "running",
-      timeScope: "近一年",
-      customRequirements: "关注海外业务",
-    });
-    const firstCompleted = fixture.repos.companyResearchRuns.complete(first.id, "第一版报告");
-    fixture.db
-      .prepare("UPDATE company_research_runs SET completed_at = ? WHERE id = ?")
-      .run("2026-09-09T00:00:00.000Z", firstCompleted.id);
-
-    const second = fixture.repos.companyResearchRuns.createRunning(item.id, company.id, {
-      timeScope: "近三个月",
-      customRequirements: "   ",
-    });
-    const secondCompleted = fixture.repos.companyResearchRuns.complete(second.id, "第二版报告");
-
-    fixture.db.close();
-    const reopened = openDatabase(fixture.path);
-    cleanups.push(() => {
-      try {
-        reopened.close();
-      } catch {
-        // already closed
-      }
-    });
+    expect(run).not.toHaveProperty("rawReportText");
+    f.db.close();
+    const reopened = openDatabase(f.path);
+    cleanups.push(() => reopened.close());
     migrate(reopened);
-    const reconstructed = createRepositories(reopened);
-
-    expect(reconstructed.companyResearchRuns.listCompleted(item.id, company.id)).toEqual([
-      secondCompleted,
-      { ...firstCompleted, completedAt: "2026-09-09T00:00:00.000Z" },
-    ]);
+    const repo = createRepositories(reopened).companyResearchRuns;
+    expect(repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(run);
+    expect(repo.getActive()).toMatchObject({ id: run.id, status: "researching" });
+    for (const field of ["researchContext", "template", "harnessVersion", "rawReportText", "structuredContent"]) {
+      expect(repo.getActive()).not.toHaveProperty(field);
+    }
+    expect(repo.listRuns(f.item.id, f.company.id)).toEqual([]);
   });
 
-  it("enforces one global running row, cleans abandoned work, and cascades membership deletion", () => {
-    const { repos } = openFixture();
-    const first = addMembership(repos, "Robotics");
-    const second = addMembership(repos, "Semiconductors");
-
-    const abandoned = repos.companyResearchRuns.createRunning(first.item.id, first.company.id, {
-      timeScope: "近一年",
+  it("commits raw output before structuring and preserves it through failure and retry", () => {
+    const f = fixture();
+    const run = f.create();
+    const structuring = f.repo.completeRaw(run.id, rawText);
+    expect(structuring).toMatchObject({ status: "structuring", rawReportText: rawText, structuringAttempts: 1 });
+    expect(structuring.rawCompletedAt).toBeTruthy();
+    const connection = openDatabase(f.path);
+    cleanups.push(() => connection.close());
+    expect(createRepositories(connection).companyResearchRuns.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(structuring);
+    expect(f.repo.failStructuring(run.id)).toMatchObject({
+      status: "structure_failed", rawReportText: rawText, lastFailureCode: "structuring_failed",
     });
-    expect(repos.companyResearchRuns.getRunning()?.id).toBe(abandoned.id);
-    expect(() =>
-      repos.companyResearchRuns.createRunning(second.item.id, second.company.id, {
-        timeScope: "不限时间",
-      }),
-    ).toThrow();
-    expect(repos.companyResearchRuns.deleteAllRunning()).toBe(1);
-    expect(repos.companyResearchRuns.getRunning()).toBeUndefined();
+    expect(f.repo.getActive()).toBeUndefined();
+    const retry = f.repo.retryStructuring(run.id);
+    expect(retry).toMatchObject({ status: "structuring", structuringAttempts: 2, rawCompletedAt: structuring.rawCompletedAt });
+    expect(retry).not.toHaveProperty("lastFailureCode");
+    const completed = f.repo.completeStructured(run.id, content);
+    expect(completed).toMatchObject({ status: "completed", structuredContent: content, rawReportText: rawText, structuringAttempts: 2 });
+    expect(completed.completedAt).toBeTruthy();
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(completed);
+  });
 
-    const firstCompleted = repos.companyResearchRuns.complete(
-      repos.companyResearchRuns.createRunning(first.item.id, first.company.id, {
-        timeScope: "近一年",
-      }).id,
-      "Robotics report",
-    );
-    const secondCompleted = repos.companyResearchRuns.complete(
-      repos.companyResearchRuns.createRunning(second.item.id, second.company.id, {
-        timeScope: "近一年",
-      }).id,
-      "Semiconductors report",
-    );
+  it("guards every state transition, including deletion and missing IDs", () => {
+    const f = fixture();
+    const run = f.create();
+    expect(() => f.repo.completeStructured(run.id, content)).toThrow();
+    expect(() => f.repo.failStructuring(run.id)).toThrow();
+    expect(() => f.repo.retryStructuring(run.id)).toThrow();
+    f.repo.completeRaw(run.id, rawText);
+    expect(() => f.repo.completeRaw(run.id, "replacement")).toThrow();
+    expect(() => f.repo.deleteResearching(run.id)).toThrow();
+    f.repo.failStructuring(run.id);
+    expect(() => f.repo.failStructuring(run.id)).toThrow();
+    expect(() => f.repo.completeStructured(run.id, content)).toThrow();
+    f.repo.retryStructuring(run.id);
+    expect(() => f.repo.retryStructuring(run.id)).toThrow();
+    f.repo.completeStructured(run.id, content);
+    expect(() => f.repo.completeStructured(run.id, content)).toThrow();
+    expect(() => f.repo.deleteResearching(run.id)).toThrow();
+    const deleted = f.create();
+    expect(f.repo.deleteResearching(deleted.id)).toBe(true);
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, deleted.id)).toBeUndefined();
+    expect(() => f.repo.deleteResearching(deleted.id)).toThrow();
+    expect(() => f.repo.completeRaw(deleted.id, rawText)).toThrow();
+  });
 
-    repos.itemCompanies.remove(first.item.id, first.company.id);
-    expect(repos.companyResearchRuns.getById(firstCompleted.id)).toBeUndefined();
-    expect(repos.companyResearchRuns.listCompleted(first.item.id, first.company.id)).toEqual([]);
-    expect(repos.companyResearchRuns.getById(secondCompleted.id)).toEqual(secondCompleted);
+  it("enforces one global active run across stages, targets, connections, and retry", () => {
+    const f = fixture();
+    const other = f.repos.capabilityItems.create({ industry: "Other" });
+    f.repos.itemCompanies.add(other.id, f.company.id);
+    const connection = openDatabase(f.path);
+    cleanups.push(() => connection.close());
+    const repo = createRepositories(connection).companyResearchRuns;
+    const createOther = () => repo.createResearching(other.id, f.company.id, input, context, template);
+    const run = f.create();
+    expect(createOther).toThrow();
+    f.repo.completeRaw(run.id, rawText);
+    expect(createOther).toThrow();
+    f.repo.failStructuring(run.id);
+    const otherRun = createOther();
+    expect(() => f.repo.retryStructuring(run.id)).toThrow();
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)?.status).toBe("structure_failed");
+    repo.deleteResearching(otherRun.id);
+    expect(f.repo.retryStructuring(run.id).structuringAttempts).toBe(2);
+  });
+
+  it("recovers both interrupted stages idempotently and preserves terminal rows", () => {
+    const f = fixture();
+    const done = f.create();
+    f.repo.completeRaw(done.id, rawText);
+    const completed = f.repo.completeStructured(done.id, content);
+    const run = f.create();
+    const structuring = f.repo.completeRaw(run.id, rawText);
+    expect(f.repo.recoverAbandoned()).toEqual({ deletedResearching: 0, failedStructuring: 1 });
+    const failed = f.repo.getByIdForTarget(f.item.id, f.company.id, run.id);
+    expect(failed).toMatchObject({ status: "structure_failed", rawReportText: rawText, rawCompletedAt: structuring.rawCompletedAt, structuringAttempts: 1 });
+    const abandoned = f.create();
+    expect(f.repo.recoverAbandoned()).toEqual({ deletedResearching: 1, failedStructuring: 0 });
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, abandoned.id)).toBeUndefined();
+    expect(f.repo.recoverAbandoned()).toEqual({ deletedResearching: 0, failedStructuring: 0 });
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(failed);
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, done.id)).toEqual(completed);
+  });
+
+  it("lists body-free terminal history newest-first with deterministic ties", () => {
+    const f = fixture();
+    const completed = f.create();
+    f.repo.completeRaw(completed.id, rawText);
+    f.repo.completeStructured(completed.id, content);
+    f.db.prepare("UPDATE company_research_runs SET completed_at = '2026-09-01' WHERE id = ?").run(completed.id);
+    const failed = f.create();
+    f.repo.completeRaw(failed.id, rawText);
+    f.repo.failStructuring(failed.id);
+    const active = f.create();
+    expect(f.repo.listRuns(f.item.id, f.company.id).map((run) => run.id)).toEqual([failed.id, completed.id]);
+    f.repo.completeRaw(active.id, rawText);
+    f.repo.failStructuring(active.id);
+    f.db.prepare("UPDATE company_research_runs SET raw_completed_at = '2026-09-02' WHERE status = 'structure_failed'").run();
+    const runs = f.repo.listRuns(f.item.id, f.company.id);
+    expect(runs.map((run) => run.id)).toEqual([...[failed.id, active.id].sort().reverse(), completed.id]);
+    for (const run of runs) {
+      for (const field of ["reportText", "rawReportText", "structuredContent", "researchContext", "template", "harnessVersion"]) {
+        expect(run).not.toHaveProperty(field);
+      }
+    }
+  });
+
+  it("scopes detail and history to membership and cascades only the removed target", () => {
+    const f = fixture();
+    const other = f.repos.capabilityItems.create({ industry: "Other" });
+    f.repos.itemCompanies.add(other.id, f.company.id);
+    const otherCompany = f.repos.companies.upsert({ name: "Other Company" });
+    expect(() => f.repo.createResearching(f.item.id, otherCompany.id, input, context, template)).toThrow();
+    const run = f.create();
+    f.repo.completeRaw(run.id, rawText);
+    f.repo.completeStructured(run.id, content);
+    expect(f.repo.getByIdForTarget(other.id, f.company.id, run.id)).toBeUndefined();
+    expect(f.repo.getByIdForTarget(f.item.id, otherCompany.id, run.id)).toBeUndefined();
+    expect(f.repo.listRuns(other.id, f.company.id)).toEqual([]);
+    const second = f.repo.createResearching(other.id, f.company.id, input, context, template);
+    f.repos.itemCompanies.remove(f.item.id, f.company.id);
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toBeUndefined();
+    expect(f.repo.getByIdForTarget(other.id, f.company.id, second.id)).toEqual(second);
+    f.repos.capabilityItems.delete(other.id);
+    expect(f.repo.getActive()).toBeUndefined();
+  });
+
+  it("rejects invalid inputs and output before mutating durable state", () => {
+    const f = fixture();
+    expect(() => f.repo.createResearching(f.item.id, f.company.id, { ...input, direction: "invalid" } as never, context, template)).toThrow();
+    expect(() => f.repo.createResearching(f.item.id, f.company.id, input, { ...context, companyName: "" }, template)).toThrow();
+    expect(() => f.repo.createResearching(f.item.id, f.company.id, input, { ...context, asOfDate: "2025-01-01" }, template)).toThrow();
+    expect(() => f.repo.createResearching(f.item.id, f.company.id, input, context, getCompanyResearchTemplate("operations_and_performance"))).toThrow();
+    expect(f.repo.getActive()).toBeUndefined();
+    const run = f.create();
+    for (const text of ["", " \n\t", "x".repeat(1_000_001)]) expect(() => f.repo.completeRaw(run.id, text)).toThrow();
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(run);
+    const structuring = f.repo.completeRaw(run.id, rawText);
+    expect(() => f.repo.completeStructured(run.id, { ...content, sections: [] })).toThrow();
+    expect(() => f.repo.completeStructured(run.id, { ...content, secret: "private" } as never)).toThrow();
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(structuring);
+  });
+
+  it.each([
+    ["research_context_json", '{"private":"sensitive malformed'],
+    ["research_context_json", JSON.stringify({ ...context, companyName: 123 })],
+    ["research_context_json", JSON.stringify({ ...context, direction: "operations_and_performance" })],
+    ["template_snapshot_json", "null"],
+    ["template_snapshot_json", JSON.stringify({ ...template, sections: [] })],
+    ["template_id", "operations_and_performance"],
+    ["template_version", 2],
+    ["harness_version", 2],
+    ["structured_content_json", '{"private":"sensitive malformed'],
+    ["structured_content_json", JSON.stringify({ coreSummary: [], sections: [] })],
+    ["raw_report_text", null],
+    ["raw_report_text", " \n\t"],
+    ["raw_completed_at", null],
+    ["completed_at", null],
+    ["structuring_attempts", 0],
+    ["last_failure_code", "structuring_failed"],
+    ["legacy_report_text", "unexpected legacy body"],
+  ])("rejects corrupt completed %s on detail and summary reads", (column, value) => {
+    const f = fixture();
+    const run = f.create();
+    f.repo.completeRaw(run.id, rawText);
+    f.repo.completeStructured(run.id, content);
+    f.db.exec("PRAGMA ignore_check_constraints = ON");
+    f.db.prepare(`UPDATE company_research_runs SET ${column} = ? WHERE id = ?`).run(value, run.id);
+    expect(() => f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toThrow("invalid persisted research run");
+    expect(() => f.repo.listRuns(f.item.id, f.company.id)).toThrow("invalid persisted research run");
+  });
+
+  it.each([
+    ["researching", "raw_report_text", rawText],
+    ["researching", "structuring_attempts", 1],
+    ["structuring", "raw_completed_at", null],
+    ["structuring", "completed_at", "2026-09-11"],
+    ["structure_failed", "last_failure_code", null],
+    ["structure_failed", "structured_content_json", JSON.stringify(content)],
+  ])("rejects %s rows with inconsistent %s", (status, column, value) => {
+    const f = fixture();
+    const run = f.create();
+    if (status !== "researching") f.repo.completeRaw(run.id, rawText);
+    if (status === "structure_failed") f.repo.failStructuring(run.id);
+    f.db.exec("PRAGMA ignore_check_constraints = ON");
+    f.db.prepare(`UPDATE company_research_runs SET ${column} = ? WHERE id = ?`).run(value, run.id);
+    expect(() => f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toThrow("invalid persisted research run");
+    if (status !== "structure_failed") expect(() => f.repo.getActive()).toThrow("invalid persisted research run");
   });
 });

@@ -179,6 +179,12 @@ describe("Capability A persistence", () => {
         updated_at TEXT NOT NULL
       );
       INSERT INTO companies VALUES('legacy', 'Legacy Co', 'legacy co', 'Singapore', '', '');
+      CREATE TABLE capability_item_companies(item_id TEXT, company_id TEXT, PRIMARY KEY(item_id, company_id));
+      CREATE TABLE company_research_runs(
+        id TEXT PRIMARY KEY, item_id TEXT, company_id TEXT, status TEXT,
+        time_scope TEXT, custom_requirements TEXT, report_text TEXT,
+        created_at TEXT, completed_at TEXT
+      );
     `);
 
     migrate(db);
@@ -192,5 +198,48 @@ describe("Capability A persistence", () => {
       name: "Legacy Co",
     });
     expect(cleared?.headquarters).toBeUndefined();
+  });
+
+  it("migrates completed legacy reports without a body limit and discards abandoned running rows", () => {
+    const db = openDatabase(":memory:");
+    cleanups.push(() => db.close());
+    db.exec(`
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_migrations VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,'');
+      CREATE TABLE capability_item_companies(item_id TEXT, company_id TEXT, PRIMARY KEY(item_id, company_id));
+      INSERT INTO capability_item_companies VALUES ('item', 'company');
+      CREATE TABLE company_research_runs(
+        id TEXT PRIMARY KEY, item_id TEXT NOT NULL, company_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','completed')),
+        time_scope TEXT NOT NULL, custom_requirements TEXT, report_text TEXT,
+        created_at TEXT NOT NULL, completed_at TEXT,
+        FOREIGN KEY(item_id, company_id) REFERENCES capability_item_companies(item_id, company_id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX idx_company_research_one_running ON company_research_runs(status) WHERE status = 'running';
+      CREATE INDEX idx_company_research_completed_history ON company_research_runs(item_id, company_id, completed_at DESC, id DESC) WHERE status = 'completed';
+      INSERT INTO company_research_runs VALUES
+        ('old', 'item', 'company', 'completed', '近一年', '原要求', '旧报告', '2026-01-01', '2026-01-02'),
+        ('abandoned', 'item', 'company', 'running', '近一年', NULL, NULL, '2026-01-03', NULL);
+    `);
+    const hugeReport = "旧".repeat(1_000_001);
+    db.prepare("INSERT INTO company_research_runs VALUES ('large', 'item', 'company', 'completed', '不限时间', NULL, ?, '2026-02-01', '2026-02-02')").run(hugeReport);
+    migrate(db);
+    migrate(db);
+    const repo = createRepositories(db).companyResearchRuns;
+    expect(repo.getByIdForTarget("item" as never, "company" as never, "old" as never)).toMatchObject({
+      schemaVersion: "legacy-freeform-v1", status: "completed", reportText: "旧报告",
+      timeScope: "近一年", customRequirements: "原要求", createdAt: "2026-01-01", completedAt: "2026-01-02",
+    });
+    expect(repo.getByIdForTarget("item" as never, "company" as never, "large" as never)).toHaveProperty("reportText", hugeReport);
+    expect(repo.getByIdForTarget("item" as never, "company" as never, "abandoned" as never)).toBeUndefined();
+    const summaries = repo.listRuns("item" as never, "company" as never);
+    expect(summaries.map((run) => run.id)).toEqual(["large", "old"]);
+    for (const summary of summaries) expect(summary).not.toHaveProperty("reportText");
+    expect(repo.recoverAbandoned()).toEqual({ deletedResearching: 0, failedStructuring: 0 });
+    expect(repo.listRuns("item" as never, "company" as never)).toEqual(summaries);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 8 });
+    db.prepare("DELETE FROM capability_item_companies WHERE item_id = 'item' AND company_id = 'company'").run();
+    expect(repo.listRuns("item" as never, "company" as never)).toEqual([]);
   });
 });
