@@ -94,6 +94,13 @@ describe("Markdown source inheritance", () => {
     expect(extractMarkdownSources(markdown)).toEqual(new Set());
     expect(() => validateStructuredResearch(JSON.stringify(content()), markdown, template)).toThrow();
   });
+  it.each(["```", "~~~"])("accepts a reference definition immediately after a closed %s block", (fence) => {
+    for (const separator of ["\n\n", "\n"]) {
+      const markdown = `[公司公告][ref]\n${fence}\ncode\n${fence}${separator}[ref]: https://example.com/a`;
+      expect(extractMarkdownSources(markdown)).toEqual(new Set(["公司公告\u0000https://example.com/a"]));
+      expect(validateStructuredResearch(JSON.stringify(content()), markdown, template)).toEqual(content());
+    }
+  });
   it("does not invent an outer link when its label contains a real link", () => {
     expect(extractMarkdownSources('[outer [inner](https://example.com/b)](https://example.com/a)'))
       .toEqual(new Set(["inner\u0000https://example.com/b"]));

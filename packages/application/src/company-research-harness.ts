@@ -154,10 +154,14 @@ export function extractMarkdownSources(markdown: string): Set<string> {
     return original.replace(/^(?: {0,3}>[ \t]?)+/, "")
       .replace(/^ {0,3}(?:[-+*]|\d+[.)])( +)/, (_match: string, spaces: string) => spaces.length > 4 ? spaces.slice(1) : "");
   });
-  const lines = sourceLines.map((line) => {
+  const closedFenceLines = new Set<number>();
+  const lines = sourceLines.map((line, index) => {
     if (fence) {
       const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
-      if (closing && closing[1]![0] === fence.marker && closing[1]!.length >= fence.length) fence = undefined;
+      if (closing && closing[1]![0] === fence.marker && closing[1]!.length >= fence.length) {
+        fence = undefined;
+        closedFenceLines.add(index);
+      }
       return "";
     }
     if (htmlEnd) {
@@ -214,8 +218,9 @@ export function extractMarkdownSources(markdown: string): Set<string> {
   const text = lines.map((line, index) => {
     const start = offset;
     offset += line.length + 1;
-    // Filtered content is not a blank line in the source paragraph.
-    const canDefine = index === 0 || !sourceLines[index - 1]!.trim() || previousDefinition;
+    // A recognized block ending is a boundary; filtered paragraph content is not.
+    const canDefine = index === 0 || !sourceLines[index - 1]!.trim()
+      || closedFenceLines.has(index - 1) || previousDefinition;
     previousDefinition = false;
     while (opaque[spanIndex] && opaque[spanIndex]!.end <= start) spanIndex++;
     const span = opaque[spanIndex];
