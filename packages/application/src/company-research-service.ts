@@ -1,28 +1,27 @@
 import { Value } from "typebox/value";
-import type {
-  CapabilityItemId,
-  CompanyId,
-  CompanyResearchWorkerEvent,
-  CompanyResearchWorkerRequest,
-  CompanyResearchState,
-  ResearchRun,
-  ResearchRunId,
-  StartCompanyResearchInput,
-} from "@deepfield/contracts";
 import {
   CompanyResearchWorkerEventSchema,
   DEFAULT_DEEPSEEK_MODEL_ID,
   StartCompanyResearchInputSchema,
+  STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+  getCompanyResearchTemplate,
+  type CapabilityItemId,
+  type CompanyId,
+  type CompanyResearchContext,
+  type CompanyResearchEvent,
+  type CompanyResearchStage,
+  type CompanyResearchState,
+  type CompanyResearchWorkerRequest,
+  type KeyResearchRun,
+  type ResearchRun,
+  type ResearchRunId,
+  type ResearchRunSummary,
+  type StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { CompanyResearchWorkerPort, RequestIdFactory, SecretReader } from "./ports.js";
 import { DEEPSEEK_KEY_NAME } from "./chat-service.js";
-
-const SAFE_FAILED_EVENT = {
-  type: "failed",
-  code: "research_failed",
-  message: "company research failed",
-} as const;
+import { validateStructuredResearch } from "./company-research-harness.js";
 
 export class CompanyResearchServiceError extends Error {
   constructor(message: string) {
@@ -37,10 +36,12 @@ export interface CompanyResearchServiceOptions {
 }
 
 interface ActiveResearch {
-  run: ResearchRun;
+  run: KeyResearchRun;
   requestId: string;
-  draftText: string;
-  startedAt: Date;
+  stage: CompanyResearchStage;
+  rawDraftText: string;
+  dispatched: boolean;
+  cancelRequested: boolean;
   done: Promise<void>;
 }
 
@@ -50,7 +51,7 @@ type CompanyResearchRepositories = Omit<Repositories, "companies"> & {
 
 export class CompanyResearchService {
   private active: ActiveResearch | undefined;
-  private readonly listeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
+  private readonly listeners = new Set<(event: CompanyResearchEvent) => void>();
   private readonly now: () => Date;
 
   constructor(
@@ -62,76 +63,61 @@ export class CompanyResearchService {
     this.now = options.now ?? (() => new Date());
   }
 
-  start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun {
-    if (!Value.Check(StartCompanyResearchInputSchema, input) || input.timeScope.trim().length === 0) {
+  start(itemId: string, companyId: string, input: StartCompanyResearchInput): KeyResearchRun {
+    const today = formatLocalDate(this.now());
+    if (!Value.Check(StartCompanyResearchInputSchema, input) || !isRealDate(input.asOfDate) || input.asOfDate > today) {
       throw new CompanyResearchServiceError("invalid company research input");
     }
-    if (this.active !== undefined || this.repositories.companyResearchRuns.getRunning()) {
-      throw new CompanyResearchServiceError("company research is already running");
-    }
-    const item = this.repositories.capabilityItems.getById(itemId as CapabilityItemId);
-    const company = this.repositories.companies.getById(companyId as CompanyId);
-    const membership = this.repositories.itemCompanies
-      .listByItem(itemId as CapabilityItemId)
-      .find((entry) => entry.companyId === companyId);
-    if (!item || !company || !membership) {
-      throw new CompanyResearchServiceError("company research target not found");
-    }
-    const apiKey = this.secrets.get(DEEPSEEK_KEY_NAME);
-    if (apiKey === undefined || apiKey.trim().length === 0) {
-      throw new CompanyResearchServiceError("deepseek api key is not configured");
-    }
-
-    let run: ResearchRun;
+    this.requireAvailable();
+    const { item, company, membership } = this.requireTarget(itemId, companyId);
+    const apiKey = this.requireApiKey();
+    const focusScope = input.focusScope?.trim();
+    const normalized: StartCompanyResearchInput = {
+      direction: input.direction, asOfDate: input.asOfDate,
+      ...(focusScope ? { focusScope } : {}),
+    };
+    const context: CompanyResearchContext = {
+      ...normalized,
+      currentDate: today,
+      companyName: company.name,
+      ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
+      ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
+      ...(company.headquarters !== undefined ? { headquarters: company.headquarters } : {}),
+      ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
+      ...(company.officialWebsite !== undefined ? { officialWebsite: company.officialWebsite } : {}),
+      ...(company.stockListings !== undefined ? { stockListings: company.stockListings } : {}),
+      ...(company.businessTags !== undefined ? { businessTags: company.businessTags } : {}),
+      topicName: item.industry,
+      ...(item.researchScope !== undefined ? { topicScope: item.researchScope } : {}),
+      ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
+    };
     try {
-      run = this.repositories.companyResearchRuns.createRunning(item.id, company.id, input);
+      const requestId = this.options.requestIdFactory();
+      const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.createResearching(
+        item.id, company.id, normalized, context, getCompanyResearchTemplate(input.direction),
+      ));
+      this.launch(run, requestId, apiKey);
+      return structuredClone(run);
     } catch {
       throw new CompanyResearchServiceError("company research could not start");
     }
-    const requestId = this.options.requestIdFactory();
-    const request: CompanyResearchWorkerRequest = {
-      requestId,
-      kind: "company-research.run",
-      runId: run.id,
-      apiKey,
-      modelId: DEFAULT_DEEPSEEK_MODEL_ID,
-      context: {
-        currentDate: formatLocalDate(this.now()),
-        companyName: company.name,
-        ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
-        ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
-        ...(company.headquarters !== undefined
-          ? { headquarters: company.headquarters }
-          : {}),
-        ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
-        ...(company.officialWebsite !== undefined
-          ? { officialWebsite: company.officialWebsite }
-          : {}),
-        ...(company.stockListings !== undefined
-          ? { stockListings: company.stockListings }
-          : {}),
-        ...(company.businessTags !== undefined
-          ? { businessTags: company.businessTags }
-          : {}),
-        industry: item.industry,
-        ...(item.researchScope !== undefined ? { researchScope: item.researchScope } : {}),
-        ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
-        timeScope: run.timeScope,
-        ...(run.customRequirements !== undefined
-          ? { customRequirements: run.customRequirements }
-          : {}),
-      },
-    };
-    const active: ActiveResearch = {
-      run,
-      requestId,
-      draftText: "",
-      startedAt: this.now(),
-      done: Promise.resolve(),
-    };
-    this.active = active;
-    active.done = this.consume(active, request);
-    return run;
+  }
+
+  retryStructuring(itemId: string, companyId: string, runId: string): KeyResearchRun {
+    this.requireAvailable();
+    const saved = this.getRun(itemId, companyId, runId);
+    if (saved?.schemaVersion !== "company-research-report-v1" || saved.status !== "structure_failed") {
+      throw new CompanyResearchServiceError("company research cannot be restructured");
+    }
+    const apiKey = this.requireApiKey();
+    try {
+      const requestId = this.options.requestIdFactory();
+      const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryStructuring(saved.id));
+      this.launch(run, requestId, apiKey);
+      return structuredClone(run);
+    } catch {
+      throw new CompanyResearchServiceError("company research could not retry structuring");
+    }
   }
 
   async cancel(runId: string): Promise<void> {
@@ -139,127 +125,216 @@ export class CompanyResearchService {
     if (active === undefined || active.run.id !== runId) {
       throw new CompanyResearchServiceError("company research is not running");
     }
-    try {
-      this.worker.cancelResearch(active.requestId, active.run.id);
-    } catch {
-      this.failActive(active);
-      return;
+    if (!active.cancelRequested) {
+      active.cancelRequested = true;
+      // Start listeners and raw-persistence listeners can cancel before dispatch.
+      if (!active.dispatched) {
+        this.failActive(active, "cancelled");
+      } else {
+        try {
+          this.worker.cancelResearch(active.requestId, active.run.id, active.stage);
+        } catch {
+          this.failActive(active, "cancelled");
+          return;
+        }
+      }
     }
     await active.done;
   }
 
   getState(itemId: string, companyId: string): CompanyResearchState {
-    const completed = this.listCompleted(itemId, companyId);
-    const active = this.active;
-    if (active?.run.itemId !== itemId || active.run.companyId !== companyId) {
-      return { completed };
-    }
-    return {
-      active: { run: active.run, draftText: active.draftText },
-      completed,
-    };
+    this.requireTarget(itemId, companyId);
+    return this.read(() => {
+      const active = this.repositories.companyResearchRuns.getActive();
+      const state: CompanyResearchState = {
+        runs: this.repositories.companyResearchRuns.listRuns(itemId as CapabilityItemId, companyId as CompanyId),
+        globalActiveRun: active ? {
+          runId: active.id, itemId: active.itemId, companyId: active.companyId,
+          stage: active.status === "researching" ? "raw" : "structure",
+        } : null,
+      };
+      if (active?.itemId === itemId && active.companyId === companyId) {
+        state.active = {
+          run: active,
+          draftText: this.active?.run.id === active.id ? this.active.rawDraftText : "",
+        };
+      }
+      return state;
+    });
   }
 
-  listCompleted(itemId: string, companyId: string): ResearchRun[] {
-    return this.repositories.companyResearchRuns.listCompleted(
-      itemId as CapabilityItemId,
-      companyId as CompanyId,
-    );
+  listRuns(itemId: string, companyId: string): ResearchRunSummary[] {
+    this.requireTarget(itemId, companyId);
+    return this.read(() => this.repositories.companyResearchRuns.listRuns(itemId as CapabilityItemId, companyId as CompanyId));
   }
 
-  cleanupAbandoned(): number {
-    this.active = undefined;
-    return this.repositories.companyResearchRuns.deleteAllRunning();
+  getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined {
+    this.requireTarget(itemId, companyId);
+    return this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
+      itemId as CapabilityItemId, companyId as CompanyId, runId as ResearchRunId,
+    ));
   }
 
-  subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void {
+  cleanupAbandoned(): { deletedResearching: number; failedStructuring: number } {
+    if (this.active) throw new CompanyResearchServiceError("company research is already running");
+    return this.read(() => this.repositories.companyResearchRuns.recoverAbandoned());
+  }
+
+  subscribe(listener: (event: CompanyResearchEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
   isRunning(): boolean {
-    return this.active !== undefined || this.repositories.companyResearchRuns.getRunning() !== undefined;
+    return this.active !== undefined || this.read(() => this.repositories.companyResearchRuns.getActive()) !== undefined;
   }
 
-  private async consume(
-    active: ActiveResearch,
-    request: CompanyResearchWorkerRequest,
-  ): Promise<void> {
-    let terminal = false;
+  private requireAvailable(): void {
+    if (this.isRunning()) throw new CompanyResearchServiceError("company research is already running");
+  }
+
+  private requireTarget(itemId: string, companyId: string) {
+    return this.read(() => {
+      const item = this.repositories.capabilityItems.getById(itemId as CapabilityItemId);
+      const company = this.repositories.companies.getById(companyId as CompanyId);
+      const membership = this.repositories.itemCompanies.listByItem(itemId as CapabilityItemId)
+        .find((entry) => entry.companyId === companyId);
+      if (!item || !company || !membership) throw new CompanyResearchServiceError("company research target not found");
+      return { item, company, membership };
+    });
+  }
+
+  private requireApiKey(): string {
+    let apiKey: string | undefined;
+    try { apiKey = this.secrets.get(DEEPSEEK_KEY_NAME); } catch {
+      throw new CompanyResearchServiceError("deepseek api key could not be read");
+    }
+    if (!apiKey?.trim()) throw new CompanyResearchServiceError("deepseek api key is not configured");
+    return apiKey;
+  }
+
+  private read<T>(work: () => T): T {
+    try { return work(); } catch (error) {
+      if (error instanceof CompanyResearchServiceError) throw error;
+      throw new CompanyResearchServiceError("company research report could not be read");
+    }
+  }
+
+  private launch(run: KeyResearchRun, requestId: string, apiKey: string): void {
+    const active: ActiveResearch = {
+      run: structuredClone(run), requestId, stage: run.status === "researching" ? "raw" : "structure",
+      rawDraftText: "", dispatched: false, cancelRequested: false, done: Promise.resolve(),
+    };
+    this.active = active;
+    // Install done before notifying listeners, so synchronous cancellation is safe.
+    active.done = Promise.resolve().then(() => this.consume(active, apiKey));
+    this.stateChanged(active.run);
+  }
+
+  private request(active: ActiveResearch, apiKey: string): CompanyResearchWorkerRequest {
+    const common = {
+      requestId: active.requestId, runId: active.run.id, apiKey, modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+      context: structuredClone(active.run.researchContext), template: structuredClone(active.run.template),
+    };
+    if (active.stage === "raw") return { ...common, kind: "company-research.raw.run", stage: "raw" };
+    return {
+      ...common, kind: "company-research.structure.run", stage: "structure",
+      rawReportText: active.run.rawReportText!, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+    };
+  }
+
+  private async consume(active: ActiveResearch, apiKey: string): Promise<void> {
     try {
-      const stream = this.worker.sendResearch(request);
-      for await (const event of stream) {
-        if (this.active !== active || terminal) return;
-        if (
-          !Value.Check(CompanyResearchWorkerEventSchema, event) ||
-          event.requestId !== request.requestId ||
-          event.runId !== request.runId
-        ) {
-          break;
-        }
-        if (event.type === "text_delta") {
-          active.draftText += event.delta;
-          this.emit(event);
-          continue;
-        }
-        if (event.type === "completed") {
-          try {
-            this.repositories.runInTransaction(() => {
-              this.repositories.companyResearchRuns.complete(
-                active.run.id as ResearchRunId,
-                event.text,
-              );
-            });
-          } catch {
-            break;
+      while (this.active === active) {
+        const request = this.request(active, apiKey);
+        active.dispatched = true;
+        let rawCompleted = false;
+        for await (const event of this.worker.sendResearch(request)) {
+          if (this.active !== active) return;
+          if (active.cancelRequested) { this.failActive(active, "cancelled"); return; }
+          // Foreign/late identities cannot terminate or mutate the current stage.
+          if (event !== null && typeof event === "object" && (
+            event.requestId !== request.requestId || event.runId !== request.runId || event.stage !== request.stage
+          )) continue;
+          if (!Value.Check(CompanyResearchWorkerEventSchema, event)) throw new Error("invalid research event");
+          if (event.type === "started") continue;
+          if (event.type === "text_delta") {
+            if (active.rawDraftText.length + event.delta.length > 1_000_000) throw new Error("research draft exceeds limit");
+            active.rawDraftText += event.delta;
+            this.emit(event);
+          } else if (event.type === "completed") {
+            if (active.stage === "raw") {
+              active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeRaw(active.run.id, event.text));
+              active.stage = "structure";
+              active.dispatched = false;
+              active.rawDraftText = "";
+              rawCompleted = true;
+              this.stateChanged(active.run);
+              // A listener may cancel at the durable boundary. Keep the reservation
+              // across it and generate a distinct transport identity only afterward.
+              if (this.active === active) active.requestId = this.options.requestIdFactory();
+              break;
+            }
+            const content = validateStructuredResearch(event.text, active.run.rawReportText!, active.run.template);
+            active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeStructured(active.run.id, content));
+            this.active = undefined;
+            this.stateChanged(active.run);
+            return;
+          } else {
+            this.failActive(active, event.type === "cancelled" ? "cancelled" : "research_failed");
+            return;
           }
-          terminal = true;
-          this.active = undefined;
-          this.emit(event);
-          return;
         }
-        if (event.type === "failed" || event.type === "cancelled") {
-          terminal = true;
-          this.deleteActive(active);
-          this.emit(event);
-          return;
-        }
-        this.emit(event);
+        if (!rawCompleted) break;
       }
     } catch {
-      // Converted below to the one safe research failure shape.
+      // No provider/candidate/storage exception crosses the application boundary.
     }
-    if (!terminal && this.active === active) this.failActive(active);
+    this.failActive(active, active.cancelRequested ? "cancelled" : "research_failed");
   }
 
-  private failActive(active: ActiveResearch): void {
+  private failActive(active: ActiveResearch, outcome: "research_failed" | "cancelled"): void {
     if (this.active !== active) return;
-    this.deleteActive(active);
-    this.emit({ requestId: active.requestId, runId: active.run.id, ...SAFE_FAILED_EVENT });
-  }
-
-  private deleteActive(active: ActiveResearch): void {
+    let persisted = false;
     try {
-      this.repositories.companyResearchRuns.delete(active.run.id as ResearchRunId);
+      this.repositories.runInTransaction(() => {
+        if (active.stage === "raw") this.repositories.companyResearchRuns.deleteResearching(active.run.id);
+        else this.repositories.companyResearchRuns.failStructuring(active.run.id);
+      });
+      persisted = true;
+    } catch {
+      // If storage is unavailable, startup recovery owns the abandoned row.
+      // getActive continues to reserve it; never announce an uncommitted transition.
     } finally {
-      if (this.active === active) this.active = undefined;
+      this.active = undefined;
     }
+    if (persisted) this.stateChanged(active.run, active.stage === "raw" ? outcome : undefined);
   }
 
-  private emit(event: CompanyResearchWorkerEvent): void {
+  private stateChanged(run: KeyResearchRun, outcome?: "research_failed" | "cancelled"): void {
+    this.emit({
+      type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id,
+      ...(outcome === undefined ? {} : { outcome }),
+    });
+  }
+
+  private emit(event: CompanyResearchEvent): void {
     for (const listener of [...this.listeners]) {
-      try {
-        listener(event);
-      } catch {
-        // A closed renderer cannot interrupt persistence or cleanup.
+      try { listener(structuredClone(event)); } catch {
+        // Renderer lifecycle or reentrant listeners cannot interrupt orchestration.
       }
     }
   }
 }
 
 function formatLocalDate(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${String(value.getFullYear()).padStart(4, "0")}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function isRealDate(value: string): boolean {
+  const [year, month, day] = value.split("-").map(Number) as [number, number, number];
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= days[month - 1]!;
 }

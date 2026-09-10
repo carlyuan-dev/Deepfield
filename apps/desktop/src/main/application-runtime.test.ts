@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_DEEPSEEK_MODEL_ID } from "@deepfield/contracts";
+import {
+  DEFAULT_DEEPSEEK_MODEL_ID, getCompanyResearchTemplate,
+  type CompanyResearchWorkerRequest,
+} from "@deepfield/contracts";
 import { createApplicationRuntime } from "./application-runtime.js";
 import { openTestDb, type TestDb } from "../../../../packages/application/src/application-test-helpers.js";
 
@@ -12,6 +15,90 @@ afterEach(() => {
 });
 
 describe("application runtime composition", () => {
+  it.each(["researching", "structuring"])("recovers abandoned %s before starting profile enrichment", async (status) => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });
+    const company = db.repos.companies.upsert({ name: "待补全公司" });
+    db.repos.itemCompanies.add(item.id, company.id);
+    const input = { direction: "product_and_technology", asOfDate: "2026-09-11" } as const;
+    const run = db.repos.companyResearchRuns.createResearching(item.id, company.id, input, {
+      ...input, companyName: company.name, topicName: item.industry, currentDate: "2026-09-11",
+    }, getCompanyResearchTemplate(input.direction));
+    if (status === "structuring") db.repos.companyResearchRuns.completeRaw(run.id, "已保存原始报告");
+    const observed: unknown[] = [];
+    const runtime = createApplicationRuntime({
+      repositories: db.repos, secrets: { get: () => "sk-runtime" },
+      companyRecognizer: { recognize: async () => [] },
+      companyCompleter: { complete: async () => {
+        observed.push(db.repos.companyResearchRuns.getActive());
+        return { headquarters: "中国北京" };
+      } },
+      worker: {
+        send: () => ({ async *[Symbol.asyncIterator]() {} }),
+        sendResearch: () => { throw Error("startup must not restart research"); },
+        cancelResearch: () => {},
+      },
+    });
+    await runtime.companyProfiles.whenIdle();
+    expect(runtime.companyResearch.isRunning()).toBe(false);
+    expect(runtime.companyResearch.getRun(item.id, company.id, run.id)?.status).toBe(status === "researching" ? undefined : "structure_failed");
+    expect(observed).toEqual([undefined]);
+    expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("ready");
+    runtime.companyProfiles.dispose();
+  });
+
+  it.each(["completed", "structure_failed"])("keeps enrichment paused across both stages, permits Chat, and resumes on %s", async (terminal) => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });
+    const company = db.repos.companies.upsert({ name: "小米" });
+    db.repos.itemCompanies.add(item.id, company.id);
+    const requests: CompanyResearchWorkerRequest[] = [];
+    const finish = new Map<string, (text: string) => void>();
+    const completedProfiles: string[] = [];
+    const runtime = createApplicationRuntime({
+      repositories: db.repos, secrets: { get: () => "sk-runtime" },
+      companyRecognizer: { recognize: async () => [] },
+      companyCompleter: { complete: async (name) => { completedProfiles.push(name); return { headquarters: "中国北京" }; } },
+      worker: {
+        send: (request) => ({ async *[Symbol.asyncIterator]() {
+          yield { requestId: request.requestId, type: "completed", text: "独立 Chat" } as const;
+        } }),
+        sendResearch: (request) => {
+          requests.push(request);
+          return (async function* () {
+            const text = await new Promise<string>((resolve) => finish.set(request.requestId, resolve));
+            yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text } as const;
+          })();
+        },
+        cancelResearch: () => {},
+      },
+    });
+    const run = runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(completedProfiles).toEqual([]);
+    const conversation = runtime.conversationService.create();
+    await runtime.chatService.send(conversation.id, "你好", "parallel-chat", () => {});
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(db.repos.messages.listByConversation(conversation.id).at(-1)?.content).toBe("独立 Chat");
+    expect(runtime.companyResearch.isRunning()).toBe(true);
+    finish.get(requests[0]!.requestId)!("原始报告");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(requests.map((request) => request.stage)).toEqual(["raw", "structure"]);
+    expect(completedProfiles).toEqual([]);
+    expect(runtime.companyResearch.isRunning()).toBe(true);
+    const valid = {
+      coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
+      sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+    };
+    finish.get(requests[1]!.requestId)!(terminal === "completed" ? JSON.stringify(valid) : "invalid candidate");
+    await new Promise((resolve) => setImmediate(resolve));
+    await runtime.companyProfiles.whenIdle();
+    expect(runtime.companyResearch.getRun(item.id, company.id, run.id)?.status).toBe(terminal);
+    expect(completedProfiles).toEqual(["小米"]);
+    expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("ready");
+    runtime.companyProfiles.dispose();
+  });
+
   it("wires repositories, secrets and worker into working services", async () => {
     const db = openTestDb();
     dbs.push(db);

@@ -49,6 +49,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.worker,
     { requestIdFactory: randomUUID },
   );
+  companyResearch.cleanupAbandoned();
   const companyProfiles = new CompanyProfileEnrichmentService(
     deps.repositories.companies,
     deps.companyCompleter,
@@ -66,7 +67,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     companyProfiles,
   );
   companyResearch.subscribe((event) => {
-    if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
+    if (event.type === "state_changed" && !companyResearch.isRunning()) {
       companyProfiles.resume();
     }
   });

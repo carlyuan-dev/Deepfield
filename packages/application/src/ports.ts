@@ -3,6 +3,7 @@ import type {
   AgentWorkerRequest,
   CompanyResearchWorkerEvent,
   CompanyResearchWorkerRequest,
+  CompanyResearchStage,
   CompanyDraft,
   CompanyProfileFields,
 } from "@deepfield/contracts";
@@ -17,7 +18,7 @@ export interface AgentWorkerPort {
 
 export interface CompanyResearchWorkerPort {
   sendResearch(request: CompanyResearchWorkerRequest): AsyncIterable<CompanyResearchWorkerEvent>;
-  cancelResearch(requestId: string, runId: string): void;
+  cancelResearch(requestId: string, runId: string, stage: CompanyResearchStage): void;
 }
 
 export interface ConversationTitleGenerator {

@@ -230,6 +230,8 @@ export const CompanyResearchStateChangedEventSchema = Type.Object({
   itemId: IdSchema,
   companyId: IdSchema,
   runId: IdSchema,
+  // Only emitted after removing an empty raw-stage run; no provider diagnostics.
+  outcome: Type.Optional(Type.Union([Type.Literal("research_failed"), Type.Literal("cancelled")])),
 }, { additionalProperties: false });
 export const CompanyResearchEventSchema = Type.Union([
   CompanyResearchStateChangedEventSchema, RawTextDeltaSchema,
