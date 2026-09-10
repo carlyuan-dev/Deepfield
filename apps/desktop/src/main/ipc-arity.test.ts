@@ -5,9 +5,47 @@ import {
   event,
   FakeWebContents,
   makeDeps,
+  RESEARCH_INPUT,
 } from "./ipc-test-helpers.js";
 
 describe("ipc handler arity", () => {
+  it.each([
+    ["companyResearchStart", "startCalls", ["item-1", "company-1", RESEARCH_INPUT]],
+    ["companyResearchCancel", "cancelCalls", ["run-1"]],
+    ["companyResearchGetState", "getStateCalls", ["item-1", "company-1"]],
+    ["companyResearchListRuns", "listRunsCalls", ["item-1", "company-1"]],
+    ["companyResearchGetRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
+    ["companyResearchRetryStructuring", "retryStructuringCalls", ["item-1", "company-1", "run-1"]],
+  ] as const)("validates exact arity and every field of %s before calling service", async (channel, calls, valid) => {
+    const { ipcMain, companyResearch } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const invalid: unknown[][] = [[], valid.slice(0, -1), [...valid, "extra"]];
+    valid.forEach((value, index) => {
+      const replacements = typeof value === "string" ? ["", "x".repeat(201), null, 1, {}] : [null, {}, { ...RESEARCH_INPUT, extra: true }, { ...RESEARCH_INPUT, direction: "unknown" }, { ...RESEARCH_INPUT, asOfDate: "today" }, { ...RESEARCH_INPUT, focusScope: "x".repeat(1001) }];
+      for (const replacement of replacements) {
+        const args: unknown[] = [...valid];
+        args[index] = replacement;
+        invalid.push(args);
+      }
+    });
+    for (const args of invalid) {
+      await expect(ipcMain.invoke(IPC_CHANNELS[channel], event(sender), ...args)).rejects.toThrow("invalid company research input");
+    }
+    expect(companyResearch[calls]).toHaveLength(0);
+    expect(sender.destroyedListenerCount).toBe(0);
+    await ipcMain.invoke(IPC_CHANNELS[channel], event(sender), ...valid);
+    expect(companyResearch[calls]).toHaveLength(1);
+  });
+
+  it("requires zero research subscription arguments before tracking the sender", async () => {
+    const { ipcMain } = makeDeps();
+    const sender = new FakeWebContents(1);
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchSubscribe, event(sender), undefined)).rejects.toThrow("invalid company research input");
+    expect(sender.destroyedListenerCount).toBe(0);
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchSubscribe, event(sender));
+    expect(sender.destroyedListenerCount).toBe(1);
+  });
+
   it("requires exactly one argument for industryResearch.createItem", async () => {
     const { ipcMain, industryResearch } = makeDeps();
     const sender = new FakeWebContents(1);

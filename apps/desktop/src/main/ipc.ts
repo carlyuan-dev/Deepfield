@@ -2,10 +2,12 @@ import { Value } from "typebox/value";
 import {
   ChatRequestOptionsSchema,
   CompanyResearchCancelArgsSchema,
+  CompanyResearchGetRunArgsSchema,
+  CompanyResearchRetryStructuringArgsSchema,
   CompanyResearchStartArgsSchema,
   CompanyResearchSubscribeArgsSchema,
   CompanyResearchTargetArgsSchema,
-  CompanyResearchWorkerEventSchema,
+  CompanyResearchEventSchema,
   CompanyDraftSchema,
   CompanyProfileInputSchema,
   CompanyProfileEventSchema,
@@ -17,7 +19,7 @@ import {
   type CompanyProfileInput,
   type CompanyProfileEvent,
   type CompanyResearchState,
-  type CompanyResearchWorkerEvent,
+  type CompanyResearchEvent,
   type ItemCompanyView,
   type UpdateIndustryResearchItemInput,
   type AgentWorkerEvent,
@@ -28,6 +30,7 @@ import {
   type SkillSummary,
   type LlmConnectionStatus,
   type ResearchRun,
+  type ResearchRunSummary,
   type StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import { DEEPSEEK_KEY_NAME } from "@deepfield/application";
@@ -103,8 +106,10 @@ export interface CompanyResearchServiceLike {
   start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun;
   cancel(runId: string): Promise<void>;
   getState(itemId: string, companyId: string): CompanyResearchState;
-  listCompleted(itemId: string, companyId: string): ResearchRun[];
-  subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void;
+  listRuns(itemId: string, companyId: string): ResearchRunSummary[];
+  getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined;
+  retryStructuring(itemId: string, companyId: string, runId: string): ResearchRun;
+  subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
 }
 
 export interface CompanyProfileEventSource {
@@ -142,7 +147,9 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.companyResearchStart,
   IPC_CHANNELS.companyResearchCancel,
   IPC_CHANNELS.companyResearchGetState,
-  IPC_CHANNELS.companyResearchListCompleted,
+  IPC_CHANNELS.companyResearchListRuns,
+  IPC_CHANNELS.companyResearchGetRun,
+  IPC_CHANNELS.companyResearchRetryStructuring,
   IPC_CHANNELS.companyResearchSubscribe,
   IPC_CHANNELS.conversationsCreate,
   IPC_CHANNELS.conversationsOpenInitial,
@@ -180,8 +187,8 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     sender.send(IPC_CHANNELS.chatEvents, event);
   };
 
-  const emitResearch = (event: CompanyResearchWorkerEvent): void => {
-    if (!Value.Check(CompanyResearchWorkerEventSchema, event)) return;
+  const emitResearch = (event: CompanyResearchEvent): void => {
+    if (!Value.Check(CompanyResearchEventSchema, event)) return;
     for (const sender of senders.values()) {
       sender.send(IPC_CHANNELS.companyResearchEvents, event);
     }
@@ -400,7 +407,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchStart, async (event, ...args) => {
-    if (!Value.Check(CompanyResearchStartArgsSchema, args)) {
+    if (args.length !== 3 || !Value.Check(CompanyResearchStartArgsSchema, args)) {
       throw new Error("invalid company research input");
     }
     trackSender(event.sender);
@@ -412,7 +419,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchCancel, async (event, ...args) => {
-    if (!Value.Check(CompanyResearchCancelArgsSchema, args)) {
+    if (args.length !== 1 || !Value.Check(CompanyResearchCancelArgsSchema, args)) {
       throw new Error("invalid company research input");
     }
     trackSender(event.sender);
@@ -424,7 +431,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchGetState, async (event, ...args) => {
-    if (!Value.Check(CompanyResearchTargetArgsSchema, args)) {
+    if (args.length !== 2 || !Value.Check(CompanyResearchTargetArgsSchema, args)) {
       throw new Error("invalid company research input");
     }
     trackSender(event.sender);
@@ -435,20 +442,44 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.companyResearchListCompleted, async (event, ...args) => {
-    if (!Value.Check(CompanyResearchTargetArgsSchema, args)) {
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchListRuns, async (event, ...args) => {
+    if (args.length !== 2 || !Value.Check(CompanyResearchTargetArgsSchema, args)) {
       throw new Error("invalid company research input");
     }
     trackSender(event.sender);
     try {
-      return deps.companyResearch.listCompleted(args[0], args[1]);
+      return deps.companyResearch.listRuns(args[0], args[1]);
     } catch {
       throw new Error("company research read failed");
     }
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchGetRun, async (event, ...args) => {
+    if (args.length !== 3 || !Value.Check(CompanyResearchGetRunArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return deps.companyResearch.getRun(args[0], args[1], args[2]);
+    } catch {
+      throw new Error("company research read failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchRetryStructuring, async (event, ...args) => {
+    if (args.length !== 3 || !Value.Check(CompanyResearchRetryStructuringArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return deps.companyResearch.retryStructuring(args[0], args[1], args[2]);
+    } catch {
+      throw new Error("company research structuring retry failed");
+    }
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchSubscribe, async (event, ...args) => {
-    if (!Value.Check(CompanyResearchSubscribeArgsSchema, args)) {
+    if (args.length !== 0 || !Value.Check(CompanyResearchSubscribeArgsSchema, args)) {
       throw new Error("invalid company research input");
     }
     trackSender(event.sender);

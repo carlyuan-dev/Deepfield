@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Value } from "typebox/value";
+import { ResearchRunSchema, ResearchRunSummarySchema } from "@deepfield/contracts";
 import type { ConversationId, MessageId } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
@@ -7,6 +9,8 @@ import {
   event,
   FakeWebContents,
   makeDeps,
+  RESEARCH_INPUT,
+  researchRun,
   workerEvent,
 } from "./ipc-test-helpers.js";
 
@@ -37,7 +41,9 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.companyResearchStart,
         IPC_CHANNELS.companyResearchCancel,
         IPC_CHANNELS.companyResearchGetState,
-        IPC_CHANNELS.companyResearchListCompleted,
+        IPC_CHANNELS.companyResearchListRuns,
+        IPC_CHANNELS.companyResearchGetRun,
+        IPC_CHANNELS.companyResearchRetryStructuring,
         IPC_CHANNELS.companyResearchSubscribe,
         IPC_CHANNELS.conversationsCreate,
         IPC_CHANNELS.conversationsOpenInitial,
@@ -144,14 +150,15 @@ describe("ipc handlers", () => {
       event(sender),
       "item-1",
       "company-1",
-      { timeScope: "近一年" },
+      RESEARCH_INPUT,
     );
     await ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1");
-    await ipcMain.invoke(IPC_CHANNELS.companyResearchListCompleted, event(sender), "item-1", "company-1");
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchListRuns, event(sender), "item-1", "company-1");
     await ipcMain.invoke(IPC_CHANNELS.companyResearchCancel, event(sender), "run-1");
-    expect(started).toMatchObject({ id: "run-1", status: "running" });
+    expect(started).toMatchObject({ id: "run-1", status: "researching", schemaVersion: "company-research-report-v1" });
+    expect(Value.Check(ResearchRunSchema, started)).toBe(true);
     expect(companyResearch.startCalls).toEqual([
-      { itemId: "item-1", companyId: "company-1", input: { timeScope: "近一年" } },
+      { itemId: "item-1", companyId: "company-1", input: RESEARCH_INPUT },
     ]);
     await expect(
       ipcMain.invoke(
@@ -163,7 +170,7 @@ describe("ipc handlers", () => {
       ),
     ).rejects.toThrow(/invalid company research input/);
 
-    const researchEvent = { requestId: "request-1", runId: "run-1", type: "started" } as const;
+    const researchEvent = { itemId: "item-1", companyId: "company-1", runId: "run-1", type: "state_changed" } as const;
     companyResearch.emit(researchEvent);
     expect(sender.sent).toContainEqual({
       channel: IPC_CHANNELS.companyResearchEvents,
@@ -176,6 +183,83 @@ describe("ipc handlers", () => {
       channel: IPC_CHANNELS.industryResearchCompanyProfileEvents,
       payload: profileEvent,
     });
+  });
+
+  it("reads versioned details, missing runs and summary history, and retries the exact target", async () => {
+    const { ipcMain, companyResearch } = makeDeps();
+    const sender = new FakeWebContents(1);
+    const target = ["item-1", "company-1", "run-1"];
+    const run = researchRun({ status: "structure_failed", rawReportText: "# Saved raw report", structuringAttempts: 1, lastFailureCode: "structuring_failed" });
+    companyResearch.run = run;
+    const { rawReportText, researchContext, template, harnessVersion, structuredContent, ...summary } = run;
+    companyResearch.runs = [{ ...summary, status: "structure_failed" }];
+    expect(Value.Check(ResearchRunSchema, run)).toBe(true);
+    expect(Value.Check(ResearchRunSummarySchema, companyResearch.runs[0])).toBe(true);
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetRun, event(sender), ...target)).resolves.toEqual(run);
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetRun, event(sender), "item-1", "company-1", "missing")).resolves.toBeUndefined();
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchListRuns, event(sender), "item-1", "company-1")).resolves.toEqual([summary]);
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1")).resolves.toEqual({ runs: [summary], globalActiveRun: null });
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryStructuring, event(sender), ...target)).resolves.toMatchObject({ status: "structuring", rawReportText: "# Saved raw report", structuringAttempts: 2 });
+    expect(companyResearch.getRunCalls[0]).toEqual({ itemId: "item-1", companyId: "company-1", runId: "run-1" });
+    expect(companyResearch.listRunsCalls).toEqual([{ itemId: "item-1", companyId: "company-1" }]);
+    expect(companyResearch.retryStructuringCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1" }]);
+  });
+
+  it.each(["other-item", "other-company"])("safely rejects a run owned by %s without report JSON", async (wrongTarget) => {
+    const { ipcMain, companyResearch } = makeDeps();
+    companyResearch.run = researchRun({ rawReportText: "private report JSON" });
+    const args = wrongTarget === "other-item" ? [wrongTarget, "company-1", "run-1"] : ["item-1", wrongTarget, "run-1"];
+    const error = await ipcMain.invoke(IPC_CHANNELS.companyResearchGetRun, event(new FakeWebContents(1)), ...args).catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("company research read failed");
+    expect(String(error)).not.toContain("private report JSON");
+  });
+
+  it.each([
+    ["start", "companyResearchStart", ["item-1", "company-1", RESEARCH_INPUT], "start"],
+    ["cancel", "companyResearchCancel", ["run-1"], "cancellation"],
+    ["getState", "companyResearchGetState", ["item-1", "company-1"], "read"],
+    ["listRuns", "companyResearchListRuns", ["item-1", "company-1"], "read"],
+    ["getRun", "companyResearchGetRun", ["item-1", "company-1", "run-1"], "read"],
+    ["retryStructuring", "companyResearchRetryStructuring", ["item-1", "company-1", "run-1"], "structuring retry"],
+  ] as const)("sanitizes %s service errors", async (method, channel, args, action) => {
+    const { ipcMain, companyResearch } = makeDeps();
+    vi.spyOn(companyResearch, method).mockImplementation(() => { throw new Error('sk-secret provider error {"candidate":true}'); });
+    const error = await ipcMain.invoke(IPC_CHANNELS[channel], event(new FakeWebContents(1)), ...args).catch((error: Error) => error);
+    expect((error as Error).message).toBe(`company research ${action} failed`);
+  });
+
+  it("broadcasts only public research events and cleans up subscriptions", async () => {
+    const { ipcMain, companyResearch, dispose } = makeDeps();
+    const a = new FakeWebContents(1);
+    const b = new FakeWebContents(2);
+    const untracked = new FakeWebContents(3);
+    for (const sender of [a, a, b]) await ipcMain.invoke(IPC_CHANNELS.companyResearchSubscribe, event(sender));
+    const changed = { type: "state_changed", itemId: "item-1", companyId: "company-1", runId: "run-1" };
+    const delta = { type: "text_delta", stage: "raw", requestId: "r", runId: "run-1", delta: "raw Markdown" };
+    const worker = { requestId: "r", runId: "run-1", stage: "structure" };
+    for (const invalid of [
+      { ...worker, type: "started" }, { ...worker, type: "completed", text: '{"unvalidated":true}' },
+      { ...worker, stage: "raw", type: "completed", text: "raw report" },
+      { ...worker, type: "failed", code: "structuring_failed", message: "company research structuring failed" },
+      { ...worker, type: "cancelled" }, { ...delta, stage: "structure" },
+      { ...changed, apiKey: "sk-secret" }, { ...changed, companyId: undefined }, { ...delta, delta: 1 },
+    ]) companyResearch.emit(invalid);
+    expect(a.sent).toEqual([]);
+    companyResearch.emit(changed);
+    companyResearch.emit(delta);
+    expect(a.sent).toEqual([changed, delta].map((payload) => ({ channel: IPC_CHANNELS.companyResearchEvents, payload })));
+    expect(b.sent).toEqual(a.sent);
+    expect(untracked.sent).toEqual([]);
+    expect(a.destroyedListenerCount).toBe(1);
+    a.destroy();
+    companyResearch.emit(changed);
+    expect(a.sent).toHaveLength(2);
+    expect(b.sent).toHaveLength(3);
+    dispose();
+    companyResearch.emit(changed);
+    expect(b.sent).toHaveLength(3);
+    expect(b.destroyedListenerCount).toBe(0);
   });
 
   it("requires a non-blank string when setting the key and never returns the secret", async () => {

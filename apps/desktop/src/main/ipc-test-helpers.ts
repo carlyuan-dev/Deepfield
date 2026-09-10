@@ -7,7 +7,9 @@ import type {
   CompanyDraft,
   Company,
   CompanyResearchState,
-  CompanyResearchWorkerEvent,
+  CompanyResearchEvent,
+  KeyResearchRun,
+  ResearchRunSummary,
   CompanyProfileEvent,
   CompanyId,
   Conversation,
@@ -19,6 +21,7 @@ import type {
   ResearchRunId,
   StartCompanyResearchInput,
 } from "@deepfield/contracts";
+import { getCompanyResearchTemplate } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
   registerIpcHandlers,
@@ -327,19 +330,16 @@ export class FakeCompanyResearchService {
   startCalls: Array<{ itemId: string; companyId: string; input: StartCompanyResearchInput }> = [];
   cancelCalls: string[] = [];
   getStateCalls: Array<{ itemId: string; companyId: string }> = [];
-  listCompletedCalls: Array<{ itemId: string; companyId: string }> = [];
-  private listeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
+  listRunsCalls: Array<{ itemId: string; companyId: string }> = [];
+  getRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
+  retryStructuringCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
+  run: ResearchRun = researchRun();
+  runs: ResearchRunSummary[] = [];
+  private listeners = new Set<(event: CompanyResearchEvent) => void>();
 
   start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun {
     this.startCalls.push({ itemId, companyId, input });
-    return {
-      id: "run-1" as ResearchRunId,
-      itemId: itemId as CapabilityItemId,
-      companyId: companyId as CompanyId,
-      status: "running",
-      timeScope: input.timeScope,
-      createdAt: "2026-09-09T00:00:00.000Z",
-    };
+    return researchRun({ itemId: itemId as CapabilityItemId, companyId: companyId as CompanyId, ...input });
   }
 
   async cancel(runId: string): Promise<void> {
@@ -348,22 +348,58 @@ export class FakeCompanyResearchService {
 
   getState(itemId: string, companyId: string): CompanyResearchState {
     this.getStateCalls.push({ itemId, companyId });
-    return { completed: [] };
+    return { runs: this.runs, globalActiveRun: null };
   }
 
-  listCompleted(itemId: string, companyId: string): ResearchRun[] {
-    this.listCompletedCalls.push({ itemId, companyId });
-    return [];
+  listRuns(itemId: string, companyId: string): ResearchRunSummary[] {
+    this.listRunsCalls.push({ itemId, companyId });
+    return this.runs;
   }
 
-  subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void {
+  getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined {
+    this.getRunCalls.push({ itemId, companyId, runId });
+    if (runId !== this.run.id) return undefined;
+    if (itemId !== this.run.itemId || companyId !== this.run.companyId) {
+      throw new Error(`wrong target: ${JSON.stringify(this.run)}`);
+    }
+    return this.run;
+  }
+
+  retryStructuring(itemId: string, companyId: string, runId: string): ResearchRun {
+    this.retryStructuringCalls.push({ itemId, companyId, runId });
+    return researchRun({ status: "structuring", rawReportText: "# Saved raw report", structuringAttempts: 2 });
+  }
+
+  subscribe(listener: (event: CompanyResearchEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  emit(event: CompanyResearchWorkerEvent): void {
-    for (const listener of this.listeners) listener(event);
+  emit(event: unknown): void {
+    // Deliberately permit malformed transport fixtures to exercise IPC filtering.
+    for (const listener of this.listeners) listener(event as CompanyResearchEvent);
   }
+}
+
+export const RESEARCH_INPUT: StartCompanyResearchInput = {
+  direction: "product_and_technology", focusScope: "整机", asOfDate: "2026-09-11",
+};
+
+export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearchRun {
+  return {
+    id: "run-1" as ResearchRunId,
+    itemId: "item-1" as CapabilityItemId,
+    companyId: "company-1" as CompanyId,
+    schemaVersion: "company-research-report-v1",
+    status: "researching",
+    ...RESEARCH_INPUT,
+    researchContext: { ...RESEARCH_INPUT, currentDate: "2026-09-11", companyName: "ACME", topicName: "机器人" },
+    template: getCompanyResearchTemplate(RESEARCH_INPUT.direction),
+    harnessVersion: 1,
+    structuringAttempts: 0,
+    createdAt: "2026-09-11T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 export class FakeCompanyProfileEventSource {

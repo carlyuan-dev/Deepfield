@@ -7,7 +7,7 @@ import {
 import type {
   AgentWorkerEvent,
   ChatRequestOptions,
-  CompanyResearchWorkerEvent,
+  CompanyResearchEvent,
   CompanyProfileEvent,
   DesktopApi,
 } from "@deepfield/contracts";
@@ -77,8 +77,10 @@ describe("preload api", () => {
     expect(Object.keys(api.chat).sort()).toEqual(["listMessages", "send", "subscribe"]);
     expect(Object.keys(api.companyResearch).sort()).toEqual([
       "cancel",
+      "getRun",
       "getState",
-      "listCompleted",
+      "listRuns",
+      "retryStructuring",
       "start",
       "subscribe",
     ]);
@@ -110,10 +112,12 @@ describe("preload api", () => {
     await api.industryResearch.recognizeCompanies("item-1", "公司甲");
     await api.industryResearch.retryCompanyProfile("company-1");
     api.industryResearch.subscribeCompanyProfiles(() => {});
-    await api.companyResearch.start("item-1", "company-1", { timeScope: "近一年" });
+    await api.companyResearch.start("item-1", "company-1", { direction: "product_and_technology", asOfDate: "2026-09-11" });
     await api.companyResearch.cancel("run-1");
     await api.companyResearch.getState("item-1", "company-1");
-    await api.companyResearch.listCompleted("item-1", "company-1");
+    await api.companyResearch.listRuns("item-1", "company-1");
+    await api.companyResearch.getRun("item-1", "company-1", "run-1");
+    await api.companyResearch.retryStructuring("item-1", "company-1", "run-1");
     await api.settings.hasDeepSeekKey();
     await api.settings.setDeepSeekKey("sk-value");
     await api.llm.checkConnection();
@@ -139,10 +143,12 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.industryResearchRecognizeCompanies, args: ["item-1", "公司甲"] },
       { channel: IPC_CHANNELS.industryResearchRetryCompanyProfile, args: ["company-1"] },
       { channel: IPC_CHANNELS.industryResearchSubscribeCompanyProfiles, args: [] },
-      { channel: IPC_CHANNELS.companyResearchStart, args: ["item-1", "company-1", { timeScope: "近一年" }] },
+      { channel: IPC_CHANNELS.companyResearchStart, args: ["item-1", "company-1", { direction: "product_and_technology", asOfDate: "2026-09-11" }] },
       { channel: IPC_CHANNELS.companyResearchCancel, args: ["run-1"] },
       { channel: IPC_CHANNELS.companyResearchGetState, args: ["item-1", "company-1"] },
-      { channel: IPC_CHANNELS.companyResearchListCompleted, args: ["item-1", "company-1"] },
+      { channel: IPC_CHANNELS.companyResearchListRuns, args: ["item-1", "company-1"] },
+      { channel: IPC_CHANNELS.companyResearchGetRun, args: ["item-1", "company-1", "run-1"] },
+      { channel: IPC_CHANNELS.companyResearchRetryStructuring, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
       { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
       { channel: IPC_CHANNELS.llmCheckConnection, args: [] },
@@ -176,20 +182,32 @@ describe("preload api", () => {
     unsubscribe();
     expect(set?.size).toBe(0);
 
-    const researchReceived: CompanyResearchWorkerEvent[] = [];
+    const researchReceived: CompanyResearchEvent[] = [];
     const unsubscribeResearch = api.companyResearch.subscribe((event) => researchReceived.push(event));
     const researchSet = listeners.get(IPC_CHANNELS.companyResearchEvents);
-    const validResearch: CompanyResearchWorkerEvent = {
-      requestId: "rr",
+    const validResearch: CompanyResearchEvent = {
+      itemId: "item-1",
+      companyId: "company-1",
       runId: "run-1",
-      type: "started",
+      type: "state_changed",
     };
+    const rawDelta: CompanyResearchEvent = { requestId: "rr", runId: "run-1", stage: "raw", type: "text_delta", delta: "# raw" };
     for (const listener of [...(researchSet ?? [])]) {
       listener({}, validResearch);
+      listener({}, rawDelta);
       listener({}, { ...validResearch, type: "text_delta" });
+      listener({}, { ...validResearch, apiKey: "sk-secret" });
+      listener({}, { ...rawDelta, stage: "structure" });
+      for (const stage of ["raw", "structure"]) {
+        const identity = { requestId: "rr", runId: "run-1", stage };
+        listener({}, { ...identity, type: "started" });
+        listener({}, { ...identity, type: "completed", text: '{"candidate":true}' });
+        listener({}, { ...identity, type: "cancelled" });
+        listener({}, { ...identity, type: "failed", code: stage === "raw" ? "research_failed" : "structuring_failed", message: stage === "raw" ? "company research failed" : "company research structuring failed" });
+      }
       listener({}, valid);
     }
-    expect(researchReceived).toEqual([validResearch]);
+    expect(researchReceived).toEqual([validResearch, rawDelta]);
     unsubscribeResearch();
     expect(researchSet?.size).toBe(0);
 
