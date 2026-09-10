@@ -89,6 +89,11 @@ describe("Markdown source inheritance", () => {
     expect(extractMarkdownSources(`\`fake\` ![image](https://example.com/image) <!-- fake --> ${raw}\n${raw}`))
       .toEqual(new Set(["公司公告\u0000https://example.com/a"]));
   });
+  it("does not turn a filtered indented continuation into a reference paragraph boundary", () => {
+    const markdown = "[公司公告][ref]\n    continuation\n[ref]: https://example.com/a";
+    expect(extractMarkdownSources(markdown)).toEqual(new Set());
+    expect(() => validateStructuredResearch(JSON.stringify(content()), markdown, template)).toThrow();
+  });
   it("does not invent an outer link when its label contains a real link", () => {
     expect(extractMarkdownSources('[outer [inner](https://example.com/b)](https://example.com/a)'))
       .toEqual(new Set(["inner\u0000https://example.com/b"]));

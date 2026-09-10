@@ -149,10 +149,12 @@ export function extractMarkdownSources(markdown: string): Set<string> {
   const references = new Map<string, string>();
   let fence: { marker: string; length: number } | undefined;
   let htmlEnd: RegExp | undefined;
-  const lines = markdown.split(/\r\n?|\n/).map((original) => {
+  const sourceLines = markdown.split(/\r\n?|\n/).map((original) => {
     // Handle ordinary block quote/list containers before recognizing code blocks.
-    const line = original.replace(/^(?: {0,3}>[ \t]?)+/, "")
+    return original.replace(/^(?: {0,3}>[ \t]?)+/, "")
       .replace(/^ {0,3}(?:[-+*]|\d+[.)])( +)/, (_match: string, spaces: string) => spaces.length > 4 ? spaces.slice(1) : "");
+  });
+  const lines = sourceLines.map((line) => {
     if (fence) {
       const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
       if (closing && closing[1]![0] === fence.marker && closing[1]!.length >= fence.length) fence = undefined;
@@ -212,7 +214,8 @@ export function extractMarkdownSources(markdown: string): Set<string> {
   const text = lines.map((line, index) => {
     const start = offset;
     offset += line.length + 1;
-    const canDefine = index === 0 || !lines[index - 1]!.trim() || previousDefinition;
+    // Filtered content is not a blank line in the source paragraph.
+    const canDefine = index === 0 || !sourceLines[index - 1]!.trim() || previousDefinition;
     previousDefinition = false;
     while (opaque[spanIndex] && opaque[spanIndex]!.end <= start) spanIndex++;
     const span = opaque[spanIndex];
