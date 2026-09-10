@@ -4,6 +4,8 @@ import {
   type CompanyResearchWorkerRequest,
 } from "@deepfield/contracts";
 import { createApplicationRuntime } from "./application-runtime.js";
+import { AgentWorkerClient } from "./agent-worker-client.js";
+import { FakeEndpoint } from "./agent-worker-client-test-helpers.js";
 import { openTestDb, type TestDb } from "../../../../packages/application/src/application-test-helpers.js";
 
 const dbs: TestDb[] = [];
@@ -15,6 +17,58 @@ afterEach(() => {
 });
 
 describe("application runtime composition", () => {
+  it.each(["raw", "structure"] as const)("ignores foreign %s identities through the real client and completes the service run", async (stage) => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });
+    const company = db.repos.companies.upsert({ name: "小米" });
+    db.repos.itemCompanies.add(item.id, company.id);
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const runtime = createApplicationRuntime({
+      repositories: db.repos, secrets: { get: () => "sk-runtime" }, worker: client,
+      companyRecognizer: { recognize: async () => [] }, companyCompleter: { complete: async () => ({}) },
+    });
+    const events: unknown[] = [];
+    runtime.companyResearch.subscribe((event) => events.push(event));
+    const emitCompletion = (request: CompanyResearchWorkerRequest, text: string) => endpoint.emit({
+      requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text,
+    });
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      const run = runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+      await flush();
+      const rawRequest = endpoint.posted[0] as CompanyResearchWorkerRequest;
+      expect(rawRequest.stage).toBe("raw");
+      if (stage === "structure") { emitCompletion(rawRequest, "原始报告"); await flush(); }
+      const current = endpoint.posted.at(-1) as CompanyResearchWorkerRequest;
+      expect(current.stage).toBe(stage);
+      for (const identity of [{ requestId: "foreign-request" }, { runId: "foreign-run" }, { stage: stage === "raw" ? "structure" : "raw" }]) {
+        endpoint.emit({ requestId: current.requestId, runId: run.id, stage, type: "completed", text: "foreign candidate", ...identity });
+      }
+      await flush();
+      expect(runtime.companyResearch.getRun(item.id, company.id, run.id)?.status).toBe(stage === "raw" ? "researching" : "structuring");
+      expect(runtime.companyResearch.isRunning()).toBe(true);
+      expect(client.pendingCount()).toBe(1);
+      if (stage === "raw") { emitCompletion(rawRequest, "原始报告"); await flush(); }
+      const structureRequest = endpoint.posted[1] as CompanyResearchWorkerRequest;
+      expect(structureRequest.stage).toBe("structure");
+      const valid = {
+        coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
+        sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+      };
+      emitCompletion(structureRequest, JSON.stringify(valid)); await flush();
+      expect(runtime.companyResearch.getRun(item.id, company.id, run.id)).toMatchObject({ status: "completed", rawReportText: "原始报告", structuredContent: valid });
+      expect(runtime.companyResearch.isRunning()).toBe(false);
+      expect(client.pendingCount()).toBe(0);
+      expect(endpoint.posted).toHaveLength(2);
+      expect(events).toEqual(Array.from({ length: 3 }, () => ({ type: "state_changed", itemId: item.id, companyId: company.id, runId: run.id })));
+    } finally {
+      runtime.companyProfiles.dispose();
+      client.dispose();
+      await flush();
+    }
+  });
+
   it.each(["researching", "structuring"])("recovers abandoned %s before starting profile enrichment", async (status) => {
     const db = openTestDb(); dbs.push(db);
     const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });

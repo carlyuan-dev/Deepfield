@@ -39,12 +39,40 @@ describe("agent worker client", () => {
     client.dispose();
   });
 
-  it.each(["raw", "structure"] as const)("rejects wrong-stage events for %s", async (stage) => {
+  it.each(["raw", "structure"] as const)("ignores foreign research identities for %s and accepts a later matching event", async (stage) => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);
     const req = stage === "raw" ? rawResearchRequest() : structureResearchRequest();
     const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
+    endpoint.emit({ requestId: "foreign-request", runId: req.runId, stage, type: "completed", text: "wrong request" });
+    endpoint.emit({ requestId: req.requestId, runId: "foreign-run", stage, type: "completed", text: "wrong run" });
     endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: stage === "raw" ? "structure" : "raw", type: "completed", text: "wrong stage" });
+    expect(client.pendingCount()).toBe(1);
+    const matching = { requestId: req.requestId, runId: req.runId, stage, type: "completed", text: "matching result" };
+    endpoint.emit(matching);
+    expect(await iterator.next()).toEqual({ value: matching, done: false });
+    expect((await iterator.next()).done).toBe(true);
+    expect(client.pendingCount()).toBe(0);
+    client.dispose();
+  });
+
+  it.each(["raw", "structure"] as const)("still fails malformed research events for %s even with foreign identities", async (stage) => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const req = stage === "raw" ? rawResearchRequest() : structureResearchRequest();
+    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
+    endpoint.emit({ requestId: req.requestId, runId: "foreign-run", stage, type: "completed", text: 42 });
+    await expect(iterator.next()).rejects.toBeInstanceOf(AgentProtocolError);
+    expect(client.pendingCount()).toBe(0);
+    client.dispose();
+  });
+
+  it.each(["chat", "tool"] as const)("still fails a research event sent to a %s stream", async (kind) => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const stream = kind === "chat" ? client.send(request("shared")) : client.sendTool(toolRequest("shared"));
+    const iterator = stream[Symbol.asyncIterator]();
+    endpoint.emit({ requestId: "shared", runId: "foreign-run", stage: "raw", type: "completed", text: "wrong stream kind" });
     await expect(iterator.next()).rejects.toBeInstanceOf(AgentProtocolError);
     expect(client.pendingCount()).toBe(0);
     client.dispose();

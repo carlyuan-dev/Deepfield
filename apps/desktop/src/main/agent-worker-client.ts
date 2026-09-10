@@ -229,10 +229,13 @@ export class AgentWorkerClient {
   private routeResearch(event: CompanyResearchWorkerEvent): void {
     const stream = this.pending.get(event.requestId);
     if (!stream) return;
-    if (stream.kind !== "research" || stream.runId !== event.runId || stream.stage !== event.stage) {
+    if (stream.kind !== "research") {
       this.close(stream.id, stream, new AgentProtocolError());
       return;
     }
+    // Schema-valid foreign research identities do not terminate the live stage.
+    // Malformed envelopes still fail in handleMessage before reaching this route.
+    if (stream.runId !== event.runId || stream.stage !== event.stage) return;
     this.push(stream.id, stream, event);
   }
   private routeToolEnvelope(envelope: { requestId: string; event: ToolExecutionEvent }): void {
