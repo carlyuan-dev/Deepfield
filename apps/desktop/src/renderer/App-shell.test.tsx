@@ -9,7 +9,9 @@ import type {
   ItemCompanyView,
   ResearchRun,
   ResearchRunId,
+  CompanyResearchState,
 } from "@deepfield/contracts";
+import { researchRun, researchSummary, activeResearch } from "./features/industry-research/company-research-test-fixtures.js";
 import { App } from "./App.js";
 import {
   capabilityItem,
@@ -593,7 +595,8 @@ describe("app three-pane shell", () => {
       createdAt: "2026-09-09T08:00:00.000Z",
       updatedAt: "2026-09-09T08:00:00.000Z",
     };
-    let state = { completed: [] } as { active?: { run: ResearchRun; draftText: string }; completed: ResearchRun[] };
+    let state: CompanyResearchState = { runs: [], globalActiveRun: null };
+    const details = new Map<string, ResearchRun>();
     let sequence = 0;
     fake.conversations.openInitial.mockResolvedValue({
       active: activeConversation,
@@ -602,20 +605,11 @@ describe("app three-pane shell", () => {
     fake.industryResearch.listItems.mockResolvedValue([item]);
     fake.industryResearch.listCompanies.mockResolvedValue([company]);
     fake.companyResearch.getState.mockImplementation(async () => state);
-    fake.companyResearch.listCompleted.mockImplementation(async () => state.completed);
+    fake.companyResearch.getRun.mockImplementation(async (_item, _company, id) => details.get(id));
     fake.companyResearch.start.mockImplementation(async (_itemId, _companyId, input) => {
-      const run: ResearchRun = {
-        id: `run-${++sequence}` as ResearchRunId,
-        itemId: item.id,
-        companyId: company.id,
-        status: "running",
-        timeScope: input.timeScope,
-        ...(input.customRequirements !== undefined
-          ? { customRequirements: input.customRequirements }
-          : {}),
-        createdAt: `2026-09-09T0${sequence + 8}:00:00.000Z`,
-      };
-      state = { active: { run, draftText: "" }, completed: state.completed };
+      const run = researchRun({ id: `run-${++sequence}` as ResearchRunId, status: "researching", ...input });
+      state = { ...activeResearch(run), runs: state.runs };
+      details.set(run.id, run);
       return run;
     });
 
@@ -626,21 +620,24 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "查看 小米" }));
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
 
-    const timeScope = screen.getByLabelText("调研时间范围") as HTMLInputElement;
-    expect(timeScope.value).toBe("重点调研近一年，必要的公司背景不限时间");
-    await user.clear(timeScope);
-    await user.type(timeScope, "近一年");
-    await user.type(screen.getByLabelText("补充要求（可选）"), "关注新品");
+    const dialog = screen.getByRole("dialog", { name: "公司调研" });
+    expect(within(dialog).getByText("智能眼镜")).toBeTruthy();
+    expect(within(dialog).getByText("小米")).toBeTruthy();
+    expect((screen.getByLabelText("研究方向") as HTMLSelectElement).options).toHaveLength(4);
+    await user.selectOptions(screen.getByLabelText("研究方向"), "product_and_technology");
+    await user.type(screen.getByLabelText("关注范围（可选）"), "关注新品");
     await user.click(within(screen.getByRole("dialog", { name: "公司调研" })).getByRole(
       "button",
       { name: "开始调研" },
     ));
     const firstRun = state.active!.run;
+    expect(fake.companyResearch.start).toHaveBeenCalledWith(item.id, company.id, expect.objectContaining({ direction: "product_and_technology", focusScope: "关注新品" }));
     act(() => {
       fake.emitResearch({
         requestId: "request-1",
         runId: firstRun.id,
         type: "text_delta",
+        stage: "raw",
         delta: "第一版报告\n来源：https://example.com/one",
       });
     });
@@ -651,53 +648,45 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
     expect(fake.chat.send).toHaveBeenCalledTimes(1);
 
-    const firstCompleted: ResearchRun = {
-      ...firstRun,
-      status: "completed",
-      reportText: "第一版报告\n来源：https://example.com/one",
-      completedAt: "2026-09-09T09:30:00.000Z",
-    };
-    state = { completed: [firstCompleted] };
+    const firstCompleted = researchRun({ id: firstRun.id, rawReportText: "第一版报告\n来源：https://example.com/one" });
+    details.set(firstRun.id, firstCompleted);
+    state = { runs: [researchSummary(firstCompleted)], globalActiveRun: null };
     act(() => {
       fake.emitResearch({
-        requestId: "request-1",
         runId: firstRun.id,
-        type: "completed",
-        text: firstCompleted.reportText!,
+        itemId: item.id, companyId: company.id, type: "state_changed",
       });
     });
+    expect(await screen.findByText("核心结论")).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
     const firstLink = await screen.findByRole("link", { name: "https://example.com/one" });
     expect(firstLink.getAttribute("rel")).toContain("noopener");
 
     await user.click(screen.getByRole("button", { name: "重新调研" }));
-    expect((screen.getByLabelText("调研时间范围") as HTMLInputElement).value).toBe("近一年");
-    await user.clear(screen.getByLabelText("调研时间范围"));
-    await user.type(screen.getByLabelText("调研时间范围"), "近三个月");
+    expect((screen.getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("关注新品");
     await user.click(within(screen.getByRole("dialog", { name: "公司调研" })).getByRole(
       "button",
       { name: "开始调研" },
     ));
     const secondRun = state.active!.run;
-    const secondCompleted: ResearchRun = {
-      ...secondRun,
-      status: "completed",
-      reportText: "第二版报告",
-      completedAt: "2026-09-09T10:30:00.000Z",
-    };
-    state = { completed: [secondCompleted, firstCompleted] };
+    const secondCompleted = researchRun({ id: secondRun.id, rawReportText: "第二版报告" });
+    details.set(secondRun.id, secondCompleted);
+    state = { runs: [researchSummary(secondCompleted), researchSummary(firstCompleted)], globalActiveRun: null };
     act(() => {
       fake.emitResearch({
-        requestId: "request-2",
         runId: secondRun.id,
-        type: "completed",
-        text: secondCompleted.reportText!,
+        itemId: item.id, companyId: company.id, type: "state_changed",
       });
     });
 
+    expect(await screen.findByText("核心结论")).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
     expect(await screen.findByText("第二版报告")).toBeTruthy();
     const history = screen.getByLabelText("报告版本") as HTMLSelectElement;
     expect(history.options).toHaveLength(2);
     await user.selectOptions(history, firstCompleted.id);
-    expect(screen.getByText(/第一版报告/)).toBeTruthy();
+    await waitFor(() => expect(fake.companyResearch.getRun).toHaveBeenLastCalledWith(item.id, company.id, firstCompleted.id));
+    await user.click(await screen.findByRole("tab", { name: "原始调研报告" }));
+    expect(await screen.findByText(/第一版报告/)).toBeTruthy();
   });
 });

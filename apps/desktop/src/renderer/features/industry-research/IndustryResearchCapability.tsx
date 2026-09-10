@@ -273,6 +273,10 @@ export function IndustryResearchCapability({ api }: IndustryResearchCapabilityPr
             api={api}
             itemId={selectedItem.id}
             companyId={selectedCompany.id}
+            topicName={selectedItem.industry}
+            companyName={selectedCompany.name}
+            {...(selectedItem.researchScope !== undefined ? { topicScope: selectedItem.researchScope } : {})}
+            {...(selectedCompany.note !== undefined ? { companyNote: selectedCompany.note } : {})}
           />
         </>
       ) : (

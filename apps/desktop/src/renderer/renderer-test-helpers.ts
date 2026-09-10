@@ -15,7 +15,8 @@ import type {
   DesktopApi,
   CompanyDraft,
   CompanyResearchState,
-  CompanyResearchWorkerEvent,
+  CompanyResearchEvent,
+  ResearchRunSummary,
   ItemCompanyView,
   MessageId,
   SkillSummary,
@@ -51,8 +52,10 @@ export interface FakeDesktopApi extends DesktopApi {
     start: Mock<(itemId: string, companyId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
     cancel: Mock<(runId: string) => Promise<void>>;
     getState: Mock<(itemId: string, companyId: string) => Promise<CompanyResearchState>>;
-    listCompleted: Mock<(itemId: string, companyId: string) => Promise<ResearchRun[]>>;
-    subscribe: Mock<(listener: (event: CompanyResearchWorkerEvent) => void) => () => void>;
+    listRuns: Mock<(itemId: string, companyId: string) => Promise<ResearchRunSummary[]>>;
+    getRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun | undefined>>;
+    retryStructuring: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun>>;
+    subscribe: Mock<(listener: (event: CompanyResearchEvent) => void) => () => void>;
   };
   settings: {
     hasDeepSeekKey: Mock<() => Promise<boolean>>;
@@ -77,9 +80,9 @@ export interface FakeDesktopApi extends DesktopApi {
     listMessages: Mock<(conversationId: string) => Promise<ChatMessage[]>>;
   };
   listeners: Set<(event: AgentWorkerEvent) => void>;
-  researchListeners: Set<(event: CompanyResearchWorkerEvent) => void>;
+  researchListeners: Set<(event: CompanyResearchEvent) => void>;
   emit(event: AgentWorkerEvent): void;
-  emitResearch(event: CompanyResearchWorkerEvent): void;
+  emitResearch(event: CompanyResearchEvent): void;
   emitProfile(event: CompanyProfileEvent): void;
   nextRequestId(): string;
 }
@@ -123,7 +126,7 @@ export function chatSendResult(
 
 export function makeFakeApi(): FakeDesktopApi {
   const listeners = new Set<(event: AgentWorkerEvent) => void>();
-  const researchListeners = new Set<(event: CompanyResearchWorkerEvent) => void>();
+  const researchListeners = new Set<(event: CompanyResearchEvent) => void>();
   const profileListeners = new Set<(event: CompanyProfileEvent) => void>();
   const api = {
     conversations: {
@@ -181,10 +184,12 @@ export function makeFakeApi(): FakeDesktopApi {
         throw new Error("not implemented");
       }),
       cancel: vi.fn(async (): Promise<void> => {}),
-      getState: vi.fn(async (): Promise<CompanyResearchState> => ({ completed: [] })),
-      listCompleted: vi.fn(async (): Promise<ResearchRun[]> => []),
+      getState: vi.fn(async (): Promise<CompanyResearchState> => ({ runs: [], globalActiveRun: null })),
+      listRuns: vi.fn(async (): Promise<ResearchRunSummary[]> => []),
+      getRun: vi.fn(async (): Promise<ResearchRun | undefined> => undefined),
+      retryStructuring: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
       subscribe: vi.fn(
-        (listener: (event: CompanyResearchWorkerEvent) => void): (() => void) => {
+        (listener: (event: CompanyResearchEvent) => void): (() => void) => {
           researchListeners.add(listener);
           return () => researchListeners.delete(listener);
         },
@@ -233,7 +238,7 @@ export function makeFakeApi(): FakeDesktopApi {
         listener(event);
       }
     },
-    emitResearch: (event: CompanyResearchWorkerEvent): void => {
+    emitResearch: (event: CompanyResearchEvent): void => {
       for (const listener of [...researchListeners]) listener(event);
     },
     emitProfile: (event: CompanyProfileEvent): void => {
