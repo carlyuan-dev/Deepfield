@@ -14,8 +14,9 @@ import type { AgentWorkerEvent, ChatMessage, ChatRequestOptions, ChatSendResult 
 import type { SkillSummary } from "./skills.js";
 import type {
   CompanyResearchState,
-  CompanyResearchWorkerEvent,
+  CompanyResearchEvent,
   ResearchRun,
+  ResearchRunSummary,
   StartCompanyResearchInput,
 } from "./research.js";
 import { StartCompanyResearchInputSchema } from "./research.js";
@@ -32,6 +33,12 @@ export const CompanyResearchTargetArgsSchema = Type.Tuple([
   CompanyResearchIdSchema,
 ]);
 export const CompanyResearchSubscribeArgsSchema = Type.Tuple([]);
+export const CompanyResearchGetRunArgsSchema = Type.Tuple([
+  CompanyResearchIdSchema,
+  CompanyResearchIdSchema,
+  CompanyResearchIdSchema,
+]);
+export const CompanyResearchRetryStructuringArgsSchema = CompanyResearchGetRunArgsSchema;
 
 export type LlmConnectionStatus = "connected" | "disconnected";
 
@@ -66,8 +73,10 @@ export interface DesktopApi {
     ): Promise<ResearchRun>;
     cancel(runId: string): Promise<void>;
     getState(itemId: string, companyId: string): Promise<CompanyResearchState>;
-    listCompleted(itemId: string, companyId: string): Promise<ResearchRun[]>;
-    subscribe(listener: (event: CompanyResearchWorkerEvent) => void): () => void;
+    listRuns(itemId: string, companyId: string): Promise<ResearchRunSummary[]>;
+    getRun(itemId: string, companyId: string, runId: string): Promise<ResearchRun | undefined>;
+    retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
+    subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
   };
   settings: {
     hasDeepSeekKey(): Promise<boolean>;

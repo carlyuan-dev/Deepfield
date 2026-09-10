@@ -8,3 +8,4 @@ export * from "./tools.js";
 export * from "./worker.js";
 export * from "./skills.js";
 export * from "./research.js";
+export * from "./company-research-templates.js";

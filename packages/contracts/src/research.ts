@@ -1,128 +1,227 @@
 import { Type, type Static } from "typebox";
 import type { CapabilityItemId, CompanyId, ResearchRunId } from "./ids.js";
 import { DEFAULT_DEEPSEEK_MODEL_ID } from "./chat.js";
+import { CompanyProfileFieldsSchema } from "./capability-items.js";
+import { CompanyResearchTemplateSnapshotSchema, ResearchDirectionSchema } from "./company-research-templates.js";
+import type { JsonObject } from "./tools.js";
 
-export const StartCompanyResearchInputSchema = Type.Object(
-  {
-    timeScope: Type.String({ minLength: 1, maxLength: 300 }),
-    customRequirements: Type.Optional(Type.String({ maxLength: 4000 })),
-  },
-  { additionalProperties: false },
-);
+const DateSchema = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
+const TimestampSchema = Type.String({ minLength: 1, maxLength: 64 });
+const IdSchema = Type.String({ minLength: 1, maxLength: 200 });
+const TextSchema = Type.String({ minLength: 1, maxLength: 4000 });
+// Bound transport/storage bodies; semantic output checks remain in the Harness.
+const ReportTextSchema = Type.String({ minLength: 1, maxLength: 1_000_000 });
+
+export const StartCompanyResearchInputSchema = Type.Object({
+  direction: ResearchDirectionSchema,
+  focusScope: Type.Optional(Type.String({ maxLength: 1000 })),
+  asOfDate: DateSchema,
+}, { additionalProperties: false });
 export type StartCompanyResearchInput = Static<typeof StartCompanyResearchInputSchema>;
 
-export interface ResearchRun {
-  id: ResearchRunId;
-  itemId: CapabilityItemId;
-  companyId: CompanyId;
-  status: "running" | "completed";
-  timeScope: string;
-  customRequirements?: string;
-  reportText?: string;
-  createdAt: string;
-  completedAt?: string;
-}
+export const ResearchSectionStatusSchema = Type.Union([
+  Type.Literal("found"), Type.Literal("partial"), Type.Literal("not_found"),
+  Type.Literal("not_disclosed"), Type.Literal("conflicting"),
+]);
+export type ResearchSectionStatus = Static<typeof ResearchSectionStatusSchema>;
+export const RESEARCH_SECTION_STATUS_LABELS = Object.freeze({
+  found: "已找到", partial: "部分找到", not_found: "未找到",
+  not_disclosed: "未披露", conflicting: "存在冲突",
+} satisfies Record<ResearchSectionStatus, string>);
 
-export interface CompanyResearchState {
-  active?: { run: ResearchRun; draftText: string };
-  completed: ResearchRun[];
-}
+export const ResearchClaimTypeSchema = Type.Union([
+  Type.Literal("reported_fact"), Type.Literal("company_statement"),
+  Type.Literal("plan"), Type.Literal("estimate"), Type.Literal("forecast"),
+]);
+export type ResearchClaimType = Static<typeof ResearchClaimTypeSchema>;
 
-export const CompanyResearchContextSchema = Type.Object(
-  {
-    currentDate: Type.String({ minLength: 1, maxLength: 64 }),
-    companyName: Type.String({ minLength: 1, maxLength: 300 }),
-    legalName: Type.Optional(Type.String({ maxLength: 500 })),
-    aliases: Type.Optional(Type.Array(Type.String({ maxLength: 300 }), { maxItems: 100 })),
-    headquarters: Type.Optional(Type.String({ maxLength: 500 })),
-    foundedAt: Type.Optional(Type.String({ maxLength: 10 })),
-    officialWebsite: Type.Optional(Type.Union([Type.String({ maxLength: 2000 }), Type.Null()])),
-    stockListings: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            exchange: Type.String({ maxLength: 100 }),
-            ticker: Type.String({ maxLength: 100 }),
-          },
-          { additionalProperties: false },
-        ),
-        { maxItems: 100 },
-      ),
-    ),
-    businessTags: Type.Optional(
-      Type.Array(Type.String({ maxLength: 100 }), { minItems: 1, maxItems: 5 }),
-    ),
-    industry: Type.String({ minLength: 1, maxLength: 300 }),
-    researchScope: Type.Optional(Type.String({ maxLength: 4000 })),
-    companyNote: Type.Optional(Type.String({ maxLength: 4000 })),
-    timeScope: Type.String({ minLength: 1, maxLength: 300 }),
-    customRequirements: Type.Optional(Type.String({ maxLength: 4000 })),
-  },
-  { additionalProperties: false },
-);
+export const StructuredResearchContentSchema = Type.Object({
+  coreSummary: Type.Array(TextSchema, { minItems: 1, maxItems: 4 }),
+  sections: Type.Array(Type.Object({
+    sectionId: Type.String({ minLength: 1, maxLength: 100 }),
+    status: ResearchSectionStatusSchema,
+    summary: Type.Union([TextSchema, Type.Null()]),
+    facts: Type.Array(Type.Object({
+      text: TextSchema,
+      timeContext: Type.Union([TextSchema, Type.Null()]),
+      claimType: ResearchClaimTypeSchema,
+      source: Type.Object({
+        title: Type.String({ minLength: 1, maxLength: 1000 }),
+        url: Type.String({ minLength: 1, maxLength: 4000 }),
+      }, { additionalProperties: false }),
+    }, { additionalProperties: false }), { maxItems: 8 }),
+  }, { additionalProperties: false }), { minItems: 5, maxItems: 5 }),
+}, { additionalProperties: false });
+export type StructuredResearchContent = Static<typeof StructuredResearchContentSchema>;
+/** Plain JSON Schema for IPC/provider requests, without TypeBox's hidden metadata. */
+export const STRUCTURED_RESEARCH_OUTPUT_SCHEMA: JsonObject = JSON.parse(JSON.stringify(StructuredResearchContentSchema));
+
+export const CompanyResearchContextSchema = Type.Object({
+  ...CompanyProfileFieldsSchema.properties,
+  currentDate: DateSchema,
+  companyName: Type.String({ minLength: 1, maxLength: 300 }),
+  topicName: Type.String({ minLength: 1, maxLength: 300 }),
+  topicScope: Type.Optional(Type.String({ maxLength: 4000 })),
+  companyNote: Type.Optional(Type.String({ maxLength: 4000 })),
+  ...StartCompanyResearchInputSchema.properties,
+}, { additionalProperties: false });
 export type CompanyResearchContext = Static<typeof CompanyResearchContextSchema>;
 
-export const CompanyResearchWorkerRequestSchema = Type.Object(
-  {
-    requestId: Type.String({ minLength: 1 }),
-    kind: Type.Literal("company-research.run"),
-    runId: Type.String({ minLength: 1 }),
-    apiKey: Type.String(),
-    modelId: Type.Literal(DEFAULT_DEEPSEEK_MODEL_ID),
-    context: CompanyResearchContextSchema,
-  },
-  { additionalProperties: false },
-);
+const RunIdentity = {
+  id: Type.Unsafe<ResearchRunId>(IdSchema),
+  itemId: Type.Unsafe<CapabilityItemId>(IdSchema),
+  companyId: Type.Unsafe<CompanyId>(IdSchema),
+  createdAt: TimestampSchema,
+};
+export const KeyResearchStatusSchema = Type.Union([
+  Type.Literal("researching"), Type.Literal("structuring"),
+  Type.Literal("structure_failed"), Type.Literal("completed"),
+]);
+export type KeyResearchStatus = Static<typeof KeyResearchStatusSchema>;
+
+export const LegacyResearchRunSchema = Type.Object({
+  ...RunIdentity,
+  schemaVersion: Type.Literal("legacy-freeform-v1"),
+  status: Type.Literal("completed"),
+  timeScope: Type.String({ minLength: 1, maxLength: 300 }),
+  customRequirements: Type.Optional(Type.String({ maxLength: 4000 })),
+  reportText: ReportTextSchema,
+  completedAt: TimestampSchema,
+}, { additionalProperties: false });
+export type LegacyResearchRun = Static<typeof LegacyResearchRunSchema>;
+
+// Artifact requirements for each transition are owned by Application/Repository;
+// this persisted JSON boundary validates shape and bounds without repairing data.
+export const KeyResearchRunSchema = Type.Object({
+  ...RunIdentity,
+  schemaVersion: Type.Literal("company-research-report-v1"),
+  status: KeyResearchStatusSchema,
+  ...StartCompanyResearchInputSchema.properties,
+  researchContext: CompanyResearchContextSchema,
+  template: CompanyResearchTemplateSnapshotSchema,
+  harnessVersion: Type.Literal(1),
+  rawReportText: Type.Optional(ReportTextSchema),
+  structuredContent: Type.Optional(StructuredResearchContentSchema),
+  structuringAttempts: Type.Integer({ minimum: 0 }),
+  lastFailureCode: Type.Optional(Type.Literal("structuring_failed")),
+  rawCompletedAt: Type.Optional(TimestampSchema),
+  completedAt: Type.Optional(TimestampSchema),
+}, { additionalProperties: false });
+export type KeyResearchRun = Static<typeof KeyResearchRunSchema>;
+
+export const ResearchRunSchema = Type.Union([LegacyResearchRunSchema, KeyResearchRunSchema]);
+export type ResearchRun = Static<typeof ResearchRunSchema>;
+
+export const LegacyResearchRunSummarySchema = Type.Omit(LegacyResearchRunSchema, ["reportText"], { additionalProperties: false });
+export const KeyResearchRunSummarySchema = Type.Omit(KeyResearchRunSchema, [
+  "rawReportText", "structuredContent", "researchContext", "template", "harnessVersion",
+], { additionalProperties: false });
+export const ActiveResearchRunSummarySchema = Type.Object({
+  ...KeyResearchRunSummarySchema.properties,
+  status: Type.Union([Type.Literal("researching"), Type.Literal("structuring")]),
+}, { additionalProperties: false });
+export type ActiveResearchRunSummary = Static<typeof ActiveResearchRunSummarySchema>;
+/** History includes failed structuring and completed reports, never active runs. */
+export const ResearchRunSummarySchema = Type.Union([
+  LegacyResearchRunSummarySchema,
+  Type.Object({
+    ...KeyResearchRunSummarySchema.properties,
+    status: Type.Union([Type.Literal("structure_failed"), Type.Literal("completed")]),
+  }, { additionalProperties: false }),
+]);
+export type ResearchRunSummary = Static<typeof ResearchRunSummarySchema>;
+
+export const CompanyResearchStageSchema = Type.Union([Type.Literal("raw"), Type.Literal("structure")]);
+export type CompanyResearchStage = Static<typeof CompanyResearchStageSchema>;
+export const CompanyResearchGlobalActiveRunSchema = Type.Object({
+  runId: Type.Unsafe<ResearchRunId>(IdSchema),
+  itemId: Type.Unsafe<CapabilityItemId>(IdSchema),
+  companyId: Type.Unsafe<CompanyId>(IdSchema),
+  stage: CompanyResearchStageSchema,
+}, { additionalProperties: false });
+export type CompanyResearchGlobalActiveRun = Static<typeof CompanyResearchGlobalActiveRunSchema>;
+
+export const CompanyResearchStateSchema = Type.Object({
+  active: Type.Optional(Type.Object({
+    run: ActiveResearchRunSummarySchema,
+    draftText: Type.String({ maxLength: 1_000_000 }),
+  }, { additionalProperties: false })),
+  runs: Type.Array(ResearchRunSummarySchema),
+  // Required even when the selected target is idle; null explicitly means free.
+  globalActiveRun: Type.Union([CompanyResearchGlobalActiveRunSchema, Type.Null()]),
+}, { additionalProperties: false });
+export type CompanyResearchState = Static<typeof CompanyResearchStateSchema>;
+
+const WorkerRequestFields = {
+  requestId: IdSchema,
+  runId: IdSchema,
+  apiKey: Type.String(),
+  modelId: Type.Literal(DEFAULT_DEEPSEEK_MODEL_ID),
+  context: CompanyResearchContextSchema,
+  template: CompanyResearchTemplateSnapshotSchema,
+};
+export const CompanyResearchRawWorkerRequestSchema = Type.Object({
+  ...WorkerRequestFields,
+  kind: Type.Literal("company-research.raw.run"),
+  stage: Type.Literal("raw"),
+}, { additionalProperties: false });
+export type CompanyResearchRawWorkerRequest = Static<typeof CompanyResearchRawWorkerRequestSchema>;
+export const CompanyResearchStructureWorkerRequestSchema = Type.Object({
+  ...WorkerRequestFields,
+  kind: Type.Literal("company-research.structure.run"),
+  stage: Type.Literal("structure"),
+  rawReportText: ReportTextSchema,
+  // JSON Schema const validates the schema as data, not as the candidate output.
+  outputSchema: Type.Unsafe<JsonObject>({ type: "object", const: STRUCTURED_RESEARCH_OUTPUT_SCHEMA }),
+}, { additionalProperties: false });
+export type CompanyResearchStructureWorkerRequest = Static<typeof CompanyResearchStructureWorkerRequestSchema>;
+export const CompanyResearchWorkerRequestSchema = Type.Union([
+  CompanyResearchRawWorkerRequestSchema, CompanyResearchStructureWorkerRequestSchema,
+]);
 export type CompanyResearchWorkerRequest = Static<typeof CompanyResearchWorkerRequestSchema>;
 
-export const CompanyResearchCancelRequestSchema = Type.Object(
-  {
-    requestId: Type.String({ minLength: 1 }),
-    kind: Type.Literal("company-research.cancel"),
-    runId: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const CompanyResearchCancelRequestSchema = Type.Object({
+  requestId: IdSchema,
+  kind: Type.Literal("company-research.cancel"),
+  runId: IdSchema,
+  stage: CompanyResearchStageSchema,
+}, { additionalProperties: false });
 export type CompanyResearchCancelRequest = Static<typeof CompanyResearchCancelRequestSchema>;
 
-const CompanyResearchEventIdentitySchema = {
-  requestId: Type.String({ minLength: 1 }),
-  runId: Type.String({ minLength: 1 }),
-};
-
+const EventIdentity = { requestId: IdSchema, runId: IdSchema, stage: CompanyResearchStageSchema };
+const RawTextDeltaSchema = Type.Object({
+  ...EventIdentity,
+  stage: Type.Literal("raw"),
+  type: Type.Literal("text_delta"),
+  delta: Type.String({ maxLength: 1_000_000 }),
+}, { additionalProperties: false });
 export const CompanyResearchWorkerEventSchema = Type.Union([
-  Type.Object(
-    { ...CompanyResearchEventIdentitySchema, type: Type.Literal("started") },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      ...CompanyResearchEventIdentitySchema,
-      type: Type.Literal("text_delta"),
-      delta: Type.String(),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      ...CompanyResearchEventIdentitySchema,
-      type: Type.Literal("completed"),
-      text: Type.String(),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      ...CompanyResearchEventIdentitySchema,
-      type: Type.Literal("failed"),
-      code: Type.Literal("research_failed"),
-      message: Type.Literal("company research failed"),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { ...CompanyResearchEventIdentitySchema, type: Type.Literal("cancelled") },
-    { additionalProperties: false },
-  ),
+  Type.Object({ ...EventIdentity, type: Type.Literal("started") }, { additionalProperties: false }),
+  RawTextDeltaSchema,
+  Type.Object({ ...EventIdentity, type: Type.Literal("completed"), text: ReportTextSchema }, { additionalProperties: false }),
+  Type.Object({
+    ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("failed"),
+    code: Type.Literal("research_failed"), message: Type.Literal("company research failed"),
+  }, { additionalProperties: false }),
+  Type.Object({
+    ...EventIdentity, stage: Type.Literal("structure"), type: Type.Literal("failed"),
+    code: Type.Literal("structuring_failed"), message: Type.Literal("company research structuring failed"),
+  }, { additionalProperties: false }),
+  Type.Object({ ...EventIdentity, type: Type.Literal("cancelled") }, { additionalProperties: false }),
 ]);
 export type CompanyResearchWorkerEvent = Static<typeof CompanyResearchWorkerEventSchema>;
+
+/** Application emits after durable transitions/cleanup; all targets refresh occupancy.
+ * Worker completion is deliberately excluded: raw completion is not run completion,
+ * and a structure candidate is not a validated, persisted report.
+ */
+export const CompanyResearchStateChangedEventSchema = Type.Object({
+  type: Type.Literal("state_changed"),
+  itemId: IdSchema,
+  companyId: IdSchema,
+  runId: IdSchema,
+}, { additionalProperties: false });
+export const CompanyResearchEventSchema = Type.Union([
+  CompanyResearchStateChangedEventSchema, RawTextDeltaSchema,
+]);
+export type CompanyResearchEvent = Static<typeof CompanyResearchEventSchema>;

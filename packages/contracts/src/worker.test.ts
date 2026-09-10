@@ -5,6 +5,8 @@ import {
   CompanyResearchCancelRequestSchema,
   CompanyResearchWorkerEventSchema,
   CompanyResearchWorkerRequestSchema,
+  CompanyResearchEventSchema,
+  STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
 } from "./research.js";
 import { ToolExecutionEventSchema } from "./tools.js";
 import {
@@ -43,6 +45,16 @@ const auditStartPayload = {
   actor: "developer_probe",
   toolName: "echo",
   toolVersion: 1,
+};
+
+const researchRequest = {
+  requestId: "research-1", kind: "company-research.raw.run", runId: "run-1", stage: "raw",
+  apiKey: "sk-test-key", modelId: "deepseek-v4-flash",
+  context: { currentDate: "2026-09-11", companyName: "小米", topicName: "电池", direction: "product_and_technology", asOfDate: "2026-09-11" },
+  template: {
+    templateId: "product_and_technology", templateVersion: 1, title: "产品与技术",
+    sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, title: "模块", coreQuestion: "问题", coverage: "覆盖", boundary: "边界" })),
+  },
 };
 
 describe("utility worker protocol", () => {
@@ -89,23 +101,11 @@ describe("utility worker protocol", () => {
   });
 
   it("keeps chat requests valid and adds tool and research requests to the union", () => {
-    const researchRequest = {
-      requestId: "research-1",
-      kind: "company-research.run",
-      runId: "run-1",
-      apiKey: "sk-test-key",
-      modelId: "deepseek-v4-flash",
-      context: {
-        currentDate: "2026-09-09",
-        companyName: "小米",
-        industry: "智能眼镜",
-        timeScope: "近一年",
-      },
-    };
     const cancelRequest = {
       requestId: "research-1",
       kind: "company-research.cancel",
       runId: "run-1",
+      stage: "raw",
     };
     expect(Value.Check(AgentWorkerRequestSchema, chatRequest)).toBe(true);
     expect(Value.Check(ToolRunRequestSchema, toolRequest)).toBe(true);
@@ -151,7 +151,7 @@ describe("utility worker protocol", () => {
       type: "started",
     };
     const envelope = { kind: "tool.event", requestId: "r2", event: toolEvent };
-    const researchEvent = { requestId: "research-1", runId: "run-1", type: "started" };
+    const researchEvent = { requestId: "research-1", runId: "run-1", stage: "raw", type: "started" };
     expect(Value.Check(AgentWorkerEventSchema, chatEvent)).toBe(true);
     expect(Value.Check(ToolExecutionEventSchema, toolEvent)).toBe(true);
     expect(Value.Check(UtilityWorkerEventSchema, chatEvent)).toBe(true);
@@ -361,5 +361,68 @@ describe("utility worker protocol", () => {
         payload: auditStartPayload,
       }),
     ).toBe(false);
+  });
+});
+
+describe("two-stage company research protocol", () => {
+  it("requires raw and structure kinds, stage identity, snapshots and the fixed output schema", () => {
+    expect(Value.Check(CompanyResearchWorkerRequestSchema, researchRequest)).toBe(true);
+    const structure = { ...researchRequest, kind: "company-research.structure.run", stage: "structure", rawReportText: "# 原始报告", outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA };
+    expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(true);
+    expect(Value.Check(UtilityWorkerRequestSchema, JSON.parse(JSON.stringify(structure)))).toBe(true);
+    for (const invalid of [
+      { ...researchRequest, kind: "company-research.run" }, { ...researchRequest, stage: "structure" },
+      { ...structure, stage: "raw" }, { ...structure, rawReportText: "" },
+      { ...structure, outputSchema: {} }, { ...structure, tools: ["web_search"] },
+    ]) expect(Value.Check(UtilityWorkerRequestSchema, invalid)).toBe(false);
+    for (const key of ["requestId", "runId", "stage", "context", "template", "rawReportText", "outputSchema"]) {
+      const invalid = { ...structure };
+      Reflect.deleteProperty(invalid, key);
+      expect(Value.Check(UtilityWorkerRequestSchema, invalid)).toBe(false);
+    }
+  });
+
+  it("only streams raw deltas and requires identity on every stage event and cancellation", () => {
+    const identity = { requestId: "research-1", runId: "run-1" };
+    const events = [
+      { type: "started" }, { type: "completed", text: "complete candidate" }, { type: "cancelled" },
+    ];
+    for (const stage of ["raw", "structure"]) {
+      const failure = stage === "raw"
+        ? { type: "failed", code: "research_failed", message: "company research failed" }
+        : { type: "failed", code: "structuring_failed", message: "company research structuring failed" };
+      for (const event of [...events, failure]) {
+        const valid = { ...identity, stage, ...event };
+        expect(Value.Check(CompanyResearchWorkerEventSchema, valid)).toBe(true);
+        expect(Value.Check(UtilityWorkerEventSchema, valid)).toBe(true);
+        for (const key of ["requestId", "runId", "stage"]) {
+          const invalid = { ...valid };
+          Reflect.deleteProperty(invalid, key);
+          expect(Value.Check(CompanyResearchWorkerEventSchema, invalid)).toBe(false);
+          expect(Value.Check(UtilityWorkerEventSchema, invalid)).toBe(false);
+        }
+        expect(Value.Check(CompanyResearchWorkerEventSchema, { ...valid, apiKey: "secret" })).toBe(false);
+      }
+      const cancel = { ...identity, stage, kind: "company-research.cancel" };
+      expect(Value.Check(UtilityWorkerRequestSchema, cancel)).toBe(true);
+      Reflect.deleteProperty(cancel, "stage");
+      expect(Value.Check(CompanyResearchCancelRequestSchema, cancel)).toBe(false);
+    }
+    expect(Value.Check(UtilityWorkerEventSchema, { ...identity, stage: "raw", type: "text_delta", delta: "draft" })).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, { ...identity, stage: "structure", type: "text_delta", delta: "{unfinished" })).toBe(false);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, { ...identity, stage: "structure", type: "failed", code: "research_failed", message: "raw provider secret" })).toBe(false);
+  });
+
+  it("keeps application state changes separate from worker terminal events", () => {
+    expect(CompanyResearchEventSchema).toBeDefined();
+    const rawCompleted = { requestId: "research-1", runId: "run-1", stage: "raw", type: "completed", text: "# raw" };
+    expect(Value.Check(CompanyResearchWorkerEventSchema, rawCompleted)).toBe(true);
+    expect(Value.Check(CompanyResearchEventSchema, rawCompleted)).toBe(false);
+    const changed = { type: "state_changed", itemId: "item-1", companyId: "company-1", runId: "run-1" };
+    expect(Value.Check(CompanyResearchEventSchema, changed)).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, changed)).toBe(false);
+    expect(Value.Check(CompanyResearchEventSchema, { ...changed, apiKey: "secret" })).toBe(false);
+    expect(Value.Check(CompanyResearchEventSchema, { requestId: "research-1", runId: "run-1", stage: "raw", type: "text_delta", delta: "draft" })).toBe(true);
+    expect(Value.Check(CompanyResearchEventSchema, { ...rawCompleted, stage: "structure", text: "unvalidated JSON" })).toBe(false);
   });
 });

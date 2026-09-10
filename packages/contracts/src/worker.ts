@@ -3,7 +3,8 @@ import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
 import {
   CompanyResearchCancelRequestSchema,
   CompanyResearchWorkerEventSchema,
-  CompanyResearchWorkerRequestSchema,
+  CompanyResearchRawWorkerRequestSchema,
+  CompanyResearchStructureWorkerRequestSchema,
 } from "./research.js";
 import {
   JsonObjectSchema,
@@ -69,7 +70,8 @@ export type ToolRunRequest = Static<typeof ToolRunRequestSchema>;
 
 export const UtilityWorkerRequestSchema = Type.Union([
   AgentWorkerRequestSchema,
-  CompanyResearchWorkerRequestSchema,
+  CompanyResearchRawWorkerRequestSchema,
+  CompanyResearchStructureWorkerRequestSchema,
   CompanyResearchCancelRequestSchema,
   ToolRunRequestSchema,
 ]);
