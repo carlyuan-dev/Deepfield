@@ -365,6 +365,27 @@ describe("utility worker protocol", () => {
 });
 
 describe("two-stage company research protocol", () => {
+  it("freezes the complete exported output schema so mutation cannot alter accepted worker payloads", () => {
+    const pending: unknown[] = [STRUCTURED_RESEARCH_OUTPUT_SCHEMA];
+    while (pending.length > 0) {
+      const value = pending.pop();
+      if (value !== null && typeof value === "object") {
+        expect(Object.isFrozen(value)).toBe(true);
+        pending.push(...Object.values(value));
+      }
+    }
+    const properties = STRUCTURED_RESEARCH_OUTPUT_SCHEMA.properties as Record<string, { maxItems: number }>;
+    const required = STRUCTURED_RESEARCH_OUTPUT_SCHEMA.required as string[];
+    expect(Reflect.set(STRUCTURED_RESEARCH_OUTPUT_SCHEMA, "additionalProperties", true)).toBe(false);
+    expect(Reflect.set(properties.coreSummary!, "maxItems", 100)).toBe(false);
+    expect(Reflect.set(required, "0", "injectedField")).toBe(false);
+
+    const structure = { ...researchRequest, kind: "company-research.structure.run", stage: "structure", rawReportText: "# 原始报告", outputSchema: JSON.parse(JSON.stringify(STRUCTURED_RESEARCH_OUTPUT_SCHEMA)) };
+    expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(true);
+    structure.outputSchema.properties.coreSummary.maxItems = 100;
+    expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(false);
+  });
+
   it("requires raw and structure kinds, stage identity, snapshots and the fixed output schema", () => {
     expect(Value.Check(CompanyResearchWorkerRequestSchema, researchRequest)).toBe(true);
     const structure = { ...researchRequest, kind: "company-research.structure.run", stage: "structure", rawReportText: "# 原始报告", outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA };

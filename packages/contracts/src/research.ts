@@ -11,6 +11,8 @@ const IdSchema = Type.String({ minLength: 1, maxLength: 200 });
 const TextSchema = Type.String({ minLength: 1, maxLength: 4000 });
 // Bound transport/storage bodies; semantic output checks remain in the Harness.
 const ReportTextSchema = Type.String({ minLength: 1, maxLength: 1_000_000 });
+// Historical completed reports were only required to be nonblank, with no size cap.
+const LegacyReportTextSchema = Type.String({ minLength: 1, pattern: "\\S" });
 
 export const StartCompanyResearchInputSchema = Type.Object({
   direction: ResearchDirectionSchema,
@@ -53,8 +55,16 @@ export const StructuredResearchContentSchema = Type.Object({
   }, { additionalProperties: false }), { minItems: 5, maxItems: 5 }),
 }, { additionalProperties: false });
 export type StructuredResearchContent = Static<typeof StructuredResearchContentSchema>;
+function freezeJson<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** Plain JSON Schema for IPC/provider requests, without TypeBox's hidden metadata. */
-export const STRUCTURED_RESEARCH_OUTPUT_SCHEMA: JsonObject = JSON.parse(JSON.stringify(StructuredResearchContentSchema));
+export const STRUCTURED_RESEARCH_OUTPUT_SCHEMA: JsonObject = freezeJson(JSON.parse(JSON.stringify(StructuredResearchContentSchema)));
 
 export const CompanyResearchContextSchema = Type.Object({
   ...CompanyProfileFieldsSchema.properties,
@@ -85,7 +95,7 @@ export const LegacyResearchRunSchema = Type.Object({
   status: Type.Literal("completed"),
   timeScope: Type.String({ minLength: 1, maxLength: 300 }),
   customRequirements: Type.Optional(Type.String({ maxLength: 4000 })),
-  reportText: ReportTextSchema,
+  reportText: LegacyReportTextSchema,
   completedAt: TimestampSchema,
 }, { additionalProperties: false });
 export type LegacyResearchRun = Static<typeof LegacyResearchRunSchema>;

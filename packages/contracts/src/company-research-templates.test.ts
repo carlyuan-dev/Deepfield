@@ -163,6 +163,19 @@ describe("read-only research JSON contracts", () => {
     expect(Value.Check(contracts.ResearchRunSchema, { ...legacy, direction: input.direction })).toBe(false);
   });
 
+  it("reads nonblank legacy bodies above 1M without relaxing the new report limit", () => {
+    const reportText = "旧".repeat(1_000_001);
+    const legacy = { ...identity, schemaVersion: "legacy-freeform-v1", status: "completed", timeScope: "近一年", reportText, completedAt: identity.createdAt };
+    expect(Value.Check(contracts.LegacyResearchRunSchema, legacy)).toBe(true);
+    expect(Value.Check(contracts.ResearchRunSchema, JSON.parse(JSON.stringify(legacy)))).toBe(true);
+    for (const blank of ["", " \t\n\r\u3000"]) {
+      expect(Value.Check(contracts.ResearchRunSchema, { ...legacy, reportText: blank })).toBe(false);
+    }
+    const run = { ...identity, schemaVersion: "company-research-report-v1", status: "structuring", ...input, researchContext: context, template: contracts.getCompanyResearchTemplate("product_and_technology"), harnessVersion: 1, structuringAttempts: 1, rawReportText: reportText };
+    expect(Value.Check(contracts.ResearchRunSchema, run)).toBe(false);
+    expect(Value.Check(contracts.ResearchRunSchema, { ...run, rawReportText: reportText.slice(0, 1_000_000) })).toBe(true);
+  });
+
   it("keeps summaries body-free and exposes occupancy even when the target has no active run", () => {
     expect(contracts.CompanyResearchStateSchema).toBeDefined();
     const summary = { ...identity, schemaVersion: "company-research-report-v1", status: "structure_failed", ...input, structuringAttempts: 1, lastFailureCode: "structuring_failed" };
