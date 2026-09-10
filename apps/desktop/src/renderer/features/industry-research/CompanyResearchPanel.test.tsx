@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { CompanyResearchState, ResearchRun } from "@deepfield/contracts";
@@ -17,6 +17,72 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it.each(["pending", "reject"] as const)("keeps the same-run stream on early structure failure while first detail reads %s", async (outcome) => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const initialDetail = deferred<ResearchRun | undefined>();
+    const failedDetail = deferred<ResearchRun | undefined>();
+    const otherDetail = deferred<ResearchRun | undefined>();
+    const run = researchRun({ status: "researching" });
+    const failed = researchRun({ status: "structure_failed" });
+    const other = researchRun({ id: "other-run" as ResearchRun["id"], status: "structure_failed" });
+    fake.companyResearch.getState.mockResolvedValue(activeResearch(run, "本轮流式原文"));
+    fake.companyResearch.getRun.mockReturnValueOnce(initialDetail.promise).mockReturnValueOnce(failedDetail.promise).mockReturnValue(otherDetail.promise);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText("本轮流式原文");
+    fake.companyResearch.getState.mockResolvedValue(activeResearch({ ...run, status: "structuring" }, ""));
+    act(() => fake.emitResearch({ type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id }));
+    await waitFor(() => expect(fake.companyResearch.getRun).toHaveBeenCalledTimes(1));
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(failed), researchSummary(other)], globalActiveRun: null });
+    act(() => fake.emitResearch({ type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id }));
+    await screen.findByText("整理失败，请重试");
+    await waitFor(() => expect(fake.companyResearch.getRun).toHaveBeenCalledTimes(2));
+    if (outcome === "reject") {
+      await act(async () => { initialDetail.reject(new Error("private initial read")); failedDetail.reject(new Error("private failed read")); });
+      await screen.findByText("加载调研报告失败，请重试");
+    }
+    expect(screen.getByText("本轮流式原文")).toBeTruthy();
+    expect(screen.queryByText(/private/)).toBeNull();
+    await user.selectOptions(screen.getByLabelText("报告版本"), other.id);
+    expect(screen.queryByText("本轮流式原文")).toBeNull();
+    if (outcome === "pending") await act(async () => { initialDetail.resolve(failed); failedDetail.resolve(failed); });
+    expect(screen.queryByText("本轮流式原文")).toBeNull();
+    await act(async () => otherDetail.resolve({ ...other, rawReportText: "另一轮原文" }));
+    expect(await screen.findByText("另一轮原文")).toBeTruthy();
+    expect(screen.queryByText("本轮流式原文")).toBeNull();
+  });
+
+  it("identifies saved reports with snapshot context and history cutoff after live target edits", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const run = researchRun({
+      focusScope: "历史新品范围", asOfDate: "2025-06-30",
+      researchContext: {
+        companyName: "历史公司名称", legalName: "历史公司全称", aliases: ["历史别名"],
+        headquarters: "历史总部", foundedAt: "2001-02-03", officialWebsite: "https://example.com/saved",
+        stockListings: [{ exchange: "HKEX", ticker: "1234" }], businessTags: ["历史业务"],
+        topicName: "历史研究主题", topicScope: "历史主题范围", companyNote: "历史候选备注",
+        currentDate: "2025-07-01", direction: "product_and_technology", focusScope: "历史新品范围", asOfDate: "2025-06-30",
+      },
+    });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    const view = render(<CompanyResearchPanel api={fake} {...context} companyName="当前公司名称" topicName="当前研究主题" />);
+    await screen.findByText("核心结论");
+    const header = screen.getByRole("region", { name: "报告研究背景" });
+    for (const value of ["历史公司名称", "历史公司全称", "历史别名", "历史总部", "2001-02-03", "历史业务", "历史研究主题", "历史主题范围", "历史候选备注", "历史新品范围", "2025-06-30"]) expect(within(header).getByText(value)).toBeTruthy();
+    expect(within(header).getByText(/HKEX.*1234/)).toBeTruthy();
+    expect(within(header).getByText("https://example.com/saved")).toBeTruthy();
+    expect(screen.getByRole("option").textContent).toContain("截至 2025-06-30");
+    expect(within(header).queryByRole("textbox")).toBeNull();
+    expect(within(header).queryByRole("button")).toBeNull();
+    view.rerender(<CompanyResearchPanel api={fake} {...context} companyName="再次改名" topicName="再次修改主题" topicScope="当前范围" />);
+    expect(within(header).getByText("历史公司名称")).toBeTruthy();
+    expect(screen.queryByText("再次改名")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
+    expect(screen.getByRole("region", { name: "报告研究背景" })).toBeTruthy();
+    expect(screen.getByText("历史新品范围")).toBeTruthy();
+    expect(await screen.findByText(/原始事实/)).toBeTruthy();
+  });
+
   it.each(["resolve", "reject"] as const)("retains the streamed raw body across an empty structuring snapshot and detail %s without leaking across runs or navigation", async (outcome) => {
     const fake = makeFakeApi();
     const pending = deferred<ResearchRun | undefined>();
@@ -172,7 +238,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getRun.mockResolvedValue(run);
     render(<CompanyResearchPanel api={fake} {...context} />);
     expect(await screen.findByText("核心结论")).toBeTruthy();
-    expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["核心结论", "主要产品与定位", "核心技术与指标", "研发与产品阶段", "竞争力与替代方案", "技术瓶颈与路线图"]);
+    expect(within(screen.getByRole("tabpanel")).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["核心结论", "主要产品与定位", "核心技术与指标", "研发与产品阶段", "竞争力与替代方案", "技术瓶颈与路线图"]);
     for (const text of ["已找到", "部分找到", "未找到", "未披露", "存在冲突", "已报道事实", "预测", "2026年", "<img src=x onerror=alert(1)>", "<script>unsafe</script>"]) expect(screen.getByText(text)).toBeTruthy();
     expect(screen.getAllByRole("link")).toHaveLength(1);
     expect(screen.getByRole("link").getAttribute("href")).toBe("https://example.com/one");
@@ -224,6 +290,8 @@ describe("two-stage company research", () => {
     expect(fake.companyResearch.getRun).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
     for (const text of ["旧版原始报告", "近一年", "历史要求"]) expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.queryByRole("region", { name: "报告研究背景" })).toBeNull();
+    expect(screen.getByRole("option").textContent).not.toContain("截至");
   });
 
   it("refreshes global occupancy from events for other companies", async () => {

@@ -3,6 +3,7 @@ import { COMPANY_RESEARCH_TEMPLATES, type DesktopApi, type KeyResearchRun, type 
 import { LinkifiedText } from "../../components/LinkifiedText.js";
 import { CompanyResearchModal, type ResearchContextProps } from "./CompanyResearchModal.js";
 import { StructuredResearchReport } from "./StructuredResearchReport.js";
+import { ResearchReportContext } from "./ResearchReportContext.js";
 import { useCompanyResearch } from "./use-company-research.js";
 
 export interface CompanyResearchPanelProps extends ResearchContextProps {
@@ -13,12 +14,13 @@ export interface CompanyResearchPanelProps extends ResearchContextProps {
 function runLabel(run: ResearchRunSummary): string {
   const date = new Date(run.completedAt ?? run.createdAt);
   const timestamp = Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date) : "时间未知";
-  return `${timestamp} · ${run.schemaVersion === "legacy-freeform-v1" ? "旧版原始报告" : COMPANY_RESEARCH_TEMPLATES[run.direction].title}${run.status === "structure_failed" ? " · 整理失败" : ""}`;
+  return `${timestamp} · ${run.schemaVersion === "legacy-freeform-v1" ? "旧版原始报告" : `${COMPANY_RESEARCH_TEMPLATES[run.direction].title} · 截至 ${run.asOfDate}`}${run.status === "structure_failed" ? " · 整理失败" : ""}`;
 }
 function ReportTabs({ run, rawText }: { run: KeyResearchRun | undefined; rawText: string }) {
   const completed = run?.status === "completed";
   const [tab, setTab] = useState<"structured" | "raw">(completed ? "structured" : "raw");
   return <>
+    {run && <ResearchReportContext run={run} />}
     <div role="tablist" aria-label="报告视图" className="research-tabs">
       {completed && <button role="tab" id="research-structured-tab" aria-controls="research-report-body" aria-selected={tab === "structured"} onClick={() => setTab("structured")}>结构化报告</button>}
       <button role="tab" id="research-raw-tab" aria-controls="research-report-body" aria-selected={tab === "raw"} onClick={() => setTab("raw")}>原始调研报告</button>
@@ -68,7 +70,7 @@ function ResearchTarget({ api, itemId, companyId, ...context }: CompanyResearchP
           <dl className="research-context"><div><dt>调研时间范围</dt><dd>{run.timeScope}</dd></div>{run.customRequirements && <div><dt>补充要求</dt><dd>{run.customRequirements}</dd></div>}</dl>
           <div className="company-report-text"><LinkifiedText text={run.reportText} /></div>
         </div>
-        : run?.schemaVersion === "company-research-report-v1" || active?.run.status === "structuring" ? <ReportTabs key={`${research.selectedRunId}:${status}:${run?.status ?? "loading"}`} run={run?.schemaVersion === "company-research-report-v1" ? run : undefined} rawText={rawText} />
+        : run?.schemaVersion === "company-research-report-v1" || active?.run.status === "structuring" || (status === "structure_failed" && rawText) ? <ReportTabs key={`${research.selectedRunId}:${status}:${run?.status ?? "loading"}`} run={run?.schemaVersion === "company-research-report-v1" ? run : undefined} rawText={rawText} />
         : research.detailLoading ? <p className="muted">加载调研报告…</p>
         : research.state.runs.length === 0 ? <p className="muted company-research-empty">还没有调研报告。</p> : null}
     </>}

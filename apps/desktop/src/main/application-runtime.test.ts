@@ -17,6 +17,59 @@ afterEach(() => {
 });
 
 describe("application runtime composition", () => {
+  it.each([
+    ["raw", "completed"], ["raw", "cancelled"],
+    ["structure", "completed"], ["structure", "cancelled"],
+  ] as const)("releases a deleted %s target on %s and wakes queued profiles", async (stage, terminal) => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });
+    const company = db.repos.companies.upsert({ name: "待删除公司" });
+    const survivor = db.repos.companies.upsert({ name: "排队公司" });
+    db.repos.itemCompanies.add(item.id, company.id);
+    db.repos.itemCompanies.add(item.id, survivor.id);
+    const endpoint = new FakeEndpoint(); const client = new AgentWorkerClient(endpoint);
+    const profiles: string[] = [];
+    const runtime = createApplicationRuntime({
+      repositories: db.repos, secrets: { get: () => "sk-test" }, worker: client,
+      companyRecognizer: { recognize: async () => [] },
+      companyCompleter: { complete: async (name) => { profiles.push(name); return { headquarters: "中国北京" }; } },
+    });
+    const events: unknown[] = [];
+    runtime.companyResearch.subscribe((event) => events.push(event));
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      const run = runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+      await flush();
+      if (stage === "structure") {
+        const request = endpoint.posted[0] as CompanyResearchWorkerRequest;
+        endpoint.emit({ requestId: request.requestId, runId: run.id, stage: "raw", type: "completed", text: "原始报告" });
+        await flush();
+      }
+      const request = endpoint.posted.at(-1) as CompanyResearchWorkerRequest;
+      runtime.industryResearch.removeCompany(item.id, company.id);
+      expect(db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, run.id)).toBeUndefined();
+      const during = runtime.companyResearch.getState(item.id, survivor.id);
+      expect(runtime.companyResearch.isRunning()).toBe(true);
+      expect(profiles).toEqual([]);
+      const cancellation = terminal === "cancelled" ? runtime.companyResearch.cancel(run.id) : undefined;
+      const valid = {
+        coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
+        sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+      };
+      endpoint.emit({ requestId: request.requestId, runId: run.id, stage, type: terminal, ...(terminal === "completed" ? { text: stage === "raw" ? "原始报告" : JSON.stringify(valid) } : {}) });
+      await cancellation; await flush(); await runtime.companyProfiles.whenIdle();
+      expect(events).toHaveLength(stage === "raw" ? 2 : 3);
+      expect(events.at(-1)).toEqual({ type: "state_changed", runId: run.id, itemId: item.id, companyId: company.id });
+      expect(runtime.companyResearch.isRunning()).toBe(false);
+      expect(runtime.companyResearch.getState(item.id, survivor.id).globalActiveRun).toBeNull();
+      expect(profiles).toEqual(["排队公司"]);
+      expect(db.repos.companies.getById(survivor.id)?.profileStatus).toBe("ready");
+      expect(during.globalActiveRun).toEqual({ runId: run.id, itemId: item.id, companyId: company.id, stage });
+    } finally {
+      runtime.companyProfiles.dispose(); client.dispose(); await flush();
+    }
+  });
+
   it.each(["raw", "structure"] as const)("ignores foreign %s identities through the real client and completes the service run", async (stage) => {
     const db = openTestDb(); dbs.push(db);
     const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });

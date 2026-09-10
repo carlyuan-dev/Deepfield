@@ -146,9 +146,14 @@ export class CompanyResearchService {
     this.requireTarget(itemId, companyId);
     return this.read(() => {
       const active = this.repositories.companyResearchRuns.getActive();
+      const reserved = this.active;
       const state: CompanyResearchState = {
         runs: this.repositories.companyResearchRuns.listRuns(itemId as CapabilityItemId, companyId as CompanyId),
-        globalActiveRun: active ? {
+        // Target deletion can cascade the row away while its Worker is still
+        // running. Public occupancy must describe the same reservation as isRunning.
+        globalActiveRun: reserved ? {
+          runId: reserved.run.id, itemId: reserved.run.itemId, companyId: reserved.run.companyId, stage: reserved.stage,
+        } : active ? {
           runId: active.id, itemId: active.itemId, companyId: active.companyId,
           stage: active.status === "researching" ? "raw" : "structure",
         } : null,
@@ -296,10 +301,18 @@ export class CompanyResearchService {
   private failActive(active: ActiveResearch, outcome: "research_failed" | "cancelled"): void {
     if (this.active !== active) return;
     let persisted = false;
+    let deletedRaw = false;
     try {
       this.repositories.runInTransaction(() => {
-        if (active.stage === "raw") this.repositories.companyResearchRuns.deleteResearching(active.run.id);
-        else this.repositories.companyResearchRuns.failStructuring(active.run.id);
+        const { id, itemId, companyId } = active.run;
+        // A removed target has already durably deleted the run. There is no
+        // transition left to perform, but releasing its reservation still notifies
+        // other targets and wakes the profile queue.
+        if (!this.repositories.companyResearchRuns.getByIdForTarget(itemId, companyId, id)) return;
+        if (active.stage === "raw") {
+          this.repositories.companyResearchRuns.deleteResearching(id);
+          deletedRaw = true;
+        } else this.repositories.companyResearchRuns.failStructuring(id);
       });
       persisted = true;
     } catch {
@@ -308,7 +321,7 @@ export class CompanyResearchService {
     } finally {
       this.active = undefined;
     }
-    if (persisted) this.stateChanged(active.run, active.stage === "raw" ? outcome : undefined);
+    if (persisted) this.stateChanged(active.run, deletedRaw ? outcome : undefined);
   }
 
   private stateChanged(run: KeyResearchRun, outcome?: "research_failed" | "cancelled"): void {
