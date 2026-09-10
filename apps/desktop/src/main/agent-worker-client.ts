@@ -7,6 +7,7 @@ import {
   type AgentWorkerRequest,
   type CompanyResearchWorkerEvent,
   type CompanyResearchWorkerRequest,
+  type CompanyResearchStage,
   type ToolExecutionEvent,
   type ToolRunRequest,
 } from "@deepfield/contracts";
@@ -98,20 +99,22 @@ export class AgentWorkerClient {
       kind: "research",
       id: request.requestId,
       runId: request.runId,
+      stage: request.stage,
       request,
     });
   }
 
-  cancelResearch(requestId: string, runId: string): void {
+  cancelResearch(requestId: string, runId: string, stage: CompanyResearchStage): void {
     if (this.disposed) throw new Error("agent worker client is disposed");
     if (this.exited) throw new AgentWorkerExitedError(this.exitCode);
-    this.endpoint.postMessage({ requestId, kind: "company-research.cancel", runId });
+    this.endpoint.postMessage({ requestId, kind: "company-research.cancel", runId, stage });
   }
 
   private sendStream<T extends StreamEvent>(spec: {
     kind: "chat" | "research" | "tool";
     id: string;
     runId?: string;
+    stage?: CompanyResearchStage;
     executionId?: string;
     traceId?: string;
     request: unknown;
@@ -130,6 +133,7 @@ export class AgentWorkerClient {
       id: spec.id,
       ...(spec.executionId !== undefined ? { executionId: spec.executionId } : {}),
       ...(spec.runId !== undefined ? { runId: spec.runId } : {}),
+      ...(spec.stage !== undefined ? { stage: spec.stage } : {}),
       ...(spec.traceId !== undefined ? { traceId: spec.traceId } : {}),
       queue: [],
       waiters: [],
@@ -225,7 +229,7 @@ export class AgentWorkerClient {
   private routeResearch(event: CompanyResearchWorkerEvent): void {
     const stream = this.pending.get(event.requestId);
     if (!stream) return;
-    if (stream.kind !== "research" || stream.runId !== event.runId) {
+    if (stream.kind !== "research" || stream.runId !== event.runId || stream.stage !== event.stage) {
       this.close(stream.id, stream, new AgentProtocolError());
       return;
     }

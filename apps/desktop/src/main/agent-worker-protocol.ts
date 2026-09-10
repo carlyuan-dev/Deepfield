@@ -1,6 +1,7 @@
 import type {
   AgentWorkerEvent,
   CompanyResearchWorkerEvent,
+  CompanyResearchStage,
   ToolEventEnvelope,
   ToolExecutionEvent,
 } from "@deepfield/contracts";
@@ -63,6 +64,7 @@ export interface PendingStream {
   kind: "chat" | "research" | "tool";
   id: string;
   runId?: string;
+  stage?: CompanyResearchStage;
   executionId?: string;
   traceId?: string;
   queue: StreamEvent[];

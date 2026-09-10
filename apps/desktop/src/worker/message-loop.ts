@@ -11,11 +11,13 @@ import {
   type AgentWorkerRequest,
   type CompanyResearchWorkerEvent,
   type CompanyResearchWorkerRequest,
+  type CompanyResearchStage,
   type ToolExecutionEvent,
   type ToolRunRequest,
 } from "@deepfield/contracts";
 import {
   isHostReply,
+  researchFailure,
   safeRequestId,
   toolEnvelope,
   toolFailedEnvelope,
@@ -64,7 +66,7 @@ export function createWorkerMessageLoop(
       return;
     }
     if (Value.Check(CompanyResearchCancelRequestSchema, value)) {
-      cancelResearch(value.requestId, value.runId);
+      cancelResearch(value.requestId, value.runId, value.stage);
       return;
     }
     if (Value.Check(ToolRunRequestSchema, value)) {
@@ -89,19 +91,19 @@ export function createWorkerMessageLoop(
         requestId: request.requestId,
         runId: request.runId,
         type: "failed",
-        code: "research_failed",
-        message: "company research failed",
+        ...researchFailure(request.stage),
       } satisfies CompanyResearchWorkerEvent);
       return;
     }
-    const execution = begin(request.requestId, "research", undefined, request.runId);
+    const execution = begin(request.requestId, "research", undefined, request.runId, request.stage);
     if (!execution) return;
     const emit = (event: unknown): void => {
       if (disposed || execution.settled) return;
       if (
         !Value.Check(CompanyResearchWorkerEventSchema, event) ||
         event.requestId !== request.requestId ||
-        event.runId !== request.runId
+        event.runId !== request.runId ||
+        event.stage !== request.stage
       ) {
         execution.settle("research_failed", "company research failed", true);
         return;
@@ -123,10 +125,13 @@ export function createWorkerMessageLoop(
       .catch(() => execution.settle("research_failed", "company research failed", false));
   }
 
-  function cancelResearch(requestId: string, runId: string): void {
+  function cancelResearch(requestId: string, runId: string, stage: CompanyResearchStage): void {
     const execution = active.get(requestId);
-    if (execution?.kind === "research" && execution.runId === runId) {
+    if (execution?.kind === "research" && execution.runId === runId && execution.stage === stage) {
+      // Finalize before abort listeners can emit: cancellation wins exactly once.
+      execution.finalize();
       execution.controller.abort();
+      endpoint.postMessage({ requestId, runId, stage, type: "cancelled" } satisfies CompanyResearchWorkerEvent);
     }
   }
 
@@ -264,6 +269,7 @@ export function createWorkerMessageLoop(
     kind: "chat" | "research" | "tool",
     executionId?: string,
     runId?: string,
+    stage?: CompanyResearchStage,
   ): ActiveExecution | undefined {
     const existing = active.get(requestId);
     if (existing) {
@@ -276,6 +282,7 @@ export function createWorkerMessageLoop(
       requestId,
       ...(executionId !== undefined ? { executionId } : {}),
       ...(runId !== undefined ? { runId } : {}),
+      ...(stage !== undefined ? { stage } : {}),
       controller,
       settled: false,
       settle: () => {},
@@ -321,13 +328,12 @@ export function createWorkerMessageLoop(
         );
         return;
       }
-      if (execution.kind === "research" && execution.runId !== undefined) {
+      if (execution.kind === "research" && execution.runId !== undefined && execution.stage !== undefined) {
         endpoint.postMessage({
           requestId,
           runId: execution.runId,
           type: "failed",
-          code: "research_failed",
-          message: "company research failed",
+          ...researchFailure(execution.stage),
         } satisfies CompanyResearchWorkerEvent);
         return;
       }

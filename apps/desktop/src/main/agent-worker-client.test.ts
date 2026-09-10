@@ -4,6 +4,7 @@ import type {
   CompanyResearchWorkerRequest,
 } from "@deepfield/contracts";
 import { createWorkerMessageLoop } from "../worker/message-loop.js";
+import { rawResearchRequest, structureResearchRequest } from "../worker/company-research-test-helpers.js";
 import {
   echoAgent,
   flushPending,
@@ -30,6 +31,37 @@ import {
 } from "./agent-worker-client-test-helpers.js";
 
 describe("agent worker client", () => {
+  it("posts the explicit cancellation stage", () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    client.cancelResearch("structure-1", "run-1", "structure");
+    expect(endpoint.posted).toEqual([{ requestId: "structure-1", runId: "run-1", kind: "company-research.cancel", stage: "structure" }]);
+    client.dispose();
+  });
+
+  it.each(["raw", "structure"] as const)("rejects wrong-stage events for %s", async (stage) => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const req = stage === "raw" ? rawResearchRequest() : structureResearchRequest();
+    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
+    endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: stage === "raw" ? "structure" : "raw", type: "completed", text: "wrong stage" });
+    await expect(iterator.next()).rejects.toBeInstanceOf(AgentProtocolError);
+    expect(client.pendingCount()).toBe(0);
+    client.dispose();
+  });
+
+  it("delivers structure candidates and ignores late raw events from a different request", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const req = structureResearchRequest();
+    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
+    endpoint.emit({ requestId: "research-1", runId: req.runId, stage: "raw", type: "completed", text: "late raw" });
+    endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: "structure", type: "completed", text: "{}" });
+    expect((await iterator.next()).value).toMatchObject({ stage: "structure", text: "{}" });
+    expect((await iterator.next()).done).toBe(true);
+    client.dispose();
+  });
+
   it("cancels only the matching research while chat stays usable and drops late research events", async () => {
     const clientEndpoint = new FakeEndpoint();
     const workerEndpoint = new InMemoryEndpoint();
@@ -42,6 +74,7 @@ describe("agent worker client", () => {
           emit({
             requestId: workerRequest.requestId,
             runId: workerRequest.runId,
+            stage: workerRequest.stage,
             type: "started",
           });
           await new Promise<void>((resolve) => {
@@ -53,11 +86,13 @@ describe("agent worker client", () => {
           emit({
             requestId: workerRequest.requestId,
             runId: workerRequest.runId,
+            stage: workerRequest.stage,
             type: "cancelled",
           });
           emit({
             requestId: workerRequest.requestId,
             runId: workerRequest.runId,
+            stage: "raw",
             type: "text_delta",
             delta: "late",
           });
@@ -65,27 +100,17 @@ describe("agent worker client", () => {
       },
     });
     const client = new AgentWorkerClient(clientEndpoint);
-    const researchRequest: CompanyResearchWorkerRequest = {
-      requestId: "research-1",
-      kind: "company-research.run",
-      runId: "run-1",
-      apiKey: "sk-test",
-      modelId: "deepseek-v4-flash",
-      context: {
-        currentDate: "2026-09-09",
-        companyName: "小米",
-        industry: "智能眼镜",
-        timeScope: "近一年",
-      },
-    };
+    const researchRequest: CompanyResearchWorkerRequest = rawResearchRequest();
     const research = client.sendResearch(researchRequest);
     await flushPending();
-    client.cancelResearch("other-request", "run-1");
+    client.cancelResearch("other-request", "run-1", "raw");
+    client.cancelResearch("research-1", "run-1", "structure");
     await flushPending();
+    expect(aborted).toBe(false);
 
     const chat = client.send(request("chat-during-research"));
     await flushPending();
-    client.cancelResearch("research-1", "run-1");
+    client.cancelResearch("research-1", "run-1", "raw");
 
     const researchTypes: string[] = [];
     for await (const event of research as AsyncIterable<CompanyResearchWorkerEvent>) {

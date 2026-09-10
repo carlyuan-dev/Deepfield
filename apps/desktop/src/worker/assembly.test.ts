@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { HostClient } from "./host-client.js";
 import { createUtilityAssembly } from "./assembly.js";
+import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "@deepfield/contracts";
+import { Value } from "typebox/value";
+import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
 import {
   FakePiAgent,
   makeRuntime,
@@ -14,6 +17,36 @@ import {
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 
 describe("utility worker assembly (focused revision)", () => {
+  it.each(RESEARCH_DIRECTIONS)("fake research completes both stages for %s without structure deltas", async (direction) => {
+    const endpoint = new InMemoryEndpoint();
+    const hostClient = new HostClient({ postMessage: () => {}, timeoutMs: 1000 });
+    const { loop } = createUtilityAssembly({ endpoint, agentMode: "fake", hostClient });
+    const template = getCompanyResearchTemplate(direction);
+    const raw = { ...rawResearchRequest(), context: { ...rawResearchRequest().context, direction }, template };
+    endpoint.emit(raw);
+    await flushPending();
+    const rawEvents = endpoint.posted as CompanyResearchWorkerEvent[];
+    expect(rawEvents.map((event) => event.type)).toEqual(["started", "text_delta", "completed"]);
+    const terminal = rawEvents.at(-1);
+    if (terminal?.type !== "completed") throw new Error("raw did not complete");
+    for (const section of template.sections) expect(terminal.text).toContain(section.sectionId);
+    const rawReportText = terminal.text;
+    endpoint.posted = [];
+    endpoint.emit({ ...structureResearchRequest(), context: raw.context, template, rawReportText });
+    await flushPending();
+    const events = endpoint.posted as CompanyResearchWorkerEvent[];
+    expect(events.map((event) => event.type)).toEqual(["started", "completed"]);
+    expect(events.every((event) => Value.Check(CompanyResearchWorkerEventSchema, event))).toBe(true);
+    const structured = events.at(-1);
+    if (structured?.type !== "completed") throw new Error("structure did not complete");
+    const content = JSON.parse(structured.text);
+    expect(Value.Check(StructuredResearchContentSchema, content)).toBe(true);
+    expect(content.sections.map((section: { sectionId: string }) => section.sectionId)).toEqual(template.sections.map((section) => section.sectionId));
+    expect(content.coreSummary).toEqual(["现有公开信息不足以形成可靠的核心判断。"]);
+    expect(content.sections.every((section: { status: string; summary: unknown; facts: unknown[] }) => section.status === "not_found" && section.summary === null && section.facts.length === 0)).toBe(true);
+    loop.dispose();
+  });
+
   it("exposes per-request utility tools and releases the request trace", async () => {
     let agent!: FakePiAgent;
     agent = new FakePiAgent({

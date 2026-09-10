@@ -1,161 +1,169 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_DEEPSEEK_MODEL_ID,
-  type CompanyResearchWorkerEvent,
-  type CompanyResearchWorkerRequest,
-  type ResearchRunId,
-} from "@deepfield/contracts";
-import {
-  createCompanyResearchAgent,
-} from "./company-research-agent.js";
+import { describe, expect, it } from "vitest";
+import { CompanyResearchWorkerEventSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "@deepfield/contracts";
+import { Value } from "typebox/value";
+import { createCompanyResearchAgent } from "./company-research-agent.js";
+import { buildCompanyResearchPrompt } from "./company-research-prompt.js";
+import { rawResearchRequest, structureResearchRequest, sse } from "./company-research-test-helpers.js";
 
-function request(): CompanyResearchWorkerRequest {
-  return {
-    requestId: "research-request-1",
-    kind: "company-research.run",
-    runId: "research-run-1" as ResearchRunId,
-    apiKey: "sk-secret-research-key",
-    modelId: DEFAULT_DEEPSEEK_MODEL_ID,
-    context: {
-      currentDate: "2026-09-09",
-      companyName: "Unitree Robotics",
-      legalName: "Hangzhou Yushu Technology Co., Ltd.",
-      aliases: ["Unitree"],
-      headquarters: "Hangzhou, China",
-      foundedAt: "2016",
-      officialWebsite: "https://www.unitree.com",
-      stockListings: [],
-      businessTags: ["Robotics", "Embodied AI"],
-      industry: "Humanoid Robotics",
-      researchScope: "Commercialization and core components",
-      companyNote: "Candidate note for this industry only",
-      timeScope: "Focus on the past year",
-      customRequirements: "Assess overseas expansion",
-    },
-  };
-}
+const completed = { type: "response.completed", response: { status: "completed" } };
+const delta = (text: string) => ({ type: "response.output_text.delta", delta: text });
+const requests = [rawResearchRequest(), structureResearchRequest()];
 
 describe("company research agent", () => {
-  it("uses only the task snapshot, forces web search, and streams a completed report", async () => {
-    const stream = [
-      'event: response.created\ndata: {"type":"response.created"}\n\n',
-      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"Report part 1 "}\n\n',
-      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"source: https://example.com/report"}\n\n',
-      'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
-    ].join("");
-    let requestUrl: string | URL | Request | undefined;
-    let capturedInit: RequestInit | undefined;
-    const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      requestUrl = input;
-      capturedInit = init;
-      return new Response(stream, {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      });
-    });
+  it.each(requests)("isolates provider tools and visible output for $stage", async (request) => {
+    let url: unknown;
+    let init: RequestInit | undefined;
     const events: CompanyResearchWorkerEvent[] = [];
-
-    await createCompanyResearchAgent({ fetchFn }).run(
-      request(),
-      (event) => events.push(event),
-      new AbortController().signal,
-    );
-
-    expect(String(requestUrl)).toBe("https://api.deepseek.com/responses");
-    if (capturedInit === undefined) throw new Error("expected DeepSeek request options");
-    const body = JSON.parse(String(capturedInit.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({
-      model: "deepseek-v4-flash",
-      stream: true,
-      tools: [{ type: "web_search" }],
-      tool_choice: { type: "web_search" },
-      max_output_tokens: 32768,
-    });
+    const text = request.stage === "raw" ? "报告 [公告](https://example.com/report)" : '{"coreSummary":[],"sections":[]}';
+    await createCompanyResearchAgent({ fetchFn: async (input, options) => {
+      url = input; init = options;
+      return new Response(sse(delta(text.slice(0, 5)), delta(text.slice(5)), completed));
+    } }).run(request, (event) => events.push(event), new AbortController().signal);
+    expect(url).toBe("https://api.deepseek.com/responses");
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ model: "deepseek-v4-flash", stream: true, max_output_tokens: 32768 });
     expect(body).not.toHaveProperty("messages");
-    expect(body.instructions).toEqual(expect.stringContaining("company-research-v2"));
-    expect(body.instructions).toEqual(expect.stringContaining("仅用于识别调研对象"));
-    expect(body.instructions).toEqual(expect.stringContaining("不得把补全、纠正或更新"));
-    expect(body.instructions).toEqual(expect.stringContaining("中文调研报告"));
-    expect(body.instructions).toEqual(expect.stringContaining("每项重要结论只保留一个最合适的来源"));
-    expect(body.instructions).toEqual(expect.stringContaining("完整的 http/https 网址"));
-    expect(body.instructions).toEqual(expect.stringContaining("责任主体"));
-    expect(body.instructions).toEqual(expect.stringContaining("尚未确认"));
-    const input = body.input as Array<{ role: string; content: string }>;
-    expect(input).toHaveLength(1);
-    expect(input[0]?.role).toBe("user");
-    for (const expected of [
-      "2026-09-09",
-      "Unitree Robotics",
-      "Hangzhou Yushu Technology Co., Ltd.",
-      "Unitree",
-      "Hangzhou, China",
-      "2016",
-      "https://www.unitree.com",
-      "已确认未上市",
-      "Robotics、Embodied AI",
-      "Humanoid Robotics",
-      "Commercialization and core components",
-      "Candidate note for this industry only",
-      "Focus on the past year",
-      "Assess overseas expansion",
-    ]) {
-      expect(input[0]?.content).toContain(expected);
+    if (request.stage === "raw") {
+      expect(body.tools).toEqual([{ type: "web_search" }]);
+      expect(body.tool_choice).toEqual({ type: "web_search" });
+      expect(body.text).toBeUndefined();
+      expect(events.map((event) => event.type)).toEqual(["started", "text_delta", "text_delta", "completed"]);
+    } else {
+      expect(body.tools).toBeUndefined();
+      expect(body.tool_choice).toBeUndefined();
+      expect(body.text).toEqual({ format: { type: "json_object" } });
+      expect(events.map((event) => event.type)).toEqual(["started", "completed"]);
+      expect(body.input[0].content).toContain("<raw_research_report>\n" + request.rawReportText + "\n</raw_research_report>");
+      expect(body.input[0].content).toContain(JSON.stringify(request.context));
+      expect(body.input[0].content).toContain(JSON.stringify(request.template));
+      expect(body.input[0].content).toContain(JSON.stringify(request.outputSchema));
     }
-    expect(events).toEqual([
-      { requestId: "research-request-1", runId: "research-run-1", type: "started" },
-      {
-        requestId: "research-request-1",
-        runId: "research-run-1",
-        type: "text_delta",
-        delta: "Report part 1 ",
-      },
-      {
-        requestId: "research-request-1",
-        runId: "research-run-1",
-        type: "text_delta",
-        delta: "source: https://example.com/report",
-      },
-      {
-        requestId: "research-request-1",
-        runId: "research-run-1",
-        type: "completed",
-        text: "Report part 1 source: https://example.com/report",
-      },
-    ]);
-    expect(JSON.stringify(events)).not.toContain("sk-secret-research-key");
+    expect(events.at(-1)).toEqual({ requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text });
+    expect(events.every((event) => Value.Check(CompanyResearchWorkerEventSchema, event))).toBe(true);
+    expect(JSON.stringify(events)).not.toContain(request.apiKey);
   });
 
-  it("maps response.incomplete to one fixed safe failure and never completes", async () => {
-    const stream = [
-      'data: {"type":"response.output_text.delta","delta":"partial report"}\n\n',
-      'data: {"type":"response.incomplete","response":{"status":"incomplete","error":"provider-secret-detail"}}\n\n',
-    ].join("");
-    const events: CompanyResearchWorkerEvent[] = [];
-    const fetchFn = vi.fn(async () => new Response(stream, { status: 200 }));
+  it.each(RESEARCH_DIRECTIONS)("injects only selected modules and task context for %s", (direction) => {
+    const template = getCompanyResearchTemplate(direction);
+    const prompt = buildCompanyResearchPrompt({ ...rawResearchRequest().context, direction }, template);
+    const text = prompt.instructions + "\n" + prompt.input;
+    for (const [index, section] of template.sections.entries()) {
+      for (const value of [section.sectionId, section.coreQuestion, section.coverage, section.boundary]) expect(text).toContain(value);
+      expect(text).toContain("## " + (index + 1) + ". " + section.title + " `" + section.sectionId + "`");
+    }
+    for (const other of RESEARCH_DIRECTIONS.filter((value) => value !== direction)) {
+      for (const section of getCompanyResearchTemplate(other).sections) expect(text).not.toContain(section.sectionId);
+    }
+    for (const expected of ["2026-06-30", "Humanoid actuators", "Humanoid Robotics", "Unitree Robotics", "https://www.unitree.com"]) expect(prompt.input).toContain(expected);
+  });
 
-    await createCompanyResearchAgent({ fetchFn }).run(
-      request(),
-      (event) => events.push(event),
-      new AbortController().signal,
-    );
+  describe.each(requests)("$stage stream lifecycle", (request) => {
+    it("releases an HTTP failure body without exposing its contents", async () => {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(body, { status: 500 }) }).run(request, (event) => events.push(event), new AbortController().signal);
+      expect(events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(cancelled).toBe(true);
+      expect(body.locked).toBe(false);
+    });
 
-    expect(events).toEqual([
-      { requestId: "research-request-1", runId: "research-run-1", type: "started" },
-      {
-        requestId: "research-request-1",
-        runId: "research-run-1",
-        type: "text_delta",
-        delta: "partial report",
-      },
-      {
-        requestId: "research-request-1",
-        runId: "research-run-1",
-        type: "failed",
-        code: "research_failed",
-        message: "company research failed",
-      },
-    ]);
-    expect(events.some((event) => event.type === "completed")).toBe(false);
-    expect(JSON.stringify(events)).not.toContain("provider-secret-detail");
+    it("finishes on completed without waiting for EOF or emitting trailing data", async () => {
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse(delta("valid"), completed, delta("late"))));
+      }, cancel() { cancelled = true; } });
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(stream) }).run(request, (event) => events.push(event), new AbortController().signal);
+      expect(events.at(-1)).toMatchObject({ type: "completed", text: "valid", stage: request.stage });
+      expect(JSON.stringify(events)).not.toContain("late");
+      expect(cancelled).toBe(true);
+      expect(stream.locked).toBe(false);
+    }, 1000);
+
+    it("cancels a pending fetch and discards its eventual response", async () => {
+      const controller = new AbortController();
+      let resolveFetch!: (response: Response) => void;
+      let cancelled = false;
+      const events: CompanyResearchWorkerEvent[] = [];
+      const running = createCompanyResearchAgent({ fetchFn: () => new Promise((resolve) => { resolveFetch = resolve; }) }).run(request, (event) => events.push(event), controller.signal);
+      controller.abort();
+      await running;
+      resolveFetch(new Response(new ReadableStream({ cancel() { cancelled = true; } })));
+      await Promise.resolve();
+      expect(events.map((event) => event.type)).toEqual(["started", "cancelled"]);
+      expect(cancelled).toBe(true);
+    });
+
+    it.each(["http", "network", "missing body"])("safely rejects %s errors", async (failure) => {
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => {
+        if (failure === "network") throw new Error("provider-secret");
+        return failure === "http" ? new Response("provider-secret", { status: 401 }) : new Response(null);
+      } }).run(request, (event) => events.push(event), new AbortController().signal);
+      expect(events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(events.at(-1)).toMatchObject({ stage: request.stage, code: request.stage === "raw" ? "research_failed" : "structuring_failed" });
+      expect(JSON.stringify(events)).not.toContain("provider-secret");
+    });
+
+    it.each([
+      ["missing completion", sse(delta("partial"))],
+      ["missing status", sse(delta("partial"), { type: "response.completed", response: {} })],
+      ["wrong status", sse(delta("partial"), { type: "response.completed", response: { status: "incomplete" } })],
+      ["incomplete", sse(delta("partial"), { type: "response.incomplete", error: "provider-secret" })],
+      ["failed", sse(delta("partial"), { type: "response.failed", error: "provider-secret" })],
+      ["error", sse(delta("partial"), { type: "error", error: "provider-secret" }, completed)],
+      ["empty", sse(completed)],
+      ["whitespace", sse(delta(" \n "), completed)],
+      ["malformed", "data: {provider-secret\n\n"],
+    ])("rejects %s with one safe terminal", async (_name, stream) => {
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(stream) }).run(request, (event) => events.push(event), new AbortController().signal);
+      expect(events.filter((event) => ["failed", "cancelled", "completed"].includes(event.type))).toEqual([{
+        requestId: request.requestId, runId: request.runId, stage: request.stage, type: "failed",
+        code: request.stage === "raw" ? "research_failed" : "structuring_failed",
+        message: request.stage === "raw" ? "company research failed" : "company research structuring failed",
+      }]);
+      if (request.stage === "structure") expect(events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(JSON.stringify(events)).not.toContain("provider-secret");
+    });
+
+    it("handles chunked UTF-8 and CRLF with an unterminated final block", async () => {
+      const bytes = new TextEncoder().encode(sse(delta("中文报告"), completed).replaceAll("\n", "\r\n").trimEnd());
+      const stream = new ReadableStream<Uint8Array>({ start(controller) {
+        for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
+        controller.close();
+      } });
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(stream) }).run(request, (event) => events.push(event), new AbortController().signal);
+      expect(events.at(-1)).toMatchObject({ type: "completed", stage: request.stage, text: "中文报告" });
+    });
+
+    it("cancels a pending reader even when the provider stays open", async () => {
+      const controller = new AbortController();
+      let cancelled = false;
+      let ready!: () => void;
+      const reading = new Promise<void>((resolve) => { ready = resolve; });
+      const stream = new ReadableStream<Uint8Array>({ pull() { ready(); }, cancel() { cancelled = true; } });
+      const events: CompanyResearchWorkerEvent[] = [];
+      const running = createCompanyResearchAgent({ fetchFn: async () => new Response(stream) }).run(request, (event) => events.push(event), controller.signal);
+      await reading;
+      controller.abort();
+      await running;
+      expect(events.map((event) => event.type)).toEqual(["started", "cancelled"]);
+      expect(events.at(-1)).toMatchObject({ stage: request.stage });
+      expect(cancelled).toBe(true);
+      expect(stream.locked).toBe(false);
+    }, 1000);
+
+    it("does not contact the provider when already cancelled", async () => {
+      const controller = new AbortController(); controller.abort();
+      let called = false;
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => { called = true; throw new Error("secret"); } }).run(request, (event) => events.push(event), controller.signal);
+      expect(called).toBe(false);
+      expect(events.map((event) => event.type)).toEqual(["started", "cancelled"]);
+      expect(events.at(-1)).toMatchObject({ stage: request.stage });
+    });
   });
 });

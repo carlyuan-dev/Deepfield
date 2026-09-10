@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
+  CompanyResearchWorkerEventSchema,
   ToolEventEnvelopeSchema,
   type AgentWorkerEvent,
   type ToolExecutionEvent,
 } from "@deepfield/contracts";
 import { createWorkerMessageLoop, type ChatAgent, type ToolRuntime } from "./message-loop.js";
+import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
 import {
   echoAgent,
   echoToolRuntime,
@@ -18,6 +20,70 @@ import {
 } from "./message-loop-test-helpers.js";
 
 describe("worker message loop", () => {
+  it.each([rawResearchRequest(), structureResearchRequest()])("correlates stage on $stage failure without leaking errors", async (req) => {
+    const endpoint = new InMemoryEndpoint();
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, {
+      researchAgent: { async run() { throw new Error("secret provider error"); } },
+    });
+    endpoint.emit(req);
+    await flushPending();
+    expect(endpoint.posted).toEqual([{
+      requestId: req.requestId, runId: req.runId, stage: req.stage, type: "failed",
+      code: req.stage === "raw" ? "research_failed" : "structuring_failed",
+      message: req.stage === "raw" ? "company research failed" : "company research structuring failed",
+    }]);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, endpoint.posted[0])).toBe(true);
+    expect(loop.activeCount()).toBe(0);
+    loop.dispose();
+  });
+
+  it("rejects a wrong-stage terminal and suppresses all later events", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let aborted = false;
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, {
+      researchAgent: { async run(req, emit, signal) {
+        signal.addEventListener("abort", () => { aborted = true; });
+        emit({ requestId: req.requestId, runId: req.runId, stage: "raw", type: "completed", text: "wrong" });
+        emit({ requestId: req.requestId, runId: req.runId, stage: "structure", type: "completed", text: "late" });
+      } },
+    });
+    endpoint.emit(structureResearchRequest());
+    await flushPending();
+    expect(endpoint.posted).toHaveLength(1);
+    expect(endpoint.posted[0]).toMatchObject({ type: "failed", stage: "structure", code: "structuring_failed" });
+    expect(aborted).toBe(true);
+    expect(loop.activeCount()).toBe(0);
+    loop.dispose();
+  });
+
+  it.each([rawResearchRequest(), structureResearchRequest()])("cancels $stage only on all three identity fields and settles an uncooperative agent", async (req) => {
+    const endpoint = new InMemoryEndpoint();
+    let signal: AbortSignal | undefined;
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, {
+      researchAgent: { async run(_req, _emit, currentSignal) { signal = currentSignal; await new Promise(() => {}); } },
+    });
+    endpoint.emit(req);
+    await flushPending();
+    const cancel = { requestId: req.requestId, runId: req.runId, stage: req.stage, kind: "company-research.cancel" };
+    endpoint.emit({ ...cancel, stage: req.stage === "raw" ? "structure" : "raw" });
+    endpoint.emit({ ...cancel, runId: "other-run" });
+    endpoint.emit({ ...cancel, requestId: "other-request" });
+    expect(signal?.aborted).toBe(false);
+    endpoint.emit(cancel);
+    endpoint.emit(cancel);
+    expect(signal?.aborted).toBe(true);
+    expect(endpoint.posted).toEqual([{ requestId: req.requestId, runId: req.runId, stage: req.stage, type: "cancelled" }]);
+    expect(loop.activeCount()).toBe(0);
+    loop.dispose();
+  });
+
+  it("fails with the structure identity when no research agent is available", () => {
+    const endpoint = new InMemoryEndpoint();
+    const loop = createWorkerMessageLoop(endpoint, echoAgent);
+    endpoint.emit(structureResearchRequest());
+    expect(endpoint.posted[0]).toMatchObject({ stage: "structure", type: "failed", code: "structuring_failed" });
+    loop.dispose();
+  });
   it("streams only schema-valid events for a valid request", async () => {
     const endpoint = new InMemoryEndpoint();
     createWorkerMessageLoop(endpoint, echoAgent);
