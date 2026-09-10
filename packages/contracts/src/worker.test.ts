@@ -374,8 +374,9 @@ describe("two-stage company research protocol", () => {
         pending.push(...Object.values(value));
       }
     }
-    const properties = STRUCTURED_RESEARCH_OUTPUT_SCHEMA.properties as Record<string, { maxItems: number }>;
-    const required = STRUCTURED_RESEARCH_OUTPUT_SCHEMA.required as string[];
+    const schema = STRUCTURED_RESEARCH_OUTPUT_SCHEMA as Record<string, unknown>;
+    const properties = schema.properties as Record<string, { maxItems: number }>;
+    const required = schema.required as string[];
     expect(Reflect.set(STRUCTURED_RESEARCH_OUTPUT_SCHEMA, "additionalProperties", true)).toBe(false);
     expect(Reflect.set(properties.coreSummary!, "maxItems", 100)).toBe(false);
     expect(Reflect.set(required, "0", "injectedField")).toBe(false);
