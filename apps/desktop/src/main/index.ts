@@ -125,10 +125,10 @@ void app.whenReady().then(async () => {
         if (!client) throw new Error("agent worker is not available");
         return client.sendResearch(request);
       },
-      cancelResearch: (requestId, runId) => {
+      cancelResearch: (requestId, runId, stage) => {
         const client = agentRuntime?.client;
         if (!client) throw new Error("agent worker is not available");
-        client.cancelResearch(requestId, runId);
+        client.cancelResearch(requestId, runId, stage);
       },
     },
     titleGenerator: deepSeekService,
