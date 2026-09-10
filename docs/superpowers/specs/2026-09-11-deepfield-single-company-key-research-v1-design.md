@@ -1,7 +1,7 @@
 # Deepfield 单公司关键调研 MVP v1 工程设计
 
 日期：2026-09-11
-状态：产品与工程设计已确认，待实施计划
+状态：产品与工程设计已确认，进入实施
 参考：`docs/single-company-key-research-discussion.md`
 
 ## 1. 决策与目标
@@ -13,9 +13,8 @@
 → 首次联网事实调研
 → 持久化只读 Markdown 原始报告
 → 第二次非联网分析与结构化
-→ Harness 校验、有限修补与系统 ID 分配
-→ 原始/结构化双视图
-→ 最小内容单元编辑、增删和恢复
+→ Harness 校验与有限确定性修补
+→ 原始/结构化只读双视图
 ```
 
 现有 Company、Capability Item、Utility Process、Main、IPC、历史运行和全局前台任务互斥均继续复用。该功能仍是 Capability 业务状态，不写入普通 Chat Conversation。
@@ -25,10 +24,9 @@
 - 单公司、单研究主题、单研究方向的一次完整调研；
 - 四个内置模板，每个模板固定五个模块；
 - 两次有明确边界的 LLM 调用；
-- 原始报告、结构化 AI 基线和用户工作副本；
+- 原始报告和结构化报告；
 - 第二阶段失败后的原始报告保留和重试；
 - 第二阶段成功锁定；
-- 最小内容单元人工核验、事实增删和 AI 基线恢复；
 - 旧版自由结构报告的只读兼容。
 
 ### 1.2 本切片不包含
@@ -40,6 +38,11 @@
 - 自动事实真伪验证、可信度评分或多来源关系图；
 - 主 Chat 启动或操纵调研；
 - 调研任务跨应用重启自动续跑。
+- 报告编辑、事实增删、恢复和编辑历史；
+- “人工编辑”或“人工核验”状态；
+- 第二次 LLM 的自动格式修复调用。
+
+人工编辑与人工核验是后续两个独立能力：改写文本不能自动证明事实已经核验，后续实现也不得因编辑而隐藏 AI 原始来源。
 
 ## 2. 现状与关键改变
 
@@ -63,7 +66,7 @@ CompanyResearchPanel
 
 ```text
 Renderer
-  CompanyResearchPanel / start modal / structured editor
+  CompanyResearchPanel / start modal / report viewer
         │ typed commands + stage events
         ▼
 Preload + Main IPC
@@ -72,7 +75,7 @@ CompanyResearchService ────── CompanyResearchHarness
         │                           │
         │ state transition           ├─ schema and semantic invariants
         │ transaction                ├─ raw-report URL allowlist
-        ▼                           └─ stable ID assignment
+        ▼                           └─ deterministic safe repair
 CompanyResearchRunRepository
         │
         ├─ runRawResearch() ──► Utility Process ──► DeepSeek + web_search
@@ -82,11 +85,11 @@ CompanyResearchRunRepository
 职责边界：
 
 - Contracts：输入、运行快照、内容模型、命令、Worker 请求与事件 Schema；
-- Persistence：运行状态迁移、报告产物、工作副本和旧报告兼容；
-- Application：状态机、事务边界、重试和锁定、编辑命令、启动上下文快照；
-- Harness：纯函数校验、有限确定性修补、URL 继承检查和稳定 ID 分配；
+- Persistence：运行状态迁移、报告产物和旧报告兼容；
+- Application：状态机、事务边界、重试和锁定、启动上下文快照；
+- Harness：纯函数校验、有限确定性修补和 URL 继承检查；
 - Worker：供应商请求、SSE/响应解析、取消和安全失败事件；
-- Renderer：状态展示、两种报告视图和受控编辑，不直接写整份 JSON。
+- Renderer：状态展示和两种只读报告视图。
 
 ## 4. 研究主题与输入语义
 
@@ -141,7 +144,7 @@ completed ── 不允许再次整理；重新生成必须创建新 ResearchRun
 阶段转换必须使用带前置状态条件的 Repository 更新，并在事务中同时写入阶段产物：
 
 - `researching → structuring`：写入完整原始 Markdown、首次完成时间和模板快照；
-- `structuring → completed`：写入 `generatedContent`、`editableContent`、Harness 版本和完成时间；
+- `structuring → completed`：写入 `structuredContent`、Harness 版本和完成时间；
 - `structuring → structure_failed`：保留原始报告，记录安全的失败类别，不保存供应商原始错误或密钥；
 - `structure_failed → structuring`：清空本次整理错误并增加整理尝试计数。
 
@@ -170,8 +173,7 @@ research_context_json
 template_id, template_version, template_snapshot_json
 harness_version
 raw_report_text, raw_completed_at
-generated_content_json
-editable_content_json
+structured_content_json
 structuring_attempts
 last_failure_code
 created_at, completed_at
@@ -208,17 +210,7 @@ interface LlmStructuredContent {
 }
 ```
 
-Harness 通过后，系统为核心结论、模块摘要和事实分配稳定 UUID，再形成 `generatedContent`。`editableContent` 从它复制而来，并为最小内容单元附加：
-
-```ts
-reviewStatus: "ai_generated" | "human_verified"
-```
-
-`generatedContent` 永不被编辑。`editableContent` 中的事实使用判别联合：未经编辑的 AI 事实保留 `timeContext`、`claimType` 和 `source`；一旦用户修改正文，该工作副本只保留稳定 ID、正文、来源基线 ID 和 `human_verified`，避免修改后的正文继续携带可能已经失真的 AI 时间、性质或来源。完整原始字段仍保存在 `generatedContent`。人工新增事实同样只要求正文和系统 ID，不伪造来源、时间或事实性质。
-
-事实删除表现为从 `editableContent` 的可见事实数组移除。恢复时以 `generatedContent` 中相同稳定 ID 的单元为基线重新插入；界面提供已删除 AI 事实列表，使单条恢复仍然可达。恢复后的单元回到 `ai_generated` 并重新显示原来源。
-
-模块发生人工事实增删改后，工作副本记录 `contentModified: true`，Renderer 隐藏该模块原有 AI 状态文案；这不改变模块中其他内容单元各自的 `reviewStatus`。
+Harness 通过后，Application 将内容保存为只读 `structuredContent`。MVP 不分配内容单元 ID，不创建用户工作副本，也不把任何文字操作表达为人工核验。未来增加编辑能力时再为内容单元引入稳定 ID，并把“人工编辑”与显式“人工核验”设计成两个状态。
 
 ## 9. Harness 边界与修补
 
@@ -237,9 +229,9 @@ Harness 是确定性的纯逻辑，不联网，也不判断互联网事实真假
 
 系统级修补只处理不改变语义且结果唯一的问题，例如移除单个 Markdown JSON 围栏、截取唯一 JSON 对象、按模板重排已完整存在的模块。它不能补模块、改枚举、改 URL、生成摘要或事实。
 
-系统修补后仍无效时，Application 最多触发一次不联网的格式修复调用。修复输出仍经过同一 Harness；失败则进入 `structure_failed`。完整第二阶段重试由用户触发，次数不硬限制，但成功后立即锁定。
+系统修补后仍无效时进入 `structure_failed`。用户可以基于同一原始报告重新执行完整第二阶段，次数不硬限制；任意一次成功后立即锁定。MVP 不增加第三次格式修复调用。
 
-“核心结论或摘要是否引入新事实”无法由简单确定性 Harness 可靠证明。MVP 通过严格 Prompt、最终事实集合约束和人工核验降低风险，不在产品或测试中宣称已经完成语义证明。
+“核心结论或摘要是否引入新事实”无法由简单确定性 Harness 可靠证明。MVP 通过严格 Prompt 和最终事实集合约束降低风险，不在产品或测试中宣称已经完成语义证明。
 
 ## 10. Worker 与模型调用
 
@@ -247,7 +239,6 @@ Worker 契约拆成阶段请求：
 
 - `company-research.raw.run`：使用 DeepSeek Responses API，强制 `web_search`，流式发送原始 Markdown delta；
 - `company-research.structure.run`：不提供工具，只接收上下文快照、模板快照、原始报告和输出 Schema；结果在 Worker 内聚合后作为完整候选 JSON 返回，不向 Renderer 流式展示半成品；
-- `company-research.structure.repair`：不提供工具，只能在 Application 明确要求时执行一次受限格式修复。
 
 每个事件包含传输 `requestId`、`runId` 和 `stage`，Application 拒绝身份或阶段不匹配的事件。取消由阶段对应的 AbortController 处理。
 
@@ -264,15 +255,7 @@ retryStructuring(runId)
 getState(itemId, companyId)
 listRuns(itemId, companyId)
 getRun(itemId, companyId, runId)
-updateCoreSummary(runId, summaryId, text)
-updateSectionSummary(runId, sectionId, text)
-updateFact(runId, factId, text)
-addFact(runId, sectionId, text)
-deleteFact(runId, factId)
-restoreContentUnit(runId, unitKind, unitId)
 ```
-
-编辑接口只接受运行 ID、目标 ID 和用户可编辑正文，不接受来源、状态、模板或整份工作副本。Application 必须确认运行属于 `completed` v1 报告、目标存在且命令合法，再在事务内修改单一工作副本并标记对应 `reviewStatus`。
 
 `getState` 返回当前目标公司的活动运行，以及 `structure_failed`、新版 `completed` 和旧版 `completed` 的历史摘要；`listRuns` 使用相同集合和稳定倒序。完整报告内容只随选中运行读取，避免未来历史数量增加后每次传输全部 JSON。`getRun` 必须校验该运行仍属于传入的 Item—Company 关联，不能只凭全局 `runId` 读取。
 
@@ -296,11 +279,11 @@ restoreContentUnit(runId, unitKind, unitId)
 - `structure_failed`：原始报告保持可见，显示“整理失败，请重试”；
 - 全局其他目标有运行时，开始按钮禁用并显示已有任务占用提示。
 
-### 12.3 完成与编辑
+### 12.3 完成与查看
 
 历史选择器展示完成时间、方向和截止日期。新版完成报告提供“结构化报告 / 原始调研报告”切换；旧版报告只显示“旧版原始报告”。
 
-结构化视图固定显示核心结论和五张展开卡片。AI 事实紧跟来源链接；被编辑或新增的单元显示“已人工核验”。编辑采用单元级保存/取消，事实支持新增和删除。已修改单元可恢复，已删除 AI 事实在对应模块的恢复区域中单条恢复。
+结构化视图固定显示核心结论和五张展开卡片，事实紧跟来源链接。第一版报告只读；页面明确提示这是 AI 调研结果，仍需人工核验。
 
 所有模型文本按文本或安全 Markdown 子集渲染，不执行原始 HTML、脚本或事件属性。外部 URL 仅允许 HTTP/HTTPS。
 
@@ -311,7 +294,6 @@ restoreContentUnit(runId, unitKind, unitId)
 - 第二阶段调用、解析、Harness、修复或最终事务失败：保留原始报告并进入 `structure_failed`；
 - 第二阶段成功写入使用状态前置条件，重复完成事件不能覆盖结果；
 - 已完成运行的 `retryStructuring` 必须拒绝；
-- 编辑命令使用稳定 ID 和事务更新，过期或不存在的 ID 返回安全冲突错误；
 - API Key 只进入 Worker 请求，不写日志、事件、报告或数据库；
 - 原始报告中的任何指令都作为不可信资料，第二次 Prompt 明确包裹并拒绝执行；
 - URL 白名单由原始 Markdown 实际解析，不接受模型新造或规范化后的 URL。
@@ -321,12 +303,12 @@ restoreContentUnit(runId, unitKind, unitId)
 按风险分层测试：
 
 1. Contracts/模板：输入 Schema、四模板五模块唯一性、内容联合类型和 IPC 参数；
-2. Harness：合法样本、额外字段、模块缺失/乱序、状态组合、URL 注入、确定性修补、修复后复验和 ID 分配；
+2. Harness：合法样本、额外字段、模块缺失/乱序、状态组合、URL 注入、确定性修补和修补后复验；
 3. Persistence：旧数据迁移、阶段原子转换、崩溃恢复、JSON 读写、历史顺序和级联删除；
 4. Application：双阶段成功、首次失败清理、原始报告后失败保留、重试、成功锁定、取消、重复事件和全局互斥；
 5. Worker：首次强制联网、第二次无工具、Prompt 边界、流式解析、非流式 JSON、截断和取消；
 6. IPC/Preload：新增命令参数校验、订阅和安全错误映射；
-7. Renderer：启动输入、阶段切换、双视图、整理重试、旧报告、最小单元编辑、人工核验、删除和恢复；
+7. Renderer：启动输入、阶段切换、双视图、整理重试和旧报告；
 8. 回归：全量单元测试、类型检查和桌面构建。
 
 真实联网效果测试不替代自动测试。工程线路通过后，至少对两个不同方向各运行一家公司，检查来源 URL、原子事实粒度、缺失状态和二次整理稳定性。
@@ -334,14 +316,12 @@ restoreContentUnit(runId, unitKind, unitId)
 ## 15. 验收标准
 
 - 用户能为当前主题中的一家公司选择唯一方向并启动调研；
-- 首次调用只使用截止日期以内的信息并生成固定结构的 Markdown；
+- 首次调用接收截止日期约束并生成固定结构的 Markdown；该约束依赖模型执行，MVP 不宣称机器级证明；
 - 原始报告落盘后，即使第二阶段失败或应用退出也仍可查看；
 - 第二阶段不联网，输出通过 Harness 后才成为结构化报告；
 - 非原始报告 URL 无法进入结构化事实；
 - 整理失败可重试，成功后同一运行不能再次整理；
-- 新运行不会覆盖旧运行或其人工编辑；
-- 核心结论、模块摘要和事实可以最小单元编辑；事实可新增、删除和恢复；
-- 人工修改只标记对应单元，AI 基线和原始报告不变；
+- 新运行不会覆盖旧运行；
 - 旧版自由结构报告仍可读取；
 - 全局单活动任务、Chat 可并行和公司档案后台暂停规则继续成立；
 - 聚焦测试、全量测试、类型检查和构建全部通过。
