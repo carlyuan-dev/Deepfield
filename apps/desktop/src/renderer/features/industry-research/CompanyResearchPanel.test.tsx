@@ -17,6 +17,62 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it.each(["resolve", "reject"] as const)("retains the streamed raw body across an empty structuring snapshot and detail %s without leaking across runs or navigation", async (outcome) => {
+    const fake = makeFakeApi();
+    const pending = deferred<ResearchRun | undefined>();
+    const nextDetail = deferred<ResearchRun | undefined>();
+    const run = researchRun({ status: "researching" });
+    fake.companyResearch.getState.mockResolvedValue(activeResearch(run, "流式原文"));
+    fake.companyResearch.getRun.mockReturnValueOnce(pending.promise).mockReturnValue(nextDetail.promise);
+    const view = render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText("流式原文");
+    act(() => fake.emitResearch({ type: "text_delta", stage: "raw", requestId: "raw-request", runId: run.id, delta: "追加事实" }));
+    await screen.findByText("流式原文追加事实");
+
+    const structuring = researchRun({ status: "structuring" });
+    // Production clears the transient draft as soon as raw is durably saved.
+    fake.companyResearch.getState.mockResolvedValue(activeResearch(structuring, ""));
+    act(() => fake.emitResearch({ type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id }));
+    await screen.findByText("正在整理结构化报告…");
+    expect(screen.getByText("流式原文追加事实")).toBeTruthy();
+    expect(fake.companyResearch.getRun).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
+
+    await act(async () => {
+      if (outcome === "resolve") pending.resolve(structuring);
+      else pending.reject(new Error("private storage error"));
+    });
+    if (outcome === "resolve") {
+      expect(await screen.findByText(/原始事实/)).toBeTruthy();
+      expect(screen.queryByText("流式原文追加事实")).toBeNull();
+    } else {
+      expect(await screen.findByText("加载调研报告失败，请重试")).toBeTruthy();
+      expect(screen.getByText("流式原文追加事实")).toBeTruthy();
+      expect(screen.queryByText(/private storage/)).toBeNull();
+    }
+
+    const next = researchRun({ id: "next-run" as ResearchRun["id"], status: "structuring" });
+    fake.companyResearch.getState.mockResolvedValue(activeResearch({ ...next, status: "researching" }, "下一轮原文"));
+    act(() => fake.emitResearch({ type: "state_changed", itemId: next.itemId, companyId: next.companyId, runId: next.id }));
+    await screen.findByText("下一轮原文");
+    expect(screen.queryByText("流式原文追加事实")).toBeNull();
+    expect(screen.queryByText(/原始事实/)).toBeNull();
+    fake.companyResearch.getState.mockResolvedValue(activeResearch(next, ""));
+    act(() => fake.emitResearch({ type: "state_changed", itemId: next.itemId, companyId: next.companyId, runId: next.id }));
+    await waitFor(() => expect(fake.companyResearch.getRun).toHaveBeenLastCalledWith(context.itemId, context.companyId, next.id));
+    expect(screen.queryByText("流式原文追加事实")).toBeNull();
+    expect(screen.queryByText(/原始事实/)).toBeNull();
+    expect(screen.getByText("下一轮原文")).toBeTruthy();
+
+    fake.companyResearch.getState.mockResolvedValue({ runs: [], globalActiveRun: null });
+    view.rerender(<CompanyResearchPanel api={fake} {...context} companyId="other" />);
+    await screen.findByText("还没有调研报告。");
+    await act(async () => nextDetail.resolve(next));
+    expect(screen.queryByText("流式原文追加事实")).toBeNull();
+    expect(screen.queryByText(/原始事实/)).toBeNull();
+    expect(screen.queryByText("下一轮原文")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("shows only matching safe research failure outcomes and treats cancellation as nonfailure", async () => {
     const fake = makeFakeApi();
     const user = userEvent.setup();
@@ -83,12 +139,12 @@ describe("two-stage company research", () => {
     const fake = makeFakeApi();
     const user = userEvent.setup();
     let run = researchRun({ status: "structuring" });
-    let state = activeResearch(run, run.rawReportText);
+    let state = activeResearch(run);
     fake.companyResearch.getState.mockImplementation(async () => state);
     fake.companyResearch.getRun.mockImplementation(async () => run);
     fake.companyResearch.retryStructuring.mockImplementation(async () => {
       run = { ...run, status: "structuring" };
-      state = activeResearch(run, run.rawReportText);
+      state = activeResearch(run);
       return run;
     });
     render(<CompanyResearchPanel api={fake} {...context} />);
@@ -128,7 +184,7 @@ describe("two-stage company research", () => {
     const fake = makeFakeApi();
     const run = researchRun({ status: "structuring" });
     const pending = deferred<ResearchRun | undefined>();
-    fake.companyResearch.getState.mockResolvedValue(activeResearch(run, run.rawReportText));
+    fake.companyResearch.getState.mockResolvedValue(activeResearch(run));
     fake.companyResearch.getRun.mockResolvedValueOnce(run).mockReturnValue(pending.promise);
     render(<CompanyResearchPanel api={fake} {...context} />);
     await screen.findByText(/原始事实/);

@@ -6,12 +6,13 @@ interface View {
   state: CompanyResearchState;
   selectedRunId: string | undefined;
   selectedRun: ResearchRun | undefined;
+  streamedRaw: { runId: string; text: string } | undefined;
   loading: boolean;
   detailLoading: boolean;
   pending: boolean;
   error: string | undefined;
 }
-const EMPTY_VIEW: View = { state: EMPTY_STATE, selectedRunId: undefined, selectedRun: undefined, loading: true, detailLoading: false, pending: false, error: undefined };
+const EMPTY_VIEW: View = { state: EMPTY_STATE, selectedRunId: undefined, selectedRun: undefined, streamedRaw: undefined, loading: true, detailLoading: false, pending: false, error: undefined };
 interface Actions {
   start(input: StartCompanyResearchInput): Promise<void>;
   cancel(): Promise<void>;
@@ -80,7 +81,12 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
               ?? snapshot.runs[0]?.id;
             // Keep the same run's saved raw report readable during stage reloads.
             const retained = current.selectedRun?.id === selectedRunId ? current.selectedRun : undefined;
-            publish({ state: snapshot, selectedRunId, selectedRun: retained, loading: false });
+            // Raw completion clears the service's draft before getRun returns.
+            // Preserve the visible stream separately from the authoritative snapshot.
+            const streamedRaw = previousActive?.id === selectedRunId && previousActive?.status === "researching"
+              ? { runId: previousActive.id, text: current.state.active!.draftText }
+              : current.streamedRaw?.runId === selectedRunId ? current.streamedRaw : undefined;
+            publish({ state: snapshot, selectedRunId, selectedRun: retained, streamedRaw, loading: false });
             if (snapshot.active?.run.status === "researching") {
               ++detailTicket;
               publish({ selectedRun: undefined, detailLoading: false });
@@ -133,7 +139,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           // Use only its identity; its returned stage may already be stale.
           if (started.itemId === itemId && started.companyId === companyId && current.selectedRunId !== started.id) {
             ++detailTicket;
-            publish({ selectedRunId: started.id, selectedRun: undefined });
+            publish({ selectedRunId: started.id, selectedRun: undefined, streamedRaw: undefined });
           }
           ++revision;
           await refresh();
@@ -170,7 +176,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
       reload() { publish({ error: undefined }); ++revision; void refresh(); },
       selectRun(id) {
         if (current.state.active || !current.state.runs.some((run) => run.id === id)) return;
-        publish({ selectedRunId: id, selectedRun: undefined, error: undefined });
+        publish({ selectedRunId: id, selectedRun: undefined, streamedRaw: undefined, error: undefined });
         void loadDetail(id);
       },
     };
@@ -188,6 +194,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
   const seconds = active ? Math.max(0, Math.floor((now - Date.parse(active.run.createdAt)) / 1000)) : 0;
   return {
     ...view,
+    rawDraftText: view.streamedRaw?.runId === view.selectedRunId ? view.streamedRaw?.text ?? "" : "",
     elapsedLabel: seconds < 60 ? `已运行 ${seconds} 秒` : `已运行 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`,
     start: (input: StartCompanyResearchInput) => actions.current!.start(input),
     cancel: () => actions.current!.cancel(),

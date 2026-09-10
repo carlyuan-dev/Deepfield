@@ -43,6 +43,9 @@ function ResearchTarget({ api, itemId, companyId, ...context }: CompanyResearchP
   const otherActive = occupied && (research.state.globalActiveRun!.itemId !== itemId || research.state.globalActiveRun!.companyId !== companyId);
   const summary = research.state.runs.find((entry) => entry.id === research.selectedRunId);
   const status = active?.run.status ?? summary?.status;
+  const rawText = run?.schemaVersion === "company-research-report-v1"
+    ? run.rawReportText ?? (active?.draftText || research.rawDraftText)
+    : active?.draftText || research.rawDraftText;
   return <section className="company-research-panel" aria-labelledby="company-research-title">
     <div className="company-research-heading">
       <div><h2 id="company-research-title">公司调研</h2><p className="muted">AI 调研结果仅供参考，重要事实仍需人工核验。</p></div>
@@ -65,7 +68,7 @@ function ResearchTarget({ api, itemId, companyId, ...context }: CompanyResearchP
           <dl className="research-context"><div><dt>调研时间范围</dt><dd>{run.timeScope}</dd></div>{run.customRequirements && <div><dt>补充要求</dt><dd>{run.customRequirements}</dd></div>}</dl>
           <div className="company-report-text"><LinkifiedText text={run.reportText} /></div>
         </div>
-        : run?.schemaVersion === "company-research-report-v1" || active?.run.status === "structuring" ? <ReportTabs key={`${research.selectedRunId}:${status}:${run?.status ?? "loading"}`} run={run?.schemaVersion === "company-research-report-v1" ? run : undefined} rawText={run?.schemaVersion === "company-research-report-v1" ? run.rawReportText ?? active?.draftText ?? "" : active?.draftText ?? ""} />
+        : run?.schemaVersion === "company-research-report-v1" || active?.run.status === "structuring" ? <ReportTabs key={`${research.selectedRunId}:${status}:${run?.status ?? "loading"}`} run={run?.schemaVersion === "company-research-report-v1" ? run : undefined} rawText={rawText} />
         : research.detailLoading ? <p className="muted">加载调研报告…</p>
         : research.state.runs.length === 0 ? <p className="muted company-research-empty">还没有调研报告。</p> : null}
     </>}
