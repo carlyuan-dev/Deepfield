@@ -16,6 +16,12 @@ export {
   CompanyResearchServiceError,
 } from "./company-research-service.js";
 export { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
+export {
+  COMPANY_RESEARCH_HARNESS_VERSION,
+  extractMarkdownSources,
+  parseStructuredCandidate,
+  validateStructuredResearch,
+} from "./company-research-harness.js";
 export type {
   CompanyProfileEnrichmentOptions,
   CompanyProfileFailureDiagnostic,
