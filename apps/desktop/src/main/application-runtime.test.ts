@@ -213,8 +213,11 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos,
       secrets: { get: (name) => (name === "deepseek.apiKey" ? "sk-runtime" : undefined) },
-      companyRecognizer: { recognize: async () => [] },
-      companyCompleter: { complete: async () => ({}) },
+      llmHelpers: {
+        recognize: async () => [],
+        complete: async () => ({}),
+        generateConversationTitle: async () => "运行时标题",
+      },
       worker: {
         send: (request) => {
           requests.push(request.requestId);

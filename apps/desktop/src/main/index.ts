@@ -16,9 +16,11 @@ import { registerIpcHandlers } from "./ipc.js";
 import { createTrustedIpcMainAdapter } from "./ipc-trusted-adapter.js";
 import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
-import { DeepSeekService } from "./deepseek-service.js";
+import { ProfileStore } from "./profile-store.js";
+import { ConfiguredLlmService } from "./configured-llm-service.js";
 import { FakeCompanyRecognizer } from "./fake-company-recognizer.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
+import { PiModelGateway } from "../shared/model-gateway.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
@@ -84,13 +86,16 @@ void app.whenReady().then(async () => {
     encrypt: (value) => safeStorage.encryptString(value),
     decrypt: (value) => safeStorage.decryptString(value),
   });
-  const deepSeekService = new DeepSeekService(secrets, {
-    enabled: process.env.DEEPFIELD_AGENT_MODE !== "fake",
-  });
+  const profiles = new ProfileStore(paths.settingsFile, secrets);
+  await profiles.initialize();
+  const configuredLlm = new ConfiguredLlmService(
+    () => profiles.resolveActiveLlm(),
+    new PiModelGateway(),
+  );
   const companyRecognizer =
     process.env.DEEPFIELD_AGENT_MODE === "fake"
       ? new FakeCompanyRecognizer()
-      : deepSeekService;
+      : configuredLlm;
 
   const skillsDir = resolveSkillsDir({
     appPath: app.getAppPath(),
@@ -134,9 +139,8 @@ void app.whenReady().then(async () => {
         client.cancelResearch(requestId, runId, stage);
       },
     },
-    titleGenerator: deepSeekService,
-    companyRecognizer,
-    companyCompleter: deepSeekService,
+    llmHelpers: configuredLlm,
+    ...(companyRecognizer === configuredLlm ? {} : { companyRecognizer }),
   });
   appRuntime.companyResearch.cleanupAbandoned();
   appRuntime.companyProfiles.resume();
@@ -145,7 +149,7 @@ void app.whenReady().then(async () => {
     conversations: appRuntime.conversationService,
     industryResearch: appRuntime.industryResearch,
     settings: secrets,
-    llm: deepSeekService,
+    llm: configuredLlm,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
     companyResearch: appRuntime.companyResearch,

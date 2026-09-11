@@ -19,8 +19,9 @@ export interface ApplicationRuntimeDeps {
   repositories: Repositories;
   secrets: SecretReader;
   worker: AgentWorkerPort & CompanyResearchWorkerPort;
-  companyRecognizer: CompanyRecognizer;
-  companyCompleter: CompanyCompleter;
+  llmHelpers?: CompanyRecognizer & CompanyCompleter & ConversationTitleGenerator;
+  companyRecognizer?: CompanyRecognizer;
+  companyCompleter?: CompanyCompleter;
   titleGenerator?: ConversationTitleGenerator;
 }
 
@@ -34,6 +35,12 @@ export interface ApplicationRuntime {
 }
 
 export function createApplicationRuntime(deps: ApplicationRuntimeDeps): ApplicationRuntime {
+  const companyRecognizer = deps.companyRecognizer ?? deps.llmHelpers;
+  const companyCompleter = deps.companyCompleter ?? deps.llmHelpers;
+  const titleGenerator = deps.titleGenerator ?? deps.llmHelpers;
+  if (companyRecognizer === undefined || companyCompleter === undefined) {
+    throw new Error("llm helpers are not configured");
+  }
   const conversationService = new ConversationService(deps.repositories);
   const contextBuilder = new ContextBuilder(deps.repositories);
   const chatService = new ChatService(
@@ -41,7 +48,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     contextBuilder,
     deps.secrets,
     deps.worker,
-    deps.titleGenerator === undefined ? {} : { titleGenerator: deps.titleGenerator },
+    titleGenerator === undefined ? {} : { titleGenerator },
   );
   const companyResearch = new CompanyResearchService(
     deps.repositories,
@@ -52,7 +59,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
   companyResearch.cleanupAbandoned();
   const companyProfiles = new CompanyProfileEnrichmentService(
     deps.repositories.companies,
-    deps.companyCompleter,
+    companyCompleter,
     {
       isForegroundBusy: () => companyResearch.isRunning(),
       getResearchTopics: (companyId) => deps.repositories.capabilityItems.list()
@@ -63,7 +70,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
   );
   const industryResearch = new IndustryResearchService(
     deps.repositories,
-    deps.companyRecognizer,
+    companyRecognizer,
     companyProfiles,
   );
   companyResearch.subscribe((event) => {
