@@ -214,6 +214,10 @@ export const CompanyResearchWorkerEventSchema = Type.Union([
     code: Type.Literal("research_failed"), message: Type.Literal("company research failed"),
   }, { additionalProperties: false }),
   Type.Object({
+    ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("failed"),
+    code: Type.Literal("web_search_failed"), message: Type.Literal("company research web search failed"),
+  }, { additionalProperties: false }),
+  Type.Object({
     ...EventIdentity, stage: Type.Literal("structure"), type: Type.Literal("failed"),
     code: Type.Literal("structuring_failed"), message: Type.Literal("company research structuring failed"),
   }, { additionalProperties: false }),
@@ -231,7 +235,7 @@ export const CompanyResearchStateChangedEventSchema = Type.Object({
   companyId: IdSchema,
   runId: IdSchema,
   // Only emitted after removing an empty raw-stage run; no provider diagnostics.
-  outcome: Type.Optional(Type.Union([Type.Literal("research_failed"), Type.Literal("cancelled")])),
+  outcome: Type.Optional(Type.Union([Type.Literal("research_failed"), Type.Literal("web_search_failed"), Type.Literal("cancelled")])),
 }, { additionalProperties: false });
 export const CompanyResearchEventSchema = Type.Union([
   CompanyResearchStateChangedEventSchema, RawTextDeltaSchema,

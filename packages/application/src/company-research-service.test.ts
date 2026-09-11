@@ -98,6 +98,20 @@ function fixture(options: { key?: string; now?: Date } = {}) {
 }
 
 describe("CompanyResearchService two-stage orchestration", () => {
+  it.each([false, true])("cleans up web search failure without structuring or leaking provider text (malformed=%s)", async (malformed) => {
+    const f = fixture(); const run = f.start();
+    await waitFor(() => f.worker.requests.length === 1);
+    const request = f.worker.requests[0]!;
+    f.worker.push(request, { requestId: request.requestId, runId: run.id, stage: "raw", type: "failed", code: "web_search_failed", message: malformed ? "private refusal" : "company research web search failed" });
+    await waitFor(() => !f.service.isRunning());
+    expect(f.worker.requests).toHaveLength(1);
+    expect(f.detail(run.id)).toBeUndefined();
+    expect(f.service.getState(f.item.id, f.company.id).globalActiveRun).toBeNull();
+    expect(f.events.at(-1)).toEqual({ type: "state_changed", itemId: f.item.id, companyId: f.company.id, runId: run.id, outcome: malformed ? "research_failed" : "web_search_failed" });
+    expect(JSON.stringify(f.events)).not.toContain("private refusal");
+    expect(f.events.some((event) => event.type === "text_delta")).toBe(false);
+  });
+
   it("commits raw before a new structure request, holds reservation, and publishes only durable states/raw deltas", async () => {
     const f = fixture(); const seen: unknown[] = []; const boundary: unknown[] = [];
     f.service.subscribe((event) => {

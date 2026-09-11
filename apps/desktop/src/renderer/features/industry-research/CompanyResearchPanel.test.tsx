@@ -17,6 +17,20 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it("shows the specific search failure only for the current target without displaying provider text", async () => {
+    const fake = makeFakeApi();
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText("还没有调研报告。");
+    const failure = { type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: "failed-run", outcome: "web_search_failed" } as const;
+    act(() => fake.emitResearch({ ...failure, companyId: "other-company" }));
+    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+    act(() => fake.emitResearch(failure));
+    expect(await screen.findByText("DeepSeek 联网搜索未成功，请稍后重试")).toBeTruthy();
+    expect(screen.queryByText("调研未完成，请稍后重试")).toBeNull();
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+  });
+
   it.each(["pending", "reject"] as const)("keeps the same-run stream on early structure failure while first detail reads %s", async (outcome) => {
     const fake = makeFakeApi(); const user = userEvent.setup();
     const initialDetail = deferred<ResearchRun | undefined>();

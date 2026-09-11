@@ -114,6 +114,8 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           ++detailTicket;
           if ("outcome" in event && event.outcome === "research_failed") {
             publish({ error: "调研未完成，请稍后重试" });
+          } else if (event.outcome === "web_search_failed") {
+            publish({ error: "DeepSeek 联网搜索未成功，请稍后重试" });
           }
         }
         void refresh();

@@ -286,7 +286,7 @@ export class CompanyResearchService {
             this.stateChanged(active.run);
             return;
           } else {
-            this.failActive(active, event.type === "cancelled" ? "cancelled" : "research_failed");
+            this.failActive(active, event.type === "cancelled" ? "cancelled" : event.code === "web_search_failed" ? "web_search_failed" : "research_failed");
             return;
           }
         }
@@ -298,7 +298,7 @@ export class CompanyResearchService {
     this.failActive(active, active.cancelRequested ? "cancelled" : "research_failed");
   }
 
-  private failActive(active: ActiveResearch, outcome: "research_failed" | "cancelled"): void {
+  private failActive(active: ActiveResearch, outcome: "research_failed" | "web_search_failed" | "cancelled"): void {
     if (this.active !== active) return;
     let persisted = false;
     let deletedRaw = false;
@@ -324,7 +324,7 @@ export class CompanyResearchService {
     if (persisted) this.stateChanged(active.run, deletedRaw ? outcome : undefined);
   }
 
-  private stateChanged(run: KeyResearchRun, outcome?: "research_failed" | "cancelled"): void {
+  private stateChanged(run: KeyResearchRun, outcome?: "research_failed" | "web_search_failed" | "cancelled"): void {
     this.emit({
       type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id,
       ...(outcome === undefined ? {} : { outcome }),

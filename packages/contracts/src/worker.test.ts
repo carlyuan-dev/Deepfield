@@ -58,6 +58,19 @@ const researchRequest = {
 };
 
 describe("utility worker protocol", () => {
+  it("accepts only fixed raw web search failure and a metadata-free public outcome", () => {
+    const failure = { requestId: "request-1", runId: "run-1", stage: "raw", type: "failed", code: "web_search_failed", message: "company research web search failed" };
+    expect(Value.Check(CompanyResearchWorkerEventSchema, failure)).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, failure)).toBe(true);
+    for (const invalid of [{ ...failure, stage: "structure" }, { ...failure, message: "private refusal" }, { ...failure, query: "private query" }, { ...failure, code: "provider_failure" }]) {
+      expect(Value.Check(CompanyResearchWorkerEventSchema, invalid)).toBe(false);
+    }
+    const changed = { type: "state_changed", itemId: "item-1", companyId: "company-1", runId: "run-1", outcome: "web_search_failed" };
+    expect(Value.Check(CompanyResearchEventSchema, changed)).toBe(true);
+    expect(Value.Check(CompanyResearchEventSchema, { ...changed, message: "private refusal" })).toBe(false);
+    expect(Value.Check(CompanyResearchEventSchema, { ...changed, outcome: "private refusal" })).toBe(false);
+  });
+
   it("allows only strict conversation read RPC payloads and replies", () => {
     const requests = [
       { method: "conversation.listRecent", payload: { limit: 10 } },

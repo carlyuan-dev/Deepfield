@@ -93,7 +93,7 @@ export function createCompanyResearchAgent(
               instructions: prompt.instructions,
               input: [{ role: "user", content: prompt.input }],
               ...(request.stage === "raw"
-                ? { tools: [{ type: "web_search" }], tool_choice: { type: "web_search" } }
+                ? { tools: [{ type: "web_search" }], tool_choice: { type: "web_search" }, reasoning: { effort: "low" } }
                 : { text: { format: { type: "json_object" } } }),
               max_output_tokens: 32768,
               stream: true,
@@ -112,19 +112,22 @@ export function createCompanyResearchAgent(
           let pending = "";
           let finalText = "";
           let completed = false;
-          let visibleStarted = false;
+          let searchCompleted = false;
+          let emittedLength = 0;
           const filter = request.stage === "raw" ? new CompanyResearchRawFilter() : undefined;
+          const flushVisible = (): void => {
+            if (settled || request.stage !== "raw" || !searchCompleted) return;
+            // Isolate all text until a real tool completion. Leading whitespace
+            // alone is not a report and must not leave a draft on a failed attempt.
+            if (emittedLength === 0 && finalText.trim().length === 0) return;
+            const delta = finalText.slice(emittedLength);
+            emittedLength = finalText.length;
+            if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });
+          };
           const appendText = (text: string): void => {
             if (!text || settled) return;
             finalText += text;
-            if (request.stage === "raw") {
-              // Hold leading whitespace so an empty first attempt leaves no UI draft.
-              if (visibleStarted) emit({ ...identity, stage: "raw", type: "text_delta", delta: text });
-              else if (text.trim().length > 0) {
-                visibleStarted = true;
-                emit({ ...identity, stage: "raw", type: "text_delta", delta: finalText });
-              }
-            }
+            flushVisible();
           };
           const consume = (block: string): void => {
             if (settled || completed) return;
@@ -133,6 +136,9 @@ export function createCompanyResearchAgent(
               receivedLength += event.delta.length;
               if (receivedLength > 1_000_000) throw new Error("research output too large");
               appendText(filter ? filter.push(event.delta) : event.delta);
+            } else if (request.stage === "raw" && event?.type === "response.web_search_call.completed") {
+              searchCompleted = true;
+              flushVisible();
             } else if (event?.type === "response.completed") {
               if (event.response?.status !== "completed") throw new Error("research response not completed");
               completed = true;
@@ -156,6 +162,14 @@ export function createCompanyResearchAgent(
           if (!completed) throw new Error("research output incomplete");
           if (filter) appendText(filter.finish());
           if (settled) return;
+          if (request.stage === "raw" && !searchCompleted) {
+            if (attempt + 1 === attempts) {
+              settle({ ...identity, stage: "raw", type: "failed", code: "web_search_failed", message: "company research web search failed" });
+              return;
+            }
+            releaseReader();
+            continue;
+          }
           if (finalText.trim().length > 0) {
             settle({ ...identity, type: "completed", text: finalText });
             return;
