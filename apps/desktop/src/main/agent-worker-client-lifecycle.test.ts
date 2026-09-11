@@ -40,13 +40,15 @@ describe("agent worker client lifecycle", () => {
     expect(endpoint.exitListenerCount()).toBe(0);
 
     const postedBefore = endpoint.posted.length;
+    const second = request("req-2");
     expect(() =>
-      client.send({ ...request("req-2"), prompt: "super-secret-prompt", apiKey: "sk-secret-api-key" }),
+      client.send({ ...second, prompt: "super-secret-prompt", llm: { ...second.llm, apiKey: "sk-secret-api-key" } }),
     ).toThrow(AgentWorkerExitedError);
     expect(endpoint.posted.length).toBe(postedBefore);
 
     try {
-      client.send({ ...request("req-3"), prompt: "super-secret-prompt", apiKey: "sk-secret-api-key" });
+      const third = request("req-3");
+      client.send({ ...third, prompt: "super-secret-prompt", llm: { ...third.llm, apiKey: "sk-secret-api-key" } });
       expect.unreachable("should have thrown");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

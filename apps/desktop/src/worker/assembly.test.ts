@@ -141,7 +141,7 @@ describe("utility worker assembly (focused revision)", () => {
     const hostClient = { request: () => Promise.resolve({ acknowledged: true }), handleReply: () => undefined, dispose: () => undefined } as unknown as HostClient;
     const { loop, toolRuntime } = createUtilityAssembly({ endpoint, agentMode: "pi", hostClient, piRuntime: makeRuntime(agent, stubModel) });
     endpoint.emit(request({ webSearch: true })); await flushPending();
-    const names = (agent.receivedOptions?.initialState.tools ?? []).map((tool) => tool.name);
+    const names = (agent.receivedOptions?.initialState?.tools ?? []).map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining(["web_search", "fetch_url", "calculator"]));
     expect(toolRuntime.searchSessions.has("req-1")).toBe(false);
     loop.dispose();

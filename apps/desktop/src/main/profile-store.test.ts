@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupTempDirs, makeCrypto, makeDir } from "./secret-store-test-helpers.js";
 import { SecretStore } from "./secret-store.js";
@@ -23,9 +23,21 @@ describe("ProfileStore", () => {
     const view = await store.getView(); expect(view.llm.profiles).toHaveLength(1); expect(view.llm.activeProfileId).toBe(view.llm.profiles[0]!.id);
     expect((await store.resolveActiveLlm()).apiKey).toBe("legacy-key");
   });
+  it("rejects settings files that do not match the strict version-1 schema", async () => {
+    const { root, secrets } = fixture();
+    writeFileSync(join(root, "settings.json"), JSON.stringify({
+      schemaVersion: 1,
+      llm: { activeProfileId: null, profiles: [] },
+      search: { activeProfileId: null, profiles: [] },
+      apiKey: "must-not-be-accepted",
+    }));
+    const store = new ProfileStore(join(root, "settings.json"), secrets);
+    await expect(store.initialize()).rejects.toBeInstanceOf(ProfileStoreError);
+  });
   it("preserves omitted credentials and rejects deleting active profiles", async () => {
     const { store } = fixture(); await store.initialize(); let view = await store.saveSearchProfile(search); const profile = view.search.profiles[0]!;
-    view = await store.saveSearchProfile({ ...search, id: profile.id, name: "Renamed", apiKey: undefined });
+    const { apiKey: _apiKey, ...searchWithoutKey } = search;
+    view = await store.saveSearchProfile({ ...searchWithoutKey, id: profile.id, name: "Renamed" });
     expect(view.search.profiles[0]).toMatchObject({ name: "Renamed", hasCredential: true }); await store.activateSearchProfile(profile.id);
     await expect(store.deleteSearchProfile(profile.id)).rejects.toBeInstanceOf(ProfileStoreError); expect((await store.resolveActiveSearch()).apiKey).toBe("search-secret");
   });

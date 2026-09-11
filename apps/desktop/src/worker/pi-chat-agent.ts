@@ -56,7 +56,7 @@ export interface PiRuntime {
 export interface PiToolSessionProvider {
   createAgentTools(context: {
     traceId: string;
-    actor: "main_agent";
+    actor: "main_agent" | "capability";
     networkEnabled?: boolean;
   }): AgentTool<any>[];
   bindSearchProvider(traceId: string, provider: SearchProvider, limits?: { maxCalls?: number; categoryCalls?: { search?: number; fetch?: number } }): void;

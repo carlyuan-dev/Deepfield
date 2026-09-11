@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_DEEPSEEK_MODEL_ID, getCompanyResearchTemplate,
   type CompanyResearchWorkerRequest,
+  type LlmRuntimeSnapshot,
+  type SearchRuntimeSnapshot,
 } from "@deepfield/contracts";
 import { createApplicationRuntime } from "./application-runtime.js";
 import { AgentWorkerClient } from "./agent-worker-client.js";
@@ -9,6 +11,28 @@ import { FakeEndpoint } from "./agent-worker-client-test-helpers.js";
 import { openTestDb, type TestDb } from "../../../../packages/application/src/application-test-helpers.js";
 
 const dbs: TestDb[] = [];
+const llmSnapshot: LlmRuntimeSnapshot = {
+  id: "llm-runtime-test",
+  name: "DeepSeek",
+  provider: "deepseek",
+  protocol: "openai_compatible",
+  baseUrl: "https://api.deepseek.com",
+  modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+  contextWindow: 128_000,
+  apiKey: "sk-runtime",
+};
+const searchSnapshot: SearchRuntimeSnapshot = {
+  id: "search-runtime-test",
+  name: "Tavily",
+  provider: "tavily",
+  baseUrl: "https://api.tavily.com",
+  options: {},
+  apiKey: "search-runtime-key",
+};
+const runtimeProfiles = () => ({
+  resolveActiveLlm: async () => llmSnapshot,
+  resolveActiveSearch: async () => searchSnapshot,
+});
 
 afterEach(() => {
   for (const db of dbs.splice(0)) {
@@ -31,6 +55,7 @@ describe("application runtime composition", () => {
     const profiles: string[] = [];
     const runtime = createApplicationRuntime({
       repositories: db.repos, secrets: { get: () => "sk-test" }, worker: client,
+      profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
       companyCompleter: { complete: async (name) => { profiles.push(name); return { headquarters: "中国北京" }; } },
     });
@@ -38,7 +63,7 @@ describe("application runtime composition", () => {
     runtime.companyResearch.subscribe((event) => events.push(event));
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     try {
-      const run = runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+      const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
       await flush();
       if (stage === "structure") {
         const request = endpoint.posted[0] as CompanyResearchWorkerRequest;
@@ -79,6 +104,7 @@ describe("application runtime composition", () => {
     const client = new AgentWorkerClient(endpoint);
     const runtime = createApplicationRuntime({
       repositories: db.repos, secrets: { get: () => "sk-runtime" }, worker: client,
+      profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] }, companyCompleter: { complete: async () => ({}) },
     });
     const events: unknown[] = [];
@@ -88,7 +114,7 @@ describe("application runtime composition", () => {
     });
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     try {
-      const run = runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+      const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
       await flush();
       const rawRequest = endpoint.posted[0] as CompanyResearchWorkerRequest;
       expect(rawRequest.stage).toBe("raw");
@@ -135,6 +161,7 @@ describe("application runtime composition", () => {
     const observed: unknown[] = [];
     const runtime = createApplicationRuntime({
       repositories: db.repos, secrets: { get: () => "sk-runtime" },
+      profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
       companyCompleter: { complete: async () => {
         observed.push(db.repos.companyResearchRuns.getActive());
@@ -164,6 +191,7 @@ describe("application runtime composition", () => {
     const completedProfiles: string[] = [];
     const runtime = createApplicationRuntime({
       repositories: db.repos, secrets: { get: () => "sk-runtime" },
+      profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
       companyCompleter: { complete: async (name) => { completedProfiles.push(name); return { headquarters: "中国北京" }; } },
       worker: {
@@ -180,7 +208,7 @@ describe("application runtime composition", () => {
         cancelResearch: () => {},
       },
     });
-    const run = runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+    const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
     await new Promise((resolve) => setImmediate(resolve));
     expect(completedProfiles).toEqual([]);
     const conversation = runtime.conversationService.create();
@@ -213,6 +241,7 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos,
       secrets: { get: (name) => (name === "deepseek.apiKey" ? "sk-runtime" : undefined) },
+      profiles: runtimeProfiles(),
       llmHelpers: {
         recognize: async () => [],
         complete: async () => ({}),
@@ -268,6 +297,7 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos,
       secrets: { get: () => undefined },
+      profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
       companyCompleter: { complete: async () => ({}) },
       worker: {
@@ -296,6 +326,7 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos,
       secrets: { get: () => undefined },
+      profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
       companyCompleter: {
         complete: async (_name, context) => {

@@ -56,6 +56,7 @@ type CompanyResearchRepositories = Omit<Repositories, "companies"> & {
 
 export class CompanyResearchService {
   private active: ActiveResearch | undefined;
+  private starting = false;
   private readonly listeners = new Set<(event: CompanyResearchEvent) => void>();
   private readonly now: () => Date;
 
@@ -75,38 +76,43 @@ export class CompanyResearchService {
     }
     this.requireAvailable();
     const { item, company, membership } = this.requireTarget(itemId, companyId);
-    let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
-    try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
-    catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
-    const focusScope = input.focusScope?.trim();
-    const normalized: StartCompanyResearchInput = {
-      direction: input.direction, asOfDate: input.asOfDate,
-      ...(focusScope ? { focusScope } : {}),
-    };
-    const context: CompanyResearchContext = {
-      ...normalized,
-      currentDate: today,
-      companyName: company.name,
-      ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
-      ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
-      ...(company.headquarters !== undefined ? { headquarters: company.headquarters } : {}),
-      ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
-      ...(company.officialWebsite !== undefined ? { officialWebsite: company.officialWebsite } : {}),
-      ...(company.stockListings !== undefined ? { stockListings: company.stockListings } : {}),
-      ...(company.businessTags !== undefined ? { businessTags: company.businessTags } : {}),
-      topicName: item.industry,
-      ...(item.researchScope !== undefined ? { topicScope: item.researchScope } : {}),
-      ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
-    };
+    this.starting = true;
     try {
-      const requestId = this.options.requestIdFactory();
-      const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.createResearching(
-        item.id, company.id, normalized, context, getCompanyResearchTemplate(input.direction),
-      ));
-      this.launch(run, requestId, llm, search);
-      return structuredClone(run);
-    } catch {
-      throw new CompanyResearchServiceError("company research could not start");
+      let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
+      try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
+      catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
+      const focusScope = input.focusScope?.trim();
+      const normalized: StartCompanyResearchInput = {
+        direction: input.direction, asOfDate: input.asOfDate,
+        ...(focusScope ? { focusScope } : {}),
+      };
+      const context: CompanyResearchContext = {
+        ...normalized,
+        currentDate: today,
+        companyName: company.name,
+        ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
+        ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
+        ...(company.headquarters !== undefined ? { headquarters: company.headquarters } : {}),
+        ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
+        ...(company.officialWebsite !== undefined ? { officialWebsite: company.officialWebsite } : {}),
+        ...(company.stockListings !== undefined ? { stockListings: company.stockListings } : {}),
+        ...(company.businessTags !== undefined ? { businessTags: company.businessTags } : {}),
+        topicName: item.industry,
+        ...(item.researchScope !== undefined ? { topicScope: item.researchScope } : {}),
+        ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
+      };
+      try {
+        const requestId = this.options.requestIdFactory();
+        const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.createResearching(
+          item.id, company.id, normalized, context, getCompanyResearchTemplate(input.direction),
+        ));
+        this.launch(run, requestId, llm, search);
+        return structuredClone(run);
+      } catch {
+        throw new CompanyResearchServiceError("company research could not start");
+      }
+    } finally {
+      this.starting = false;
     }
   }
 
@@ -200,7 +206,7 @@ export class CompanyResearchService {
   }
 
   isRunning(): boolean {
-    return this.active !== undefined || this.read(() => this.repositories.companyResearchRuns.getActive()) !== undefined;
+    return this.starting || this.active !== undefined || this.read(() => this.repositories.companyResearchRuns.getActive()) !== undefined;
   }
 
   private requireAvailable(): void {

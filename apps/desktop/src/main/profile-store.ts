@@ -1,13 +1,45 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { LlmProfileDraftSchema, SearchProfileDraftSchema, type LlmProfileDraft, type LlmProfileView, type LlmRuntimeSnapshot, type SearchProfileDraft, type SearchProfileView, type SearchProviderManifest, type SearchRuntimeSnapshot, type SettingsView } from "@deepfield/contracts";
+import { LlmProfileDraftSchema, LlmProtocolSchema, LlmProviderPresetIdSchema, SearchProfileDraftSchema, SearchProviderIdSchema, type LlmProfileDraft, type LlmProfileView, type LlmRuntimeSnapshot, type SearchProfileDraft, type SearchProfileView, type SearchProviderManifest, type SearchRuntimeSnapshot, type SettingsView } from "@deepfield/contracts";
 
 interface Secrets { has(name: string): boolean; get(name: string): string | undefined; set(name: string, value: string): void; delete(name: string): void }
 interface StoredLlm extends Omit<LlmProfileView, "hasCredential"> { credentialRef: string }
 interface StoredSearch extends Omit<SearchProfileView, "hasCredential"> { credentialRef: string }
 interface StoredSettings { schemaVersion: 1; llm: { activeProfileId: string | null; profiles: StoredLlm[] }; search: { activeProfileId: string | null; profiles: StoredSearch[] } }
+const StoredIdSchema = Type.String({ minLength: 1, maxLength: 200 });
+const StoredHttpsUrlSchema = Type.String({ pattern: "^https://", maxLength: 2000 });
+const StoredLlmSchema = Type.Object({
+  id: StoredIdSchema,
+  name: Type.String({ minLength: 1, maxLength: 120 }),
+  provider: LlmProviderPresetIdSchema,
+  protocol: LlmProtocolSchema,
+  baseUrl: StoredHttpsUrlSchema,
+  modelId: Type.String({ minLength: 1, maxLength: 200 }),
+  contextWindow: Type.Integer({ minimum: 1024, maximum: 10_000_000 }),
+  credentialRef: Type.String({ minLength: 1, maxLength: 500 }),
+}, { additionalProperties: false });
+const StoredSearchSchema = Type.Object({
+  id: StoredIdSchema,
+  name: Type.String({ minLength: 1, maxLength: 120 }),
+  provider: SearchProviderIdSchema,
+  baseUrl: StoredHttpsUrlSchema,
+  options: Type.Record(Type.String(), Type.Unknown()),
+  credentialRef: Type.String({ minLength: 1, maxLength: 500 }),
+}, { additionalProperties: false });
+const StoredSettingsSchema = Type.Object({
+  schemaVersion: Type.Literal(1),
+  llm: Type.Object({
+    activeProfileId: Type.Union([StoredIdSchema, Type.Null()]),
+    profiles: Type.Array(StoredLlmSchema),
+  }, { additionalProperties: false }),
+  search: Type.Object({
+    activeProfileId: Type.Union([StoredIdSchema, Type.Null()]),
+    profiles: Type.Array(StoredSearchSchema),
+  }, { additionalProperties: false }),
+}, { additionalProperties: false });
 const empty = (): StoredSettings => ({ schemaVersion: 1, llm: { activeProfileId: null, profiles: [] }, search: { activeProfileId: null, profiles: [] } });
 export class ProfileStoreError extends Error { constructor(message: string) { super(message); this.name = "ProfileStoreError"; } }
 
@@ -17,9 +49,11 @@ export class ProfileStore {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     if (existsSync(this.file)) {
-      try { this.settings = JSON.parse(readFileSync(this.file, "utf8")) as StoredSettings; }
+      let parsed: unknown;
+      try { parsed = JSON.parse(readFileSync(this.file, "utf8")); }
       catch { throw new ProfileStoreError("settings are corrupted"); }
-      if (this.settings.schemaVersion !== 1 || !Array.isArray(this.settings.llm?.profiles) || !Array.isArray(this.settings.search?.profiles)) throw new ProfileStoreError("settings are corrupted");
+      if (!Value.Check(StoredSettingsSchema, parsed)) throw new ProfileStoreError("settings are corrupted");
+      this.settings = parsed;
     }
     if (this.settings.llm.profiles.length === 0 && this.secrets.has("deepseek.apiKey")) {
       const id = randomUUID(); this.settings.llm.profiles.push({ id, name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, credentialRef: "deepseek.apiKey" }); this.settings.llm.activeProfileId = id; this.write();

@@ -69,7 +69,10 @@ export class PiModelGateway implements ModelGateway {
           systemPrompt: system,
           messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
         },
-        { apiKey: await this.getApiKey(snapshot, model.provider), signal },
+        {
+          apiKey: await this.getApiKey(snapshot, model.provider),
+          ...(signal === undefined ? {} : { signal }),
+        },
       );
       if (message.stopReason === "error" || message.stopReason === "aborted") {
         throw new ModelGatewayError();

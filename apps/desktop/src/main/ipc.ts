@@ -1,3 +1,4 @@
+import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import {
   ChatRequestOptionsSchema,
@@ -521,7 +522,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.conversations.listRecent();
   });
 
-  const settingsHandler = <T>(channel: string, schema: Parameters<typeof Value.Check>[0], call: (...args: any[]) => Promise<T>): void => {
+  const settingsHandler = <T>(channel: string, schema: TSchema, call: (...args: any[]) => Promise<T>): void => {
     deps.ipcMain.handle(channel, async (_event, ...args) => {
       if (!Value.Check(schema, args)) throw new Error("invalid settings input");
       try { return await call(...args); }

@@ -81,7 +81,7 @@ function mapProviderError(error: SearchProviderError): ToolExecutionError {
 }
 
 /**
- * Registers the search_web v1 definition bound to ONE provider instance.
+ * Registers the canonical web_search v1 definition bound to one provider session.
  * Provider payloads never reach the tool output: only normalized fields do,
  * and every provider error is a stable sanitized Tool code.
  */

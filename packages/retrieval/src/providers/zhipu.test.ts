@@ -11,7 +11,13 @@ describe("Zhipu web search adapter", () => {
     const requests: Array<{ endpoint: unknown; method: string; path: string; headers: Record<string, string>; body?: string }> = [];
     const transport: ProviderTransport = {
       async request(endpoint, request) {
-        requests.push({ endpoint, method: request.method, path: request.path, headers: request.headers, body: request.body });
+        requests.push({
+          endpoint,
+          method: request.method,
+          path: request.path,
+          headers: request.headers,
+          ...(request.body === undefined ? {} : { body: request.body }),
+        });
         return {
           statusCode: 200,
           headers: { "content-type": "application/json" },

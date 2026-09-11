@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ToolBudgetError, ToolBudgetLedger, type ToolBudgetLimits, type ToolBudgetToken } from "./budget.js";
 import type { ToolIdentity } from "@deepfield/contracts";
 
-const searchV1: ToolIdentity = { name: "search_web", version: 1 };
+const searchV1: ToolIdentity = { name: "web_search", version: 1 };
 const fetchV1: ToolIdentity = { name: "fetch_url", version: 1 };
 const checkV1: ToolIdentity = { name: "check_link_accessibility", version: 1 };
 
@@ -145,7 +145,7 @@ describe("ToolBudgetLedger", () => {
       message = (error as ToolBudgetError).message;
     }
     expect(message).toContain("budget");
-    expect(message).not.toContain("search_web");
+    expect(message).not.toContain("web_search");
     expect(message).not.toContain("fetch_url");
     expect(message).not.toContain("secret");
   });

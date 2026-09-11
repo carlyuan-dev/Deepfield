@@ -203,7 +203,7 @@ describe("candidate provider adapters (focused revision)", () => {
   });
 });
 
-describe("search_web definition (focused revision)", () => {
+describe("web_search definition (focused revision)", () => {
   it("maps provider errors to stable Tool codes and never leaks payloads", async () => {
     const body = JSON.parse(readFileSync(join(FIXTURES, "brave-secret-error.json"), "utf8"));
     const { transport } = scriptedTransport([() => jsonResponse(200, body)]);

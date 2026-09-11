@@ -101,7 +101,10 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
     toolRuntime,
     researchAgent: deps.agentMode === "fake"
       ? fakeCompanyResearchAgent
-      : createCompanyResearchAgent({ piRuntime: deps.piRuntime, toolSessions: toolRuntime }),
+      : createCompanyResearchAgent({
+          ...(deps.piRuntime === undefined ? {} : { piRuntime: deps.piRuntime }),
+          toolSessions: toolRuntime,
+        }),
     hostReplyHandler: (reply) => deps.hostClient.handleReply(reply),
     onDispose: () => deps.hostClient.dispose(),
   });

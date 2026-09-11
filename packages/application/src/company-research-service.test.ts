@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CompanyResearchWorkerRequest, LlmRuntimeSnapshot, SearchRuntimeSnapshot } from "@deepfield/contracts";
+import type { CompanyResearchWorkerRequest, LlmRuntimeSnapshot, ResearchRunId, SearchRuntimeSnapshot } from "@deepfield/contracts";
 import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY } from "./company-research-service.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 
@@ -12,7 +12,7 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 function setup(structureText = JSON.stringify(valid)) {
   const db = openTestDb(); dbs.push(db); const item = db.repos.capabilityItems.create({ industry: "智能眼镜" }); const company = db.repos.companies.upsert({ name: "小米" }); db.repos.itemCompanies.add(item.id, company.id);
   const requests: CompanyResearchWorkerRequest[] = []; const persistedBeforeStructure: boolean[] = [];
-  const worker = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") persistedBeforeStructure.push(db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId)?.rawReportText === "原始报告"); return (async function* () { yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
+  const worker = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") { const persisted = db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId as ResearchRunId); persistedBeforeStructure.push(persisted?.schemaVersion === "company-research-report-v1" && persisted.rawReportText === "原始报告"); } return (async function* () { yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
   const profiles = { llmCalls: 0, searchCalls: 0, resolveActiveLlm: async () => { profiles.llmCalls++; return llm; }, resolveActiveSearch: async () => { profiles.searchCalls++; return search; } };
   let seq = 0; const service = new CompanyResearchService(db.repos, profiles, worker, { requestIdFactory: () => `r${++seq}`, now: () => new Date(2026, 8, 11) });
   return { db, item, company, requests, persistedBeforeStructure, profiles, service };

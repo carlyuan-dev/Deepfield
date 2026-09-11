@@ -51,7 +51,14 @@ export function createSearchProvider(snapshot: SearchRuntimeSnapshot): SearchPro
   switch (snapshot.provider) {
     case "metaso": return createMetaSoProvider({ client: makeClient("/api/v1/search"), token: snapshot.apiKey, allowCustomEndpoint: true });
     case "baidu": return createBaiduProvider({ client: makeClient("/v2/ai_search/web_search"), token: snapshot.apiKey, authHeader: (snapshot.options.authHeader as "authorization" | "x-appbuilder-authorization" | undefined) ?? "authorization", allowCustomEndpoint: true });
-    case "zhipu": return createZhipuProvider({ client: makeClient("/web_search"), token: snapshot.apiKey, searchEngine: snapshot.options.searchEngine as typeof ZHIPU_SEARCH_ENGINES[number] | undefined });
+    case "zhipu": {
+      const searchEngine = snapshot.options.searchEngine as typeof ZHIPU_SEARCH_ENGINES[number] | undefined;
+      return createZhipuProvider({
+        client: makeClient("/web_search"),
+        token: snapshot.apiKey,
+        ...(searchEngine === undefined ? {} : { searchEngine }),
+      });
+    }
     case "tavily": return createTavilyProvider({ client: makeClient("/search"), token: snapshot.apiKey, allowCustomEndpoint: true });
     case "serper": return createSerperProvider({ client: makeClient("/search"), token: snapshot.apiKey, allowCustomEndpoint: true });
   }
