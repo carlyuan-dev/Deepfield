@@ -53,7 +53,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
   );
   const companyResearch = new CompanyResearchService(
     deps.repositories,
-    deps.secrets,
+    deps.profiles,
     deps.worker,
     { requestIdFactory: randomUUID },
   );

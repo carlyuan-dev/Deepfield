@@ -101,6 +101,7 @@ export function createPiChatAgent(
   toolSessions?: PiToolSessionProvider,
   gateway: ModelGateway = new PiModelGateway(),
   searchProviderFactory: (snapshot: NonNullable<AgentWorkerRequest["search"]>) => SearchProvider = createSearchProvider,
+  toolActor: "main_agent" | "capability" = "main_agent",
 ): ChatAgent {
   return {
     async run(
@@ -145,7 +146,7 @@ export function createPiChatAgent(
                 ...tools,
                 ...toolSessions.createAgentTools({
                   traceId: request.requestId,
-                  actor: "main_agent",
+                  actor: toolActor,
                   networkEnabled: request.toolAccess.network === "enabled",
                 }),
               ];

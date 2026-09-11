@@ -1,7 +1,6 @@
 import { Value } from "typebox/value";
 import {
   CompanyResearchWorkerEventSchema,
-  DEFAULT_DEEPSEEK_MODEL_ID,
   StartCompanyResearchInputSchema,
   STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
   getCompanyResearchTemplate,
@@ -17,10 +16,11 @@ import {
   type ResearchRunId,
   type ResearchRunSummary,
   type StartCompanyResearchInput,
+  type LlmRuntimeSnapshot,
+  type SearchRuntimeSnapshot,
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
-import type { CompanyResearchWorkerPort, RequestIdFactory, SecretReader } from "./ports.js";
-import { DEEPSEEK_KEY_NAME } from "./chat-service.js";
+import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "./ports.js";
 import { validateStructuredResearch } from "./company-research-harness.js";
 
 export class CompanyResearchServiceError extends Error {
@@ -43,7 +43,12 @@ interface ActiveResearch {
   dispatched: boolean;
   cancelRequested: boolean;
   done: Promise<void>;
+  llm: LlmRuntimeSnapshot;
+  search?: SearchRuntimeSnapshot;
 }
+
+export const RAW_RESEARCH_POLICY = { network: "enabled", maxAgentTurns: 12, maxSearchCalls: 8, maxFetchCalls: 8 } as const;
+export const STRUCTURE_RESEARCH_POLICY = { network: "disabled", maxAgentTurns: 1, maxSearchCalls: 0, maxFetchCalls: 0 } as const;
 
 type CompanyResearchRepositories = Omit<Repositories, "companies"> & {
   companies: Pick<Repositories["companies"], "getById">;
@@ -56,21 +61,23 @@ export class CompanyResearchService {
 
   constructor(
     private readonly repositories: CompanyResearchRepositories,
-    private readonly secrets: SecretReader,
+    private readonly profiles: RuntimeProfileResolver,
     private readonly worker: CompanyResearchWorkerPort,
     private readonly options: CompanyResearchServiceOptions,
   ) {
     this.now = options.now ?? (() => new Date());
   }
 
-  start(itemId: string, companyId: string, input: StartCompanyResearchInput): KeyResearchRun {
+  async start(itemId: string, companyId: string, input: StartCompanyResearchInput): Promise<KeyResearchRun> {
     const today = formatLocalDate(this.now());
     if (!Value.Check(StartCompanyResearchInputSchema, input) || !isRealDate(input.asOfDate) || input.asOfDate > today) {
       throw new CompanyResearchServiceError("invalid company research input");
     }
     this.requireAvailable();
     const { item, company, membership } = this.requireTarget(itemId, companyId);
-    const apiKey = this.requireApiKey();
+    let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
+    try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
+    catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
     const focusScope = input.focusScope?.trim();
     const normalized: StartCompanyResearchInput = {
       direction: input.direction, asOfDate: input.asOfDate,
@@ -96,24 +103,26 @@ export class CompanyResearchService {
       const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.createResearching(
         item.id, company.id, normalized, context, getCompanyResearchTemplate(input.direction),
       ));
-      this.launch(run, requestId, apiKey);
+      this.launch(run, requestId, llm, search);
       return structuredClone(run);
     } catch {
       throw new CompanyResearchServiceError("company research could not start");
     }
   }
 
-  retryStructuring(itemId: string, companyId: string, runId: string): KeyResearchRun {
+  async retryStructuring(itemId: string, companyId: string, runId: string): Promise<KeyResearchRun> {
     this.requireAvailable();
     const saved = this.getRun(itemId, companyId, runId);
     if (saved?.schemaVersion !== "company-research-report-v1" || saved.status !== "structure_failed") {
       throw new CompanyResearchServiceError("company research cannot be restructured");
     }
-    const apiKey = this.requireApiKey();
+    let llm: LlmRuntimeSnapshot;
+    try { llm = await this.profiles.resolveActiveLlm(); }
+    catch { throw new CompanyResearchServiceError("请先配置并启用 LLM Profile"); }
     try {
       const requestId = this.options.requestIdFactory();
       const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryStructuring(saved.id));
-      this.launch(run, requestId, apiKey);
+      this.launch(run, requestId, llm);
       return structuredClone(run);
     } catch {
       throw new CompanyResearchServiceError("company research could not retry structuring");
@@ -209,15 +218,6 @@ export class CompanyResearchService {
     });
   }
 
-  private requireApiKey(): string {
-    let apiKey: string | undefined;
-    try { apiKey = this.secrets.get(DEEPSEEK_KEY_NAME); } catch {
-      throw new CompanyResearchServiceError("deepseek api key could not be read");
-    }
-    if (!apiKey?.trim()) throw new CompanyResearchServiceError("deepseek api key is not configured");
-    return apiKey;
-  }
-
   private read<T>(work: () => T): T {
     try { return work(); } catch (error) {
       if (error instanceof CompanyResearchServiceError) throw error;
@@ -225,33 +225,34 @@ export class CompanyResearchService {
     }
   }
 
-  private launch(run: KeyResearchRun, requestId: string, apiKey: string): void {
+  private launch(run: KeyResearchRun, requestId: string, llm: LlmRuntimeSnapshot, search?: SearchRuntimeSnapshot): void {
     const active: ActiveResearch = {
       run: structuredClone(run), requestId, stage: run.status === "researching" ? "raw" : "structure",
       rawDraftText: "", dispatched: false, cancelRequested: false, done: Promise.resolve(),
+      llm: structuredClone(llm), ...(search === undefined ? {} : { search: structuredClone(search) }),
     };
     this.active = active;
     // Install done before notifying listeners, so synchronous cancellation is safe.
-    active.done = Promise.resolve().then(() => this.consume(active, apiKey));
+    active.done = Promise.resolve().then(() => this.consume(active));
     this.stateChanged(active.run);
   }
 
-  private request(active: ActiveResearch, apiKey: string): CompanyResearchWorkerRequest {
+  private request(active: ActiveResearch): CompanyResearchWorkerRequest {
     const common = {
-      requestId: active.requestId, runId: active.run.id, apiKey, modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+      requestId: active.requestId, runId: active.run.id, llm: structuredClone(active.llm),
       context: structuredClone(active.run.researchContext), template: structuredClone(active.run.template),
     };
-    if (active.stage === "raw") return { ...common, kind: "company-research.raw.run", stage: "raw" };
+    if (active.stage === "raw") return { ...common, kind: "company-research.raw.run", stage: "raw", search: structuredClone(active.search!), toolAccess: RAW_RESEARCH_POLICY };
     return {
       ...common, kind: "company-research.structure.run", stage: "structure",
-      rawReportText: active.run.rawReportText!, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+      rawReportText: active.run.rawReportText!, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA, toolAccess: STRUCTURE_RESEARCH_POLICY,
     };
   }
 
-  private async consume(active: ActiveResearch, apiKey: string): Promise<void> {
+  private async consume(active: ActiveResearch): Promise<void> {
     try {
       while (this.active === active) {
-        const request = this.request(active, apiKey);
+        const request = this.request(active);
         active.dispatched = true;
         let rawCompleted = false;
         for await (const event of this.worker.sendResearch(request)) {

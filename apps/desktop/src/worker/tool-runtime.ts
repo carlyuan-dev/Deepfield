@@ -139,13 +139,11 @@ export function createTrustedToolSet(actor: ToolActor, networkEnabled = false): 
         effect: "conversation.read",
       },
     );
-    if (networkEnabled) {
-      grants.push(
-        { identity: { name: "web_search", version: 1 }, actor, effect: "network.read.public" },
-        { identity: { name: "fetch_url", version: 1 }, actor, effect: "network.read.public" },
-      );
-    }
   }
+  if (networkEnabled && (actor === "main_agent" || actor === "capability")) grants.push(
+    { identity: { name: "web_search", version: 1 }, actor, effect: "network.read.public" },
+    { identity: { name: "fetch_url", version: 1 }, actor, effect: "network.read.public" },
+  );
   if (PROBE_GRANTS[actor]) {
     grants.push({
       identity: { name: "echo_probe", version: 1 },

@@ -113,12 +113,12 @@ export interface ChatServiceLike {
 }
 
 export interface CompanyResearchServiceLike {
-  start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun;
+  start(itemId: string, companyId: string, input: StartCompanyResearchInput): Promise<ResearchRun>;
   cancel(runId: string): Promise<void>;
   getState(itemId: string, companyId: string): CompanyResearchState;
   listRuns(itemId: string, companyId: string): ResearchRunSummary[];
   getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined;
-  retryStructuring(itemId: string, companyId: string, runId: string): ResearchRun;
+  retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
   subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
 }
 
@@ -427,7 +427,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
     trackSender(event.sender);
     try {
-      return deps.companyResearch.start(args[0], args[1], args[2]);
+      return await deps.companyResearch.start(args[0], args[1], args[2]);
     } catch {
       throw new Error("company research start failed");
     }
@@ -487,7 +487,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
     trackSender(event.sender);
     try {
-      return deps.companyResearch.retryStructuring(args[0], args[1], args[2]);
+      return await deps.companyResearch.retryStructuring(args[0], args[1], args[2]);
     } catch {
       throw new Error("company research structuring retry failed");
     }

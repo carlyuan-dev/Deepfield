@@ -335,7 +335,7 @@ export class FakeCompanyResearchService {
   runs: ResearchRunSummary[] = [];
   private listeners = new Set<(event: CompanyResearchEvent) => void>();
 
-  start(itemId: string, companyId: string, input: StartCompanyResearchInput): ResearchRun {
+  async start(itemId: string, companyId: string, input: StartCompanyResearchInput): Promise<ResearchRun> {
     this.startCalls.push({ itemId, companyId, input });
     return researchRun({ itemId: itemId as CapabilityItemId, companyId: companyId as CompanyId, ...input });
   }
@@ -363,7 +363,7 @@ export class FakeCompanyResearchService {
     return this.run;
   }
 
-  retryStructuring(itemId: string, companyId: string, runId: string): ResearchRun {
+  async retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun> {
     this.retryStructuringCalls.push({ itemId, companyId, runId });
     return researchRun({ status: "structuring", rawReportText: "# Saved raw report", structuringAttempts: 2 });
   }
