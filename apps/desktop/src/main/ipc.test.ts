@@ -48,9 +48,8 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.conversationsCreate,
         IPC_CHANNELS.conversationsOpenInitial,
         IPC_CHANNELS.conversationsListRecent,
-        IPC_CHANNELS.settingsHasDeepSeekKey,
-        IPC_CHANNELS.settingsSetDeepSeekKey,
-        IPC_CHANNELS.llmCheckConnection,
+        IPC_CHANNELS.settingsGet, IPC_CHANNELS.settingsSaveLlmProfile, IPC_CHANNELS.settingsActivateLlmProfile, IPC_CHANNELS.settingsDeleteLlmProfile, IPC_CHANNELS.settingsDiagnoseLlm,
+        IPC_CHANNELS.settingsSaveSearchProfile, IPC_CHANNELS.settingsActivateSearchProfile, IPC_CHANNELS.settingsDeleteSearchProfile, IPC_CHANNELS.settingsDiagnoseSearch,
         IPC_CHANNELS.skillsList,
         IPC_CHANNELS.chatSend,
         IPC_CHANNELS.chatListMessages,
@@ -137,14 +136,14 @@ describe("ipc handlers", () => {
     expect(industryResearch.addCompanyCalls).toHaveLength(0);
   });
 
-  it("delegates list, research lifecycle, and key checks with strict arguments", async () => {
+  it("delegates list, research lifecycle, and settings reads with strict arguments", async () => {
     const { ipcMain, industryResearch, companyResearch, companyProfiles, settings } = makeDeps();
     const sender = new FakeWebContents(1);
     await ipcMain.invoke(IPC_CHANNELS.industryResearchListItems, event(sender));
     expect(industryResearch.listItemsCalls).toBe(1);
-    const has = await ipcMain.invoke(IPC_CHANNELS.settingsHasDeepSeekKey, event(sender));
-    expect(has).toBe(true);
-    expect(settings.hasCalls).toEqual(["deepseek.apiKey"]);
+    const view = await ipcMain.invoke(IPC_CHANNELS.settingsGet, event(sender));
+    expect(view).toEqual(settings.view);
+    expect(settings.calls).toEqual([{ method: "get" }]);
     const started = await ipcMain.invoke(
       IPC_CHANNELS.companyResearchStart,
       event(sender),
@@ -280,24 +279,22 @@ describe("ipc handlers", () => {
     ]);
   });
 
-  it("requires a non-blank string when setting the key and never returns the secret", async () => {
+  it("validates profile drafts and never returns their secret", async () => {
     const { ipcMain, settings } = makeDeps();
     const sender = new FakeWebContents(1);
-    const setResult = await ipcMain.invoke(
-      IPC_CHANNELS.settingsSetDeepSeekKey,
-      event(sender),
-      "sk-value",
-    );
-    expect(setResult).toBeUndefined();
-    expect(settings.setCalls).toEqual([{ name: "deepseek.apiKey", value: "sk-value" }]);
+    const draft = { name: "Test", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 32000, apiKey: "sk-value" } as const;
+    const result = await ipcMain.invoke(IPC_CHANNELS.settingsSaveLlmProfile, event(sender), draft);
+    expect(result).toEqual(settings.view);
+    expect(JSON.stringify(result)).not.toContain("sk-value");
+    expect(settings.calls).toEqual([{ method: "saveLlmProfile", value: draft }]);
 
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, event(sender), "  "),
+      ipcMain.invoke(IPC_CHANNELS.settingsSaveLlmProfile, event(sender), { ...draft, baseUrl: "http://unsafe.test" }),
     ).rejects.toThrow();
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, event(sender), 42),
+      ipcMain.invoke(IPC_CHANNELS.settingsSaveLlmProfile, event(sender), 42),
     ).rejects.toThrow();
-    expect(settings.setCalls).toHaveLength(1);
+    expect(settings.calls).toHaveLength(1);
   });
 
   it("creates a blank Conversation through the service", async () => {

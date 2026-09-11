@@ -90,25 +90,25 @@ describe("ipc handler arity", () => {
     expect(industryResearch.deleteItemsCalls).toHaveLength(0);
   });
 
-  it("requires zero arguments for settings.has", async () => {
+  it("requires zero arguments for settings.get", async () => {
     const { ipcMain, settings } = makeDeps();
     const sender = new FakeWebContents(1);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.settingsHasDeepSeekKey, event(sender), "extra"),
+      ipcMain.invoke(IPC_CHANNELS.settingsGet, event(sender), "extra"),
     ).rejects.toThrow(/invalid settings input/);
-    expect(settings.hasCalls).toHaveLength(0);
+    expect(settings.calls).toHaveLength(0);
   });
 
-  it("requires exactly one argument for settings.set", async () => {
+  it("requires exactly one valid argument for profile saves", async () => {
     const { ipcMain, settings } = makeDeps();
     const sender = new FakeWebContents(1);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, event(sender)),
+      ipcMain.invoke(IPC_CHANNELS.settingsSaveLlmProfile, event(sender)),
     ).rejects.toThrow(/invalid settings input/);
     await expect(
-      ipcMain.invoke(IPC_CHANNELS.settingsSetDeepSeekKey, event(sender), "a", "b"),
+      ipcMain.invoke(IPC_CHANNELS.settingsSaveLlmProfile, event(sender), "a", "b"),
     ).rejects.toThrow(/invalid settings input/);
-    expect(settings.setCalls).toHaveLength(0);
+    expect(settings.calls).toHaveLength(0);
   });
 
   it("requires zero arguments for skills.list", async () => {

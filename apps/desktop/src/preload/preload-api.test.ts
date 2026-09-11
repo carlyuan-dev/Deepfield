@@ -67,7 +67,6 @@ describe("preload api", () => {
       "companyResearch",
       "conversations",
       "industryResearch",
-      "llm",
       "settings",
       "skills",
     ]);
@@ -89,8 +88,7 @@ describe("preload api", () => {
       "updateCompany",
       "updateItem",
     ]);
-    expect(Object.keys(api.settings).sort()).toEqual(["hasDeepSeekKey", "setDeepSeekKey"]);
-    expect(Object.keys(api.llm).sort()).toEqual(["checkConnection"]);
+    expect(Object.keys(api.settings).sort()).toEqual(["activateLlmProfile", "activateSearchProfile", "deleteLlmProfile", "deleteSearchProfile", "diagnoseLlm", "diagnoseSearch", "get", "saveLlmProfile", "saveSearchProfile"]);
     expect(Object.keys(api.skills).sort()).toEqual(["list"]);
     expect(Object.keys(api.chat).sort()).toEqual(["listMessages", "send", "subscribe"]);
     expect(Object.keys(api.companyResearch).sort()).toEqual([
@@ -136,9 +134,11 @@ describe("preload api", () => {
     await api.companyResearch.listRuns("item-1", "company-1");
     await api.companyResearch.getRun("item-1", "company-1", "run-1");
     await api.companyResearch.retryStructuring("item-1", "company-1", "run-1");
-    await api.settings.hasDeepSeekKey();
-    await api.settings.setDeepSeekKey("sk-value");
-    await api.llm.checkConnection();
+    const llmDraft = { name: "Test", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 32000 } as const;
+    const searchDraft = { name: "Search", provider: "zhipu", baseUrl: "https://search.test/v4", options: {} } as const;
+    await api.settings.get();
+    await api.settings.saveLlmProfile(llmDraft); await api.settings.activateLlmProfile("l1"); await api.settings.deleteLlmProfile("l1"); await api.settings.diagnoseLlm(llmDraft);
+    await api.settings.saveSearchProfile(searchDraft); await api.settings.activateSearchProfile("s1"); await api.settings.deleteSearchProfile("s1"); await api.settings.diagnoseSearch(searchDraft);
     await api.conversations.create();
     await api.conversations.openInitial();
     await api.conversations.listRecent();
@@ -167,9 +167,15 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.companyResearchListRuns, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.companyResearchGetRun, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.companyResearchRetryStructuring, args: ["item-1", "company-1", "run-1"] },
-      { channel: IPC_CHANNELS.settingsHasDeepSeekKey, args: [] },
-      { channel: IPC_CHANNELS.settingsSetDeepSeekKey, args: ["sk-value"] },
-      { channel: IPC_CHANNELS.llmCheckConnection, args: [] },
+      { channel: IPC_CHANNELS.settingsGet, args: [] },
+      { channel: IPC_CHANNELS.settingsSaveLlmProfile, args: [llmDraft] },
+      { channel: IPC_CHANNELS.settingsActivateLlmProfile, args: ["l1"] },
+      { channel: IPC_CHANNELS.settingsDeleteLlmProfile, args: ["l1"] },
+      { channel: IPC_CHANNELS.settingsDiagnoseLlm, args: [llmDraft] },
+      { channel: IPC_CHANNELS.settingsSaveSearchProfile, args: [searchDraft] },
+      { channel: IPC_CHANNELS.settingsActivateSearchProfile, args: ["s1"] },
+      { channel: IPC_CHANNELS.settingsDeleteSearchProfile, args: ["s1"] },
+      { channel: IPC_CHANNELS.settingsDiagnoseSearch, args: [searchDraft] },
       { channel: IPC_CHANNELS.conversationsCreate, args: [] },
       { channel: IPC_CHANNELS.conversationsOpenInitial, args: [] },
       { channel: IPC_CHANNELS.conversationsListRecent, args: [] },

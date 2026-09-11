@@ -20,7 +20,7 @@ import type {
   StartCompanyResearchInput,
 } from "./research.js";
 import { StartCompanyResearchInputSchema } from "./research.js";
-import { LlmProfileDraftSchema, SearchProfileDraftSchema } from "./settings.js";
+import { LlmProfileDraftSchema, SearchProfileDraftSchema, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView } from "./settings.js";
 
 export const SettingsGetArgsSchema = Type.Tuple([]);
 export const SettingsLlmDraftArgsSchema = Type.Tuple([LlmProfileDraftSchema]);
@@ -86,11 +86,15 @@ export interface DesktopApi {
     subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
   };
   settings: {
-    hasDeepSeekKey(): Promise<boolean>;
-    setDeepSeekKey(value: string): Promise<void>;
-  };
-  llm: {
-    checkConnection(): Promise<LlmConnectionStatus>;
+    get(): Promise<SettingsView>;
+    saveLlmProfile(input: LlmProfileDraft): Promise<SettingsView>;
+    activateLlmProfile(id: string | null): Promise<SettingsView>;
+    deleteLlmProfile(id: string): Promise<SettingsView>;
+    diagnoseLlm(input: LlmProfileDraft): Promise<DiagnosticResult>;
+    saveSearchProfile(input: SearchProfileDraft): Promise<SettingsView>;
+    activateSearchProfile(id: string | null): Promise<SettingsView>;
+    deleteSearchProfile(id: string): Promise<SettingsView>;
+    diagnoseSearch(input: SearchProfileDraft): Promise<DiagnosticResult>;
   };
   skills: {
     list(): Promise<SkillSummary[]>;

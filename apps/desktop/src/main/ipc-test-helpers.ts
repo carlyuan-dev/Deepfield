@@ -16,7 +16,10 @@ import type {
   ConversationId,
   ItemCompanyView,
   SkillSummary,
-  LlmConnectionStatus,
+  LlmProfileDraft,
+  SearchProfileDraft,
+  SettingsView,
+  DiagnosticResult,
   ResearchRun,
   ResearchRunId,
   StartCompanyResearchInput,
@@ -253,28 +256,18 @@ export class FakeConversationService {
   }
 }
 
-export class FakeSecretSettings {
-  hasCalls: string[] = [];
-  setCalls: Array<{ name: string; value: string }> = [];
-
-  has(name: string): boolean {
-    this.hasCalls.push(name);
-    return true;
-  }
-
-  set(name: string, value: string): void {
-    this.setCalls.push({ name, value });
-  }
-}
-
-export class FakeLlmService {
-  checkConnectionCalls = 0;
-  status: LlmConnectionStatus = "connected";
-
-  checkConnection(): Promise<LlmConnectionStatus> {
-    this.checkConnectionCalls += 1;
-    return Promise.resolve(this.status);
-  }
+export class FakeConfigurationService {
+  calls: Array<{ method: string; value?: unknown }> = [];
+  view: SettingsView = { schemaVersion: 1, llm: { activeProfileId: null, profiles: [] }, search: { activeProfileId: null, profiles: [], manifests: [] } };
+  get(): Promise<SettingsView> { this.calls.push({ method: "get" }); return Promise.resolve(this.view); }
+  saveLlmProfile(value: LlmProfileDraft): Promise<SettingsView> { this.calls.push({ method: "saveLlmProfile", value }); return Promise.resolve(this.view); }
+  activateLlmProfile(value: string | null): Promise<SettingsView> { this.calls.push({ method: "activateLlmProfile", value }); return Promise.resolve(this.view); }
+  deleteLlmProfile(value: string): Promise<SettingsView> { this.calls.push({ method: "deleteLlmProfile", value }); return Promise.resolve(this.view); }
+  diagnoseLlm(value: LlmProfileDraft): Promise<DiagnosticResult> { this.calls.push({ method: "diagnoseLlm", value }); return Promise.resolve({ ok: true, latencyMs: 1, summary: "ok" }); }
+  saveSearchProfile(value: SearchProfileDraft): Promise<SettingsView> { this.calls.push({ method: "saveSearchProfile", value }); return Promise.resolve(this.view); }
+  activateSearchProfile(value: string | null): Promise<SettingsView> { this.calls.push({ method: "activateSearchProfile", value }); return Promise.resolve(this.view); }
+  deleteSearchProfile(value: string): Promise<SettingsView> { this.calls.push({ method: "deleteSearchProfile", value }); return Promise.resolve(this.view); }
+  diagnoseSearch(value: SearchProfileDraft): Promise<DiagnosticResult> { this.calls.push({ method: "diagnoseSearch", value }); return Promise.resolve({ ok: true, latencyMs: 1, summary: "ok" }); }
 }
 
 export const DEFAULT_CHAT_OPTIONS: ChatRequestOptions = { webSearch: false };
@@ -422,8 +415,7 @@ export function makeDeps() {
   const ipcMain = new FakeIpcMain();
   const conversations = new FakeConversationService();
   const industryResearch = new FakeIndustryResearchService();
-  const settings = new FakeSecretSettings();
-  const llm = new FakeLlmService();
+  const settings = new FakeConfigurationService();
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
   const companyResearch = new FakeCompanyResearchService();
@@ -433,14 +425,13 @@ export function makeDeps() {
     conversations,
     industryResearch,
     settings,
-    llm,
     skills,
     chat,
     companyResearch,
     companyProfiles,
   };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, industryResearch, settings, llm, skills, chat, companyResearch, companyProfiles, dispose };
+  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyProfiles, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

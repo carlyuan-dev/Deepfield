@@ -20,7 +20,10 @@ import type {
   ItemCompanyView,
   MessageId,
   SkillSummary,
-  LlmConnectionStatus,
+  LlmProfileDraft,
+  SearchProfileDraft,
+  SettingsView,
+  DiagnosticResult,
   ResearchRun,
   StartCompanyResearchInput,
 } from "@deepfield/contracts";
@@ -58,11 +61,15 @@ export interface FakeDesktopApi extends DesktopApi {
     subscribe: Mock<(listener: (event: CompanyResearchEvent) => void) => () => void>;
   };
   settings: {
-    hasDeepSeekKey: Mock<() => Promise<boolean>>;
-    setDeepSeekKey: Mock<(value: string) => Promise<void>>;
-  };
-  llm: {
-    checkConnection: Mock<() => Promise<LlmConnectionStatus>>;
+    get: Mock<() => Promise<SettingsView>>;
+    saveLlmProfile: Mock<(input: LlmProfileDraft) => Promise<SettingsView>>;
+    activateLlmProfile: Mock<(id: string | null) => Promise<SettingsView>>;
+    deleteLlmProfile: Mock<(id: string) => Promise<SettingsView>>;
+    diagnoseLlm: Mock<(input: LlmProfileDraft) => Promise<DiagnosticResult>>;
+    saveSearchProfile: Mock<(input: SearchProfileDraft) => Promise<SettingsView>>;
+    activateSearchProfile: Mock<(id: string | null) => Promise<SettingsView>>;
+    deleteSearchProfile: Mock<(id: string) => Promise<SettingsView>>;
+    diagnoseSearch: Mock<(input: SearchProfileDraft) => Promise<DiagnosticResult>>;
   };
   skills: {
     list: Mock<() => Promise<SkillSummary[]>>;
@@ -195,13 +202,14 @@ export function makeFakeApi(): FakeDesktopApi {
         },
       ),
     },
-    settings: {
-      hasDeepSeekKey: vi.fn(async (): Promise<boolean> => false),
-      setDeepSeekKey: vi.fn(async (_value: string): Promise<void> => {}),
-    },
-    llm: {
-      checkConnection: vi.fn(async (): Promise<LlmConnectionStatus> => "disconnected"),
-    },
+    settings: (() => {
+      const view: SettingsView = { schemaVersion: 1, llm: { activeProfileId: null, profiles: [] }, search: { activeProfileId: null, profiles: [], manifests: [] } };
+      return {
+        get: vi.fn(async () => view),
+        saveLlmProfile: vi.fn(async () => view), activateLlmProfile: vi.fn(async () => view), deleteLlmProfile: vi.fn(async () => view), diagnoseLlm: vi.fn(async () => ({ ok: true, latencyMs: 1, summary: "模型连接正常" } as const)),
+        saveSearchProfile: vi.fn(async () => view), activateSearchProfile: vi.fn(async () => view), deleteSearchProfile: vi.fn(async () => view), diagnoseSearch: vi.fn(async () => ({ ok: true, latencyMs: 1, summary: "搜索连接正常" } as const)),
+      };
+    })(),
     skills: {
       list: vi.fn(async (): Promise<SkillSummary[]> => []),
     },

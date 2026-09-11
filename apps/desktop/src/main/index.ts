@@ -21,6 +21,8 @@ import { ConfiguredLlmService } from "./configured-llm-service.js";
 import { FakeCompanyRecognizer } from "./fake-company-recognizer.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { PiModelGateway } from "../shared/model-gateway.js";
+import { listSearchProviderManifests } from "@deepfield/retrieval";
+import { ConfigurationService } from "./configuration-service.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
@@ -86,12 +88,14 @@ void app.whenReady().then(async () => {
     encrypt: (value) => safeStorage.encryptString(value),
     decrypt: (value) => safeStorage.decryptString(value),
   });
-  const profiles = new ProfileStore(paths.settingsFile, secrets);
+  const profiles = new ProfileStore(paths.settingsFile, secrets, listSearchProviderManifests());
   await profiles.initialize();
+  const modelGateway = new PiModelGateway();
   const configuredLlm = new ConfiguredLlmService(
     () => profiles.resolveActiveLlm(),
-    new PiModelGateway(),
+    modelGateway,
   );
+  const configuration = new ConfigurationService(profiles, modelGateway);
   const companyRecognizer =
     process.env.DEEPFIELD_AGENT_MODE === "fake"
       ? new FakeCompanyRecognizer()
@@ -148,8 +152,7 @@ void app.whenReady().then(async () => {
     ipcMain: ipcMainAdapter,
     conversations: appRuntime.conversationService,
     industryResearch: appRuntime.industryResearch,
-    settings: secrets,
-    llm: configuredLlm,
+    settings: configuration,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
     companyResearch: appRuntime.companyResearch,

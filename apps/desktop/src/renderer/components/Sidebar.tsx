@@ -55,10 +55,10 @@ export function Sidebar({
           role="status"
           aria-label={
             connectionStatus === "checking"
-              ? "DeepSeek 连接状态：检测中"
+              ? "模型连接状态：检测中"
               : connectionStatus === "connected"
-                ? "DeepSeek 连接状态：已连接"
-                : "DeepSeek 连接状态：未连接"
+                ? "模型连接状态：已连接"
+                : "模型连接状态：未连接"
           }
           title={
             connectionStatus === "checking"

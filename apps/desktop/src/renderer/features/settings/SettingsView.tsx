@@ -1,101 +1,74 @@
-import { useEffect, useState } from "react";
-import type { DesktopApi } from "@deepfield/contracts";
+import { useEffect, useRef, useState } from "react";
+import { LLM_PROVIDER_PRESETS, type DesktopApi, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView as SettingsData } from "@deepfield/contracts";
 
-export interface SettingsViewProps {
-  api: DesktopApi;
-  onKeySaved(): void;
+export interface SettingsViewProps { api: DesktopApi; onKeySaved(): void }
+type Module = "llm" | "search";
+const newLlm = (): LlmProfileDraft => ({ name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: LLM_PROVIDER_PRESETS.deepseek.baseUrl, modelId: "deepseek-v4-flash", contextWindow: 128000 });
+const llmDraft = (p: SettingsData["llm"]["profiles"][number]): LlmProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, protocol: p.protocol, baseUrl: p.baseUrl, modelId: p.modelId, contextWindow: p.contextWindow });
+const searchDraft = (p: SettingsData["search"]["profiles"][number]): SearchProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, baseUrl: p.baseUrl, options: p.options });
+
+function Diagnostic({ value }: { value?: DiagnosticResult | "testing" }) {
+  if (!value) return <span className="diagnostic idle">未检测</span>;
+  if (value === "testing") return <span className="diagnostic testing">检测中…</span>;
+  return value.ok ? <span className="diagnostic success">连接正常 · {value.latencyMs}ms</span> : <span className="diagnostic failure">连接失败 · {value.message}</span>;
 }
 
 export function SettingsView({ api, onKeySaved }: SettingsViewProps) {
-  const [configured, setConfigured] = useState<boolean>();
-  const [value, setValue] = useState("");
+  const [module, setModule] = useState<Module>("llm");
+  const [data, setData] = useState<SettingsData>();
+  const [llm, setLlm] = useState<LlmProfileDraft>(newLlm);
+  const [search, setSearch] = useState<SearchProfileDraft>();
+  const [diagnostic, setDiagnostic] = useState<DiagnosticResult | "testing">();
   const [error, setError] = useState<string>();
-  const [saving, setSaving] = useState(false);
+  const requestIds = useRef({ llm: 0, search: 0 });
 
-  useEffect(() => {
-    let cancelled = false;
-    void api.settings.hasDeepSeekKey().then(
-      (has) => {
-        if (!cancelled) {
-          setConfigured(has);
-        }
-      },
-      () => {
-        if (!cancelled) {
-          setConfigured(false);
-          setError("无法读取设置，请重试");
-        }
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
+  useEffect(() => { void api.settings.get().then((view) => {
+    setData(view);
+    const lp = view.llm.profiles.find((p) => p.id === view.llm.activeProfileId) ?? view.llm.profiles[0];
+    if (lp) setLlm(llmDraft(lp));
+    const sp = view.search.profiles.find((p) => p.id === view.search.activeProfileId) ?? view.search.profiles[0];
+    if (sp) setSearch(searchDraft(sp));
+    else if (view.search.manifests[0]) setSearch({ name: view.search.manifests[0].displayName, provider: view.search.manifests[0].id, baseUrl: view.search.manifests[0].defaultBaseUrl, options: {} });
+  }, () => setError("无法读取设置，请重试")); }, [api]);
 
-  const save = async (): Promise<void> => {
-    const trimmed = value.trim();
-    if (trimmed.length === 0) {
-      setError("请输入 API Key");
-      return;
-    }
-    if (saving) {
-      return;
-    }
-    setSaving(true);
-    setError(undefined);
-    try {
-      await api.settings.setDeepSeekKey(trimmed);
-      setValue("");
-      setConfigured(true);
-      onKeySaved();
-    } catch {
-      setError("保存失败，请重试");
-    } finally {
-      setSaving(false);
-    }
+  const reset = () => setDiagnostic(undefined);
+  const updateLlm = (patch: Partial<LlmProfileDraft>) => { setLlm((value) => ({ ...value, ...patch })); reset(); };
+  const updateSearch = (patch: Partial<SearchProfileDraft>) => { setSearch((value) => value ? ({ ...value, ...patch }) : value); reset(); };
+  const accept = (view: SettingsData) => { setData(view); onKeySaved(); };
+  const diagnose = async () => {
+    const kind = module; const id = ++requestIds.current[kind]; setDiagnostic("testing");
+    const result = kind === "llm" ? await api.settings.diagnoseLlm(llm) : await api.settings.diagnoseSearch(search!);
+    if (id === requestIds.current[kind] && kind === module) setDiagnostic(result);
   };
+  const manifest = data?.search.manifests.find((item) => item.id === search?.provider);
+  const profiles = module === "llm" ? data?.llm.profiles : data?.search.profiles;
+  const selectedId = module === "llm" ? llm.id : search?.id;
+  const activeId = module === "llm" ? data?.llm.activeProfileId : data?.search.activeProfileId;
 
-  return (
-    <section className="settings-view" aria-label="设置">
-      <header className="settings-header">
-        <h2>模型与密钥</h2>
-      </header>
-      <div className="setting-row">
-        <div className="setting-label">DeepSeek API Key</div>
-        <div className="setting-status">
-          {configured === undefined
-            ? "检测中…"
-            : configured
-              ? "已配置"
-              : "未配置"}
-        </div>
-      </div>
-      {error !== undefined && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      <form
-        className="key-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <label>
-          API Key
-          <input
-            type="password"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            autoComplete="off"
-            placeholder="输入新的 API Key"
-          />
-        </label>
-        <button type="submit" disabled={saving}>
-          {saving ? "保存中…" : "保存"}
-        </button>
+  return <section className="settings-view" aria-label="设置">
+    <header className="settings-header"><div><h2>模型与搜索</h2><p>配置运行时使用的模型和联网搜索服务。</p></div></header>
+    <nav className="settings-modules" aria-label="设置模块"><button className={module === "llm" ? "active" : ""} onClick={() => { setModule("llm"); reset(); }}>LLM</button><button className={module === "search" ? "active" : ""} onClick={() => { setModule("search"); reset(); }}>Search</button></nav>
+    {error && <p role="alert" className="error">{error}</p>}
+    <div className="settings-layout">
+      <aside className="profile-list"><button onClick={() => module === "llm" ? setLlm(newLlm()) : manifest && setSearch({ name: manifest.displayName, provider: manifest.id, baseUrl: manifest.defaultBaseUrl, options: {} })}>＋ 新建 Profile</button>{profiles?.map((profile) => <button key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => module === "llm" ? setLlm(llmDraft(profile as SettingsData["llm"]["profiles"][number])) : setSearch(searchDraft(profile as SettingsData["search"]["profiles"][number]))}>{profile.name}{profile.id === activeId ? " · 当前" : ""}</button>)}</aside>
+      <form className="profile-editor" onSubmit={(event) => { event.preventDefault(); void (module === "llm" ? api.settings.saveLlmProfile(llm) : api.settings.saveSearchProfile(search!)).then(accept, () => setError("保存失败，请重试")); }}>
+        {module === "llm"
+          ? <LlmEditor value={llm} saved={data?.llm.profiles.find((p) => p.id === llm.id)?.hasCredential ?? false} update={updateLlm}/>
+          : search && (
+            <SearchEditor value={search} manifests={data?.search.manifests ?? []} saved={data?.search.profiles.find((p) => p.id === search.id)?.hasCredential ?? false} update={updateSearch} replace={(next) => { setSearch(next); reset(); }}/>
+          )}
+        <div className="diagnostic-row"><Diagnostic value={diagnostic}/><button type="button" onClick={() => void diagnose()} disabled={diagnostic === "testing" || (module === "search" && !search)}>测试连接</button></div>
+        <div className="editor-actions"><button type="submit">保存</button><button type="button" disabled={!selectedId || activeId === selectedId} onClick={() => void (module === "llm" ? api.settings.activateLlmProfile(llm.id!) : api.settings.activateSearchProfile(search!.id!)).then(accept)}>设为当前</button><button type="button" disabled={!selectedId || activeId === selectedId} onClick={() => void (module === "llm" ? api.settings.deleteLlmProfile(llm.id!) : api.settings.deleteSearchProfile(search!.id!)).then(accept)}>删除</button></div>
       </form>
-    </section>
-  );
+    </div>
+  </section>;
+}
+
+function LlmEditor({ value, saved, update }: { value: LlmProfileDraft; saved: boolean; update(p: Partial<LlmProfileDraft>): void }) {
+  return <><label>名称<input value={value.name} onChange={(e) => update({ name: e.target.value })}/></label><label>Provider<select value={value.provider} onChange={(e) => { const provider = e.target.value as LlmProfileDraft["provider"]; const preset = LLM_PROVIDER_PRESETS[provider]; update({ provider, protocol: preset.protocol, baseUrl: preset.baseUrl, name: preset.displayName }); }}>{Object.entries(LLM_PROVIDER_PRESETS).map(([id, preset]) => <option key={id} value={id}>{preset.displayName}</option>)}</select></label><label>Protocol<select value={value.protocol} onChange={(e) => update({ protocol: e.target.value as LlmProfileDraft["protocol"] })}><option value="openai_compatible">OpenAI Compatible</option><option value="anthropic_messages">Anthropic Messages</option></select></label><label>Base URL<input value={value.baseUrl} onChange={(e) => update({ baseUrl: e.target.value })}/></label><label>API Key<input type="password" value={value.apiKey ?? ""} onChange={(e) => update({ apiKey: e.target.value || undefined })} autoComplete="off"/>{saved && !value.apiKey ? <small>已保存（留空则保留）</small> : null}</label><label>Model ID<input value={value.modelId} onChange={(e) => update({ modelId: e.target.value })}/></label><label>Context Window<input type="number" value={value.contextWindow} onChange={(e) => update({ contextWindow: Number(e.target.value) })}/></label></>;
+}
+
+function SearchEditor({ value, manifests, saved, update, replace }: { value: SearchProfileDraft; manifests: SettingsData["search"]["manifests"]; saved: boolean; update(p: Partial<SearchProfileDraft>): void; replace(v: SearchProfileDraft): void }) {
+  const manifest = manifests.find((item) => item.id === value.provider);
+  return <><label>名称<input value={value.name} onChange={(e) => update({ name: e.target.value })}/></label><label>Provider<select value={value.provider} onChange={(e) => { const next = manifests.find((item) => item.id === e.target.value); if (next) replace({ name: next.displayName, provider: next.id, baseUrl: next.defaultBaseUrl, options: {} }); }}>{manifests.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label><label>Base URL<input value={value.baseUrl} onChange={(e) => update({ baseUrl: e.target.value })}/></label><label>API Key<input type="password" value={value.apiKey ?? ""} onChange={(e) => update({ apiKey: e.target.value || undefined })} autoComplete="off"/>{saved && !value.apiKey ? <small>已保存（留空则保留）</small> : null}</label>{manifest?.optionFields.map((field) => <label key={field.key}>{field.label}{field.type === "select" ? <select value={String(value.options[field.key] ?? "")} onChange={(e) => update({ options: { ...value.options, [field.key]: e.target.value } })}><option value="">默认</option>{field.options?.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : <input value={String(value.options[field.key] ?? "")} onChange={(e) => update({ options: { ...value.options, [field.key]: field.type === "number" ? Number(e.target.value) : e.target.value } })}/>}</label>)}</>;
 }

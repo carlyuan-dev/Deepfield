@@ -13,6 +13,7 @@ import {
 } from "./renderer-test-helpers.js";
 
 const REQUEST_ID = "fixed-req";
+const connectionView = (connected: boolean) => ({ schemaVersion: 1 as const, llm: { activeProfileId: connected ? "l1" : null, profiles: connected ? [{ id: "l1", name: "Model", provider: "custom" as const, protocol: "openai_compatible" as const, baseUrl: "https://llm.test", modelId: "m", contextWindow: 32000, hasCredential: true }] : [] }, search: { activeProfileId: null, profiles: [], manifests: [] } });
 
 async function renderApp(fake: FakeDesktopApi) {
   const user = userEvent.setup();
@@ -32,36 +33,32 @@ async function chatVisible(): Promise<HTMLTextAreaElement> {
 describe("app conversation chat", () => {
   it("rechecks a stale disconnected indicator when the window regains focus", async () => {
     const fake = makeFakeApi();
-    fake.llm.checkConnection
-      .mockResolvedValueOnce("disconnected")
-      .mockResolvedValueOnce("connected");
+    fake.settings.get.mockResolvedValueOnce(connectionView(false)).mockResolvedValueOnce(connectionView(true));
     render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
 
-    expect(await screen.findByLabelText("DeepSeek 连接状态：未连接")).toBeTruthy();
+    expect(await screen.findByLabelText("模型连接状态：未连接")).toBeTruthy();
     act(() => window.dispatchEvent(new Event("focus")));
 
-    expect(await screen.findByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
-    expect(fake.llm.checkConnection).toHaveBeenCalledTimes(2);
+    expect(await screen.findByLabelText("模型连接状态：已连接")).toBeTruthy();
+    expect(fake.settings.get).toHaveBeenCalledTimes(2);
   });
 
   it("ignores an older connection result that finishes after a newer successful check", async () => {
     const fake = makeFakeApi();
-    let resolveInitial!: (status: "disconnected") => void;
-    fake.llm.checkConnection
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
-      .mockResolvedValueOnce("connected");
+    let resolveInitial!: () => void;
+    fake.settings.get.mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = () => resolve(connectionView(false)); })).mockResolvedValueOnce(connectionView(true));
     render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
 
     act(() => window.dispatchEvent(new Event("focus")));
-    expect(await screen.findByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
-    await act(async () => resolveInitial("disconnected"));
+    expect(await screen.findByLabelText("模型连接状态：已连接")).toBeTruthy();
+    await act(async () => resolveInitial());
 
-    expect(screen.getByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
+    expect(screen.getByLabelText("模型连接状态：已连接")).toBeTruthy();
   });
 
   it("opens the newest recent Conversation ready to type, switches history and titles a new first message", async () => {
     const fake = makeFakeApi();
-    fake.llm.checkConnection.mockResolvedValue("connected");
+    fake.settings.get.mockResolvedValue(connectionView(true));
     const older = conversation("c-older", "旧对话", true);
     const newer = conversation("c-newer", "最近对话", true);
     fake.conversations.openInitial.mockResolvedValue({ active: newer, recent: [newer, older] });
@@ -79,7 +76,7 @@ describe("app conversation chat", () => {
 
     // The newest recent Conversation is open immediately without selecting a Project.
     await waitFor(() => expect(screen.getByText("新项目回答")).toBeTruthy());
-    expect(screen.getByLabelText("DeepSeek 连接状态：已连接")).toBeTruthy();
+    expect(screen.getByLabelText("模型连接状态：已连接")).toBeTruthy();
     expect(screen.queryByText("请先创建或选择一个项目")).toBeNull();
     const input = await chatVisible();
     await user.type(input, "再问一次");

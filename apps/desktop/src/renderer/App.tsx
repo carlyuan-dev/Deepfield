@@ -32,9 +32,10 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const checkConnection = useCallback((): void => {
     const sequence = ++connectionCheckSequence.current;
     setConnectionStatus("checking");
-    void api.llm.checkConnection().then(
-      (status) => {
-        if (sequence === connectionCheckSequence.current) setConnectionStatus(status);
+    void api.settings.get().then(
+      (settings) => {
+        const active = settings.llm.profiles.find((profile) => profile.id === settings.llm.activeProfileId);
+        if (sequence === connectionCheckSequence.current) setConnectionStatus(active?.hasCredential ? "connected" : "disconnected");
       },
       () => {
         if (sequence === connectionCheckSequence.current) setConnectionStatus("disconnected");

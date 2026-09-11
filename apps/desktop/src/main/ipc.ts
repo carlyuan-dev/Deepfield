@@ -8,6 +8,11 @@ import {
   CompanyResearchSubscribeArgsSchema,
   CompanyResearchTargetArgsSchema,
   CompanyResearchEventSchema,
+  SettingsGetArgsSchema,
+  SettingsLlmDraftArgsSchema,
+  SettingsSearchDraftArgsSchema,
+  SettingsProfileIdArgsSchema,
+  SettingsDeleteProfileArgsSchema,
   CompanyDraftSchema,
   CompanyProfileInputSchema,
   CompanyProfileEventSchema,
@@ -28,12 +33,14 @@ import {
   type ChatSendResult,
   type Conversation,
   type SkillSummary,
-  type LlmConnectionStatus,
+  type LlmProfileDraft,
+  type SearchProfileDraft,
+  type SettingsView,
+  type DiagnosticResult,
   type ResearchRun,
   type ResearchRunSummary,
   type StartCompanyResearchInput,
 } from "@deepfield/contracts";
-import { DEEPSEEK_KEY_NAME } from "@deepfield/application";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 
 export interface IpcEventLike {
@@ -78,13 +85,16 @@ export interface ConversationServiceLike {
   listRecent(): Conversation[];
 }
 
-export interface SecretSettingsLike {
-  has(name: string): boolean;
-  set(name: string, value: string): void;
-}
-
-export interface LlmServiceLike {
-  checkConnection(): Promise<LlmConnectionStatus>;
+export interface ConfigurationServiceLike {
+  get(): Promise<SettingsView>;
+  saveLlmProfile(input: LlmProfileDraft): Promise<SettingsView>;
+  activateLlmProfile(id: string | null): Promise<SettingsView>;
+  deleteLlmProfile(id: string): Promise<SettingsView>;
+  diagnoseLlm(input: LlmProfileDraft): Promise<DiagnosticResult>;
+  saveSearchProfile(input: SearchProfileDraft): Promise<SettingsView>;
+  activateSearchProfile(id: string | null): Promise<SettingsView>;
+  deleteSearchProfile(id: string): Promise<SettingsView>;
+  diagnoseSearch(input: SearchProfileDraft): Promise<DiagnosticResult>;
 }
 
 export interface SkillListLike {
@@ -120,8 +130,7 @@ export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
   conversations: ConversationServiceLike;
   industryResearch: IndustryResearchServiceLike;
-  settings: SecretSettingsLike;
-  llm: LlmServiceLike;
+  settings: ConfigurationServiceLike;
   skills: SkillListLike;
   chat: ChatServiceLike;
   companyResearch: CompanyResearchServiceLike;
@@ -154,9 +163,15 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.conversationsCreate,
   IPC_CHANNELS.conversationsOpenInitial,
   IPC_CHANNELS.conversationsListRecent,
-  IPC_CHANNELS.settingsHasDeepSeekKey,
-  IPC_CHANNELS.settingsSetDeepSeekKey,
-  IPC_CHANNELS.llmCheckConnection,
+  IPC_CHANNELS.settingsGet,
+  IPC_CHANNELS.settingsSaveLlmProfile,
+  IPC_CHANNELS.settingsActivateLlmProfile,
+  IPC_CHANNELS.settingsDeleteLlmProfile,
+  IPC_CHANNELS.settingsDiagnoseLlm,
+  IPC_CHANNELS.settingsSaveSearchProfile,
+  IPC_CHANNELS.settingsActivateSearchProfile,
+  IPC_CHANNELS.settingsDeleteSearchProfile,
+  IPC_CHANNELS.settingsDiagnoseSearch,
   IPC_CHANNELS.skillsList,
   IPC_CHANNELS.chatSend,
   IPC_CHANNELS.chatListMessages,
@@ -506,27 +521,22 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.conversations.listRecent();
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.settingsHasDeepSeekKey, async (_event, ...args) => {
-    if (args.length !== 0) {
-      throw new Error("invalid settings input");
-    }
-    return deps.settings.has(DEEPSEEK_KEY_NAME);
-  });
-
-  deps.ipcMain.handle(IPC_CHANNELS.settingsSetDeepSeekKey, async (_event, ...args) => {
-    const value = args[0];
-    if (args.length !== 1 || typeof value !== "string" || value.trim().length === 0) {
-      throw new Error("invalid settings input");
-    }
-    deps.settings.set(DEEPSEEK_KEY_NAME, value);
-  });
-
-  deps.ipcMain.handle(IPC_CHANNELS.llmCheckConnection, async (_event, ...args) => {
-    if (args.length !== 0) {
-      throw new Error("invalid llm input");
-    }
-    return deps.llm.checkConnection();
-  });
+  const settingsHandler = <T>(channel: string, schema: Parameters<typeof Value.Check>[0], call: (...args: any[]) => Promise<T>): void => {
+    deps.ipcMain.handle(channel, async (_event, ...args) => {
+      if (!Value.Check(schema, args)) throw new Error("invalid settings input");
+      try { return await call(...args); }
+      catch { throw new Error("settings operation failed"); }
+    });
+  };
+  settingsHandler(IPC_CHANNELS.settingsGet, SettingsGetArgsSchema, () => deps.settings.get());
+  settingsHandler(IPC_CHANNELS.settingsSaveLlmProfile, SettingsLlmDraftArgsSchema, (input: LlmProfileDraft) => deps.settings.saveLlmProfile(input));
+  settingsHandler(IPC_CHANNELS.settingsActivateLlmProfile, SettingsProfileIdArgsSchema, (id: string | null) => deps.settings.activateLlmProfile(id));
+  settingsHandler(IPC_CHANNELS.settingsDeleteLlmProfile, SettingsDeleteProfileArgsSchema, (id: string) => deps.settings.deleteLlmProfile(id));
+  settingsHandler(IPC_CHANNELS.settingsDiagnoseLlm, SettingsLlmDraftArgsSchema, (input: LlmProfileDraft) => deps.settings.diagnoseLlm(input));
+  settingsHandler(IPC_CHANNELS.settingsSaveSearchProfile, SettingsSearchDraftArgsSchema, (input: SearchProfileDraft) => deps.settings.saveSearchProfile(input));
+  settingsHandler(IPC_CHANNELS.settingsActivateSearchProfile, SettingsProfileIdArgsSchema, (id: string | null) => deps.settings.activateSearchProfile(id));
+  settingsHandler(IPC_CHANNELS.settingsDeleteSearchProfile, SettingsDeleteProfileArgsSchema, (id: string) => deps.settings.deleteSearchProfile(id));
+  settingsHandler(IPC_CHANNELS.settingsDiagnoseSearch, SettingsSearchDraftArgsSchema, (input: SearchProfileDraft) => deps.settings.diagnoseSearch(input));
 
   deps.ipcMain.handle(IPC_CHANNELS.skillsList, async (_event, ...args) => {
     if (args.length !== 0) {
