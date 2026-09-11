@@ -18,6 +18,7 @@ export interface SerperProviderDeps {
   client: ProviderHttpClient;
   /** API key; injected only inside the Utility process, never logged. */
   token: string;
+  allowCustomEndpoint?: boolean;
 }
 
 function assertClientEndpoint(client: ProviderHttpClient, expected: ProviderEndpoint): void {
@@ -38,7 +39,7 @@ function parseJson(body: Buffer): unknown {
 
 export function createSerperProvider(deps: SerperProviderDeps): SearchProvider {
   const { client, token } = deps;
-  assertClientEndpoint(client, ENDPOINT);
+  if (deps.allowCustomEndpoint !== true) assertClientEndpoint(client, ENDPOINT);
   return {
     id: "serper",
     // Serper's Google Search API (official openapi) exposes no date-range

@@ -1,0 +1,16 @@
+{
+  "search_result": [
+    {
+      "title": "示例公司官网",
+      "link": "https://example.com/company",
+      "content": "示例公司的公开介绍。",
+      "media": "示例媒体",
+      "publish_date": "2026-08-31"
+    },
+    {
+      "title": "第二条结果",
+      "link": "https://example.org/report",
+      "content": "第二条公开摘要。"
+    }
+  ]
+}

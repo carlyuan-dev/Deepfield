@@ -66,6 +66,8 @@ export interface NormalizedSearchResult {
   provider: string;
   /** Optional YYYY-MM-DD date. */
   date?: string;
+  publishedAt?: string;
+  sourceName?: string;
 }
 
 export interface NormalizedSearchResponse {
@@ -92,6 +94,8 @@ export interface RawSearchResult {
   snippet?: unknown;
   rank?: unknown;
   date?: unknown;
+  publishedAt?: unknown;
+  sourceName?: unknown;
   [key: string]: unknown;
 }
 
@@ -232,6 +236,10 @@ export function normalizeSearchResults(
     }
     seenRanks.add(rank);
     const date = raw.date === undefined ? undefined : requireDate(raw.date);
+    const publishedAt = raw.publishedAt === undefined ? undefined : requireDate(raw.publishedAt);
+    const sourceName = raw.sourceName === undefined
+      ? undefined
+      : requireString(raw.sourceName, "sourceName", MAX_RESULT_TITLE_LENGTH);
     results.push({
       title,
       url,
@@ -239,6 +247,8 @@ export function normalizeSearchResults(
       rank,
       provider,
       ...(date !== undefined ? { date } : {}),
+      ...(publishedAt !== undefined ? { publishedAt } : {}),
+      ...(sourceName !== undefined ? { sourceName } : {}),
     });
   }
   return { provider, results };

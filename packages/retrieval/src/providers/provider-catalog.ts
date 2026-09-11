@@ -1,9 +1,14 @@
 export const SUPPORTED_PROVIDER_IDS = Object.freeze([
   "brave",
+  "zhipu",
   "tavily",
   "serper",
   "baidu",
   "metaso",
+] as const);
+
+export const PRODUCT_SEARCH_PROVIDER_IDS = Object.freeze([
+  "metaso", "baidu", "zhipu", "tavily", "serper",
 ] as const);
 
 export const BENCHMARK_CANDIDATES_V1 = Object.freeze([

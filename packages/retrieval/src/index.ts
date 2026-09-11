@@ -126,6 +126,8 @@ export {
   type ProviderTransportResponse,
 } from "./provider-http-client.js";
 export { createNodeProviderTransport } from "./provider-node-transport.js";
+export { createSearchProvider, listSearchProviderManifests } from "./providers/provider-registry.js";
+export { createZhipuProvider, ZHIPU_ENDPOINT, ZHIPU_SEARCH_ENGINES, type ZhipuProviderDeps, type ZhipuSearchEngine } from "./providers/zhipu.js";
 export { BAIDU_ENDPOINT, countBaiduQueryUnits, createBaiduProvider, type BaiduAuthHeader, type BaiduProviderDeps } from "./providers/baidu.js";
 export { createBraveProvider, type BraveProviderDeps } from "./providers/brave.js";
 export { METASO_ENDPOINT, createMetaSoProvider, type MetaSoProviderDeps } from "./providers/metaso.js";
@@ -159,6 +161,7 @@ export {
   KEYCHAIN_SERVICES,
   LIVE_PROVIDER_ENV_KEYS,
   SUPPORTED_PROVIDER_IDS,
+  PRODUCT_SEARCH_PROVIDER_IDS,
   requireBenchmarkCandidateAssembly,
   type LiveProviderId,
   type SupportedProviderId,

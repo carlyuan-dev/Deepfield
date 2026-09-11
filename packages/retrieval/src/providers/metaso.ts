@@ -22,6 +22,7 @@ export interface MetaSoProviderDeps {
   client: ProviderHttpClient;
   /** API key; injected only inside the Utility process, never logged. */
   token: string;
+  allowCustomEndpoint?: boolean;
 }
 
 function assertClientEndpoint(client: ProviderHttpClient, expected: ProviderEndpoint): void {
@@ -58,7 +59,7 @@ function normalizeMetaSoDate(value: unknown): string | undefined {
 
 export function createMetaSoProvider(deps: MetaSoProviderDeps): SearchProvider {
   const { client, token } = deps;
-  assertClientEndpoint(client, METASO_ENDPOINT);
+  if (deps.allowCustomEndpoint !== true) assertClientEndpoint(client, METASO_ENDPOINT);
   if (typeof token !== "string" || token.trim().length === 0) {
     throw new SearchProviderError("invalid_request");
   }

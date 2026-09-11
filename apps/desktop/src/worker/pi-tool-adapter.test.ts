@@ -14,6 +14,7 @@ import { createPiChatAgent } from "./pi-chat-agent.js";
 import { FakePiAgent, makeRuntime, request, stubModel } from "./pi-chat-agent-test-helpers.js";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { createPiAgentTools, deterministicOutputText, type PiToolAdapterContext } from "./pi-tool-adapter.js";
+import { createToolRuntime } from "./tool-runtime.js";
 
 const factInputSchema = Type.Object(
   { subject: Type.String() },
@@ -71,6 +72,12 @@ async function flush(): Promise<void> {
 }
 
 describe("pi tool adapter", () => {
+  it("keeps the canonical production search tool name", () => {
+    const runtime = createToolRuntime({ audit: new FakeAuditSink() });
+    const provider = { id: "test", capabilities: { timeRange: false }, search: async () => ({ provider: "test", results: [] }) };
+    runtime.bindSearchProvider("trace-search", provider);
+    expect(runtime.createAgentTools({ traceId: "trace-search", actor: "main_agent", networkEnabled: true }).map((tool) => tool.name)).toContain("web_search");
+  });
   it("generates AgentTools only for granted definitions", () => {
     const registry = new ToolRegistry();
     registry.register(lookupFactDefinition());

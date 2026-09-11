@@ -28,6 +28,8 @@ import {
   createNodeHttpAdapter,
   createParseHtmlDefinition,
   createParsePdfDefinition,
+  createSearchWebDefinition,
+  type SearchProvider,
 } from "@deepfield/retrieval";
 import {
   createCalculatorDefinition,
@@ -102,7 +104,7 @@ const PROBE_GRANTS: Record<ToolActor, boolean> = {
 };
 
 /** Actor-scoped trusted ToolSet: one grant per identity, never mixed actors. */
-export function createTrustedToolSet(actor: ToolActor): ToolSet {
+export function createTrustedToolSet(actor: ToolActor, networkEnabled = false): ToolSet {
   const grants: ToolGrant[] = [];
   if (actor === "main_agent") {
     grants.push(
@@ -137,6 +139,12 @@ export function createTrustedToolSet(actor: ToolActor): ToolSet {
         effect: "conversation.read",
       },
     );
+    if (networkEnabled) {
+      grants.push(
+        { identity: { name: "web_search", version: 1 }, actor, effect: "network.read.public" },
+        { identity: { name: "fetch_url", version: 1 }, actor, effect: "network.read.public" },
+      );
+    }
   }
   if (PROBE_GRANTS[actor]) {
     grants.push({
@@ -164,6 +172,7 @@ export interface TraceBudgetPoolOptions {
  */
 export class TraceBudgetPool {
   readonly #entries = new Map<string, ToolBudgetLedger>();
+  readonly #traceLimits = new Map<string, ToolBudgetLimits>();
   readonly #limits: ToolBudgetLimits;
   readonly #maxTraces: number;
   readonly #clock: () => number;
@@ -182,9 +191,14 @@ export class TraceBudgetPool {
     if (this.#entries.size >= this.#maxTraces) {
       throw new ToolBudgetError("tool budget exceeded: max traces");
     }
-    const ledger = new ToolBudgetLedger(this.#limits, this.#clock);
+    const ledger = new ToolBudgetLedger(this.#traceLimits.get(traceId) ?? this.#limits, this.#clock);
     this.#entries.set(traceId, ledger);
     return ledger;
+  }
+
+  initializeTrace(traceId: string, limits: ToolBudgetLimits): void {
+    if (this.#entries.has(traceId)) throw new ToolBudgetError("trace budget already initialized");
+    this.#traceLimits.set(traceId, limits);
   }
 
   /**
@@ -195,12 +209,14 @@ export class TraceBudgetPool {
   releaseTrace(traceId: string): boolean {
     const ledger = this.#entries.get(traceId);
     if (ledger === undefined) {
+      this.#traceLimits.delete(traceId);
       return true;
     }
     if (ledger.activeCount() > 0) {
       return false;
     }
     this.#entries.delete(traceId);
+    this.#traceLimits.delete(traceId);
     return true;
   }
 
@@ -211,6 +227,24 @@ export class TraceBudgetPool {
   has(traceId: string): boolean {
     return this.#entries.has(traceId);
   }
+}
+
+export class SearchSessionRegistry {
+  readonly #providers = new Map<string, SearchProvider>();
+
+  bind(traceId: string, provider: SearchProvider): void {
+    if (!traceId || this.#providers.has(traceId)) throw new Error("search session is already bound");
+    this.#providers.set(traceId, provider);
+  }
+
+  get(traceId: string): SearchProvider {
+    const provider = this.#providers.get(traceId);
+    if (provider === undefined) throw new Error("search session is not bound");
+    return provider;
+  }
+
+  release(traceId: string): void { this.#providers.delete(traceId); }
+  has(traceId: string): boolean { return this.#providers.has(traceId); }
 }
 
 export const TRACE_BUDGET_LIMITS: ToolBudgetLimits = {
@@ -233,6 +267,7 @@ export interface PiToolContext {
   traceId: string;
   actor: ToolActor;
   projectId?: string;
+  networkEnabled?: boolean;
 }
 
 export interface UtilityToolRuntime extends ToolRuntime {
@@ -248,6 +283,8 @@ export interface UtilityToolRuntime extends ToolRuntime {
   createAgentTools(context: PiToolContext): ReturnType<typeof createPiAgentTools>;
   traceLedgerCount(): number;
   tracePool: TraceBudgetPool;
+  searchSessions: SearchSessionRegistry;
+  bindSearchProvider(traceId: string, provider: SearchProvider, limits?: ToolBudgetLimits): void;
   /** Explicit end-of-trace; false while the trace has in-flight tokens. */
   releaseTrace(traceId: string): boolean;
 }
@@ -277,6 +314,8 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
   registry.register(createParseHtmlDefinition({ store: resourceStore }));
   registry.register(createParsePdfDefinition({ store: resourceStore }));
   registry.register(createCheckLinkAccessibilityDefinition({ transport }));
+  const searchSessions = new SearchSessionRegistry();
+  registry.register(createSearchWebDefinition((traceId) => searchSessions.get(traceId)));
   if (options.registerProbe === true) {
     registry.register(echoProbeDefinition());
   }
@@ -308,11 +347,17 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
     runner,
     audit: options.audit,
     tracePool,
+    searchSessions,
+    bindSearchProvider(traceId, provider, limits) {
+      if (limits !== undefined) tracePool.initializeTrace(traceId, limits);
+      searchSessions.bind(traceId, provider);
+    },
     traceLedgerCount: () => tracePool.size(),
     releaseTrace(traceId) {
       const released = tracePool.releaseTrace(traceId);
       if (released) {
         resourceStore.releaseTrace(traceId);
+        searchSessions.release(traceId);
       }
       return released;
     },
@@ -328,7 +373,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
           traceId: request.traceId,
           actor: request.actor,
           ...(request.projectId !== undefined ? { projectId: request.projectId } : {}),
-          toolSet: toolSetByActor.get(request.actor) ?? createTrustedToolSet(request.actor),
+        toolSet: toolSetByActor.get(request.actor) ?? createTrustedToolSet(request.actor),
         },
         signal,
         emit,
@@ -339,7 +384,9 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
         traceId: context.traceId,
         actor: context.actor,
         ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
-        toolSet: toolSetByActor.get(context.actor) ?? createTrustedToolSet(context.actor),
+        toolSet: context.networkEnabled === true
+          ? createTrustedToolSet(context.actor, true)
+          : toolSetByActor.get(context.actor) ?? createTrustedToolSet(context.actor),
       });
     },
   };

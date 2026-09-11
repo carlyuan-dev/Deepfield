@@ -3,6 +3,7 @@ import {
   BENCHMARK_CANDIDATES_V1,
   KEYCHAIN_SERVICES,
   LIVE_PROVIDER_ENV_KEYS,
+  PRODUCT_SEARCH_PROVIDER_IDS,
   SUPPORTED_PROVIDER_IDS,
   requireBenchmarkCandidateAssembly,
   type LiveProviderId,
@@ -19,9 +20,11 @@ const ASSEMBLED: Partial<Record<SupportedProviderId, { probe: boolean }>> = {
 
 describe("provider catalog (focused revision)", () => {
   it("freezes the exact supported ids (incl. brave) and the exact v1 candidates", () => {
-    expect(SUPPORTED_PROVIDER_IDS).toEqual(["brave", "tavily", "serper", "baidu", "metaso"]);
+    expect(SUPPORTED_PROVIDER_IDS).toEqual(["brave", "zhipu", "tavily", "serper", "baidu", "metaso"]);
     expect(SUPPORTED_PROVIDER_IDS).toContain("brave");
     expect(Object.isFrozen(SUPPORTED_PROVIDER_IDS)).toBe(true);
+    expect(PRODUCT_SEARCH_PROVIDER_IDS).toEqual(["metaso", "baidu", "zhipu", "tavily", "serper"]);
+    expect(PRODUCT_SEARCH_PROVIDER_IDS).not.toContain("brave");
     expect(BENCHMARK_CANDIDATES_V1).toEqual(["baidu", "metaso", "tavily", "serper"]);
     expect(BENCHMARK_CANDIDATES_V1).not.toContain("brave");
     expect(Object.isFrozen(BENCHMARK_CANDIDATES_V1)).toBe(true);
@@ -122,7 +125,7 @@ describe("catalog type derivations", () => {
     const allCandidates: LiveProviderId[] = [...BENCHMARK_CANDIDATES_V1];
     expect(allCandidates.length).toBe(4);
     const supported: SupportedProviderId[] = [...SUPPORTED_PROVIDER_IDS];
-    expect(supported.length).toBe(5);
+    expect(supported.length).toBe(6);
     // a candidate value is a supported id (structural)
     const first: SupportedProviderId = BENCHMARK_CANDIDATES_V1[0];
     expect(first).toBe("baidu");

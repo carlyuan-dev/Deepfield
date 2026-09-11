@@ -31,7 +31,7 @@ function retrievalContext(traceId: string) {
 describe("utility tool runtime assembly (focused revision)", () => {
   it("constructs without duplicate grants and freezes the registry", () => {
     const runtime = makeRuntime();
-    expect(runtime.registry.list()).toHaveLength(9);
+    expect(runtime.registry.list()).toHaveLength(10);
     expect(() =>
       runtime.registry.register({
         identity: { name: "echo_probe", version: 1 },
@@ -60,10 +60,21 @@ describe("utility tool runtime assembly (focused revision)", () => {
       "parse_html",
       "parse_pdf",
       "check_link_accessibility",
+      "web_search",
     ]);
     expect(runtime.registry.manifest().some((entry) => entry.identity.name === "echo_probe")).toBe(
       false,
     );
+  });
+
+  it("binds web_search to one trace and releases it with that trace", () => {
+    const runtime = makeRuntime(false);
+    const provider = { id: "test", capabilities: { timeRange: false }, search: async () => ({ provider: "test", results: [] }) };
+    runtime.bindSearchProvider("search-trace", provider, { maxCalls: 2, categoryCalls: { search: 1, fetch: 1 } });
+    expect(runtime.searchSessions.get("search-trace")).toBe(provider);
+    expect(runtime.createAgentTools({ traceId: "search-trace", actor: "main_agent", networkEnabled: true }).map((tool) => tool.name)).toContain("web_search");
+    expect(runtime.releaseTrace("search-trace")).toBe(true);
+    expect(runtime.searchSessions.has("search-trace")).toBe(false);
   });
 
   it("runs echo_probe directly when explicitly registered", async () => {

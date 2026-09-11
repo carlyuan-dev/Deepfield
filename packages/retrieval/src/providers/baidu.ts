@@ -31,6 +31,7 @@ export interface BaiduProviderDeps {
   token: string;
   /** Explicit header choice; NO default and no automatic retry with the other header. */
   authHeader: BaiduAuthHeader;
+  allowCustomEndpoint?: boolean;
 }
 
 function assertClientEndpoint(client: ProviderHttpClient, expected: ProviderEndpoint): void {
@@ -80,7 +81,7 @@ function normalizeBaiduDate(value: unknown): string | undefined {
 
 export function createBaiduProvider(deps: BaiduProviderDeps): SearchProvider {
   const { client, token, authHeader } = deps;
-  assertClientEndpoint(client, BAIDU_ENDPOINT);
+  if (deps.allowCustomEndpoint !== true) assertClientEndpoint(client, BAIDU_ENDPOINT);
   if (typeof token !== "string" || token.trim().length === 0) {
     throw new SearchProviderError("invalid_request");
   }

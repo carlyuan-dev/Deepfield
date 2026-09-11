@@ -38,6 +38,8 @@ export const SearchWebResultSchema = Type.Object(
     rank: Type.Integer({ minimum: 1, maximum: MAX_RESULTS }),
     provider: Type.String({ minLength: 1, maxLength: 64 }),
     date: Type.Optional(Type.String({ maxLength: 40 })),
+    publishedAt: Type.Optional(Type.String({ maxLength: 40 })),
+    sourceName: Type.Optional(Type.String({ maxLength: 2000 })),
   },
   { additionalProperties: false },
 );
@@ -84,10 +86,10 @@ function mapProviderError(error: SearchProviderError): ToolExecutionError {
  * and every provider error is a stable sanitized Tool code.
  */
 export function createSearchWebDefinition(
-  provider: SearchProvider,
+  provider: SearchProvider | ((traceId: string) => SearchProvider),
 ): ToolDefinition<typeof SearchWebInputSchema, typeof SearchWebOutputSchema> {
   return {
-    identity: { name: "search_web", version: 1 },
+    identity: { name: "web_search", version: 1 },
     label: "Search Web",
     description: "Search the web through a fixed configured search provider.",
     inputSchema: SearchWebInputSchema,
@@ -97,8 +99,9 @@ export function createSearchWebDefinition(
     retry: { maxRetries: 0, backoffMs: 0 },
     concurrency: 2,
     meter: { category: "search", countsBytes: false, countsTime: true },
-    async execute(input, _context, signal) {
+    async execute(input, context, signal) {
       try {
+        const activeProvider = typeof provider === "function" ? provider(context.traceId) : provider;
         // the schema enforces shapes; this enforces real dates and from <= to
         // so an illegal range never reaches a remote provider
         if (
@@ -109,7 +112,7 @@ export function createSearchWebDefinition(
         ) {
           throw new ToolExecutionError("invalid_input");
         }
-        if (input.timeRange !== undefined && !provider.capabilities.timeRange) {
+        if (input.timeRange !== undefined && !activeProvider.capabilities.timeRange) {
           throw new ToolExecutionError("invalid_input");
         }
         assertValidSearchRequest({
@@ -117,7 +120,7 @@ export function createSearchWebDefinition(
           maxResults: input.maxResults,
           ...(input.timeRange !== undefined ? { timeRange: input.timeRange } : {}),
         });
-        const response = await provider.search(
+        const response = await activeProvider.search(
           {
             query: input.query,
             maxResults: input.maxResults,
