@@ -19,6 +19,7 @@ describe("app paths", () => {
     const paths = createAppPaths(root);
     expect(paths.database).toBe(join(root, "deepfield.sqlite"));
     expect(paths.secretsFile).toBe(join(root, "secrets.json"));
+    expect(paths.settingsFile).toBe(join(root, "settings.json"));
     expect(paths.attachments).toBe(join(root, "attachments"));
     expect(existsSync(root)).toBe(true);
     expect(existsSync(paths.attachments)).toBe(true);

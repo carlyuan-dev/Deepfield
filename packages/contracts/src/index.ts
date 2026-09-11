@@ -9,3 +9,4 @@ export * from "./worker.js";
 export * from "./skills.js";
 export * from "./research.js";
 export * from "./company-research-templates.js";
+export * from "./settings.js";

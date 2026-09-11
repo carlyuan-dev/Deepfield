@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
+import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "./settings.js";
 import type { CapabilityItemId, CompanyId, ResearchRunId } from "./ids.js";
-import { DEFAULT_DEEPSEEK_MODEL_ID } from "./chat.js";
 import { CompanyProfileFieldsSchema } from "./capability-items.js";
 import { CompanyResearchTemplateSnapshotSchema, ResearchDirectionSchema } from "./company-research-templates.js";
 import type { JsonObject } from "./tools.js";
@@ -165,8 +165,8 @@ export type CompanyResearchState = Static<typeof CompanyResearchStateSchema>;
 const WorkerRequestFields = {
   requestId: IdSchema,
   runId: IdSchema,
-  apiKey: Type.String(),
-  modelId: Type.Literal(DEFAULT_DEEPSEEK_MODEL_ID),
+  llm: LlmRuntimeSnapshotSchema,
+  toolAccess: ToolAccessPolicySchema,
   context: CompanyResearchContextSchema,
   template: CompanyResearchTemplateSnapshotSchema,
 };
@@ -174,6 +174,7 @@ export const CompanyResearchRawWorkerRequestSchema = Type.Object({
   ...WorkerRequestFields,
   kind: Type.Literal("company-research.raw.run"),
   stage: Type.Literal("raw"),
+  search: SearchRuntimeSnapshotSchema,
 }, { additionalProperties: false });
 export type CompanyResearchRawWorkerRequest = Static<typeof CompanyResearchRawWorkerRequestSchema>;
 export const CompanyResearchStructureWorkerRequestSchema = Type.Object({

@@ -60,6 +60,7 @@ export interface SecretStoreCore {
   has(name: string): boolean;
   set(name: string, value: string): void;
   get(name: string): string | undefined;
+  delete(name: string): void;
 }
 
 const UNSUPPORTED_DIR_FSYNC_CODES = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EISDIR"]);
@@ -244,6 +245,14 @@ export function createSecretStoreCore(
       } catch {
         throw new SecretStoreCorruptError(filePath);
       }
+    },
+    delete(name: string): void {
+      assertNonBlank(name, "secret name");
+      const existing = readStore();
+      if (existing === undefined || !Object.prototype.hasOwnProperty.call(existing, name)) return;
+      delete existing[name];
+      ensureParentDirectory();
+      writeFileAtomically(Buffer.from(`${JSON.stringify(existing, null, 2)}\n`, "utf8"));
     },
   };
 }

@@ -29,6 +29,11 @@ import {
 afterEach(cleanupTempDirs);
 
 describe("secret store", () => {
+  it("deletes one secret without exposing other values", () => {
+    const store = new SecretStore(storePath(makeDir()), makeCrypto());
+    store.set("one", "first"); store.set("two", "second"); store.delete("one");
+    expect(store.get("one")).toBeUndefined(); expect(store.get("two")).toBe("second");
+  });
   it("never writes the plaintext API key", () => {
     const file = storePath(makeDir());
     const store = new SecretStore(file, makeCrypto());

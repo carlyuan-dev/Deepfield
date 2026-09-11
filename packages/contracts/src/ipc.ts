@@ -20,6 +20,13 @@ import type {
   StartCompanyResearchInput,
 } from "./research.js";
 import { StartCompanyResearchInputSchema } from "./research.js";
+import { LlmProfileDraftSchema, SearchProfileDraftSchema } from "./settings.js";
+
+export const SettingsGetArgsSchema = Type.Tuple([]);
+export const SettingsLlmDraftArgsSchema = Type.Tuple([LlmProfileDraftSchema]);
+export const SettingsSearchDraftArgsSchema = Type.Tuple([SearchProfileDraftSchema]);
+export const SettingsProfileIdArgsSchema = Type.Tuple([Type.Union([Type.String({ minLength: 1, maxLength: 200 }), Type.Null()])]);
+export const SettingsDeleteProfileArgsSchema = Type.Tuple([Type.String({ minLength: 1, maxLength: 200 })]);
 
 const CompanyResearchIdSchema = Type.String({ minLength: 1, maxLength: 200 });
 export const CompanyResearchStartArgsSchema = Type.Tuple([

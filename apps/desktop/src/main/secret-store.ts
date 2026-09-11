@@ -29,4 +29,5 @@ export class SecretStore {
   get(name: string): string | undefined {
     return this.core.get(name);
   }
+  delete(name: string): void { this.core.delete(name); }
 }

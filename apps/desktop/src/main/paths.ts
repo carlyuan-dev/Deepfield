@@ -5,6 +5,7 @@ export interface AppPaths {
   root: string;
   database: string;
   secretsFile: string;
+  settingsFile: string;
   attachments: string;
 }
 
@@ -29,6 +30,7 @@ export function createAppPaths(userDataRoot: string): AppPaths {
     root: userDataRoot,
     database: join(userDataRoot, "deepfield.sqlite"),
     secretsFile: join(userDataRoot, "secrets.json"),
+    settingsFile: join(userDataRoot, "settings.json"),
     attachments: join(userDataRoot, "attachments"),
   };
   mkdirSync(paths.root, { recursive: true });

@@ -1,6 +1,7 @@
 import { Type, type Static } from "typebox";
 import type { ConversationId, MessageId } from "./ids.js";
 import type { Conversation } from "./conversations.js";
+import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "./settings.js";
 
 export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-v4-flash" as const;
 
@@ -40,8 +41,9 @@ export const AgentWorkerRequestSchema = Type.Object(
     prompt: Type.String(),
     context: AgentContextSnapshotSchema,
     options: ChatRequestOptionsSchema,
-    apiKey: Type.String(),
-    modelId: Type.Literal(DEFAULT_DEEPSEEK_MODEL_ID),
+    llm: LlmRuntimeSnapshotSchema,
+    search: Type.Optional(SearchRuntimeSnapshotSchema),
+    toolAccess: ToolAccessPolicySchema,
   },
   { additionalProperties: false },
 );
