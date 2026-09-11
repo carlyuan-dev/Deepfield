@@ -66,21 +66,34 @@ describe("two-stage company research", () => {
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
     fake.companyResearch.getRun.mockResolvedValue(run);
     const view = render(<CompanyResearchPanel api={fake} {...context} companyName="当前公司名称" topicName="当前研究主题" />);
-    await screen.findByText("核心结论");
-    const header = screen.getByRole("region", { name: "报告研究背景" });
-    for (const value of ["历史公司名称", "历史公司全称", "历史别名", "历史总部", "2001-02-03", "历史业务", "历史研究主题", "历史主题范围", "历史候选备注", "历史新品范围", "2025-06-30"]) expect(within(header).getByText(value)).toBeTruthy();
-    expect(within(header).getByText(/HKEX.*1234/)).toBeTruthy();
-    expect(within(header).getByText("https://example.com/saved")).toBeTruthy();
+    const header = await screen.findByRole("region", { name: "报告研究背景" });
+    expect([...header.querySelectorAll("dt")].map((node) => node.textContent)).toEqual(["研究主题", "研究方向", "重点研究范围", "截止日期"]);
+    expect([...header.querySelectorAll("dd")].map((node) => node.textContent)).toEqual(["历史研究主题", "产品与技术", "历史新品范围", "2025-06-30"]);
     expect(screen.getByRole("option").textContent).toContain("截至 2025-06-30");
     expect(within(header).queryByRole("textbox")).toBeNull();
     expect(within(header).queryByRole("button")).toBeNull();
     view.rerender(<CompanyResearchPanel api={fake} {...context} companyName="再次改名" topicName="再次修改主题" topicScope="当前范围" />);
-    expect(within(header).getByText("历史公司名称")).toBeTruthy();
+    expect(within(header).getByText("历史研究主题")).toBeTruthy();
     expect(screen.queryByText("再次改名")).toBeNull();
     await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
     expect(screen.getByRole("region", { name: "报告研究背景" })).toBeTruthy();
     expect(screen.getByText("历史新品范围")).toBeTruthy();
     expect(await screen.findByText(/原始事实/)).toBeTruthy();
+  });
+
+  it("defaults completed reports to raw with the raw tab before the structured tab", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const run = researchRun();
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByRole("tab", { name: "结构化报告" });
+    expect(screen.getAllByRole("tab").map((node) => node.textContent)).toEqual(["原始调研报告", "结构化报告"]);
+    expect(screen.getByRole("tab", { name: "原始调研报告" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel").textContent).toContain("原始事实");
+    expect(within(screen.getByRole("tabpanel")).queryByText("核心结论")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "结构化报告" }));
+    expect(within(screen.getByRole("tabpanel")).getByText("核心结论")).toBeTruthy();
   });
 
   it.each(["resolve", "reject"] as const)("retains the streamed raw body across an empty structuring snapshot and detail %s without leaking across runs or navigation", async (outcome) => {
@@ -230,6 +243,7 @@ describe("two-stage company research", () => {
 
   it("renders persisted section order, statuses, and source text safely", async () => {
     const fake = makeFakeApi();
+    const user = userEvent.setup();
     const run = researchRun();
     const first = run.structuredContent!.sections[0]!;
     first.facts.push({ text: "<img src=x onerror=alert(1)>", timeContext: null, claimType: "forecast", source: { title: "<script>unsafe</script>", url: "javascript:alert(1)" } });
@@ -237,6 +251,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
     fake.companyResearch.getRun.mockResolvedValue(run);
     render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.click(await screen.findByRole("tab", { name: "结构化报告" }));
     expect(await screen.findByText("核心结论")).toBeTruthy();
     expect(within(screen.getByRole("tabpanel")).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["核心结论", "主要产品与定位", "核心技术与指标", "研发与产品阶段", "竞争力与替代方案", "技术瓶颈与路线图"]);
     for (const text of ["已找到", "部分找到", "未找到", "未披露", "存在冲突", "已报道事实", "预测", "2026年", "<img src=x onerror=alert(1)>", "<script>unsafe</script>"]) expect(screen.getByText(text)).toBeTruthy();
@@ -332,9 +347,11 @@ describe("two-stage company research", () => {
     await user.click(screen.getAllByRole("button", { name: "开始调研" })[1]!);
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
     act(() => fake.emitResearch({ type: "state_changed", runId: run.id, itemId: run.itemId, companyId: run.companyId }));
-    expect(await screen.findByText("核心结论")).toBeTruthy();
+    expect(await screen.findByText(/原始事实/)).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "结构化报告" })).toBeTruthy();
     await act(async () => pending.resolve(researchRun({ status: "researching" })));
-    expect(await screen.findByText("核心结论")).toBeTruthy();
+    expect(await screen.findByText(/原始事实/)).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "结构化报告" })).toBeTruthy();
     expect(screen.queryByText("正在联网调研…")).toBeNull();
   });
 

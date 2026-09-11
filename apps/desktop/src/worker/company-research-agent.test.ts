@@ -8,8 +8,122 @@ import { rawResearchRequest, structureResearchRequest, sse } from "./company-res
 const completed = { type: "response.completed", response: { status: "completed" } };
 const delta = (text: string) => ({ type: "response.output_text.delta", delta: text });
 const requests = [rawResearchRequest(), structureResearchRequest()];
+const dsmlOpen = "<｜｜DSML｜｜ calls>";
+const dsmlClose = "</｜｜DSML｜｜ calls>";
+const dsml = `${dsmlOpen}<｜｜DSML｜｜ invoke name="web_search">private-query</｜｜DSML｜｜ invoke>${dsmlClose}`;
+const visibleText = (events: CompanyResearchWorkerEvent[]) => events.flatMap((event) => event.type === "text_delta" ? [event.delta] : []).join("");
 
 describe("company research agent", () => {
+  describe("raw DSML boundary", () => {
+    it.each(["whole", "split"])("rejects two protocol-only responses (%s deltas) without exposing controls", async (chunks) => {
+      let calls = 0;
+      const events: CompanyResearchWorkerEvent[] = [];
+      const request = rawResearchRequest();
+      await createCompanyResearchAgent({ fetchFn: async () => {
+        calls++;
+        return new Response(sse(...(chunks === "whole" ? [dsml] : [...dsml]).map(delta), completed));
+      } }).run(request, (event) => events.push(event), new AbortController().signal);
+      expect(events).toEqual([
+        { requestId: request.requestId, runId: request.runId, stage: "raw", type: "started" },
+        { requestId: request.requestId, runId: request.runId, stage: "raw", type: "failed", code: "research_failed", message: "company research failed" },
+      ]);
+      expect(calls).toBe(2);
+    });
+
+    it.each(["whole", "split"])("streams only the report before/after multiple control blocks (%s deltas)", async (chunks) => {
+      let calls = 0;
+      const events: CompanyResearchWorkerEvent[] = [];
+      const text = `报告前文${dsml}报告后文${dsml}。普通 DSML 字样、<tag> 和反斜杠 \\ 不变。`;
+      const expected = "报告前文报告后文。普通 DSML 字样、<tag> 和反斜杠 \\ 不变。";
+      await createCompanyResearchAgent({ fetchFn: async () => {
+        calls++;
+        return new Response(sse(...(chunks === "whole" ? [text] : [...text]).map(delta), completed));
+      } }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(visibleText(events)).toBe(expected);
+      expect(events.at(-1)).toMatchObject({ type: "completed", text: expected });
+      expect(events.filter((event) => event.type === "completed")).toHaveLength(1);
+      expect(JSON.stringify(events)).not.toContain("private-query");
+      expect(calls).toBe(1);
+    });
+
+    it.each([dsml, "", " \n "])("retries empty filtered raw once then completes only the real report", async (first) => {
+      let calls = 0;
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(sse(delta(++calls === 1 ? first : "真实报告"), completed)) })
+        .run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(calls).toBe(2);
+      expect(visibleText(events)).toBe("真实报告");
+      expect(events.filter((event) => event.type !== "text_delta").map((event) => event.type)).toEqual(["started", "completed"]);
+      expect(events.at(-1)).toMatchObject({ type: "completed", text: "真实报告" });
+    });
+
+    it.each([dsml, ""])("does not filter or retry the structure stage", async (text) => {
+      let calls = 0;
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => { calls++; return new Response(sse(delta(text), completed)); } })
+        .run(structureResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(calls).toBe(1);
+      expect(visibleText(events)).toBe("");
+      expect(events.at(-1)).toMatchObject(text ? { type: "completed", text } : { type: "failed", code: "structuring_failed" });
+    });
+
+    it("cancels during the retry fetch with one terminal and releases both bodies", async () => {
+      let calls = 0; let disposed = 0;
+      const controller = new AbortController();
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => {
+        calls++;
+        if (calls === 2) controller.abort();
+        return new Response(new ReadableStream({ start(stream) {
+          stream.enqueue(new TextEncoder().encode(sse(delta(dsml), completed)));
+        }, cancel() { disposed++; } }));
+      } }).run(rawResearchRequest(), (event) => events.push(event), controller.signal);
+      await Promise.resolve();
+      expect(calls).toBe(2);
+      expect(events.map((event) => event.type)).toEqual(["started", "cancelled"]);
+      expect(disposed).toBe(2);
+    });
+
+    it.each([false, true])("counts oversized output even when hidden by DSML (hidden=%s)", async (hidden) => {
+      let calls = 0;
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => {
+        calls++;
+        return new Response(sse(delta((hidden ? dsmlOpen : "") + "x".repeat(1_000_001) + (hidden ? dsmlClose : "")), completed));
+      } }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(calls).toBe(1);
+      expect(events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(events.at(-1)).toMatchObject({ code: "research_failed" });
+    });
+
+    it("does not leak an unterminated control block", async () => {
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(sse(delta(`真实报告${dsmlOpen}private-query`), completed)) })
+        .run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(visibleText(events)).toBe("真实报告");
+      expect(events.at(-1)).toMatchObject({ type: "completed", text: "真实报告" });
+    });
+
+    it("does not flush a truncated DSML opening marker as a completed report", async () => {
+      let calls = 0;
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => {
+        calls++;
+        return new Response(sse(delta("<｜｜DSML｜｜ calls"), completed));
+      } }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(events.map((event) => event.type)).toEqual(["started", "failed"]);
+      expect(calls).toBe(2);
+    });
+
+    it("flushes an ordinary trailing less-than sign without treating prose as DSML", async () => {
+      const events: CompanyResearchWorkerEvent[] = [];
+      await createCompanyResearchAgent({ fetchFn: async () => new Response(sse(delta("普通正文 <"), completed)) })
+        .run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+      expect(visibleText(events)).toBe("普通正文 <");
+      expect(events.at(-1)).toMatchObject({ type: "completed", text: "普通正文 <" });
+    });
+  });
+
   it.each(requests)("isolates provider tools and visible output for $stage", async (request) => {
     let url: unknown;
     let init: RequestInit | undefined;

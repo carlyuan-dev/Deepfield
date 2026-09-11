@@ -18,12 +18,12 @@ function runLabel(run: ResearchRunSummary): string {
 }
 function ReportTabs({ run, rawText }: { run: KeyResearchRun | undefined; rawText: string }) {
   const completed = run?.status === "completed";
-  const [tab, setTab] = useState<"structured" | "raw">(completed ? "structured" : "raw");
+  const [tab, setTab] = useState<"structured" | "raw">("raw");
   return <>
     {run && <ResearchReportContext run={run} />}
     <div role="tablist" aria-label="报告视图" className="research-tabs">
-      {completed && <button role="tab" id="research-structured-tab" aria-controls="research-report-body" aria-selected={tab === "structured"} onClick={() => setTab("structured")}>结构化报告</button>}
       <button role="tab" id="research-raw-tab" aria-controls="research-report-body" aria-selected={tab === "raw"} onClick={() => setTab("raw")}>原始调研报告</button>
+      {completed && <button role="tab" id="research-structured-tab" aria-controls="research-report-body" aria-selected={tab === "structured"} onClick={() => setTab("structured")}>结构化报告</button>}
     </div>
     <div role="tabpanel" id="research-report-body" aria-labelledby={tab === "structured" ? "research-structured-tab" : "research-raw-tab"}>
       {tab === "structured" && run ? <StructuredResearchReport run={run} /> : <div className="company-report-text"><LinkifiedText text={rawText} /></div>}

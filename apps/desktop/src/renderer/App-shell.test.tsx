@@ -657,6 +657,7 @@ describe("app three-pane shell", () => {
         itemId: item.id, companyId: company.id, type: "state_changed",
       });
     });
+    await user.click(await screen.findByRole("tab", { name: "结构化报告" }));
     expect(await screen.findByText("核心结论")).toBeTruthy();
     await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
     const firstLink = await screen.findByRole("link", { name: "https://example.com/one" });
@@ -679,6 +680,8 @@ describe("app three-pane shell", () => {
       });
     });
 
+    expect(await screen.findByText("第二版报告")).toBeTruthy();
+    await user.click(await screen.findByRole("tab", { name: "结构化报告" }));
     expect(await screen.findByText("核心结论")).toBeTruthy();
     await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
     expect(await screen.findByText("第二版报告")).toBeTruthy();
