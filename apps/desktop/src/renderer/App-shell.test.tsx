@@ -568,7 +568,7 @@ describe("app three-pane shell", () => {
     expect(screen.getByRole("button", { name: "模型与密钥" }).getAttribute("aria-current")).toBe(
       "page",
     );
-    expect(screen.getByRole("heading", { name: "模型与密钥" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "模型与搜索" })).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "‹ 返回" }));
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();

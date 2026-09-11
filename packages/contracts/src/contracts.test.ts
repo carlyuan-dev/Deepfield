@@ -47,8 +47,17 @@ describe("agent worker request schema", () => {
       ],
     },
     options: { webSearch: false },
-    apiKey: "sk-test-only",
-    modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+    llm: {
+      id: "llm-1",
+      name: "DeepSeek",
+      provider: "deepseek",
+      protocol: "openai_compatible",
+      baseUrl: "https://api.deepseek.com",
+      modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+      contextWindow: 128_000,
+      apiKey: "sk-test-only",
+    },
+    toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
   } as const;
 
   it("accepts a valid worker request with strict nested messages", () => {
@@ -114,19 +123,19 @@ describe("agent worker request schema", () => {
     expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-v4-flash");
   });
 
-  it("locks the request model id to the fixed deepseek model", () => {
+  it("accepts configured model ids and rejects malformed model snapshots", () => {
     expect(
-      Value.Check(AgentWorkerRequestSchema, { ...validRequest, modelId: "deepseek-v4-flash" }),
+      Value.Check(AgentWorkerRequestSchema, {
+        ...validRequest,
+        llm: { ...validRequest.llm, modelId: "qwen-max" },
+      }),
     ).toBe(true);
     expect(
-      Value.Check(AgentWorkerRequestSchema, { ...validRequest, modelId: "deepseek-v4-pro" }),
+      Value.Check(AgentWorkerRequestSchema, {
+        ...validRequest,
+        llm: { ...validRequest.llm, baseUrl: "http://insecure.test" },
+      }),
     ).toBe(false);
-    const literal = (
-      AgentWorkerRequestSchema as unknown as {
-        properties: { modelId: { const?: string } };
-      }
-    ).properties.modelId;
-    expect(literal.const).toBe(DEFAULT_DEEPSEEK_MODEL_ID);
   });
 
   describe("chat request options and skill summaries", () => {
@@ -170,8 +179,6 @@ describe("agent worker request schema", () => {
           kind: "chat.prompt",
           prompt: "p",
           context: validRequest.context,
-          apiKey: "sk-test-only",
-          modelId: DEFAULT_DEEPSEEK_MODEL_ID,
         }),
       ).toBe(false);
     });

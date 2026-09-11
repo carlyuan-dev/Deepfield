@@ -25,8 +25,8 @@ const chatRequest = {
   prompt: "你好",
   context: { conversationId: "c1", systemPrompt: "sys", messages: [] },
   options: { webSearch: false },
-  apiKey: "sk-test-key",
-  modelId: "deepseek-v4-flash",
+  llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
+  toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
 };
 
 const toolRequest = {
@@ -49,12 +49,23 @@ const auditStartPayload = {
 
 const researchRequest = {
   requestId: "research-1", kind: "company-research.raw.run", runId: "run-1", stage: "raw",
-  apiKey: "sk-test-key", modelId: "deepseek-v4-flash",
+  llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
+  search: { id: "search-1", name: "Zhipu", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: {}, apiKey: "search-test-key" },
+  toolAccess: { network: "enabled", maxAgentTurns: 12, maxSearchCalls: 8, maxFetchCalls: 8 },
   context: { currentDate: "2026-09-11", companyName: "小米", topicName: "电池", direction: "product_and_technology", asOfDate: "2026-09-11" },
   template: {
     templateId: "product_and_technology", templateVersion: 1, title: "产品与技术",
     sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, title: "模块", coreQuestion: "问题", coverage: "覆盖", boundary: "边界" })),
   },
+};
+const { search: _rawSearch, ...researchWithoutSearch } = researchRequest;
+const structureRequest = {
+  ...researchWithoutSearch,
+  kind: "company-research.structure.run",
+  stage: "structure",
+  rawReportText: "# 原始报告",
+  outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+  toolAccess: { network: "disabled", maxAgentTurns: 1, maxSearchCalls: 0, maxFetchCalls: 0 },
 };
 
 describe("utility worker protocol", () => {
@@ -394,7 +405,7 @@ describe("two-stage company research protocol", () => {
     expect(Reflect.set(properties.coreSummary!, "maxItems", 100)).toBe(false);
     expect(Reflect.set(required, "0", "injectedField")).toBe(false);
 
-    const structure = { ...researchRequest, kind: "company-research.structure.run", stage: "structure", rawReportText: "# 原始报告", outputSchema: JSON.parse(JSON.stringify(STRUCTURED_RESEARCH_OUTPUT_SCHEMA)) };
+    const structure = { ...structureRequest, outputSchema: JSON.parse(JSON.stringify(STRUCTURED_RESEARCH_OUTPUT_SCHEMA)) };
     expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(true);
     structure.outputSchema.properties.coreSummary.maxItems = 100;
     expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(false);
@@ -402,7 +413,7 @@ describe("two-stage company research protocol", () => {
 
   it("requires raw and structure kinds, stage identity, snapshots and the fixed output schema", () => {
     expect(Value.Check(CompanyResearchWorkerRequestSchema, researchRequest)).toBe(true);
-    const structure = { ...researchRequest, kind: "company-research.structure.run", stage: "structure", rawReportText: "# 原始报告", outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA };
+    const structure = structureRequest;
     expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(true);
     expect(Value.Check(UtilityWorkerRequestSchema, JSON.parse(JSON.stringify(structure)))).toBe(true);
     for (const invalid of [

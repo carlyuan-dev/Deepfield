@@ -62,7 +62,7 @@ export function thinkingDelta(): AgentEvent {
 export const stubModel = {
   id: "deepseek-v4-flash",
   api: "openai-completions",
-  provider: "deepseek",
+  provider: "deepfield-llm-1",
 } as unknown as Model<Api>;
 
 export class FakePiAgent implements PiAgentHandle {

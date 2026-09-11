@@ -69,8 +69,8 @@ describe("pi chat agent lifecycle", () => {
     expect(assistantMessage.usage).toEqual(zeroUsage());
     expect(JSON.stringify(initialState.messages)).not.toContain("当前问题");
     expect(fake.promptedWith).toBe("当前问题");
-    expect(await options.getApiKey?.("deepseek")).toBe("sk-secret-test-key");
-    expect(await options.getApiKey?.("other")).toBeUndefined();
+    expect(await options.getApiKey?.("deepfield-llm-1")).toBe("sk-secret-test-key");
+    await expect(options.getApiKey?.("other")).rejects.toThrow("model request failed");
   });
 
   it("fails safely when the deepseek model is unavailable", async () => {
