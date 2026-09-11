@@ -130,7 +130,20 @@ describe("utility worker assembly (focused revision)", () => {
       "parse_html",
       "parse_pdf",
       "check_link_accessibility",
+      "web_search",
     ]);
+    loop.dispose();
+  });
+
+  it("exposes network tools only for a web-enabled request", async () => {
+    const agent = new FakePiAgent({ events: [{ type: "agent_start" } as AgentEvent, { type: "agent_end", messages: [] }] });
+    const endpoint = new InMemoryEndpoint();
+    const hostClient = { request: () => Promise.resolve({ acknowledged: true }), handleReply: () => undefined, dispose: () => undefined } as unknown as HostClient;
+    const { loop, toolRuntime } = createUtilityAssembly({ endpoint, agentMode: "pi", hostClient, piRuntime: makeRuntime(agent, stubModel) });
+    endpoint.emit(request({ webSearch: true })); await flushPending();
+    const names = (agent.receivedOptions?.initialState.tools ?? []).map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(["web_search", "fetch_url", "calculator"]));
+    expect(toolRuntime.searchSessions.has("req-1")).toBe(false);
     loop.dispose();
   });
 

@@ -1,7 +1,6 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
-  DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
   type ChatMessage,
@@ -12,9 +11,11 @@ import {
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { ContextBuilder } from "./context-builder.js";
-import type { AgentWorkerPort, ConversationTitleGenerator, SecretReader } from "./ports.js";
+import type { AgentWorkerPort, ConversationTitleGenerator, RuntimeProfileResolver } from "./ports.js";
 
 export const DEEPSEEK_KEY_NAME = "deepseek.apiKey";
+export const OFFLINE_CHAT_POLICY = { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 } as const;
+export const WEB_CHAT_POLICY = { network: "enabled", maxAgentTurns: 6, maxSearchCalls: 4, maxFetchCalls: 3 } as const;
 
 export type { ChatSendResult } from "@deepfield/contracts";
 
@@ -45,7 +46,7 @@ export class ChatService {
   constructor(
     private readonly repositories: Repositories,
     private readonly contextBuilder: ContextBuilder,
-    private readonly secrets: SecretReader,
+    private readonly profiles: RuntimeProfileResolver,
     private readonly worker: AgentWorkerPort,
     private readonly options: ChatServiceOptions = {},
   ) {}
@@ -63,9 +64,13 @@ export class ChatService {
     if (typeof requestId !== "string" || requestId.length === 0) {
       throw new ChatServiceError("request id must not be blank");
     }
-    const apiKey = this.secrets.get(DEEPSEEK_KEY_NAME);
-    if (apiKey === undefined || apiKey.trim().length === 0) {
-      throw new ChatServiceError("deepseek api key is not configured");
+    let llm;
+    try { llm = await this.profiles.resolveActiveLlm(); }
+    catch { throw new ChatServiceError("请先在设置中配置并启用 LLM Profile"); }
+    let search;
+    if (options.webSearch) {
+      try { search = await this.profiles.resolveActiveSearch(); }
+      catch { throw new ChatServiceError("请先在设置中配置并启用 Search Profile"); }
     }
     const conversation = this.repositories.conversations.getById(conversationId as ConversationId);
     if (!conversation) {
@@ -96,8 +101,9 @@ export class ChatService {
       prompt: content,
       context,
       options,
-      apiKey,
-      modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+      llm,
+      ...(search === undefined ? {} : { search }),
+      toolAccess: options.webSearch ? WEB_CHAT_POLICY : OFFLINE_CHAT_POLICY,
     };
 
     void this.consume(request, conversation.id, onEvent).catch(() => {

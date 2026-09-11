@@ -1,5 +1,5 @@
-import type { AgentWorkerEvent, AgentWorkerRequest, Conversation } from "@deepfield/contracts";
-import type { AgentWorkerPort, SecretReader } from "./ports.js";
+import type { AgentWorkerEvent, AgentWorkerRequest, Conversation, LlmRuntimeSnapshot, SearchRuntimeSnapshot } from "@deepfield/contracts";
+import type { AgentWorkerPort, RuntimeProfileResolver } from "./ports.js";
 import type { TestDb } from "./application-test-helpers.js";
 import { ChatService } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
@@ -47,13 +47,16 @@ export class FakeWorker implements AgentWorkerPort {
   }
 }
 
-export function makeSecrets(key: string | undefined): SecretReader & { getCalls: number } {
-  const reader: SecretReader & { getCalls: number } = {
+export function makeSecrets(key: string | undefined): RuntimeProfileResolver & { getCalls: number; searchCalls: number } {
+  const reader: RuntimeProfileResolver & { getCalls: number; searchCalls: number } = {
     getCalls: 0,
-    get: (name: string): string | undefined => {
+    searchCalls: 0,
+    resolveActiveLlm: async (): Promise<LlmRuntimeSnapshot> => {
       reader.getCalls += 1;
-      return name === "deepseek.apiKey" ? key : undefined;
+      if (!key?.trim()) throw new Error("missing");
+      return { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: key };
     },
+    resolveActiveSearch: async (): Promise<SearchRuntimeSnapshot> => { reader.searchCalls += 1; return { id: "search-1", name: "Search", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: { searchEngine: "search_std" }, apiKey: "search-key" }; },
   };
   return reader;
 }

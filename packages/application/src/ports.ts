@@ -6,10 +6,17 @@ import type {
   CompanyResearchStage,
   CompanyDraft,
   CompanyProfileFields,
+  LlmRuntimeSnapshot,
+  SearchRuntimeSnapshot,
 } from "@deepfield/contracts";
 
 export interface SecretReader {
   get(name: string): string | undefined;
+}
+
+export interface RuntimeProfileResolver {
+  resolveActiveLlm(): Promise<LlmRuntimeSnapshot>;
+  resolveActiveSearch(): Promise<SearchRuntimeSnapshot>;
 }
 
 export interface AgentWorkerPort {

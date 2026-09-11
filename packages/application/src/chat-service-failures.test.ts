@@ -3,7 +3,7 @@ import type { AgentWorkerEvent } from "@deepfield/contracts";
 import { ChatService } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
-import { chatEvent, deferred, FakeWorker, makeConversation } from "./chat-service-helpers.js";
+import { chatEvent, deferred, FakeWorker, makeConversation, makeSecrets } from "./chat-service-helpers.js";
 
 const dbs: TestDb[] = [];
 
@@ -16,7 +16,7 @@ afterEach(() => {
 function makeService(db: TestDb, worker: FakeWorker) {
   const contextBuilder = new ContextBuilder(db.repos);
   const finished = deferred();
-  const service = new ChatService(db.repos, contextBuilder, { get: () => "sk-configured" }, worker, {
+  const service = new ChatService(db.repos, contextBuilder, makeSecrets("sk-configured"), worker, {
     onConsumptionFinished: () => finished.resolve(),
   });
   return { service, finished };

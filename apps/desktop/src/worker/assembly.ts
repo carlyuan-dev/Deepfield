@@ -11,10 +11,6 @@ import {
 } from "./host-client.js";
 import { createToolRuntime, type UtilityToolRuntime } from "./tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import {
-  createDeepSeekWebSearchAgent,
-  routeWebSearchChatAgent,
-} from "./deepseek-web-search-agent.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
 import type { ResearchAgent } from "./message-loop.js";
 
@@ -99,10 +95,7 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
   const agent = selectChatAgent(deps.agentMode, {
     fake: () => createFakeChatAgent(),
     pi: () =>
-      routeWebSearchChatAgent(
-        createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
-        createDeepSeekWebSearchAgent(skills === undefined ? {} : { skills }),
-      ),
+      createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
   });
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     toolRuntime,

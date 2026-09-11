@@ -124,6 +124,7 @@ void app.whenReady().then(async () => {
   appRuntime = createApplicationRuntime({
     repositories,
     secrets,
+    profiles,
     worker: {
       send: (request) => {
         const client = agentRuntime?.client;

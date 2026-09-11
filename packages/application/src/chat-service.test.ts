@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type ChatMessage,
   type ChatRequestOptions,
 } from "@deepfield/contracts";
-import { ChatService, ChatServiceError, titleFromFirstMessage } from "./chat-service.js";
+import { ChatService, ChatServiceError, WEB_CHAT_POLICY, titleFromFirstMessage } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 import {
@@ -25,6 +24,13 @@ afterEach(() => {
 });
 
 describe("chat service", () => {
+  it("snapshots LLM once and Search only for web-enabled messages", async () => {
+    const db = openTestDb(); dbs.push(db); const worker = new FakeWorker(); const resolver = makeSecrets("sk-configured");
+    const service = new ChatService(db.repos, new ContextBuilder(db.repos), resolver, worker); const conversation = makeConversation(db);
+    await service.send(conversation.id, "联网问题", "req-web", () => {}, { webSearch: true });
+    expect(resolver.getCalls).toBe(1); expect(resolver.searchCalls).toBe(1);
+    expect(worker.requests[0]).toMatchObject({ toolAccess: WEB_CHAT_POLICY, search: { id: "search-1" }, llm: { id: "llm-1" } });
+  });
   it("rejects blank content before any secret, db or worker access", async () => {
     const db = openTestDb();
     dbs.push(db);
@@ -123,8 +129,8 @@ describe("chat service", () => {
       requestId: "req-1",
       kind: "chat.prompt",
       prompt: content,
-      modelId: DEFAULT_DEEPSEEK_MODEL_ID,
-      apiKey: "sk-configured",
+      llm: expect.objectContaining({ modelId: "deepseek-v4-flash", apiKey: "sk-configured" }),
+      toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
       options: skillOptions,
     });
     expect(request.context.conversationId).toBe(conversation.id);

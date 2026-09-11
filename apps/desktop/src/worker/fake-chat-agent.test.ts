@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
 } from "@deepfield/contracts";
@@ -13,8 +12,8 @@ function request(): AgentWorkerRequest {
     prompt: "当前问题",
     context: { conversationId: "c1", systemPrompt: "sys", messages: [] },
     options: { webSearch: false },
-    apiKey: "sk-fake-secret",
-    modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: "sk-fake-secret" },
+    toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
   };
 }
 

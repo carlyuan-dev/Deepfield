@@ -39,4 +39,5 @@ export type {
   ProviderKeyReader,
   RequestIdFactory,
   SecretReader,
+  RuntimeProfileResolver,
 } from "./ports.js";

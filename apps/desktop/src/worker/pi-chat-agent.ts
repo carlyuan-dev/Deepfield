@@ -1,10 +1,9 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentEvent, AgentOptions, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
-import { createModels } from "@earendil-works/pi-ai";
-import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
-  DEFAULT_DEEPSEEK_MODEL_ID,
+  type LlmRuntimeSnapshot,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
 } from "@deepfield/contracts";
@@ -16,6 +15,8 @@ import {
 } from "./runtime-system-context.js";
 import type { PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { safeToolActivity, type SafeToolActivity } from "./tool-activity.js";
+import { PiModelGateway, type ModelGateway } from "../shared/model-gateway.js";
+import { createSearchProvider, type SearchProvider } from "@deepfield/retrieval";
 
 const OFFLINE_SYSTEM_PROMPT = [
   "本轮未启用联网搜索，不能访问用户提供的网页，也不能获取最新或实时信息。",
@@ -48,7 +49,7 @@ export interface PiAgentHandle {
 }
 
 export interface PiRuntime {
-  createSession(): PiSession | undefined;
+  createSession(snapshot: LlmRuntimeSnapshot): PiSession | undefined;
   createAgent(options: AgentOptions): PiAgentHandle;
 }
 
@@ -56,20 +57,16 @@ export interface PiToolSessionProvider {
   createAgentTools(context: {
     traceId: string;
     actor: "main_agent";
+    networkEnabled?: boolean;
   }): AgentTool<any>[];
+  bindSearchProvider(traceId: string, provider: SearchProvider, limits?: { maxCalls?: number; categoryCalls?: { search?: number; fetch?: number } }): void;
   releaseTrace(traceId: string): boolean;
 }
 
-export function defaultPiRuntime(): PiRuntime {
+export function defaultPiRuntime(gateway: ModelGateway = new PiModelGateway()): PiRuntime {
   return {
-    createSession() {
-      const models = createModels();
-      models.setProvider(deepseekProvider());
-      const model = models.getModel("deepseek", DEFAULT_DEEPSEEK_MODEL_ID);
-      if (!model) {
-        return undefined;
-      }
-      return { model, streamFn: models.streamSimple.bind(models) };
+    createSession(snapshot) {
+      return { model: gateway.createModel(snapshot), streamFn: streamSimple };
     },
     createAgent(options) {
       return new Agent(options);
@@ -102,6 +99,8 @@ export function createPiChatAgent(
   skills?: SkillCatalogProvider,
   runtimeContext: RuntimeSystemContextOptions = {},
   toolSessions?: PiToolSessionProvider,
+  gateway: ModelGateway = new PiModelGateway(),
+  searchProviderFactory: (snapshot: NonNullable<AgentWorkerRequest["search"]>) => SearchProvider = createSearchProvider,
 ): ChatAgent {
   return {
     async run(
@@ -109,9 +108,9 @@ export function createPiChatAgent(
       emit: (event: AgentWorkerEvent) => void,
       signal: AbortSignal,
     ): Promise<void> {
-      const session = runtime.createSession();
+      const session = runtime.createSession(request.llm);
       if (!session) {
-        throw new PiChatAgentError("deepseek model is not available");
+        throw new PiChatAgentError("configured model is not available");
       }
 
       const skillName = request.options.skillName;
@@ -132,6 +131,13 @@ export function createPiChatAgent(
       }
 
       try {
+        if (request.toolAccess.network === "enabled") {
+          if (request.search === undefined || toolSessions === undefined) throw new PiChatAgentError("search is not configured");
+          toolSessions.bindSearchProvider(request.requestId, searchProviderFactory(request.search), {
+            maxCalls: request.toolAccess.maxSearchCalls + request.toolAccess.maxFetchCalls + 8,
+            categoryCalls: { search: request.toolAccess.maxSearchCalls, fetch: request.toolAccess.maxFetchCalls },
+          });
+        }
         const requestTools =
           toolSessions === undefined
             ? tools
@@ -140,6 +146,7 @@ export function createPiChatAgent(
                 ...toolSessions.createAgentTools({
                   traceId: request.requestId,
                   actor: "main_agent",
+                  networkEnabled: request.toolAccess.network === "enabled",
                 }),
               ];
         let finalText = "";
@@ -195,9 +202,10 @@ export function createPiChatAgent(
             thinkingLevel: "off",
           },
           streamFn: session.streamFn,
-          getApiKey: (provider) => (provider === "deepseek" ? request.apiKey : undefined),
+          getApiKey: (provider) => gateway.getApiKey(request.llm, provider),
           sessionId: request.context.conversationId,
           toolExecution: "sequential",
+          shouldStopAfterTurn: ({ newMessages }) => newMessages.filter((message) => message.role === "assistant").length >= request.toolAccess.maxAgentTurns,
         });
 
         const abort = (): void => agent.abort();

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
-import { DEFAULT_DEEPSEEK_MODEL_ID } from "@deepfield/contracts";
 import { MAIN_AGENT_SYSTEM_PROMPT } from "@deepfield/application";
 import { createPiChatAgent, PiChatAgentError, type SkillCatalogProvider } from "./pi-chat-agent.js";
 import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
@@ -284,17 +283,15 @@ it.skipIf(!hasSmokeKey)(
     const events: AgentWorkerEvent[] = [];
     const controller = new AbortController();
     const smokeRequest: AgentWorkerRequest = {
+      ...request({ webSearch: false }),
       requestId: "smoke-1",
-      kind: "chat.prompt",
       prompt: "只回复 OK",
       context: {
         conversationId: "c1",
         systemPrompt: "你是 Deepfield 的主 Agent",
         messages: [],
       },
-      options: { webSearch: false },
-      apiKey: process.env.DEEPSEEK_API_KEY ?? "",
-      modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+      llm: { ...request().llm, apiKey: process.env.DEEPSEEK_API_KEY ?? "" },
     };
     await agent.run(smokeRequest, (event) => events.push(event), controller.signal);
     const completed = events.find((event) => event.type === "completed");

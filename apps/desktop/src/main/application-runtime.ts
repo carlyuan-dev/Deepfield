@@ -18,6 +18,7 @@ import {
 export interface ApplicationRuntimeDeps {
   repositories: Repositories;
   secrets: SecretReader;
+  profiles: import("@deepfield/application").RuntimeProfileResolver;
   worker: AgentWorkerPort & CompanyResearchWorkerPort;
   llmHelpers?: CompanyRecognizer & CompanyCompleter & ConversationTitleGenerator;
   companyRecognizer?: CompanyRecognizer;
@@ -46,7 +47,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
   const chatService = new ChatService(
     deps.repositories,
     contextBuilder,
-    deps.secrets,
+    deps.profiles,
     deps.worker,
     titleGenerator === undefined ? {} : { titleGenerator },
   );

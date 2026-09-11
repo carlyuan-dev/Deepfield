@@ -267,7 +267,7 @@ smoke("deepseek tool calling smoke (opt-in, offline echo_probe)", () => {
     const agent = createPiChatAgent(undefined, tools);
     const events: { type: string }[] = [];
     await agent.run(
-      { ...request(), apiKey: process.env.DEEPSEEK_API_KEY as string },
+      { ...request(), llm: { ...request().llm, apiKey: process.env.DEEPSEEK_API_KEY as string } },
       (event) => events.push(event),
       new AbortController().signal,
     );

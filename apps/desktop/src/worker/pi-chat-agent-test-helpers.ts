@@ -1,7 +1,6 @@
 import type { AgentOptions, AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import {
-  DEFAULT_DEEPSEEK_MODEL_ID,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
   type ChatRequestOptions,
@@ -134,6 +133,7 @@ export function makeRuntime(agent: FakePiAgent, model?: Model<Api>): PiRuntime {
 }
 
 export function request(options?: ChatRequestOptions): AgentWorkerRequest {
+  const chatOptions = options ?? { webSearch: false };
   return {
     requestId: "req-1",
     kind: "chat.prompt",
@@ -146,9 +146,10 @@ export function request(options?: ChatRequestOptions): AgentWorkerRequest {
         { role: "assistant", content: "历史助手", timestamp: 2 },
       ],
     },
-    options: options ?? { webSearch: false },
-    apiKey: "sk-secret-test-key",
-    modelId: DEFAULT_DEEPSEEK_MODEL_ID,
+    options: chatOptions,
+    llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: "sk-secret-test-key" },
+    ...(chatOptions.webSearch ? { search: { id: "search-1", name: "Search", provider: "zhipu" as const, baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: { searchEngine: "search_std" }, apiKey: "search-secret" } } : {}),
+    toolAccess: chatOptions.webSearch ? { network: "enabled", maxAgentTurns: 6, maxSearchCalls: 4, maxFetchCalls: 3 } : { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
   };
 }
 
