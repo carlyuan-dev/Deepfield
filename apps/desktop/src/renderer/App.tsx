@@ -23,6 +23,7 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const conversations = useConversations(api);
   const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspaceState);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [generationDeleteError, setGenerationDeleteError] = useState<string | undefined>(undefined);
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "connected" | "disconnected">(
     "checking",
   );
@@ -93,6 +94,17 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
         onOpenConversation={(conversationId) => {
           conversations.open(conversationId);
           openConversation();
+        }}
+        deletionError={generationDeleteError ?? conversations.deletionError}
+        onDeleteConversation={(conversationId) => {
+          if (eventHub.isConversationActive(conversationId)) {
+            setGenerationDeleteError("对话生成中，请等待完成后再删除");
+            return;
+          }
+          setGenerationDeleteError(undefined);
+          if (window.confirm("确定删除这个对话吗？此操作无法撤销。")) {
+            void conversations.deleteConversation(conversationId);
+          }
         }}
         onOpenResearch={() =>
           dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId: "industry-research" })

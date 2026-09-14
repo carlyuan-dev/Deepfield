@@ -112,6 +112,18 @@ describe("standalone conversation persistence", () => {
     expect((repos.toolExecutions as any).listByConversation(conversation.id)).toMatchObject([{ traceId: "req-1", toolName: "web_search", status: "failed", errorCode: "timeout", durationMs: 1000 }]);
   });
 
+  it("deletes a conversation with its messages and linked tool executions", () => {
+    const { db } = openTestDb(); const repos = createRepositories(db);
+    const conversation = repos.conversations.create();
+    repos.messages.append(conversation.id, "user", "问题", "req-delete");
+    repos.toolExecutions.start({ id: "tool-delete", traceId: "req-delete", actor: "main_agent", toolName: "fetch_url", toolVersion: 1, startedAt: "2026-09-14T00:00:00.000Z" });
+
+    expect((repos.conversations as any).delete(conversation.id)).toBe(true);
+    expect(repos.conversations.getById(conversation.id)).toBeUndefined();
+    expect(repos.messages.listByConversation(conversation.id)).toEqual([]);
+    expect(repos.toolExecutions.getById("tool-delete")).toBeUndefined();
+  });
+
   it("returns the newest N messages in chronological order", () => {
     const { db } = openTestDb();
     const repos = createRepositories(db);

@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
   companyResearchSubscribe: "deepfield:companyResearch:subscribe",
   companyResearchEvents: "deepfield:companyResearch:events",
   conversationsCreate: "deepfield:conversations:create",
+  conversationsDelete: "deepfield:conversations:delete",
   conversationsOpenInitial: "deepfield:conversations:openInitial",
   conversationsListRecent: "deepfield:conversations:listRecent",
   settingsGet: "deepfield:settings:get",
@@ -78,6 +79,8 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
   return {
     conversations: {
       create: () => ipc.invoke(IPC_CHANNELS.conversationsCreate) as Promise<Conversation>,
+      delete: (conversationId) =>
+        ipc.invoke(IPC_CHANNELS.conversationsDelete, conversationId) as Promise<void>,
       openInitial: () =>
         ipc.invoke(IPC_CHANNELS.conversationsOpenInitial) as Promise<{
           active: Conversation;

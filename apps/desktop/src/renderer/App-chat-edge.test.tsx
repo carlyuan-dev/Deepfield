@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
@@ -26,6 +26,33 @@ async function openConversation(user: ReturnType<typeof userEvent.setup>, label:
 }
 
 describe("app chat edge cases", () => {
+  it("confirms idle deletion and falls back from the active conversation", async () => {
+    const fake = makeFakeApi();
+    const first = conversation("p1", "人形机器人", true);
+    const second = conversation("p2", "低空经济", true);
+    fake.conversations.openInitial.mockResolvedValue({ active: first, recent: [first, second] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { user } = await renderApp(fake);
+    await openConversation(user, "人形机器人");
+    await user.click(screen.getByRole("button", { name: "删除人形机器人" }));
+    await waitFor(() => expect(fake.conversations.delete).toHaveBeenCalledWith("p1"));
+    expect(screen.getByRole("button", { name: "低空经济" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("rejects deletion while that conversation is generating", async () => {
+    const fake = makeFakeApi(); const active = conversation("p1", "人形机器人", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.send.mockImplementation(() => new Promise(() => {}));
+    const confirm = vi.spyOn(window, "confirm").mockClear().mockReturnValue(true);
+    const { user } = await renderApp(fake); await openConversation(user, "人形机器人");
+    await user.type(screen.getByLabelText("消息输入"), "问题");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(screen.getByRole("button", { name: "删除人形机器人" }));
+    expect(await screen.findByText("对话生成中，请等待完成后再删除")).toBeTruthy();
+    expect(fake.conversations.delete).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it("routes early events to the originating conversation even after switching", async () => {
     const fake = makeFakeApi();
     const first = conversation("p1", "人形机器人", true);

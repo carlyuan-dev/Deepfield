@@ -182,6 +182,28 @@ h3,
   overflow-y: auto;
 }
 
+.nav-conversation-row {
+  display: flex;
+  align-items: center;
+}
+
+.nav-conversation-open {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nav-conversation-delete {
+  flex: 0 0 auto;
+  opacity: 0;
+  padding-inline: 8px;
+  color: var(--muted);
+}
+
+.nav-conversation-row:hover .nav-conversation-delete,
+.nav-conversation-delete:focus-visible {
+  opacity: 1;
+}
+
 .nav-error {
   margin: 4px 10px;
   color: var(--danger);

@@ -11,6 +11,8 @@ export interface SidebarProps {
   mode?: "main" | "settings";
   onNewConversation(): void;
   onOpenConversation(conversationId: string): void;
+  onDeleteConversation(conversationId: string): void;
+  deletionError: string | undefined;
   onOpenResearch(): void;
   onOpenSettings(): void;
   onBackFromSettings(): void;
@@ -24,6 +26,8 @@ export function Sidebar({
   mode = "main",
   onNewConversation,
   onOpenConversation,
+  onDeleteConversation,
+  deletionError,
   onOpenResearch,
   onOpenSettings,
   onBackFromSettings,
@@ -79,18 +83,28 @@ export function Sidebar({
       <div className="nav-section-title">对话</div>
       <ul className="nav-projects">
         {conversations.map((conversation) => (
-          <li key={conversation.id}>
+          <li key={conversation.id} className="nav-conversation-row">
             <button
-              className={activeConversationId === conversation.id ? "active" : ""}
+              className={`nav-conversation-open ${activeConversationId === conversation.id ? "active" : ""}`}
               aria-current={activeConversationId === conversation.id ? "page" : undefined}
               onClick={() => onOpenConversation(conversation.id)}
             >
               {conversation.title}
             </button>
+            <button
+              type="button"
+              className="nav-conversation-delete"
+              aria-label={`删除${conversation.title}`}
+              title="删除对话"
+              onClick={() => onDeleteConversation(conversation.id)}
+            >
+              ×
+            </button>
           </li>
         ))}
         {conversations.length === 0 && <li className="muted">暂无对话</li>}
       </ul>
+      {deletionError !== undefined && <p className="nav-error" role="alert">{deletionError}</p>}
       <div className="nav-section-title">工作流</div>
       <ul className="nav-primary">
         <li>

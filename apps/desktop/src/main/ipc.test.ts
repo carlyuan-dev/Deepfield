@@ -46,6 +46,7 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.companyResearchRetryStructuring,
         IPC_CHANNELS.companyResearchSubscribe,
         IPC_CHANNELS.conversationsCreate,
+        IPC_CHANNELS.conversationsDelete,
         IPC_CHANNELS.conversationsOpenInitial,
         IPC_CHANNELS.conversationsListRecent,
         IPC_CHANNELS.settingsGet, IPC_CHANNELS.settingsSaveLlmProfile, IPC_CHANNELS.settingsActivateLlmProfile, IPC_CHANNELS.settingsDeleteLlmProfile, IPC_CHANNELS.settingsDiagnoseLlm,
@@ -57,6 +58,14 @@ describe("ipc handlers", () => {
     );
     expect(ipcMain.handlers.has(IPC_CHANNELS.chatEvents)).toBe(false);
     expect(ipcMain.handlers.has(IPC_CHANNELS.companyResearchEvents)).toBe(false);
+  });
+
+  it("validates and delegates conversation deletion", async () => {
+    const { ipcMain, conversations } = makeDeps();
+    const sender = new FakeWebContents(1);
+    await ipcMain.invoke(IPC_CHANNELS.conversationsDelete, event(sender), CONVERSATION_ID);
+    expect((conversations as any).deleteCalls).toEqual([CONVERSATION_ID]);
+    await expect(ipcMain.invoke(IPC_CHANNELS.conversationsDelete, event(sender), "")).rejects.toThrow();
   });
 
   it("validates research item input before delegating", async () => {

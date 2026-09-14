@@ -6,8 +6,10 @@ export interface ConversationController {
   activeConversation: Conversation | undefined;
   loading: boolean;
   error: string | undefined;
+  deletionError: string | undefined;
   open(id: string): void;
   newConversation(): Promise<void>;
+  deleteConversation(id: string): Promise<void>;
   acceptUpdated(conversation: Conversation): void;
   retry(): void;
 }
@@ -19,6 +21,7 @@ export function useConversations(api: DesktopApi): ConversationController {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [deletionError, setDeletionError] = useState<string | undefined>(undefined);
 
   const loadInitial = useCallback((): void => {
     setLoading(true);
@@ -82,6 +85,20 @@ export function useConversations(api: DesktopApi): ConversationController {
     );
   }, []);
 
+  const deleteConversation = useCallback(async (id: string): Promise<void> => {
+    setDeletionError(undefined);
+    try {
+      await api.conversations.delete(id);
+      const remaining = conversations.filter((conversation) => conversation.id !== id);
+      setConversations(remaining);
+      if (activeConversation?.id === id) {
+        setActiveConversation(remaining[0] ?? await api.conversations.create());
+      }
+    } catch {
+      setDeletionError("删除对话失败");
+    }
+  }, [api, conversations, activeConversation]);
+
   const retry = useCallback((): void => {
     loadInitial();
   }, [loadInitial]);
@@ -91,8 +108,10 @@ export function useConversations(api: DesktopApi): ConversationController {
     activeConversation,
     loading,
     error,
+    deletionError,
     open,
     newConversation,
+    deleteConversation,
     acceptUpdated,
     retry,
   };

@@ -27,6 +27,7 @@ export const SettingsLlmDraftArgsSchema = Type.Tuple([LlmProfileDraftSchema]);
 export const SettingsSearchDraftArgsSchema = Type.Tuple([SearchProfileDraftSchema]);
 export const SettingsProfileIdArgsSchema = Type.Tuple([Type.Union([Type.String({ minLength: 1, maxLength: 200 }), Type.Null()])]);
 export const SettingsDeleteProfileArgsSchema = Type.Tuple([Type.String({ minLength: 1, maxLength: 200 })]);
+export const ConversationDeleteArgsSchema = Type.Tuple([Type.String({ minLength: 1, maxLength: 200 })]);
 
 const CompanyResearchIdSchema = Type.String({ minLength: 1, maxLength: 200 });
 export const CompanyResearchStartArgsSchema = Type.Tuple([
@@ -52,6 +53,7 @@ export type LlmConnectionStatus = "connected" | "disconnected";
 export interface DesktopApi {
   conversations: {
     create(): Promise<Conversation>;
+    delete(conversationId: string): Promise<void>;
     openInitial(): Promise<{ active: Conversation; recent: Conversation[] }>;
     listRecent(): Promise<Conversation[]>;
   };

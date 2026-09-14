@@ -31,6 +31,7 @@ import type {
 export interface FakeDesktopApi extends DesktopApi {
   conversations: {
     create: Mock<() => Promise<Conversation>>;
+    delete: Mock<(id: string) => Promise<void>>;
     openInitial: Mock<() => Promise<{ active: Conversation; recent: Conversation[] }>>;
     listRecent: Mock<() => Promise<Conversation[]>>;
   };
@@ -138,6 +139,7 @@ export function makeFakeApi(): FakeDesktopApi {
   const api = {
     conversations: {
       create: vi.fn(async (): Promise<Conversation> => conversationFixture()),
+      delete: vi.fn(async (): Promise<void> => {}),
       openInitial: vi.fn(
         async (): Promise<{ active: Conversation; recent: Conversation[] }> => {
           const active = conversationFixture();

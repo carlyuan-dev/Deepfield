@@ -1,4 +1,4 @@
-import type { Conversation } from "@deepfield/contracts";
+import type { Conversation, ConversationId } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 
 export class ConversationService {
@@ -16,5 +16,9 @@ export class ConversationService {
 
   listRecent(): Conversation[] {
     return this.repositories.conversations.listRecent();
+  }
+
+  delete(conversationId: ConversationId): void {
+    this.repositories.conversations.delete(conversationId);
   }
 }

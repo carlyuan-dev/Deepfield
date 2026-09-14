@@ -13,6 +13,7 @@ export interface ChatEventHub {
   emit(event: AgentWorkerEvent): void;
   subscribe(listener: ChatListener): () => void;
   activeCount(): number;
+  isConversationActive(conversationId: string): boolean;
   dispose(): void;
 }
 
@@ -69,6 +70,9 @@ export function createChatEventHub(): ChatEventHub {
     },
     activeCount() {
       return requestConversations.size;
+    },
+    isConversationActive(conversationId) {
+      return [...requestConversations.values()].some((value) => value === conversationId);
     },
     dispose() {
       listeners.clear();

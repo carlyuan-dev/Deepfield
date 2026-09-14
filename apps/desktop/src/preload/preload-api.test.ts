@@ -70,7 +70,7 @@ describe("preload api", () => {
       "settings",
       "skills",
     ]);
-    expect(Object.keys(api.conversations).sort()).toEqual(["create", "listRecent", "openInitial"]);
+    expect(Object.keys(api.conversations).sort()).toEqual(["create", "delete", "listRecent", "openInitial"]);
     expect(Object.keys(api.industryResearch).sort()).toEqual([
       "addCompanies",
       "addCompany",
@@ -103,6 +103,13 @@ describe("preload api", () => {
     expect(JSON.stringify(api)).not.toContain("ipcRenderer");
     expect(JSON.stringify(api)).not.toContain("apiKey");
     expect(JSON.stringify(api)).not.toContain("deepseek");
+  });
+
+  it("forwards conversation deletion through its fixed channel", async () => {
+    const { ipc, invokes } = makeFakeIpc();
+    const api = createPreloadApi(ipc);
+    await (api.conversations as any).delete("conversation-1");
+    expect(invokes).toContainEqual({ channel: IPC_CHANNELS.conversationsDelete, args: ["conversation-1"] });
   });
 
   it("maps method calls to fixed channels", async () => {

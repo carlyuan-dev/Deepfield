@@ -2,6 +2,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import {
   ChatRequestOptionsSchema,
+  ConversationDeleteArgsSchema,
   CompanyResearchCancelArgsSchema,
   CompanyResearchGetRunArgsSchema,
   CompanyResearchRetryStructuringArgsSchema,
@@ -82,6 +83,7 @@ export interface IndustryResearchServiceLike {
 
 export interface ConversationServiceLike {
   create(): Conversation;
+  delete(conversationId: string): void;
   openInitial(): { active: Conversation; recent: Conversation[] };
   listRecent(): Conversation[];
 }
@@ -162,6 +164,7 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.companyResearchRetryStructuring,
   IPC_CHANNELS.companyResearchSubscribe,
   IPC_CHANNELS.conversationsCreate,
+  IPC_CHANNELS.conversationsDelete,
   IPC_CHANNELS.conversationsOpenInitial,
   IPC_CHANNELS.conversationsListRecent,
   IPC_CHANNELS.settingsGet,
@@ -506,6 +509,13 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
       throw new Error("invalid conversation input");
     }
     return deps.conversations.create();
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.conversationsDelete, async (_event, ...args) => {
+    if (!Value.Check(ConversationDeleteArgsSchema, args)) {
+      throw new Error("invalid conversation input");
+    }
+    deps.conversations.delete(args[0]);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.conversationsOpenInitial, async (_event, ...args) => {

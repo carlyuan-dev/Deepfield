@@ -81,6 +81,7 @@ export interface ConversationRepository {
   listRecent(): Conversation[];
   activate(conversationId: ConversationId, title: string): Conversation;
   updateTitle(conversationId: ConversationId, title: string): Conversation;
+  delete(conversationId: ConversationId): boolean;
 }
 
 export interface MessageRepository {

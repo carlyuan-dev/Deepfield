@@ -224,6 +224,7 @@ export class FakeConversationService {
   createCalls = 0;
   openInitialCalls = 0;
   listRecentCalls = 0;
+  deleteCalls: string[] = [];
   recent: Conversation[] = [];
   initialActive: Conversation | undefined;
 
@@ -242,6 +243,10 @@ export class FakeConversationService {
     const created = this.makeConversation(`c-created-${this.createCalls}`);
     this.initialActive = created;
     return created;
+  }
+
+  delete(conversationId: string): void {
+    this.deleteCalls.push(conversationId);
   }
 
   openInitial(): { active: Conversation; recent: Conversation[] } {

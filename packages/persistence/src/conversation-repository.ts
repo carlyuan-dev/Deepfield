@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Conversation, ConversationId } from "@deepfield/contracts";
 import { toConversation } from "./mappers.js";
 import type { ConversationRepository, ConversationRow, NewConversation } from "./types.js";
+import { runInTransaction } from "./transactions.js";
 
 export const BLANK_CONVERSATION_TITLE = "新对话";
 
@@ -92,6 +93,20 @@ export function createConversationRepository(db: DatabaseSync): ConversationRepo
         throw new Error(`conversation not found: ${conversationId}`);
       }
       return toConversation(updated);
+    },
+
+    delete(conversationId: ConversationId): boolean {
+      return runInTransaction(db, () => {
+        db.prepare(
+          `DELETE FROM tool_executions
+           WHERE trace_id IN (
+             SELECT request_id FROM messages
+             WHERE conversation_id = ? AND request_id IS NOT NULL
+           )`,
+        ).run(conversationId);
+        const result = db.prepare("DELETE FROM conversations WHERE id = ?").run(conversationId);
+        return result.changes > 0;
+      });
     },
   };
 }
