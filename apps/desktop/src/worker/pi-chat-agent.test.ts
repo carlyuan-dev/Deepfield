@@ -42,6 +42,29 @@ describe("pi chat agent", () => {
     expect(fake.promptedWith).toBe("当前问题");
   });
 
+  it("adds online tool guidance and marks started events for web-enabled runs", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+    });
+    const toolSessions = {
+      createAgentTools: () => [],
+      bindSearchProvider: () => undefined,
+      releaseTrace: () => true,
+    };
+    const events: AgentWorkerEvent[] = [];
+    await createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions).run(
+      request({ webSearch: true }),
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+
+    const systemPrompt = fake.receivedOptions?.initialState?.systemPrompt;
+    expect(systemPrompt).not.toContain("本轮未启用联网搜索");
+    expect(systemPrompt).toContain("web_search");
+    expect(systemPrompt).toContain("fetch_url");
+    expect(events[0]).toEqual({ requestId: "req-1", type: "started", webSearch: true });
+  });
+
   it("maps real tool start/end events to ordered safe chat activity events", async () => {
     const fake = new FakePiAgent({
       events: [

@@ -11,6 +11,28 @@ const settings = {
   search: { activeProfileId: null, profiles: [], manifests: [{ id: "zhipu" as const, displayName: "智谱搜索", defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4", optionFields: [{ key: "searchEngine", label: "搜索引擎", type: "select" as const, required: false, options: [{ value: "search_std", label: "search_std" }] }], capabilities: { timeFilter: "none" as const, domainFilter: false, publishedDate: true } }] },
 };
 
+const multiProfileSettings = {
+  schemaVersion: 1 as const,
+  llm: {
+    activeProfileId: "l1",
+    profiles: [
+      { id: "l1", name: "模型一", provider: "deepseek" as const, protocol: "openai_compatible" as const, baseUrl: "https://api.deepseek.com", modelId: "model-1", contextWindow: 128000, hasCredential: true },
+      { id: "l2", name: "模型二", provider: "qwen" as const, protocol: "openai_compatible" as const, baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", modelId: "model-2", contextWindow: 128000, hasCredential: true },
+    ],
+  },
+  search: {
+    activeProfileId: "s1",
+    profiles: [
+      { id: "s1", name: "搜索一", provider: "zhipu" as const, baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: {}, hasCredential: true },
+      { id: "s2", name: "搜索二", provider: "tavily" as const, baseUrl: "https://api.tavily.com", options: {}, hasCredential: true },
+    ],
+    manifests: [
+      { id: "zhipu" as const, displayName: "智谱搜索", defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4", optionFields: [], capabilities: { timeFilter: "none" as const, domainFilter: false, publishedDate: true } },
+      { id: "tavily" as const, displayName: "Tavily", defaultBaseUrl: "https://api.tavily.com", optionFields: [], capabilities: { timeFilter: "exact_range" as const, domainFilter: false, publishedDate: true } },
+    ],
+  },
+};
+
 describe("SettingsView", () => {
   it("renders editable LLM fields, saved-key state, and manifest-driven Search fields", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
@@ -33,5 +55,51 @@ describe("SettingsView", () => {
     expect(await screen.findByText(/连接正常/)).toBeTruthy();
     first({ ok: false, latencyMs: 99, code: "provider_error", message: "old" });
     await waitFor(() => expect(screen.queryByText(/old/)).toBeNull());
+  });
+
+  it("restores each saved LLM Profile diagnostic when switching", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(multiProfileSettings);
+    api.settings.diagnoseLlm
+      .mockResolvedValueOnce({ ok: true, latencyMs: 11, summary: "one" })
+      .mockResolvedValueOnce({ ok: true, latencyMs: 22, summary: "two" });
+    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("模型一");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接正常 · 11ms")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "模型二" }));
+    expect(screen.getByText("未检测")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接正常 · 22ms")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /模型一/ }));
+    expect(screen.getByText("连接正常 · 11ms")).toBeTruthy();
+  });
+
+  it("restores each saved Search Profile diagnostic when switching", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(multiProfileSettings);
+    api.settings.diagnoseSearch
+      .mockResolvedValueOnce({ ok: true, latencyMs: 31, summary: "one" })
+      .mockResolvedValueOnce({ ok: true, latencyMs: 42, summary: "two" });
+    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("模型一");
+    const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByDisplayValue("搜索一")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接正常 · 31ms")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "搜索二" }));
+    expect(screen.getByText("未检测")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接正常 · 42ms")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /搜索一/ }));
+    expect(screen.getByText("连接正常 · 31ms")).toBeTruthy();
+  });
+
+  it("gives every new Profile an independent black diagnostic state", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(multiProfileSettings);
+    api.settings.diagnoseLlm.mockResolvedValue({ ok: true, latencyMs: 55, summary: "new" });
+    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("模型一");
+    const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "＋ 新建 Profile" }));
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接正常 · 55ms")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "＋ 新建 Profile" }));
+    expect(screen.getByText("未检测")).toBeTruthy();
   });
 });

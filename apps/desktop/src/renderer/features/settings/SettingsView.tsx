@@ -3,6 +3,7 @@ import { LLM_PROVIDER_PRESETS, type DesktopApi, type DiagnosticResult, type LlmP
 
 export interface SettingsViewProps { api: DesktopApi; onKeySaved(): void }
 type Module = "llm" | "search";
+type DiagnosticState = DiagnosticResult | "testing";
 const newLlm = (): LlmProfileDraft => ({ name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: LLM_PROVIDER_PRESETS.deepseek.baseUrl, modelId: "deepseek-v4-flash", contextWindow: 128000 });
 const llmDraft = (p: SettingsData["llm"]["profiles"][number]): LlmProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, protocol: p.protocol, baseUrl: p.baseUrl, modelId: p.modelId, contextWindow: p.contextWindow });
 const searchDraft = (p: SettingsData["search"]["profiles"][number]): SearchProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, baseUrl: p.baseUrl, options: p.options });
@@ -18,20 +19,33 @@ export function SettingsView({ api, onKeySaved }: SettingsViewProps) {
   const [data, setData] = useState<SettingsData>();
   const [llm, setLlm] = useState<LlmProfileDraft>(newLlm);
   const [search, setSearch] = useState<SearchProfileDraft>();
-  const [diagnostic, setDiagnostic] = useState<DiagnosticResult | "testing">();
+  const [llmUiKey, setLlmUiKey] = useState("new:llm:initial");
+  const [searchUiKey, setSearchUiKey] = useState("new:search:initial");
+  const [diagnostics, setDiagnostics] = useState<Record<string, DiagnosticState>>({});
   const [error, setError] = useState<string>();
-  const requestIds = useRef({ llm: 0, search: 0 });
+  const requestIds = useRef(new Map<string, number>());
+  const temporarySequence = useRef(0);
 
   useEffect(() => { void api.settings.get().then((view) => {
     setData(view);
     const lp = view.llm.profiles.find((p) => p.id === view.llm.activeProfileId) ?? view.llm.profiles[0];
-    if (lp) setLlm(llmDraft(lp));
+    if (lp) { setLlm(llmDraft(lp)); setLlmUiKey(lp.id); }
     const sp = view.search.profiles.find((p) => p.id === view.search.activeProfileId) ?? view.search.profiles[0];
-    if (sp) setSearch(searchDraft(sp));
+    if (sp) { setSearch(searchDraft(sp)); setSearchUiKey(sp.id); }
     else if (view.search.manifests[0]) setSearch({ name: view.search.manifests[0].displayName, provider: view.search.manifests[0].id, baseUrl: view.search.manifests[0].defaultBaseUrl, options: {} });
   }, () => setError("无法读取设置，请重试")); }, [api]);
 
-  const reset = () => setDiagnostic(undefined);
+  const diagnosticKey = `${module}:${module === "llm" ? llmUiKey : searchUiKey}`;
+  const diagnostic = diagnostics[diagnosticKey];
+  const reset = () => {
+    requestIds.current.set(diagnosticKey, (requestIds.current.get(diagnosticKey) ?? 0) + 1);
+    setDiagnostics((values) => {
+      if (!(diagnosticKey in values)) return values;
+      const next = { ...values };
+      delete next[diagnosticKey];
+      return next;
+    });
+  };
   const updateLlm = (patch: Partial<LlmProfileDraft>) => { setLlm((value) => ({ ...value, ...patch })); reset(); };
   const updateSearch = (patch: Partial<SearchProfileDraft>) => { setSearch((value) => value ? ({ ...value, ...patch }) : value); reset(); };
   const updateLlmApiKey = (apiKey: string) => {
@@ -51,9 +65,12 @@ export function SettingsView({ api, onKeySaved }: SettingsViewProps) {
   };
   const accept = (view: SettingsData) => { setData(view); onKeySaved(); };
   const diagnose = async () => {
-    const kind = module; const id = ++requestIds.current[kind]; setDiagnostic("testing");
+    const kind = module; const key = diagnosticKey;
+    const id = (requestIds.current.get(key) ?? 0) + 1;
+    requestIds.current.set(key, id);
+    setDiagnostics((values) => ({ ...values, [key]: "testing" }));
     const result = kind === "llm" ? await api.settings.diagnoseLlm(llm) : await api.settings.diagnoseSearch(search!);
-    if (id === requestIds.current[kind] && kind === module) setDiagnostic(result);
+    if (id === requestIds.current.get(key)) setDiagnostics((values) => ({ ...values, [key]: result }));
   };
   const manifest = data?.search.manifests.find((item) => item.id === search?.provider);
   const profiles = module === "llm" ? data?.llm.profiles : data?.search.profiles;
@@ -62,10 +79,10 @@ export function SettingsView({ api, onKeySaved }: SettingsViewProps) {
 
   return <section className="settings-view" aria-label="设置">
     <header className="settings-header"><div><h2>模型与搜索</h2><p>配置运行时使用的模型和联网搜索服务。</p></div></header>
-    <nav className="settings-modules" aria-label="设置模块"><button className={module === "llm" ? "active" : ""} onClick={() => { setModule("llm"); reset(); }}>LLM</button><button className={module === "search" ? "active" : ""} onClick={() => { setModule("search"); reset(); }}>Search</button></nav>
+    <nav className="settings-modules" aria-label="设置模块"><button className={module === "llm" ? "active" : ""} onClick={() => setModule("llm")}>LLM</button><button className={module === "search" ? "active" : ""} onClick={() => setModule("search")}>Search</button></nav>
     {error && <p role="alert" className="error">{error}</p>}
     <div className="settings-layout">
-      <aside className="profile-list"><button onClick={() => module === "llm" ? setLlm(newLlm()) : manifest && setSearch({ name: manifest.displayName, provider: manifest.id, baseUrl: manifest.defaultBaseUrl, options: {} })}>＋ 新建 Profile</button>{profiles?.map((profile) => <button key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => module === "llm" ? setLlm(llmDraft(profile as SettingsData["llm"]["profiles"][number])) : setSearch(searchDraft(profile as SettingsData["search"]["profiles"][number]))}>{profile.name}{profile.id === activeId ? " · 当前" : ""}</button>)}</aside>
+      <aside className="profile-list"><button onClick={() => { const key = `new:${module}:${++temporarySequence.current}`; if (module === "llm") { setLlm(newLlm()); setLlmUiKey(key); } else if (manifest) { setSearch({ name: manifest.displayName, provider: manifest.id, baseUrl: manifest.defaultBaseUrl, options: {} }); setSearchUiKey(key); } }}>＋ 新建 Profile</button>{profiles?.map((profile) => <button key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => { if (module === "llm") { setLlm(llmDraft(profile as SettingsData["llm"]["profiles"][number])); setLlmUiKey(profile.id); } else { setSearch(searchDraft(profile as SettingsData["search"]["profiles"][number])); setSearchUiKey(profile.id); } }}>{profile.name}{profile.id === activeId ? " · 当前" : ""}</button>)}</aside>
       <form className="profile-editor" onSubmit={(event) => { event.preventDefault(); void (module === "llm" ? api.settings.saveLlmProfile(llm) : api.settings.saveSearchProfile(search!)).then(accept, () => setError("保存失败，请重试")); }}>
         {module === "llm"
           ? <LlmEditor value={llm} saved={data?.llm.profiles.find((p) => p.id === llm.id)?.hasCredential ?? false} update={updateLlm} updateApiKey={updateLlmApiKey}/>

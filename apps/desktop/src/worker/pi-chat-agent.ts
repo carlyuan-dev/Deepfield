@@ -23,6 +23,10 @@ const OFFLINE_SYSTEM_PROMPT = [
   "如需网页内容或最新信息，提示用户打开输入区的“联网搜索”后重新发送。",
   "不要据此声称本地文件不可处理；本地附件能力不属于本轮联网状态说明。",
 ].join("\n");
+const ONLINE_SYSTEM_PROMPT = [
+  "本轮已开放联网工具 web_search 与 fetch_url。",
+  "遇到最新信息或需要核实网页事实时，应使用这些工具，不得声称没有联网能力。",
+].join("\n");
 
 export class PiChatAgentError extends Error {
   constructor(message: string) {
@@ -195,7 +199,7 @@ export function createPiChatAgent(
             systemPrompt: [
               request.context.systemPrompt,
               buildRuntimeSystemContext(runtimeContext),
-              OFFLINE_SYSTEM_PROMPT,
+              request.toolAccess.network === "enabled" ? ONLINE_SYSTEM_PROMPT : OFFLINE_SYSTEM_PROMPT,
             ].join("\n"),
             model: session.model,
             messages: mapHistoryMessages(request.context.messages, session.model),
@@ -226,6 +230,7 @@ export function createPiChatAgent(
                 requestId: request.requestId,
                 type: "started",
                 ...(skillName !== undefined ? { skillName } : {}),
+                ...(request.toolAccess.network === "enabled" ? { webSearch: true } : {}),
               });
             }
             return;
