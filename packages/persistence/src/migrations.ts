@@ -244,6 +244,12 @@ const MIGRATIONS: readonly Migration[] = [
   {
     version: 9,
     up(db) {
+      const messagesTable = db
+        .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'messages'")
+        .get();
+      if (messagesTable === undefined) {
+        return;
+      }
       db.exec(`
         ALTER TABLE messages ADD COLUMN request_id TEXT;
         CREATE INDEX idx_messages_request_id ON messages(request_id);
