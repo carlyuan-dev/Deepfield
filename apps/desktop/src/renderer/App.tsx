@@ -127,7 +127,6 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
                 </div>
               ) : conversations.activeConversation !== undefined ? (
                 <ChatView
-                  key={conversations.activeConversation.id}
                   api={api}
                   eventHub={eventHub}
                   requestIdFactory={requestIdFactory}

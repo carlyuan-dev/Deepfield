@@ -7,6 +7,8 @@ export interface ToolActivityView {
   name: string;
   status: "running" | "completed" | "failed";
   summary?: string;
+  durationMs?: number;
+  errorCode?: string;
 }
 
 export interface ChatMessageView {
@@ -65,9 +67,15 @@ function toView(message: ChatMessage): ChatMessageView {
     role: message.role,
     content: message.content,
     status: "done",
-    requestId: undefined,
+    requestId: message.requestId,
     pending: false,
-    toolActivities: [],
+    toolActivities: (message.toolExecutions ?? []).map((execution) => ({
+      callKey: execution.callKey,
+      name: execution.name,
+      status: execution.status,
+      ...(execution.durationMs === undefined ? {} : { durationMs: execution.durationMs }),
+      ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
+    })),
   };
 }
 
@@ -87,7 +95,7 @@ function finalizeDraft(
       drafts: { ...state.drafts, [requestId]: draft },
     };
   }
-  const finalized = { ...draft, key: `assistant-${requestId}`, requestId: undefined };
+  const finalized = { ...draft, key: `assistant-${requestId}`, requestId };
   const finalizedMessages = [...messages];
   finalizedMessages.splice(userIndex + 1, 0, finalized);
   const drafts = { ...state.drafts };
@@ -118,7 +126,16 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (state.conversationId !== action.conversationId) {
         return state;
       }
-      return { ...state, loadState: "ready", messages: action.messages.map(toView) };
+      return {
+        ...state,
+        loadState: "ready",
+        messages: action.messages.map(toView),
+        sending: state.draftOrder.some(
+          (requestId) =>
+            state.requestConversations[requestId] === action.conversationId &&
+            state.drafts[requestId]?.status === "streaming",
+        ),
+      };
     case "LOAD_ERROR":
       if (state.conversationId !== action.conversationId) {
         return state;
@@ -130,6 +147,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sending: true,
         sendError: undefined,
         seq: state.seq + 1,
+        requestConversations:
+          state.conversationId === undefined
+            ? state.requestConversations
+            : { ...state.requestConversations, [action.requestId]: state.conversationId },
         messages: [
           ...state.messages,
           {
@@ -144,6 +165,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ],
       };
     case "SEND_ERROR":
+      const requestConversations = { ...state.requestConversations };
+      delete requestConversations[action.requestId];
       return {
         ...state,
         sending: false,
@@ -151,13 +174,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         messages: state.messages.filter(
           (message) => !(message.pending && message.requestId === action.requestId),
         ),
+        requestConversations,
       };
     case "WORKER_EVENT": {
       const { event, conversationId } = action;
-      if (conversationId === undefined || state.conversationId !== conversationId) {
+      if (conversationId === undefined) {
         return state;
       }
       const requestId = event.requestId;
+      if (
+        state.conversationId !== conversationId &&
+        state.requestConversations[requestId] !== conversationId
+      ) {
+        return state;
+      }
       const existing = state.drafts[requestId];
       if (existing !== undefined && (existing.status === "done" || existing.status === "failed")) {
         return state;
@@ -177,9 +207,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (requestConversations[requestId] === undefined) {
         requestConversations[requestId] = conversationId;
       }
-      const messages = state.messages.map((message) =>
-        message.pending && message.requestId === requestId ? { ...message, pending: false } : message,
-      );
+      const messages =
+        state.conversationId === conversationId
+          ? state.messages.map((message) =>
+              message.pending && message.requestId === requestId
+                ? { ...message, pending: false }
+                : message,
+            )
+          : state.messages;
       let draft: ChatMessageView =
         existing ?? {
           key: `draft-${requestId}`,
@@ -233,7 +268,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
               activity.status === "running" ? { ...activity, status: "completed" } : activity,
             ),
           };
-          sending = false;
+          sending = state.conversationId === conversationId ? false : state.sending;
           return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
         case "failed":
           draft = {
@@ -243,7 +278,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
               activity.status === "running" ? { ...activity, status: "failed" } : activity,
             ),
           };
-          sending = false;
+          sending = state.conversationId === conversationId ? false : state.sending;
           return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
       }
       return {
@@ -264,6 +299,12 @@ export function visibleMessages(state: ChatState): ChatMessageView[] {
   const drafts = state.draftOrder
     .filter(
       (requestId) => state.requestConversations[requestId] === state.conversationId,
+    )
+    .filter(
+      (requestId) =>
+        !state.messages.some(
+          (message) => message.role === "assistant" && message.requestId === requestId,
+        ),
     )
     .map((requestId) => state.drafts[requestId])
     .filter((draft): draft is ChatMessageView => draft !== undefined);

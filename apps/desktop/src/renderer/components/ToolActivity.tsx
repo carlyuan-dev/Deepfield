@@ -84,6 +84,12 @@ export function ToolActivity({ activities, terminal }: ToolActivityProps) {
               {activity.summary !== undefined && (
                 <span className="tool-activity-summary">{activity.summary}</span>
               )}
+              {activity.durationMs !== undefined && (
+                <span className="tool-activity-duration">{activity.durationMs}ms</span>
+              )}
+              {activity.errorCode !== undefined && (
+                <span className="tool-activity-error">{activity.errorCode}</span>
+              )}
               <span className={`tool-activity-status ${activity.status}`}>
                 {STATUS_LABELS[activity.status]}
               </span>

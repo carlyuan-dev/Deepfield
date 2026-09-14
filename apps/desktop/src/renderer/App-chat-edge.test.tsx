@@ -59,15 +59,31 @@ describe("app chat edge cases", () => {
     await waitFor(() => expect(screen.queryByText("串")).toBeNull());
     await waitFor(() => expect(screen.getByText("还没有消息")).toBeTruthy());
 
-    // send resolves; a late completed must not appear in p2
+    // send resolves; activity remains owned by p1 and must not appear in p2
     resolveSend(chatSendResult(REQUEST_ID, "p1", "人形机器人"));
-    fake.emit(workerEvent(REQUEST_ID, "completed", "最终"));
-    await waitFor(() => expect(screen.queryByText("最终")).toBeNull());
 
-    // back to p1: the persisted final is restored from history
+    // back to p1 while still running: partial output is restored immediately
     await openConversation(user, "人形机器人");
+    await waitFor(() => expect(screen.getByText("早串")).toBeTruthy());
+    fake.emit(workerEvent(REQUEST_ID, "text_delta", "续"));
+    await waitFor(() => expect(screen.getByText("早串续")).toBeTruthy());
+    fake.emit(workerEvent(REQUEST_ID, "completed", "最终"));
     await waitFor(() => expect(screen.getByText("最终")).toBeTruthy());
-    expect(screen.queryByText("串")).toBeNull();
+  });
+
+  it("hydrates safe terminal tool history for an existing assistant reply", async () => {
+    const fake = makeFakeApi(); const active = conversation("p1", "人形机器人", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([
+      { ...chatMessage("m1", "user", "问题"), requestId: "req-history" },
+      { ...chatMessage("m2", "assistant", "回答"), requestId: "req-history", toolExecutions: [{ callKey: "tool-1", name: "fetch_url", status: "failed", durationMs: 2000, errorCode: "timeout" }] },
+    ]);
+    const { user } = await renderApp(fake); await openConversation(user, "人形机器人");
+    expect(await screen.findByText("已调用 1 个工具")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /已调用 1 个工具/ }));
+    expect(screen.getByText("读取网页")).toBeTruthy();
+    expect(screen.getByText(/2000ms/)).toBeTruthy();
+    expect(screen.getByText(/timeout/)).toBeTruthy();
   });
 
   it("removes the optimistic user and restores the composer when send is rejected", async () => {
