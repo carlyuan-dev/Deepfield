@@ -78,6 +78,23 @@ describe("utility tool runtime assembly (focused revision)", () => {
     expect(runtime.searchSessions.has("search-trace")).toBe(false);
   });
 
+  it("exposes the authoritative per-trace ledger snapshot", () => {
+    const runtime = makeRuntime(false);
+    const provider = { id: "test", capabilities: { timeRange: false }, search: async () => ({ provider: "test", results: [] }) };
+    runtime.bindSearchProvider("budget-trace", provider, {
+      maxCalls: 7,
+      categoryCalls: { search: 4, fetch: 3 },
+    });
+
+    expect(runtime.budgetSnapshot("budget-trace").categories.search).toEqual({
+      limit: 4,
+      reserved: 0,
+      consumed: 0,
+      remaining: 4,
+      exhausted: false,
+    });
+  });
+
   it("exposes search and composed webpage reading only to a web-enabled agent", () => {
     const runtime = makeRuntime(false);
     const provider = { id: "test", capabilities: { timeRange: false }, search: async () => ({ provider: "test", results: [] }) };

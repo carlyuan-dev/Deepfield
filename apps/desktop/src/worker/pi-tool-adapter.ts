@@ -8,13 +8,14 @@ import type {
   ToolRegistry,
   ToolSet,
 } from "@deepfield/tool-platform";
-import type { JsonObject, ToolExecutionEvent } from "@deepfield/contracts";
+import type { JsonObject, ToolExecutionBatchScope, ToolExecutionEvent } from "@deepfield/contracts";
 
 export interface PiToolAdapterContext extends ToolRunContext {
   toolSet: ToolSet;
   traceId: string;
   actor: ToolActor;
   projectId?: string;
+  batchScopeFor?: (toolCallId: string) => ToolExecutionBatchScope | undefined;
 }
 
 export interface PiToolAdapterOptions {
@@ -90,20 +91,26 @@ function toAgentTool(
   context: PiToolAdapterContext,
   executionIdFactory: () => string,
 ): AgentTool<any> {
-  const runContext: ToolRunContext = {
-    traceId: context.traceId,
-    actor: context.actor,
-    ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
-    ...(context.agentTurnIndex !== undefined ? { agentTurnIndex: context.agentTurnIndex } : {}),
-    ...(context.batchId !== undefined ? { batchId: context.batchId } : {}),
-    toolSet: context.toolSet,
-  };
   return {
     name: definition.identity.name,
     description: definition.description,
     label: definition.label,
     parameters: definition.inputSchema,
     async execute(toolCallId, params, signal, onUpdate) {
+      const batchScope = context.batchScopeFor?.(toolCallId);
+      const runContext: ToolRunContext = {
+        traceId: context.traceId,
+        actor: context.actor,
+        ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+        ...(batchScope ??
+          (context.agentTurnIndex !== undefined
+            ? {
+                agentTurnIndex: context.agentTurnIndex,
+                ...(context.batchId !== undefined ? { batchId: context.batchId } : {}),
+              }
+            : {})),
+        toolSet: context.toolSet,
+      };
       const executionId = executionIdFactory();
       const result = await runner.execute(
         {
@@ -142,6 +149,15 @@ function toAgentTool(
           message: failure.message,
           retryable: failure.retryable,
           attempts: failure.attempts,
+          budgetConsumed: ![
+            "invalid_input",
+            "tool_not_found",
+            "tool_not_allowed",
+            "permission_denied",
+            "confirmation_required",
+            "budget_exceeded",
+            "audit_failed",
+          ].includes(failure.code),
           ...(failure.code === "budget_exceeded"
             ? { instruction: "Do not call this tool again in this run. Use the results already collected and answer the user." }
             : {}),

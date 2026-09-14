@@ -1,12 +1,22 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, AgentMessage, AgentOptions, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
+import type {
+  AgentEvent,
+  AgentMessage,
+  AgentOptions,
+  AgentTool,
+  AgentToolResult,
+  StreamFn,
+} from "@earendil-works/pi-agent-core";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
   type LlmRuntimeSnapshot,
   type AgentWorkerEvent,
   type AgentWorkerRequest,
+  type ToolExecutionBatchScope,
+  type ToolSyntheticAuditRecord,
 } from "@deepfield/contracts";
+import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import type { ChatAgent } from "./message-loop.js";
 import { mapHistoryMessages } from "./pi-message-mapper.js";
 import {
@@ -17,6 +27,17 @@ import type { PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { safeToolActivity, type SafeToolActivity } from "./tool-activity.js";
 import { PiModelGateway, type ModelGateway } from "../shared/model-gateway.js";
 import { createSearchProvider, type SearchProvider } from "@deepfield/retrieval";
+import { createAgentRunControl, WEB_CHAT_POLICY } from "./agent-run-control.js";
+import {
+  buildRuntimeBudgetContext,
+  type RuntimeBatchSummary,
+} from "./runtime-budget-context.js";
+import {
+  planToolBatch,
+  type PlannedToolCall,
+  type PriorToolResult,
+  type ToolBatchPlan,
+} from "./tool-batch-admission.js";
 
 const OFFLINE_SYSTEM_PROMPT = [
   "本轮未启用联网搜索，不能访问用户提供的网页，也不能获取最新或实时信息。",
@@ -73,8 +94,11 @@ export interface PiToolSessionProvider {
     traceId: string;
     actor: "main_agent" | "capability";
     networkEnabled?: boolean;
+    batchScopeFor?: (toolCallId: string) => ToolExecutionBatchScope | undefined;
   }): AgentTool<any>[];
   bindSearchProvider(traceId: string, provider: SearchProvider, limits?: { maxCalls?: number; categoryCalls?: { search?: number; fetch?: number } }): void;
+  budgetSnapshot(traceId: string): ToolBudgetSnapshot;
+  recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void>;
   releaseTrace(traceId: string): boolean;
 }
 
@@ -128,17 +152,65 @@ function hasToolCalls(message: AssistantMessage): boolean {
   return message.content.some((part) => part.type === "toolCall");
 }
 
-function toolResultsContainFailureCode(toolResults: unknown[], code: string): boolean {
-  return toolResults.some((result) => {
-    if (typeof result !== "object" || result === null) return false;
-    const content = (result as { content?: unknown }).content;
-    return Array.isArray(content) && content.some((part) =>
-      typeof part === "object" &&
-      part !== null &&
-      (part as { type?: unknown }).type === "text" &&
-      typeof (part as { text?: unknown }).text === "string" &&
-      (part as { text: string }).text.includes(`\"code\":\"${code}\"`),
-    );
+interface CachedPiToolOutcome {
+  status: "completed" | "failed";
+  result?: AgentToolResult<unknown>;
+  error?: unknown;
+  errorCode?: string;
+  retryable?: boolean;
+}
+
+function parseToolFailure(error: unknown): { code?: string; retryable?: boolean } {
+  const message = error instanceof Error ? error.message : String(error);
+  const jsonStart = message.indexOf("{");
+  if (jsonStart < 0) return {};
+  try {
+    const parsed = JSON.parse(message.slice(jsonStart)) as { code?: unknown; retryable?: unknown };
+    return {
+      ...(typeof parsed.code === "string" ? { code: parsed.code } : {}),
+      ...(typeof parsed.retryable === "boolean" ? { retryable: parsed.retryable } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function toolResultFailureCode(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null) return undefined;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  for (const part of content) {
+    if (typeof part !== "object" || part === null) continue;
+    const text = (part as { text?: unknown }).text;
+    if (typeof text !== "string") continue;
+    const match = text.match(/"code":"([a-z_]+)"/);
+    if (match?.[1] !== undefined) return match[1];
+  }
+  return undefined;
+}
+
+const NETWORK_TOOL_NAMES = new Set(["web_search", "read_webpage"]);
+
+function filterRuntimeTools(
+  tools: AgentTool<any>[],
+  availableNetworkTools: readonly string[],
+): AgentTool<any>[] {
+  const available = new Set(availableNetworkTools);
+  return tools.filter((tool) => !NETWORK_TOOL_NAMES.has(tool.name) || available.has(tool.name));
+}
+
+function assistantToolCalls(message: AssistantMessage): Array<{
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}> {
+  return message.content.flatMap((part) => {
+    if (part.type !== "toolCall") return [];
+    const input =
+      typeof part.arguments === "object" && part.arguments !== null
+        ? (part.arguments as Record<string, unknown>)
+        : {};
+    return [{ id: part.id, name: part.name, input }];
   });
 }
 
@@ -207,14 +279,31 @@ export function createPiChatAgent(
       }
 
       try {
+        const online = request.toolAccess.network === "enabled";
+        const batchScopeByCallId = new Map<string, ToolExecutionBatchScope>();
+        const priorResults = new Map<string, PriorToolResult>();
+        const plans = new WeakMap<AssistantMessage, ToolBatchPlan>();
+        const decisionsByCallId = new Map<string, PlannedToolCall>();
+        const outcomesByCallId = new Map<string, CachedPiToolOutcome>();
+        const syntheticRecorded = new Set<string>();
+        const runPolicy = {
+          ...WEB_CHAT_POLICY,
+          toolDecisionTurns: Math.max(0, request.toolAccess.maxAgentTurns - 1),
+          budgets: {
+            webSearch: request.toolAccess.maxSearchCalls,
+            readWebpage: request.toolAccess.maxFetchCalls,
+          },
+        };
+        const control = createAgentRunControl(runPolicy, Number.POSITIVE_INFINITY);
         if (request.toolAccess.network === "enabled") {
           if (request.search === undefined || toolSessions === undefined) throw new PiChatAgentError("search is not configured");
           toolSessions.bindSearchProvider(request.requestId, searchProviderFactory(request.search), {
             maxCalls: request.toolAccess.maxSearchCalls + request.toolAccess.maxFetchCalls + 8,
             categoryCalls: { search: request.toolAccess.maxSearchCalls, fetch: request.toolAccess.maxFetchCalls },
           });
+          control.observeSnapshot(toolSessions.budgetSnapshot(request.requestId));
         }
-        const requestTools =
+        const rawRequestTools =
           toolSessions === undefined
             ? tools
             : [
@@ -223,14 +312,106 @@ export function createPiChatAgent(
                   traceId: request.requestId,
                   actor: toolActor,
                   networkEnabled: request.toolAccess.network === "enabled",
+                  batchScopeFor: (toolCallId) => batchScopeByCallId.get(toolCallId),
                 }),
               ];
+        const recordReused = async (
+          decision: PlannedToolCall,
+          outcome: CachedPiToolOutcome,
+        ): Promise<void> => {
+          if (toolSessions === undefined || syntheticRecorded.has(decision.id)) return;
+          const scope = batchScopeByCallId.get(decision.id);
+          if (scope === undefined) return;
+          syntheticRecorded.add(decision.id);
+          await toolSessions.recordSynthetic({
+            executionId: `synthetic:${request.requestId}:${scope.batchId}:${decision.id}`,
+            traceId: request.requestId,
+            actor: toolActor,
+            tool: { name: decision.name, version: 1 },
+            status: "reused",
+            ...(outcome.errorCode === undefined ? {} : { errorCode: outcome.errorCode }),
+            ...scope,
+            attempts: 0,
+            budgetConsumed: false,
+          });
+        };
+        const requestTools = rawRequestTools.map((tool) => {
+          if (!NETWORK_TOOL_NAMES.has(tool.name)) return tool;
+          return {
+            ...tool,
+            async execute(toolCallId, params, executeSignal, onUpdate) {
+              const decision = decisionsByCallId.get(toolCallId);
+              if (decision?.disposition === "reused") {
+                const cached =
+                  (decision.priorResult?.result as CachedPiToolOutcome | undefined) ??
+                  (decision.reusedFromId === undefined
+                    ? undefined
+                    : outcomesByCallId.get(decision.reusedFromId));
+                if (cached === undefined) {
+                  throw new Error("tool_failed {\"code\":\"tool_error\",\"message\":\"cached tool result unavailable\",\"retryable\":false,\"attempts\":0}");
+                }
+                await recordReused(decision, cached);
+                if (cached.status === "completed" && cached.result !== undefined) {
+                  return cached.result;
+                }
+                throw cached.error;
+              }
+              try {
+                const result = await tool.execute(toolCallId, params, executeSignal, onUpdate);
+                const outcome: CachedPiToolOutcome = { status: "completed", result };
+                outcomesByCallId.set(toolCallId, outcome);
+                if (decision?.normalizedKey !== undefined) {
+                  priorResults.set(decision.normalizedKey, {
+                    status: "completed",
+                    result: outcome,
+                  });
+                }
+                return result;
+              } catch (error) {
+                const failure = parseToolFailure(error);
+                if (
+                  failure.code === "authentication_failed" &&
+                  (tool.name === "web_search" || tool.name === "read_webpage")
+                ) {
+                  control.disableNetworkTool(tool.name);
+                }
+                const outcome: CachedPiToolOutcome = {
+                  status: "failed",
+                  error,
+                  ...(failure.code === undefined ? {} : { errorCode: failure.code }),
+                  ...(failure.retryable === undefined ? {} : { retryable: failure.retryable }),
+                };
+                outcomesByCallId.set(toolCallId, outcome);
+                if (decision?.normalizedKey !== undefined) {
+                  priorResults.set(decision.normalizedKey, {
+                    status: "failed",
+                    ...(failure.retryable === undefined
+                      ? {}
+                      : { retryable: failure.retryable }),
+                    result: outcome,
+                  });
+                }
+                throw error;
+              }
+            },
+          } satisfies AgentTool<any>;
+        });
+        let latestBatchSummary: RuntimeBatchSummary | undefined;
+        const baseSystemPrompt = [
+          request.context.systemPrompt,
+          buildRuntimeSystemContext(runtimeContext),
+          online ? ONLINE_SYSTEM_PROMPT : OFFLINE_SYSTEM_PROMPT,
+        ].join("\n");
+        const composeSystemPrompt = (): string =>
+          online
+            ? `${baseSystemPrompt}\n${buildRuntimeBudgetContext(control, latestBatchSummary)}`
+            : baseSystemPrompt;
         let finalText: string | undefined;
         let startedEmitted = false;
         let sawAgentEnd = false;
         let providerFailure = false;
         let adapterSettled = false;
-        let streamAnswer = request.toolAccess.network !== "enabled";
+        let streamAnswer = !online || control.phase() === "synthesizing";
         let streamedAnswer = "";
         let synthesisFollowUpPending = false;
         let synthesisFollowUpSent = false;
@@ -242,7 +423,14 @@ export function createPiChatAgent(
 
         const emitActivity = (
           activity: SafeToolActivity & { callKey: string },
-          status: "running" | "completed" | "failed",
+          status: "running" | "completed" | "failed" | "skipped" | "reused",
+          metadata?: {
+            errorCode?: string;
+            agentTurnIndex?: number;
+            batchId?: string;
+            toolCallId?: string;
+            budgetConsumed?: boolean;
+          },
         ): void => {
           emit({
             requestId: request.requestId,
@@ -251,7 +439,18 @@ export function createPiChatAgent(
             name: activity.name,
             status,
             ...(activity.summary === undefined ? {} : { summary: activity.summary }),
-          });
+            ...(metadata?.errorCode === undefined ? {} : { errorCode: metadata.errorCode }),
+            ...(metadata?.agentTurnIndex === undefined
+              ? {}
+              : { agentTurnIndex: metadata.agentTurnIndex }),
+            ...(metadata?.batchId === undefined ? {} : { batchId: metadata.batchId }),
+            ...(metadata?.toolCallId === undefined
+              ? {}
+              : { toolCallId: metadata.toolCallId }),
+            ...(metadata?.budgetConsumed === undefined
+              ? {}
+              : { budgetConsumed: metadata.budgetConsumed }),
+          } as AgentWorkerEvent);
         };
 
         const failActiveActivities = (): void => {
@@ -272,28 +471,158 @@ export function createPiChatAgent(
         let agent!: PiAgentHandle;
         agent = runtime.createAgent({
           initialState: {
-            systemPrompt: [
-              request.context.systemPrompt,
-              buildRuntimeSystemContext(runtimeContext),
-              request.toolAccess.network === "enabled" ? ONLINE_SYSTEM_PROMPT : OFFLINE_SYSTEM_PROMPT,
-            ].join("\n"),
+            systemPrompt: composeSystemPrompt(),
             model: session.model,
             messages: mapHistoryMessages(request.context.messages, session.model),
-            tools: requestTools,
+            tools: online
+              ? control.phase() === "synthesizing"
+                ? []
+                : filterRuntimeTools(requestTools, control.availableNetworkTools())
+              : requestTools,
             thinkingLevel: "off",
           },
           streamFn: session.streamFn,
           getApiKey: (provider) => gateway.getApiKey(request.llm, provider),
           sessionId: request.context.conversationId,
           toolExecution: "sequential",
+          beforeToolCall: async ({ assistantMessage, toolCall }) => {
+            if (!online || toolSessions === undefined || !NETWORK_TOOL_NAMES.has(toolCall.name)) {
+              return undefined;
+            }
+            let plan = plans.get(assistantMessage);
+            if (plan === undefined) {
+              const snapshot = toolSessions.budgetSnapshot(request.requestId);
+              control.observeSnapshot(snapshot);
+              const turnIndex = control.turns().toolDecisionUsed + 1;
+              plan = planToolBatch({
+                calls: assistantToolCalls(assistantMessage),
+                snapshot,
+                priorResults,
+                turnIndex,
+              });
+              plans.set(assistantMessage, plan);
+              for (const decision of [...plan.admitted, ...plan.skipped, ...plan.reused]) {
+                decisionsByCallId.set(decision.id, decision);
+                batchScopeByCallId.set(decision.id, {
+                  agentTurnIndex: plan.turnIndex,
+                  batchId: plan.batchId,
+                  toolCallId: decision.id,
+                });
+              }
+              control.recordToolDecisionTurn();
+              control.beginExecution();
+            }
+            let decision = decisionsByCallId.get(toolCall.id);
+            if (
+              decision !== undefined &&
+              decision.disposition !== "skipped" &&
+              (toolCall.name === "web_search" || toolCall.name === "read_webpage") &&
+              !control.networkToolEnabled(toolCall.name)
+            ) {
+              decision = { ...decision, disposition: "skipped" };
+              decisionsByCallId.set(toolCall.id, decision);
+            }
+            if (decision?.disposition !== "skipped") return undefined;
+            if (!syntheticRecorded.has(toolCall.id)) {
+              syntheticRecorded.add(toolCall.id);
+              await toolSessions.recordSynthetic({
+                executionId: `synthetic:${request.requestId}:${plan.batchId}:${toolCall.id}`,
+                traceId: request.requestId,
+                actor: toolActor,
+                tool: { name: toolCall.name, version: 1 },
+                status: "skipped",
+                errorCode: "budget_trimmed",
+                agentTurnIndex: plan.turnIndex,
+                batchId: plan.batchId,
+                toolCallId: toolCall.id,
+                attempts: 0,
+                budgetConsumed: false,
+              });
+            }
+            return {
+              block: true,
+              reason: JSON.stringify({
+                status: "skipped",
+                code: "budget_trimmed",
+                message: "该调用超出本轮剩余额度，未向服务商发送请求",
+                budgetConsumed: false,
+              }),
+            };
+          },
           prepareNextTurnWithContext: ({ message, toolResults, context, newMessages }) => {
-            const online = request.toolAccess.network === "enabled";
             const mustReserveLastTurn =
               hasToolCalls(message) &&
               assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns - 1;
-            const reachedToolBudget = toolResultsContainFailureCode(toolResults, "budget_exceeded");
             const toolPhaseFinished = online && !streamAnswer && !hasToolCalls(message);
-            if (!mustReserveLastTurn && !reachedToolBudget && !toolPhaseFinished) {
+            if (online && hasToolCalls(message)) {
+              const plan = plans.get(message);
+              const admittedCallIds = new Set(plan?.admitted.map((call) => call.id) ?? []);
+              for (const result of toolResults) {
+                const code = toolResultFailureCode(result);
+                const toolName = (result as { toolName?: unknown }).toolName;
+                if (
+                  code === "authentication_failed" &&
+                  (toolName === "web_search" || toolName === "read_webpage")
+                ) {
+                  control.disableNetworkTool(toolName);
+                }
+              }
+              const successfulSearches = toolResults.filter(
+                (result) =>
+                  admittedCallIds.has(String((result as { toolCallId?: unknown }).toolCallId)) &&
+                  (result as { toolName?: unknown }).toolName === "web_search" &&
+                  (result as { isError?: unknown }).isError !== true,
+              ).length;
+              const successfulFetches = toolResults.filter(
+                (result) =>
+                  admittedCallIds.has(String((result as { toolCallId?: unknown }).toolCallId)) &&
+                  (result as { toolName?: unknown }).toolName === "read_webpage" &&
+                  (result as { isError?: unknown }).isError !== true,
+              ).length;
+              control.recordBatchEvidence({ successfulSearches, successfulFetches });
+            }
+            if (online && toolSessions !== undefined) {
+              const snapshot = toolSessions.budgetSnapshot(request.requestId);
+              control.observeSnapshot(snapshot);
+              if (hasToolCalls(message)) {
+                control.completeBatch();
+                const plan = plans.get(message);
+                if (plan !== undefined) {
+                  const currentDecisions = assistantToolCalls(message).flatMap((call) => {
+                    const decision = decisionsByCallId.get(call.id);
+                    return decision === undefined ? [] : [decision];
+                  });
+                  latestBatchSummary = {
+                    requested: currentDecisions.length,
+                    executed: currentDecisions.filter(
+                      (decision) => decision.disposition === "admitted",
+                    ).length,
+                    reused: currentDecisions.filter(
+                      (decision) => decision.disposition === "reused",
+                    ).length,
+                    skipped: currentDecisions.filter(
+                      (decision) => decision.disposition === "skipped",
+                    ).length,
+                    remaining: {
+                      web_search: snapshot.categories.search.remaining,
+                      read_webpage: snapshot.categories.fetch.remaining,
+                    },
+                    availableToolsNextTurn: control.availableNetworkTools(),
+                  };
+                }
+              }
+            }
+            if (mustReserveLastTurn || toolPhaseFinished) control.requestSynthesis();
+            if (!mustReserveLastTurn && !toolPhaseFinished && control.phase() !== "synthesizing") {
+              return {
+                context: {
+                  ...context,
+                  systemPrompt: composeSystemPrompt(),
+                  tools: filterRuntimeTools(requestTools, control.availableNetworkTools()),
+                },
+              };
+            }
+            if (!online && !mustReserveLastTurn) {
               return undefined;
             }
             streamAnswer = true;
@@ -305,7 +634,7 @@ export function createPiChatAgent(
             return {
               context: {
                 ...context,
-                systemPrompt: `${context.systemPrompt}\n${SYNTHESIS_SYSTEM_PROMPT}`,
+                systemPrompt: `${composeSystemPrompt()}\n${SYNTHESIS_SYSTEM_PROMPT}`,
                 tools: [],
               },
             };
@@ -371,7 +700,28 @@ export function createPiChatAgent(
           if (event.type === "tool_execution_end") {
             const activity = activeActivities.get(event.toolCallId);
             if (activity === undefined) return;
-            emitActivity(activity, event.isError ? "failed" : "completed");
+            const decision = decisionsByCallId.get(event.toolCallId);
+            const scope = batchScopeByCallId.get(event.toolCallId);
+            if (decision?.disposition === "skipped") {
+              emitActivity(activity, "skipped", {
+                errorCode: "budget_trimmed",
+                ...scope,
+                budgetConsumed: false,
+              });
+            } else if (decision?.disposition === "reused") {
+              const outcome =
+                (decision.priorResult?.result as CachedPiToolOutcome | undefined) ??
+                (decision.reusedFromId === undefined
+                  ? undefined
+                  : outcomesByCallId.get(decision.reusedFromId));
+              emitActivity(activity, "reused", {
+                ...(outcome?.errorCode === undefined ? {} : { errorCode: outcome.errorCode }),
+                ...scope,
+                budgetConsumed: false,
+              });
+            } else {
+              emitActivity(activity, event.isError ? "failed" : "completed", scope);
+            }
             activeActivities.delete(event.toolCallId);
             return;
           }

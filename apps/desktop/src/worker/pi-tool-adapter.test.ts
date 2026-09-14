@@ -106,6 +106,37 @@ describe("pi tool adapter", () => {
     expect(audit.records.some((record) => record.kind === "finish")).toBe(true);
   });
 
+  it("resolves the current batch scope when each Pi tool call executes", async () => {
+    const registry = new ToolRegistry();
+    registry.register(lookupFactDefinition());
+    const audit = new FakeAuditSink();
+    const runner = makeRunner(registry, audit);
+    const tools = createPiAgentTools(registry, runner, {
+      ...context(),
+      batchScopeFor: (toolCallId) => ({
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId,
+      }),
+    });
+
+    await tools[0]!.execute(
+      "pi-call-2",
+      { subject: "robot" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(audit.records.find((record) => record.kind === "start")).toEqual({
+      kind: "start",
+      record: expect.objectContaining({
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId: "pi-call-2",
+      }),
+    });
+  });
+
   it("maps controlled tool progress to onUpdate only", async () => {
     const registry = new ToolRegistry();
     registry.register(
@@ -191,7 +222,9 @@ describe("pi tool adapter", () => {
             : failureCode === "authentication_failed"
               ? "authentication failed"
               : "budget exceeded"
-        }","retryable":false,"attempts":1${
+        }","retryable":false,"attempts":1,"budgetConsumed":${
+          failureCode === "budget_exceeded" ? "false" : "true"
+        }${
           failureCode === "budget_exceeded"
             ? ',"instruction":"Do not call this tool again in this run. Use the results already collected and answer the user."'
             : ""

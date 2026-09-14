@@ -13,6 +13,7 @@ import type {
   ToolActor,
   ToolAuditSink,
   ToolBudgetLimits,
+  ToolBudgetSnapshot,
   ToolDefinition,
   ToolGrant,
 } from "@deepfield/tool-platform";
@@ -269,6 +270,11 @@ export interface PiToolContext {
   networkEnabled?: boolean;
   agentTurnIndex?: number;
   batchId?: string;
+  batchScopeFor?: (toolCallId: string) => {
+    agentTurnIndex: number;
+    batchId: string;
+    toolCallId: string;
+  } | undefined;
 }
 
 export interface UtilityToolRuntime extends ToolRuntime {
@@ -284,6 +290,7 @@ export interface UtilityToolRuntime extends ToolRuntime {
   createAgentTools(context: PiToolContext): ReturnType<typeof createPiAgentTools>;
   /** Persist a skipped/reused terminal call without dispatching ToolRunner or a Provider. */
   recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void>;
+  budgetSnapshot(traceId: string): ToolBudgetSnapshot;
   traceLedgerCount(): number;
   tracePool: TraceBudgetPool;
   searchSessions: SearchSessionRegistry;
@@ -357,6 +364,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
       searchSessions.bind(traceId, provider);
     },
     traceLedgerCount: () => tracePool.size(),
+    budgetSnapshot: (traceId) => tracePool.ledgerFor(traceId).snapshot(),
     releaseTrace(traceId) {
       const released = tracePool.releaseTrace(traceId);
       if (released) {
@@ -396,6 +404,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
         ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
         ...(context.agentTurnIndex !== undefined ? { agentTurnIndex: context.agentTurnIndex } : {}),
         ...(context.batchId !== undefined ? { batchId: context.batchId } : {}),
+        ...(context.batchScopeFor !== undefined ? { batchScopeFor: context.batchScopeFor } : {}),
         toolSet: context.networkEnabled === true
           ? createTrustedToolSet(context.actor, true)
           : toolSetByActor.get(context.actor) ?? createTrustedToolSet(context.actor),

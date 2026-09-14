@@ -40,6 +40,44 @@ describe("createAgentRunControl", () => {
     expect(control.phase()).toBe("synthesizing");
   });
 
+  it("disables a fatal tool category without spending or hiding the other quota", () => {
+    const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
+    control.observeSnapshot(snapshot({ search: 3, fetch: 2 }));
+
+    expect(control.disableNetworkTool("web_search")).toBe(true);
+    expect(control.networkToolEnabled("web_search")).toBe(false);
+    expect(control.networkToolEnabled("read_webpage")).toBe(true);
+    expect(control.availableNetworkTools()).toEqual(["read_webpage"]);
+    expect(control.phase()).toBe("deciding");
+    expect(control.disableNetworkTool("web_search")).toBe(false);
+
+    expect(control.disableNetworkTool("read_webpage")).toBe(true);
+    expect(control.availableNetworkTools()).toEqual([]);
+    expect(control.phase()).toBe("synthesizing");
+  });
+
+  it("keeps per-tool availability queryable while a batch is executing", () => {
+    const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
+    control.observeSnapshot(snapshot({ search: 2, fetch: 1 }));
+    control.recordToolDecisionTurn();
+    control.beginExecution();
+
+    expect(control.availableNetworkTools()).toEqual([]);
+    expect(control.networkToolEnabled("web_search")).toBe(true);
+    control.disableNetworkTool("web_search");
+    expect(control.networkToolEnabled("web_search")).toBe(false);
+    expect(control.networkToolEnabled("read_webpage")).toBe(true);
+  });
+
+  it("reports only the first explicit synthesis transition", () => {
+    const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
+    control.observeSnapshot(snapshot({ search: 1, fetch: 1 }));
+
+    expect(control.requestSynthesis()).toBe(true);
+    expect(control.requestSynthesis()).toBe(false);
+    expect(control.phase()).toBe("synthesizing");
+  });
+
   it("moves to synthesis when its caller reports the deadline elapsed", () => {
     const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
 

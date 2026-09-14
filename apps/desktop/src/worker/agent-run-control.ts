@@ -29,6 +29,9 @@ export interface AgentRunControl {
   budgetSnapshot(): ToolBudgetSnapshot | undefined;
   evidence(): AgentEvidence;
   availableNetworkTools(): NetworkToolName[];
+  networkToolEnabled(tool: NetworkToolName): boolean;
+  disableNetworkTool(tool: NetworkToolName): boolean;
+  requestSynthesis(): boolean;
   observeSnapshot(snapshot: ToolBudgetSnapshot): void;
   observeDeadline(now: number): void;
   recordToolDecisionTurn(): void;
@@ -68,18 +71,25 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
   let successfulFetches = 0;
   let consecutiveEmptyBatches = 0;
   const knownUrls = new Set<string>();
+  const disabledNetworkTools = new Set<NetworkToolName>();
 
-  const enterSynthesis = (): void => {
-    if (currentPhase !== "done") currentPhase = "synthesizing";
+  const enterSynthesis = (): boolean => {
+    if (currentPhase === "done" || currentPhase === "synthesizing") return false;
+    currentPhase = "synthesizing";
+    return true;
   };
 
   const availableNetworkTools = (): NetworkToolName[] => {
     if (currentPhase !== "deciding") return [];
     const tools: NetworkToolName[] = [];
-    if (hasCapacity(snapshot, "search")) tools.push("web_search");
-    if (hasCapacity(snapshot, "fetch")) tools.push("read_webpage");
+    if (!disabledNetworkTools.has("web_search") && hasCapacity(snapshot, "search")) tools.push("web_search");
+    if (!disabledNetworkTools.has("read_webpage") && hasCapacity(snapshot, "fetch")) tools.push("read_webpage");
     return tools;
   };
+
+  const networkToolEnabled = (tool: NetworkToolName): boolean =>
+    !disabledNetworkTools.has(tool) &&
+    hasCapacity(snapshot, tool === "web_search" ? "search" : "fetch");
 
   return {
     phase: () => currentPhase,
@@ -97,6 +107,16 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
       consecutiveEmptyBatches,
     }),
     availableNetworkTools,
+    networkToolEnabled,
+    disableNetworkTool(tool) {
+      if (disabledNetworkTools.has(tool)) return false;
+      disabledNetworkTools.add(tool);
+      if (currentPhase === "deciding" && availableNetworkTools().length === 0) {
+        enterSynthesis();
+      }
+      return true;
+    },
+    requestSynthesis: enterSynthesis,
     observeSnapshot(nextSnapshot) {
       snapshot = nextSnapshot;
       if (currentPhase === "deciding" && availableNetworkTools().length === 0) {
