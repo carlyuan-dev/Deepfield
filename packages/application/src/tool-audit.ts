@@ -56,6 +56,9 @@ export class SqliteToolAudit implements ToolAuditSink {
       if (typeof record.budgetConsumed !== "boolean") {
         throw new SqliteToolAuditError("missing tool budget consumption signal");
       }
+      if (record.budgetConsumed && record.attempts < 1) {
+        throw new SqliteToolAuditError("consumed tool budget requires an attempt");
+      }
       // status ↔ failure consistency, checked before the repository sees the
       // record: completed never carries a failure, failed always requires a
       // valid one, cancelled may carry an optional valid one.

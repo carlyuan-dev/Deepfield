@@ -249,6 +249,32 @@ describe("SqliteToolAudit", () => {
     await expect(audit.finish(finish)).rejects.toBeInstanceOf(SqliteToolAuditError);
   });
 
+  it.each([
+    { status: "completed" as const },
+    {
+      status: "failed" as const,
+      failure: { code: "timeout" as const, message: "timed out", retryable: false, attempts: 0 },
+    },
+    { status: "cancelled" as const },
+  ])("rejects consumed budget without an attempt for $status persistence", async (terminal) => {
+    const { db, audit } = openAuditDb();
+    await audit.start(startRecord);
+
+    await expect(audit.finish({
+      executionId: "exec-1",
+      traceId: "trace-1",
+      attempts: 0,
+      budgetConsumed: true,
+      ...terminal,
+    })).rejects.toBeInstanceOf(SqliteToolAuditError);
+
+    expect(db.repos.toolExecutions.getById("exec-1")).toMatchObject({
+      status: "running",
+      attempts: 0,
+      budgetConsumed: false,
+    });
+  });
+
   it("rejects unknown failure codes without persisting them", async () => {
     const { db, audit } = openAuditDb();
     await audit.start(startRecord);

@@ -297,6 +297,28 @@ describe("utility worker protocol", () => {
     ).toBe(false);
   });
 
+  it.each([
+    { status: "completed" },
+    { status: "failed", errorCode: "timeout" },
+    { status: "cancelled" },
+  ])("rejects consumed budget without an attempt for $status audit.finish", (terminal) => {
+    const request = (attempts: number, budgetConsumed: boolean) => ({
+      hostRequestId: "h-consumption",
+      kind: "host.request",
+      method: "audit.finish",
+      payload: {
+        executionId: "e",
+        traceId: "t",
+        attempts,
+        budgetConsumed,
+        ...terminal,
+      },
+    });
+
+    expect(Value.Check(HostRequestSchema, request(0, true))).toBe(false);
+    expect(Value.Check(HostRequestSchema, request(1, false))).toBe(true);
+  });
+
   it("keeps the tool failure code literals aligned with the wire schema", () => {
     const literalValues: string[] = [];
     for (const member of ToolFailureCodeSchema.anyOf as Array<{ const?: string }>) {

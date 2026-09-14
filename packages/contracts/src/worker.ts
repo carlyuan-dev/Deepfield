@@ -1,4 +1,4 @@
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TProperties } from "typebox";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
 import {
   CompanyResearchCancelRequestSchema,
@@ -108,42 +108,46 @@ export const HostAuditStartPayloadSchema = Type.Object(
 );
 export type HostAuditStartPayload = Static<typeof HostAuditStartPayloadSchema>;
 
-/** status ↔ errorCode consistency enforced at schema level. */
+function withAuditFinishConsumption<const T extends TProperties>(properties: T) {
+  return Type.Union([
+    Type.Object(
+      { ...properties, attempts: Type.Integer({ minimum: 0 }), budgetConsumed: Type.Literal(false) },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { ...properties, attempts: Type.Integer({ minimum: 1 }), budgetConsumed: Type.Literal(true) },
+      { additionalProperties: false },
+    ),
+  ]);
+}
+
+/** status ↔ errorCode and attempts ↔ consumption consistency enforced at schema level. */
 export const HostAuditFinishPayloadSchema = Type.Union([
-  Type.Object(
+  withAuditFinishConsumption(
     {
       executionId: Type.String({ minLength: 1 }),
       traceId: Type.String({ minLength: 1 }),
       status: Type.Literal("completed"),
-      attempts: Type.Integer({ minimum: 0 }),
-      budgetConsumed: Type.Boolean(),
       durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
     },
-    { additionalProperties: false },
   ),
-  Type.Object(
+  withAuditFinishConsumption(
     {
       executionId: Type.String({ minLength: 1 }),
       traceId: Type.String({ minLength: 1 }),
       status: Type.Literal("failed"),
-      attempts: Type.Integer({ minimum: 0 }),
-      budgetConsumed: Type.Boolean(),
       errorCode: ToolFailureCodeSchema,
       durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
     },
-    { additionalProperties: false },
   ),
-  Type.Object(
+  withAuditFinishConsumption(
     {
       executionId: Type.String({ minLength: 1 }),
       traceId: Type.String({ minLength: 1 }),
       status: Type.Literal("cancelled"),
-      attempts: Type.Integer({ minimum: 0 }),
-      budgetConsumed: Type.Boolean(),
       errorCode: Type.Optional(ToolFailureCodeSchema),
       durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
     },
-    { additionalProperties: false },
   ),
 ]);
 export type HostAuditFinishPayload = Static<typeof HostAuditFinishPayloadSchema>;
