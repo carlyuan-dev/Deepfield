@@ -180,22 +180,30 @@ h3,
 .nav-projects {
   max-height: 220px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .nav-conversation-row {
   display: flex;
   align-items: center;
+  min-width: 0;
+  width: 100%;
 }
 
 .nav-conversation-open {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.nav-conversation-delete {
-  flex: 0 0 auto;
+.sidebar .nav-conversation-delete {
+  flex: 0 0 28px;
+  width: 28px;
   opacity: 0;
-  padding-inline: 8px;
+  padding: 0;
+  text-align: center;
   color: var(--muted);
 }
 
