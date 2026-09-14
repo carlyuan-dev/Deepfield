@@ -164,7 +164,7 @@ describe("pi tool adapter", () => {
     expect(String(error)).not.toContain("apiKey");
   });
 
-  it.each(["timeout", "authentication_failed"] as const)(
+  it.each(["timeout", "authentication_failed", "budget_exceeded"] as const)(
     "preserves the safe %s failure classification for the model",
     async (failureCode) => {
       const registry = new ToolRegistry();
@@ -185,7 +185,17 @@ describe("pi tool adapter", () => {
           () => {},
         ),
       ).rejects.toThrow(
-        `tool_failed {"code":"${failureCode}","retryable":false,"attempts":1}`,
+        `tool_failed {"code":"${failureCode}","message":"${
+          failureCode === "timeout"
+            ? "tool execution timed out"
+            : failureCode === "authentication_failed"
+              ? "authentication failed"
+              : "budget exceeded"
+        }","retryable":false,"attempts":1${
+          failureCode === "budget_exceeded"
+            ? ',"instruction":"Do not call this tool again in this run. Use the results already collected and answer the user."'
+            : ""
+        }`,
       );
     },
   );

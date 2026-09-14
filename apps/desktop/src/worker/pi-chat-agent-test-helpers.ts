@@ -1,4 +1,4 @@
-import type { AgentOptions, AgentEvent } from "@earendil-works/pi-agent-core";
+import type { AgentOptions, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import {
   type AgentWorkerEvent,
@@ -81,6 +81,7 @@ export class FakePiAgent implements PiAgentHandle {
   promptCallCount = 0;
   receivedOptions: AgentOptions | undefined;
   listenerCount = 0;
+  followUps: AgentMessage[] = [];
   private listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
   private signalController = new AbortController();
   private resolvePending: (() => void) | undefined;
@@ -90,7 +91,7 @@ export class FakePiAgent implements PiAgentHandle {
       events: AgentEvent[];
       pending?: boolean;
       reject?: Error;
-      beforeEvents?: () => Promise<void> | void;
+      beforeEvents?: (agent: FakePiAgent) => Promise<void> | void;
     },
   ) {}
 
@@ -111,10 +112,14 @@ export class FakePiAgent implements PiAgentHandle {
     this.resolvePending?.();
   }
 
+  followUp(message: AgentMessage): void {
+    this.followUps.push(message);
+  }
+
   async prompt(input: string): Promise<void> {
     this.promptCallCount += 1;
     this.promptedWith = input;
-    await this.script.beforeEvents?.();
+    await this.script.beforeEvents?.(this);
     if (this.script.pending) {
       await new Promise<void>((resolve) => {
         this.resolvePending = resolve;
@@ -127,6 +132,12 @@ export class FakePiAgent implements PiAgentHandle {
     }
     if (this.script.reject) {
       throw this.script.reject;
+    }
+  }
+
+  async emit(event: AgentEvent): Promise<void> {
+    for (const listener of [...this.listeners]) {
+      await listener(event, this.signalController.signal);
     }
   }
 }
@@ -166,11 +177,12 @@ export function request(options?: ChatRequestOptions): AgentWorkerRequest {
 export async function capture(
   agent: ChatAgent,
   signal?: AbortSignal,
+  workerRequest: AgentWorkerRequest = request(),
 ): Promise<{ events: AgentWorkerEvent[]; error: Error | undefined }> {
   const events: AgentWorkerEvent[] = [];
   let error: Error | undefined;
   try {
-    await agent.run(request(), (event) => events.push(event), signal ?? new AbortController().signal);
+    await agent.run(workerRequest, (event) => events.push(event), signal ?? new AbortController().signal);
   } catch (caught) {
     error = caught instanceof Error ? caught : new Error(String(caught));
   }

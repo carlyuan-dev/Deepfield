@@ -130,14 +130,19 @@ function toAgentTool(
       }
       const failure = result.failure ?? {
         code: "cancelled",
+        message: "tool execution cancelled",
         retryable: false,
         attempts: result.attempts,
       };
       throw new PiToolExecutionError(
         `tool_failed ${JSON.stringify({
           code: failure.code,
+          message: failure.message,
           retryable: failure.retryable,
           attempts: failure.attempts,
+          ...(failure.code === "budget_exceeded"
+            ? { instruction: "Do not call this tool again in this run. Use the results already collected and answer the user." }
+            : {}),
         })}`,
       );
     },

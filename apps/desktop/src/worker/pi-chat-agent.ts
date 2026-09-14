@@ -1,5 +1,5 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, AgentOptions, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage, AgentOptions, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
@@ -35,6 +35,8 @@ const SYNTHESIS_SYSTEM_PROMPT = [
   "请立即基于已有工具结果回答用户；即使部分工具失败，也要用用户的语言给出当前证据允许的最佳答案，并清楚说明无法确认的部分。",
   "只输出最终回答，不输出搜索计划、重试过程或工具协议。",
 ].join("\n");
+const SYNTHESIS_USER_PROMPT =
+  "请基于本轮已经获得的工具结果重新组织并输出最终答案。不要再描述搜索计划、调用过程或重试过程。";
 
 export class PiChatAgentError extends Error {
   constructor(message: string) {
@@ -57,6 +59,7 @@ export interface PiAgentHandle {
     listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void,
   ): () => void;
   abort(): void;
+  followUp(message: AgentMessage): void;
   prompt(message: string): Promise<void>;
 }
 
@@ -123,6 +126,20 @@ function assistantTurnCount(messages: unknown[]): number {
 
 function hasToolCalls(message: AssistantMessage): boolean {
   return message.content.some((part) => part.type === "toolCall");
+}
+
+function toolResultsContainFailureCode(toolResults: unknown[], code: string): boolean {
+  return toolResults.some((result) => {
+    if (typeof result !== "object" || result === null) return false;
+    const content = (result as { content?: unknown }).content;
+    return Array.isArray(content) && content.some((part) =>
+      typeof part === "object" &&
+      part !== null &&
+      (part as { type?: unknown }).type === "text" &&
+      typeof (part as { text?: unknown }).text === "string" &&
+      (part as { text: string }).text.includes(`\"code\":\"${code}\"`),
+    );
+  });
 }
 
 function finalToolFreeAnswer(messages: unknown[]): string | undefined {
@@ -213,6 +230,10 @@ export function createPiChatAgent(
         let sawAgentEnd = false;
         let providerFailure = false;
         let adapterSettled = false;
+        let streamAnswer = request.toolAccess.network !== "enabled";
+        let streamedAnswer = "";
+        let synthesisFollowUpPending = false;
+        let synthesisFollowUpSent = false;
         let activitySequence = 0;
         const activeActivities = new Map<
           string,
@@ -248,7 +269,8 @@ export function createPiChatAgent(
           emit(event);
         };
 
-        const agent = runtime.createAgent({
+        let agent!: PiAgentHandle;
+        agent = runtime.createAgent({
           initialState: {
             systemPrompt: [
               request.context.systemPrompt,
@@ -264,12 +286,21 @@ export function createPiChatAgent(
           getApiKey: (provider) => gateway.getApiKey(request.llm, provider),
           sessionId: request.context.conversationId,
           toolExecution: "sequential",
-          prepareNextTurnWithContext: ({ message, context, newMessages }) => {
-            if (
-              assistantTurnCount(newMessages) < request.toolAccess.maxAgentTurns - 1 ||
-              !hasToolCalls(message)
-            ) {
+          prepareNextTurnWithContext: ({ message, toolResults, context, newMessages }) => {
+            const online = request.toolAccess.network === "enabled";
+            const mustReserveLastTurn =
+              hasToolCalls(message) &&
+              assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns - 1;
+            const reachedToolBudget = toolResultsContainFailureCode(toolResults, "budget_exceeded");
+            const toolPhaseFinished = online && !streamAnswer && !hasToolCalls(message);
+            if (!mustReserveLastTurn && !reachedToolBudget && !toolPhaseFinished) {
               return undefined;
+            }
+            streamAnswer = true;
+            if (toolPhaseFinished && !synthesisFollowUpSent) {
+              synthesisFollowUpPending = true;
+              synthesisFollowUpSent = true;
+              agent.followUp({ role: "user", content: SYNTHESIS_USER_PROMPT, timestamp: Date.now() });
             }
             return {
               context: {
@@ -279,7 +310,13 @@ export function createPiChatAgent(
               },
             };
           },
-          shouldStopAfterTurn: ({ newMessages }) => newMessages.filter((message) => message.role === "assistant").length >= request.toolAccess.maxAgentTurns,
+          shouldStopAfterTurn: ({ message, newMessages }) => {
+            if (request.toolAccess.network === "enabled") {
+              if (synthesisFollowUpPending) return false;
+              if (streamAnswer && !hasToolCalls(message)) return true;
+            }
+            return assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns;
+          },
         });
 
         const abort = (): void => agent.abort();
@@ -304,10 +341,22 @@ export function createPiChatAgent(
             }
             return;
           }
-          // Assistant text that precedes a tool call is internal execution
-          // narration. Wait for agent_end so only the last tool-free turn can
-          // become user-visible answer text.
-          if (event.type === "message_update") return;
+          if (event.type === "message_update") {
+            if (
+              streamAnswer &&
+              event.assistantMessageEvent.type === "text_delta" &&
+              event.assistantMessageEvent.delta.length > 0
+            ) {
+              synthesisFollowUpPending = false;
+              streamedAnswer += event.assistantMessageEvent.delta;
+              emit({
+                requestId: request.requestId,
+                type: "text_delta",
+                delta: event.assistantMessageEvent.delta,
+              });
+            }
+            return;
+          }
           if (event.type === "tool_execution_start") {
             if (activeActivities.has(event.toolCallId)) return;
             activitySequence += 1;
@@ -358,7 +407,15 @@ export function createPiChatAgent(
           throw new PiChatAgentError("agent finished without a final answer");
         }
         failActiveActivities();
-        emit({ requestId: request.requestId, type: "text_delta", delta: finalText });
+        if (streamedAnswer.length === 0) {
+          emit({ requestId: request.requestId, type: "text_delta", delta: finalText });
+        } else if (finalText.startsWith(streamedAnswer) && finalText.length > streamedAnswer.length) {
+          emit({
+            requestId: request.requestId,
+            type: "text_delta",
+            delta: finalText.slice(streamedAnswer.length),
+          });
+        }
         emitTerminal({ requestId: request.requestId, type: "completed", text: finalText });
       } finally {
         toolSessions?.releaseTrace(request.requestId);

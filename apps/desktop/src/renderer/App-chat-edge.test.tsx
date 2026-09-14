@@ -113,6 +113,22 @@ describe("app chat edge cases", () => {
     expect(screen.getByText(/timeout/)).toBeTruthy();
   });
 
+  it("shows an explicit thinking status after a chat run starts before text arrives", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("p1", "人形机器人", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([]);
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "p1", "人形机器人"));
+    const { user } = await renderApp(fake);
+    await openConversation(user, "人形机器人");
+
+    await user.type(screen.getByLabelText("消息输入"), "你好");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    fake.emit(workerEvent(REQUEST_ID, "started"));
+
+    expect(await screen.findByRole("status", { name: "Deepfield 正在思考" })).toBeTruthy();
+  });
+
   it("removes the optimistic user and restores the composer when send is rejected", async () => {
     const fake = makeFakeApi();
     const active = conversation("p1", "人形机器人", true);

@@ -74,6 +74,7 @@ export interface NodeSocketLike {
 
 export interface NodeClientRequestLike {
   on(event: "socket" | "response" | "error", listener: (...args: never[]) => void): unknown;
+  end(): void;
   destroy(): void;
 }
 
@@ -98,6 +99,7 @@ function defaultRequestFactory(
   const request = mod.request(options as never, (response) => responseListener(response));
   return {
     on: (event: string, listener: (...args: never[]) => void) => request.on(event, listener as never),
+    end: () => request.end(),
     destroy: () => request.destroy(),
   } as unknown as NodeClientRequestLike;
 }
@@ -205,6 +207,7 @@ export function createNodeHttpAdapter(options: NodeHttpAdapterOptions = {}): Tra
             });
           });
         });
+        request.end();
       });
     },
   };

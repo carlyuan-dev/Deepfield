@@ -23,6 +23,10 @@ class FakeSocket extends EventEmitter {
 
 class FakeClientRequest extends EventEmitter {
   destroyed = false;
+  endCalls = 0;
+  end(): void {
+    this.endCalls += 1;
+  }
   destroy(): void {
     this.destroyed = true;
   }
@@ -101,6 +105,13 @@ const target = {
 const requestOptions = { headers: { accept: "*/*" }, signal: new AbortController().signal, connectTimeoutMs: 10_000 };
 
 describe("node http adapter connect lifecycle (focused revision)", () => {
+  it("finalizes the client request exactly once so Node sends it", () => {
+    const { adapter, requestFactory } = makeAdapter();
+    void adapter.request(target, requestOptions, ADDRESSES);
+
+    expect(requestFactory.requests[0]!.endCalls).toBe(1);
+  });
+
   it("resolves through the response and cancels the connect timer on connect", async () => {
     const { adapter, requestFactory, timers } = makeAdapter();
     const promise = adapter.request(target, requestOptions, ADDRESSES);
