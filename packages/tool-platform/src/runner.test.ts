@@ -138,6 +138,61 @@ describe("ToolRunner happy path", () => {
 });
 
 describe("ToolRunner failure paths never execute unauthorized tools", () => {
+  it("releases a reservation when audit start rejects before dispatch", async () => {
+    const audit = new FakeAuditSink({ failStart: true });
+    const { runner, call, context, signal, budget } = setup({ maxCalls: 1, audit });
+
+    const result = await runner.execute(call, context, signal, () => {});
+
+    expect(result.status).toBe("failed");
+    expect(budget.snapshot().total).toEqual({
+      limit: 1,
+      reserved: 0,
+      consumed: 0,
+      remaining: 1,
+      exhausted: false,
+    });
+  });
+
+  it("releases a reservation when cancellation wins before dispatch", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { runner, call, context, budget } = setup({ maxCalls: 1 });
+
+    const result = await runner.execute(call, context, controller.signal, () => {});
+
+    expect(result.status).toBe("cancelled");
+    expect(budget.snapshot().total).toEqual({
+      limit: 1,
+      reserved: 0,
+      consumed: 0,
+      remaining: 1,
+      exhausted: false,
+    });
+  });
+
+  it("keeps quota consumed when executor dispatch fails", async () => {
+    const { runner, call, context, signal, budget } = setup({
+      maxCalls: 1,
+      definition: echoDefinition({
+        execute: async () => {
+          throw new Error("external failure");
+        },
+      }),
+    });
+
+    const result = await runner.execute(call, context, signal, () => {});
+
+    expect(result.status).toBe("failed");
+    expect(budget.snapshot().total).toEqual({
+      limit: 1,
+      reserved: 0,
+      consumed: 1,
+      remaining: 0,
+      exhausted: true,
+    });
+  });
+
   it("rejects invalid input with a single terminal and zero executor calls", async () => {
     let executorCalls = 0;
     const { runner, call, context, signal, events } = setup({

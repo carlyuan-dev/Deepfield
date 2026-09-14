@@ -4,7 +4,9 @@ export { ToolPolicy, type PolicyDecision, type ToolPolicyRequest } from "./polic
 export {
   ToolBudgetError,
   ToolBudgetLedger,
+  type BudgetDimensionSnapshot,
   type ToolBudgetLimits,
+  type ToolBudgetSnapshot,
   type ToolBudgetToken,
 } from "./budget.js";
 export {

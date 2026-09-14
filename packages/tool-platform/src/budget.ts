@@ -25,15 +25,30 @@ export interface ToolBudgetToken {
   readonly category: ToolMeterCategory;
 }
 
-const METER_CATEGORIES = new Set(["search", "fetch", "link_check", "parse", "none"] as const);
+export interface BudgetDimensionSnapshot {
+  limit?: number;
+  reserved: number;
+  consumed: number;
+  remaining?: number;
+  exhausted: boolean;
+}
 
-type TokenState = "active" | "released" | "completed";
+export interface ToolBudgetSnapshot {
+  total: BudgetDimensionSnapshot;
+  categories: Record<ToolMeterCategory, BudgetDimensionSnapshot>;
+}
+
+const METER_CATEGORY_VALUES = ["search", "fetch", "link_check", "parse", "none"] as const;
+const METER_CATEGORIES = new Set(METER_CATEGORY_VALUES);
+
+type TokenState = "reserved" | "committed" | "released" | "completed";
 
 interface TokenRecord {
   owner: ToolBudgetLedger;
   state: TokenState;
   /** Immutable per-tool key captured at reserve time. */
   toolName: string;
+  category: ToolMeterCategory;
 }
 
 // Token lifecycle state lives here, keyed by the exact token object. It cannot
@@ -83,18 +98,22 @@ function assertValidLimits(limits: ToolBudgetLimits): void {
 }
 
 /**
- * Atomic per-trace budget ledger. `reserve` checks every limit and consumes
+ * Atomic per-trace budget ledger. `reserve` checks every limit and holds quota
  * synchronously before returning the token, so two concurrent reservations can
- * never both take the last remaining slot. Tokens are owned by the ledger that
- * created them; lifecycle state is private and unforgeable.
+ * never both take the last remaining slot. `commit` converts that hold into a
+ * consumed call at dispatch. Tokens are owned by the ledger that created them;
+ * lifecycle state is private and unforgeable.
  */
 export class ToolBudgetLedger {
   readonly #limits: ToolBudgetLimits;
   readonly #clock: () => number;
   readonly #startedAt: number;
-  #calls = 0;
-  #perToolCalls = new Map<string, number>();
-  #categoryCalls = new Map<string, number>();
+  #reservedCalls = 0;
+  #consumedCalls = 0;
+  #perToolReserved = new Map<string, number>();
+  #perToolConsumed = new Map<string, number>();
+  #categoryReserved = new Map<ToolMeterCategory, number>();
+  #categoryConsumed = new Map<ToolMeterCategory, number>();
   #bytes = 0;
   #concurrency = 0;
   #perToolConcurrency = new Map<string, number>();
@@ -128,18 +147,27 @@ export class ToolBudgetLedger {
     if (this.#limits.deadlineMs !== undefined && this.#clock() - this.#startedAt >= this.#limits.deadlineMs) {
       throw new ToolBudgetError("tool budget exceeded: deadline");
     }
-    if (this.#limits.maxCalls !== undefined && this.#calls >= this.#limits.maxCalls) {
+    if (
+      this.#limits.maxCalls !== undefined &&
+      this.#reservedCalls + this.#consumedCalls >= this.#limits.maxCalls
+    ) {
       throw new ToolBudgetError("tool budget exceeded: max calls");
     }
     if (
       this.#limits.maxCallsPerTool !== undefined &&
-      (this.#perToolCalls.get(name) ?? 0) >= this.#limits.maxCallsPerTool
+      (this.#perToolReserved.get(name) ?? 0) + (this.#perToolConsumed.get(name) ?? 0) >=
+        this.#limits.maxCallsPerTool
     ) {
       throw new ToolBudgetError("tool budget exceeded: max calls per tool");
     }
     if (this.#limits.categoryCalls !== undefined) {
       const cap = this.#limits.categoryCalls[category];
-      if (cap !== undefined && (this.#categoryCalls.get(category) ?? 0) >= cap) {
+      if (
+        cap !== undefined &&
+        (this.#categoryReserved.get(category) ?? 0) +
+          (this.#categoryConsumed.get(category) ?? 0) >=
+          cap
+      ) {
         throw new ToolBudgetError("tool budget exceeded: category calls");
       }
     }
@@ -152,14 +180,45 @@ export class ToolBudgetLedger {
     ) {
       throw new ToolBudgetError("tool budget exceeded: max per-tool concurrency");
     }
-    this.#calls += 1;
-    this.#perToolCalls.set(name, (this.#perToolCalls.get(name) ?? 0) + 1);
-    this.#categoryCalls.set(category, (this.#categoryCalls.get(category) ?? 0) + 1);
+    this.#reservedCalls += 1;
+    this.#increment(this.#perToolReserved, name);
+    this.#increment(this.#categoryReserved, category);
     this.#concurrency += 1;
     this.#perToolConcurrency.set(name, (this.#perToolConcurrency.get(name) ?? 0) + 1);
     const token = new BudgetToken(capturedIdentity, category);
-    tokenRecords.set(token, { owner: this, state: "active", toolName: name });
+    tokenRecords.set(token, { owner: this, state: "reserved", toolName: name, category });
     return token;
+  }
+
+  commit(token: ToolBudgetToken): void {
+    const record = this.#requireOwnedRecord(token);
+    if (record.state !== "reserved") {
+      throw new ToolBudgetError("invalid budget token state");
+    }
+    record.state = "committed";
+    this.#moveReservedToConsumed(record);
+  }
+
+  snapshot(): ToolBudgetSnapshot {
+    const categories = Object.fromEntries(
+      METER_CATEGORY_VALUES.map((category) => [
+        category,
+        this.#snapshotDimension(
+          this.#limits.categoryCalls?.[category],
+          this.#categoryReserved.get(category) ?? 0,
+          this.#categoryConsumed.get(category) ?? 0,
+        ),
+      ]),
+    ) as Record<ToolMeterCategory, BudgetDimensionSnapshot>;
+    Object.freeze(categories);
+    return Object.freeze({
+      total: this.#snapshotDimension(
+        this.#limits.maxCalls,
+        this.#reservedCalls,
+        this.#consumedCalls,
+      ),
+      categories,
+    });
   }
 
   recordBytes(bytes: number): void {
@@ -184,27 +243,33 @@ export class ToolBudgetLedger {
    */
   complete(token: ToolBudgetToken, finalBytes?: number): void {
     const record = this.#requireOwnedRecord(token);
-    if (record.state === "completed") {
+    if (record.state === "completed" || record.state === "released") {
       return;
     }
-    const wasActive = record.state === "active";
+    if (record.state === "reserved") {
+      // Preserve existing direct reserve -> complete callers while the runner
+      // commits explicitly at the true executor-dispatch boundary.
+      record.state = "committed";
+      this.#moveReservedToConsumed(record);
+    }
     try {
       if (finalBytes !== undefined) {
         this.recordBytes(finalBytes);
       }
     } finally {
       record.state = "completed";
-      if (wasActive) {
-        this.#releaseConcurrency(record);
-      }
+      this.#releaseConcurrency(record);
     }
   }
 
-  /** Frees concurrency only; the reserved attempt stays consumed. Idempotent. */
+  /** Releases concurrency and returns quota only when dispatch never began. */
   release(token: ToolBudgetToken): void {
     const record = this.#requireOwnedRecord(token);
     if (record.state === "released" || record.state === "completed") {
       return;
+    }
+    if (record.state === "reserved") {
+      this.#releaseReservation(record);
     }
     record.state = "released";
     this.#releaseConcurrency(record);
@@ -230,5 +295,46 @@ export class ToolBudgetLedger {
     this.#concurrency = Math.max(0, this.#concurrency - 1);
     const remaining = (this.#perToolConcurrency.get(record.toolName) ?? 1) - 1;
     this.#perToolConcurrency.set(record.toolName, Math.max(0, remaining));
+  }
+
+  #moveReservedToConsumed(record: TokenRecord): void {
+    this.#reservedCalls = Math.max(0, this.#reservedCalls - 1);
+    this.#consumedCalls += 1;
+    this.#decrement(this.#perToolReserved, record.toolName);
+    this.#increment(this.#perToolConsumed, record.toolName);
+    this.#decrement(this.#categoryReserved, record.category);
+    this.#increment(this.#categoryConsumed, record.category);
+  }
+
+  #releaseReservation(record: TokenRecord): void {
+    this.#reservedCalls = Math.max(0, this.#reservedCalls - 1);
+    this.#decrement(this.#perToolReserved, record.toolName);
+    this.#decrement(this.#categoryReserved, record.category);
+  }
+
+  #snapshotDimension(
+    limit: number | undefined,
+    reserved: number,
+    consumed: number,
+  ): BudgetDimensionSnapshot {
+    if (limit === undefined) {
+      return Object.freeze({ reserved, consumed, exhausted: false });
+    }
+    const remaining = Math.max(0, limit - reserved - consumed);
+    return Object.freeze({
+      limit,
+      reserved,
+      consumed,
+      remaining,
+      exhausted: remaining === 0,
+    });
+  }
+
+  #increment<K>(counts: Map<K, number>, key: K): void {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  #decrement<K>(counts: Map<K, number>, key: K): void {
+    counts.set(key, Math.max(0, (counts.get(key) ?? 1) - 1));
   }
 }

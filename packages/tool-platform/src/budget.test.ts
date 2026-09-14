@@ -21,6 +21,39 @@ function expectBudgetExceeded(fn: () => unknown): void {
 }
 
 describe("ToolBudgetLedger", () => {
+  it("holds quota at reserve time but consumes only after commit", () => {
+    const ledger = new ToolBudgetLedger({ categoryCalls: { search: 1 } });
+    const token = ledger.reserve({ name: "web_search", version: 1 }, "search");
+    expect(ledger.snapshot().categories.search).toEqual({
+      limit: 1, reserved: 1, consumed: 0, remaining: 0, exhausted: true,
+    });
+    ledger.release(token);
+    expect(ledger.snapshot().categories.search.remaining).toBe(1);
+  });
+
+  it("keeps an externally attempted failure consumed", () => {
+    const ledger = new ToolBudgetLedger({ categoryCalls: { search: 1 } });
+    const token = ledger.reserve({ name: "web_search", version: 1 }, "search");
+    ledger.commit(token);
+    ledger.release(token);
+    expect(ledger.snapshot().categories.search.consumed).toBe(1);
+  });
+
+  it("returns deeply frozen snapshot copies", () => {
+    const ledger = new ToolBudgetLedger({ maxCalls: 2, categoryCalls: { search: 1 } });
+    ledger.reserve(searchV1, "search");
+    const snapshot = ledger.snapshot();
+
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.total)).toBe(true);
+    expect(Object.isFrozen(snapshot.categories)).toBe(true);
+    expect(Object.isFrozen(snapshot.categories.search)).toBe(true);
+    expect(() => {
+      (snapshot.categories.search as { consumed: number }).consumed = 99;
+    }).toThrow(TypeError);
+    expect(ledger.snapshot().categories.search.consumed).toBe(0);
+  });
+
   it("enforces the total call limit", () => {
     const { ledger } = makeLedger({ maxCalls: 2 });
     ledger.reserve(searchV1, "search");
@@ -114,11 +147,11 @@ describe("ToolBudgetLedger", () => {
     ledger.reserve(searchV1, "search");
   });
 
-  it("release frees concurrency but keeps the consumed attempt", () => {
+  it("release frees concurrency and returns an uncommitted attempt", () => {
     const { ledger } = makeLedger({ maxCalls: 1, maxConcurrency: 1 });
     const token = ledger.reserve(fetchV1, "fetch");
     ledger.release(token);
-    expectBudgetExceeded(() => ledger.reserve(searchV1, "search"));
+    expect(() => ledger.reserve(searchV1, "search")).not.toThrow();
   });
 
   it("defensively copies limits so callers cannot expand their own budget", () => {

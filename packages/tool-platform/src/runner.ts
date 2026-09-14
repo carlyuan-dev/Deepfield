@@ -205,6 +205,9 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
+        if (attempt === 1) {
+          ledger.commit(token);
+        }
         // attempts increments only when an attempt is really about to start.
         attempts = attempt;
         emit({ type: "started" });
