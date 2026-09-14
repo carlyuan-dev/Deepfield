@@ -127,6 +127,7 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           traceId: request.payload.traceId,
           status: request.payload.status,
           attempts: request.payload.attempts,
+          budgetConsumed: request.payload.budgetConsumed,
           ...(request.payload.status === "cancelled" && request.payload.errorCode !== undefined
             ? {
                 failure: {

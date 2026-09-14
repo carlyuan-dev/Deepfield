@@ -36,6 +36,7 @@ describe("SqliteToolAudit finish consistency (focused revision)", () => {
         traceId: "trace-1",
         status: "completed",
         attempts: 1,
+        budgetConsumed: true,
         failure: { code: "timeout", message: "x", retryable: false, attempts: 1 },
       } as unknown as ToolAuditFinish),
     ).rejects.toBeInstanceOf(SqliteToolAuditError);
@@ -45,6 +46,7 @@ describe("SqliteToolAudit finish consistency (focused revision)", () => {
         traceId: "trace-1",
         status: "failed",
         attempts: 1,
+        budgetConsumed: true,
       } as unknown as ToolAuditFinish),
     ).rejects.toBeInstanceOf(SqliteToolAuditError);
     const row = db.db
@@ -75,6 +77,7 @@ describe("SqliteToolAudit finish consistency (focused revision)", () => {
         traceId: "trace-1",
         status: "completed",
         attempts: 1,
+        budgetConsumed: true,
         failure: { code: "timeout", message: "x", retryable: false, attempts: 1 },
       } as unknown as ToolAuditFinish),
     ).rejects.toBeInstanceOf(SqliteToolAuditError);
@@ -84,6 +87,7 @@ describe("SqliteToolAudit finish consistency (focused revision)", () => {
         traceId: "trace-1",
         status: "failed",
         attempts: 1,
+        budgetConsumed: true,
       } as unknown as ToolAuditFinish),
     ).rejects.toBeInstanceOf(SqliteToolAuditError);
     expect(finishCalls).toBe(0);

@@ -157,6 +157,12 @@ export class ToolRunner {
       return fail(makeToolFailure("budget_exceeded", 1, false));
     }
     const { token, releaseGlobal, releaseTool: releaseConcurrency } = slots;
+    let budgetConsumed = false;
+    const markBudgetConsumed = (): void => {
+      if (budgetConsumed) return;
+      ledger.commit(token);
+      budgetConsumed = true;
+    };
     try {
       await this.#audit.start({
         executionId,
@@ -185,6 +191,7 @@ export class ToolRunner {
         traceId,
         status: "cancelled",
         attempts: 1,
+        budgetConsumed: false,
       });
       return cancel(makeToolFailure("cancelled", 1, false));
     }
@@ -208,15 +215,14 @@ export class ToolRunner {
           terminalFailure = makeToolFailure("timeout", attempts, false);
           break;
         }
-        if (attempt === 1) {
-          ledger.commit(token);
-        }
+        if (attempt === 1 && definition.meter.commitOn !== "external_dispatch") markBudgetConsumed();
         // attempts increments only when an attempt is really about to start.
         attempts = attempt;
         emit({ type: "started" });
-        const outcome = await runAttempt({          definition,
+        const outcome = await runAttempt({
+          definition,
           input,
-          context: scope,
+          context: Object.freeze({ ...scope, markBudgetConsumed }),
           controller: internal,
           remainingMs: deadline - this.#clock.now(),
           attempts,
@@ -273,6 +279,7 @@ export class ToolRunner {
             traceId,
             status: "completed",
             attempts,
+            budgetConsumed,
             durationMs: this.#clock.now() - startedAt,
           });
         } catch {
@@ -282,7 +289,11 @@ export class ToolRunner {
     }
 
     if (terminalFailure === undefined) {
-      ledger.complete(token);
+      if (budgetConsumed) {
+        ledger.complete(token);
+      } else {
+        ledger.release(token);
+      }
       releaseConcurrency();
       releaseGlobal();
       return complete(output, attempts);
@@ -298,6 +309,7 @@ export class ToolRunner {
       traceId,
       status,
       attempts,
+      budgetConsumed,
       failure: terminalFailure,
       durationMs: this.#clock.now() - startedAt,
     });

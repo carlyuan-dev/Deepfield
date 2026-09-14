@@ -98,12 +98,15 @@ function assertValidDefinition(definition: unknown): asserts definition is ToolD
   if (typeof d.meter !== "object" || d.meter === null) {
     throw new ToolRegistryError(`tool ${key} meter must be an object`);
   }
-  const meter = d.meter as { category?: unknown; countsBytes?: unknown; countsTime?: unknown };
+  const meter = d.meter as { category?: unknown; countsBytes?: unknown; countsTime?: unknown; commitOn?: unknown };
   if (typeof meter.category !== "string" || !METER_CATEGORIES.has(meter.category as ToolMeterCategory)) {
     throw new ToolRegistryError(`tool ${key} has unknown meter category`);
   }
   if (typeof meter.countsBytes !== "boolean" || typeof meter.countsTime !== "boolean") {
     throw new ToolRegistryError(`tool ${key} meter flags must be booleans`);
+  }
+  if (meter.commitOn !== undefined && meter.commitOn !== "external_dispatch") {
+    throw new ToolRegistryError(`tool ${key} has unknown meter commit boundary`);
   }
   if (typeof d.execute !== "function") {
     throw new ToolRegistryError(`tool ${key} must provide an execute function`);
@@ -162,6 +165,7 @@ function buildSnapshot(definition: ToolDefinition<any, any>): ToolDefinition<any
       category: definition.meter.category,
       countsBytes: definition.meter.countsBytes,
       countsTime: definition.meter.countsTime,
+      ...(definition.meter.commitOn === undefined ? {} : { commitOn: definition.meter.commitOn }),
     },
     execute: definition.execute,
   };

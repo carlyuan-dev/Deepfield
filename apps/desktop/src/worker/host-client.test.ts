@@ -6,6 +6,7 @@ import {
   HostRpcTimeoutError,
 } from "./host-client.js";
 import { RemoteToolAuditSink, createHostSecretClient } from "./host-client.js";
+import type { ToolAuditFinish } from "@deepfield/tool-platform";
 
 interface FakeTimer {
   promise: Promise<void>;
@@ -151,6 +152,7 @@ describe("host client", () => {
       traceId: "trace-1",
       status: "failed",
       attempts: 3,
+      budgetConsumed: true,
       failure: { code: "rate_limited", message: "secret provider message", retryable: true, attempts: 3 },
     });
     const serialized = JSON.stringify(posted);
@@ -166,6 +168,22 @@ describe("host client", () => {
     });
     void startPromise.catch(() => {});
     void finishPromise.catch(() => {});
+    client.dispose();
+  });
+
+  it("RemoteToolAuditSink forwards the explicit dispatch-consumption signal", async () => {
+    const posted: unknown[] = [];
+    const client = new HostClient({ postMessage: (value) => posted.push(value), timeoutMs: 1000 });
+    const sink = new RemoteToolAuditSink(client);
+    const request = sink.finish({
+      executionId: "exec-1",
+      traceId: "trace-1",
+      status: "cancelled",
+      attempts: 1,
+      budgetConsumed: false,
+    } satisfies ToolAuditFinish);
+    void request.catch(() => {});
+    expect((posted[0] as { payload: unknown }).payload).toMatchObject({ budgetConsumed: false });
     client.dispose();
   });
 

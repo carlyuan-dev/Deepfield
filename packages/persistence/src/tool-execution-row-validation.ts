@@ -86,6 +86,9 @@ export function validateRow(row: ToolExecutionRow): void {
   ) {
     persistence();
   }
+  if (row.error_code === "budget_trimmed" && row.status !== "skipped") {
+    persistence();
+  }
   if (row.status !== "running" && !TERMINAL_STATUSES.includes(row.status)) {
     persistence();
   }

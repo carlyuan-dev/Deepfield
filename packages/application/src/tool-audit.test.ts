@@ -13,6 +13,7 @@ import { ToolExecutionError } from "@deepfield/persistence";
 import type { ToolExecutionRepository } from "@deepfield/persistence";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 import { SqliteToolAudit, SqliteToolAuditError } from "./tool-audit.js";
+import { createSearchWebDefinition } from "@deepfield/retrieval";
 
 const dbs: TestDb[] = [];
 
@@ -71,6 +72,66 @@ describe("SqliteToolAudit", () => {
     });
   });
 
+  it.each([
+    { name: "pre-aborted", input: { query: "x" }, abort: true, expectedStatus: "cancelled", expectedProviderCalls: 0, expectedBudgetConsumed: false, expectedConsumed: 0 },
+    {
+      name: "reversed-date",
+      input: { query: "x", timeRange: { from: "2026-03-01", to: "2026-02-01" } },
+      abort: false,
+      expectedStatus: "failed",
+      expectedProviderCalls: 0,
+      expectedBudgetConsumed: false,
+      expectedConsumed: 0,
+    },
+    { name: "dispatched", input: { query: "x" }, abort: false, expectedStatus: "completed", expectedProviderCalls: 1, expectedBudgetConsumed: true, expectedConsumed: 1 },
+  ])("persists truthful dispatch consumption for $name search", async ({ input, abort, expectedStatus, expectedProviderCalls, expectedBudgetConsumed, expectedConsumed }) => {
+    const { db, audit } = openAuditDb();
+    let providerCalls = 0;
+    const registry = new ToolRegistry();
+    registry.register(createSearchWebDefinition({
+      id: "test",
+      capabilities: { timeRange: false },
+      async search() {
+        providerCalls += 1;
+        return { provider: "test", results: [] };
+      },
+    }));
+    registry.freeze();
+    const toolSet = new ToolSet([{
+      identity: { name: "web_search", version: 1 },
+      actor: "main_agent",
+      effect: "network.read.public",
+    }]);
+    const budget = new ToolBudgetLedger({ maxCalls: 2 });
+    const runner = new ToolRunner({
+      registry,
+      policy: new ToolPolicy(),
+      budget,
+      audit,
+      clock: new FakeRetryClock(),
+    });
+    const controller = new AbortController();
+    if (abort) controller.abort();
+    const result = await runner.execute(
+      {
+        executionId: `exec-${expectedStatus}`,
+        traceId: "trace-1",
+        tool: { name: "web_search", version: 1 },
+        input,
+      },
+      { traceId: "trace-1", actor: "main_agent", toolSet },
+      controller.signal,
+      () => {},
+    );
+    expect(result.status).toBe(expectedStatus);
+    expect(providerCalls).toBe(expectedProviderCalls);
+    expect(budget.snapshot().total).toMatchObject({ reserved: 0, consumed: expectedConsumed });
+    expect(db.repos.toolExecutions.getById(`exec-${expectedStatus}`)).toMatchObject({
+      status: expectedStatus,
+      budgetConsumed: expectedBudgetConsumed,
+    });
+  });
+
   it("finishes with completed and mapped counters", async () => {
     const { db, audit } = openAuditDb();
     await audit.start(startRecord);
@@ -79,6 +140,7 @@ describe("SqliteToolAudit", () => {
       traceId: "trace-1",
       status: "completed",
       attempts: 2,
+      budgetConsumed: true,
       durationMs: 500,
     });
     const record = db.repos.toolExecutions.getById("exec-1");
@@ -102,6 +164,7 @@ describe("SqliteToolAudit", () => {
       traceId: "trace-1",
       status: "failed",
       attempts: 3,
+      budgetConsumed: true,
       failure: {
         code: "rate_limited",
         message: "secret provider message",
@@ -130,6 +193,7 @@ describe("SqliteToolAudit", () => {
       traceId: "trace-1",
       status: "cancelled",
       attempts: 1,
+      budgetConsumed: true,
       failure: { code: "cancelled", message: "x", retryable: false, attempts: 1 },
     });
     expect(db.repos.toolExecutions.getById("exec-1")?.status).toBe("cancelled");
@@ -180,6 +244,7 @@ describe("SqliteToolAudit", () => {
       traceId: "trace-1",
       status: "completed",
       attempts: 1,
+      budgetConsumed: true,
     };
     await expect(audit.finish(finish)).rejects.toBeInstanceOf(SqliteToolAuditError);
   });
@@ -193,6 +258,7 @@ describe("SqliteToolAudit", () => {
         traceId: "trace-1",
         status: "failed",
         attempts: 1,
+        budgetConsumed: true,
         failure: { code: "sk-secret-provider-value", message: "x", retryable: false, attempts: 1 },
       } as unknown as ToolAuditFinish),
     ).rejects.toBeInstanceOf(SqliteToolAuditError);
@@ -224,6 +290,7 @@ describe("SqliteToolAudit", () => {
         traceId: "trace-1",
         status: "failed",
         attempts: 1,
+        budgetConsumed: true,
         failure: { code: "sk-secret-provider-value", message: "x", retryable: false, attempts: 1 },
       } as unknown as ToolAuditFinish),
     ).rejects.toBeInstanceOf(SqliteToolAuditError);

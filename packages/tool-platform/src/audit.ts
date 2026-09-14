@@ -19,6 +19,7 @@ export interface ToolAuditFinish {
   traceId: string;
   status: "completed" | "failed" | "cancelled";
   attempts: number;
+  budgetConsumed: boolean;
   failure?: ToolFailure;
   durationMs?: number;
 }

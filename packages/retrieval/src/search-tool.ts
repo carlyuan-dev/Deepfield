@@ -135,7 +135,7 @@ export function createSearchWebDefinition(
     timeoutMs: 40_000,
     retry: { maxRetries: 0, backoffMs: 0 },
     concurrency: 2,
-    meter: { category: "search", countsBytes: false, countsTime: true },
+    meter: { category: "search", countsBytes: false, countsTime: true, commitOn: "external_dispatch" },
     model: { formatOutput: formatSearchOutputForModel },
     async execute(input, context, signal) {
       try {
@@ -161,6 +161,7 @@ export function createSearchWebDefinition(
           ...(useNativeTimeRange ? { timeRange: input.timeRange } : {}),
         };
         assertValidSearchRequest(request);
+        context.markBudgetConsumed?.();
         const response = await activeProvider.search(request, signal);
         return {
           query,

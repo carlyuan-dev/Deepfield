@@ -52,12 +52,14 @@ export async function checkLinkAccessible(
   deps: LinkToolDeps,
   url: string,
   signal: AbortSignal,
+  markBudgetConsumed?: () => void,
 ): Promise<LinkAccessibilityOutcome> {
   if (signal.aborted) {
     throw new TransportError("cancelled");
   }
   try {
     const checkedAt = Date.now();
+    markBudgetConsumed?.();
     const head = await deps.transport.fetch(url, {
       method: "HEAD",
       signal,
@@ -113,14 +115,14 @@ export function createCheckLinkAccessibilityDefinition(
     timeoutMs: 40_000,
     retry: { maxRetries: 0, backoffMs: 0 },
     concurrency: 2,
-    meter: { category: "link_check", countsBytes: false, countsTime: true },
-    async execute(input, _context, signal) {
+    meter: { category: "link_check", countsBytes: false, countsTime: true, commitOn: "external_dispatch" },
+    async execute(input, context, signal) {
       if (signal.aborted) {
         throw new ToolExecutionError("cancelled");
       }
       try {
         const checkedAt = Date.now();
-        const outcome = await checkLinkAccessible(deps, input.url, signal);
+        const outcome = await checkLinkAccessible(deps, input.url, signal, context.markBudgetConsumed);
         return {
           url: input.url,
           statusCode: outcome.statusCode,

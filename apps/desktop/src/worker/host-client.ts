@@ -214,6 +214,7 @@ export class RemoteToolAuditSink implements ToolAuditSink {
       traceId: record.traceId,
       status: record.status,
       attempts: record.attempts,
+      budgetConsumed: record.budgetConsumed,
       ...(record.failure !== undefined ? { errorCode: record.failure.code } : {}),
       ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
     });

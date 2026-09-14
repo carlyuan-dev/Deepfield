@@ -135,6 +135,29 @@ describe("ToolRunner happy path", () => {
     expect(audit.records.map((record) => record.kind)).toEqual(["start", "finish"]);
     expect(budget.reserve({ name: "echo", version: 1 }, "none")).toBeDefined();
   });
+
+  it("does not consume a late-commit reservation when execution completes without dispatch", async () => {
+    const { runner, call, context, signal, budget, audit } = setup({
+      maxCalls: 1,
+      definition: echoDefinition({
+        meter: {
+          category: "none",
+          countsBytes: false,
+          countsTime: true,
+          commitOn: "external_dispatch",
+        },
+      }),
+    });
+
+    const result = await runner.execute(call, context, signal, () => {});
+
+    expect(result.status).toBe("completed");
+    expect(budget.snapshot().total).toMatchObject({ reserved: 0, consumed: 0, remaining: 1 });
+    expect(audit.records.at(-1)).toMatchObject({
+      kind: "finish",
+      record: { status: "completed", budgetConsumed: false },
+    });
+  });
 });
 
 describe("ToolRunner failure paths never execute unauthorized tools", () => {

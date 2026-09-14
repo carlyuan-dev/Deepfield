@@ -238,7 +238,15 @@ describe("utility worker protocol", () => {
   });
 
   it("enforces status ↔ errorCode consistency on audit.finish at schema level", () => {
-    const base = { executionId: "e", traceId: "t", attempts: 1 };
+    const base = { executionId: "e", traceId: "t", attempts: 1, budgetConsumed: true };
+    expect(
+      Value.Check(HostRequestSchema, {
+        hostRequestId: "h1",
+        kind: "host.request",
+        method: "audit.finish",
+        payload: { executionId: "e", traceId: "t", attempts: 1, status: "completed" },
+      }),
+    ).toBe(false);
     expect(
       Value.Check(HostRequestSchema, {
         hostRequestId: "h1",
@@ -334,7 +342,7 @@ describe("utility worker protocol", () => {
         hostRequestId: "h1",
         kind: "host.request",
         method: "audit.finish",
-        payload: { executionId: "e", traceId: "t", status: "failed", attempts: 2, errorCode: "rate_limited" },
+        payload: { executionId: "e", traceId: "t", status: "failed", attempts: 2, budgetConsumed: true, errorCode: "rate_limited" },
       }),
     ).toBe(true);
     expect(

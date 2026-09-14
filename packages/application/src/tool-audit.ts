@@ -53,6 +53,9 @@ export class SqliteToolAudit implements ToolAuditSink {
 
   async finish(record: ToolAuditFinish): Promise<void> {
     try {
+      if (typeof record.budgetConsumed !== "boolean") {
+        throw new SqliteToolAuditError("missing tool budget consumption signal");
+      }
       // status ↔ failure consistency, checked before the repository sees the
       // record: completed never carries a failure, failed always requires a
       // valid one, cancelled may carry an optional valid one.
@@ -89,7 +92,7 @@ export class SqliteToolAudit implements ToolAuditSink {
         retries: Math.max(record.attempts - 1, 0),
         bytesReceived: 0,
         resultCount: 0,
-        budgetConsumed: record.attempts > 0,
+        budgetConsumed: record.budgetConsumed,
         finishedAt: new Date().toISOString(),
         ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
       });

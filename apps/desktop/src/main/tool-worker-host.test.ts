@@ -77,7 +77,7 @@ const auditFinish = {
   hostRequestId: "h2",
   kind: "host.request",
   method: "audit.finish",
-  payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, errorCode: "rate_limited" },
+  payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, budgetConsumed: true, errorCode: "rate_limited" },
 };
 
 describe("tool worker host", () => {
@@ -164,6 +164,26 @@ describe("tool worker host", () => {
         payload: { acknowledged: true },
       },
     ]);
+  });
+
+  it("forwards explicit dispatch consumption on audit.finish", async () => {
+    const { audit, finishes } = fakeAudit();
+    const { host, posted } = createHost(audit);
+    host.handleRequest({
+      hostRequestId: "finish-consumption",
+      kind: "host.request",
+      method: "audit.finish",
+      payload: {
+        executionId: "exec-1",
+        traceId: "trace-1",
+        status: "cancelled",
+        attempts: 1,
+        budgetConsumed: false,
+      },
+    });
+    await Promise.resolve();
+    expect(finishes).toMatchObject([{ budgetConsumed: false }]);
+    expect(posted).toMatchObject([{ method: "audit.finish", ok: true }]);
   });
 
   it("does not acknowledge audit.finish before the audit sink resolves (ack gate)", async () => {
@@ -289,7 +309,7 @@ describe("tool worker host", () => {
       hostRequestId: "h2",
       kind: "host.request",
       method: "audit.finish",
-      payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, errorCode: "rate_limited" },
+      payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, budgetConsumed: true, errorCode: "rate_limited" },
     });
     host.handleRequest({
       hostRequestId: "h3",
@@ -316,6 +336,7 @@ describe("tool worker host", () => {
     const record = repositories.toolExecutions.getById("exec-1");
     expect(record?.status).toBe("failed");
     expect(record?.errorCode).toBe("rate_limited");
+    expect(record?.budgetConsumed).toBe(true);
     expect(repositories.toolExecutions.getById("skip-1")).toMatchObject({
       status: "skipped",
       attempts: 0,

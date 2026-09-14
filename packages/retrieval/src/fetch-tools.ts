@@ -81,7 +81,7 @@ function makeFetchDefinition(
     timeoutMs: 40_000,
     retry: { maxRetries: 0, backoffMs: 0 },
     concurrency: 2,
-    meter: { category: "fetch", countsBytes: true, countsTime: true },
+    meter: { category: "fetch", countsBytes: true, countsTime: true, commitOn: "external_dispatch" },
     async execute(input, context, signal, onProgress) {
       if (signal.aborted) {
         throw new ToolExecutionError("cancelled");
@@ -104,6 +104,7 @@ function makeFetchDefinition(
       signal.addEventListener("abort", onAbort, { once: true });
       try {
         onProgress?.({ kind: "fetching" });
+        context.markBudgetConsumed?.();
         result = await deps.transport.fetch(input.url, {
           signal,
           maxBodyBytes: options.maxBytes,

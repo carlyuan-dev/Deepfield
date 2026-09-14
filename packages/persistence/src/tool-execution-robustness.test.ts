@@ -163,6 +163,8 @@ describe("tool execution robustness (focused revision)", () => {
       { name: "running with error_code", sql: "UPDATE tool_executions SET error_code = 'timeout'" },
       { name: "completed with error_code", sql: "UPDATE tool_executions SET status = 'completed', finished_at = '2026-01-01T00:00:01.000Z', error_code = 'timeout'" },
       { name: "failed without error_code", sql: "UPDATE tool_executions SET status = 'failed', finished_at = '2026-01-01T00:00:01.000Z', error_code = NULL" },
+      { name: "failed with skipped-only code", sql: "UPDATE tool_executions SET status = 'failed', finished_at = '2026-01-01T00:00:01.000Z', error_code = 'budget_trimmed'" },
+      { name: "cancelled with skipped-only code", sql: "UPDATE tool_executions SET status = 'cancelled', finished_at = '2026-01-01T00:00:01.000Z', error_code = 'budget_trimmed'" },
     ];
     corruptions.forEach((corruption, i) => {
       start(repos, `c${i}`);

@@ -16,6 +16,8 @@ export interface ToolRunContext {
   agentTurnIndex?: number;
   batchId?: string;
   toolCallId?: string;
+  /** Called exactly when an external Provider/transport dispatch begins. */
+  markBudgetConsumed?: () => void;
   toolSet?: ToolSet;
   /**
    * Immutable authorization fingerprint of the ToolSet snapshot captured by
@@ -47,6 +49,8 @@ export interface ToolMeter {
   readonly category: ToolMeterCategory;
   readonly countsBytes: boolean;
   readonly countsTime: boolean;
+  /** Omit for normal executor-entry accounting; retrieval tools opt into a later marker. */
+  readonly commitOn?: "external_dispatch";
 }
 
 export interface ToolProgress {
