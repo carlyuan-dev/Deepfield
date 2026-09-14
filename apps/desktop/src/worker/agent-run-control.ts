@@ -38,6 +38,7 @@ export interface AgentRunControl {
     knownUrls?: Iterable<string>;
   }): void;
   beginExecution(): void;
+  completeBatch(): void;
   complete(): void;
 }
 
@@ -72,6 +73,14 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
     if (currentPhase !== "done") currentPhase = "synthesizing";
   };
 
+  const availableNetworkTools = (): NetworkToolName[] => {
+    if (currentPhase !== "deciding") return [];
+    const tools: NetworkToolName[] = [];
+    if (hasCapacity(snapshot, "search")) tools.push("web_search");
+    if (hasCapacity(snapshot, "fetch")) tools.push("read_webpage");
+    return tools;
+  };
+
   return {
     phase: () => currentPhase,
     deadlineAt: () => deadlineAt,
@@ -87,16 +96,10 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
       knownUrls: new Set(knownUrls),
       consecutiveEmptyBatches,
     }),
-    availableNetworkTools: () => {
-      if (currentPhase !== "deciding") return [];
-      const tools: NetworkToolName[] = [];
-      if (hasCapacity(snapshot, "search")) tools.push("web_search");
-      if (hasCapacity(snapshot, "fetch")) tools.push("read_webpage");
-      return tools;
-    },
+    availableNetworkTools,
     observeSnapshot(nextSnapshot) {
       snapshot = nextSnapshot;
-      if (currentPhase === "deciding" && this.availableNetworkTools().length === 0) {
+      if (currentPhase === "deciding" && availableNetworkTools().length === 0) {
         enterSynthesis();
       }
     },
@@ -116,13 +119,21 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
       for (const url of batchEvidence.knownUrls ?? []) knownUrls.add(url);
       if (searchCount + fetchCount === 0) {
         consecutiveEmptyBatches += 1;
-        if (consecutiveEmptyBatches >= policy.termination.consecutiveEmptyBatches) enterSynthesis();
       } else {
         consecutiveEmptyBatches = 0;
       }
     },
     beginExecution() {
       if (currentPhase === "deciding") currentPhase = "executing";
+    },
+    completeBatch() {
+      if (currentPhase !== "executing") return;
+      if (consecutiveEmptyBatches >= policy.termination.consecutiveEmptyBatches) {
+        enterSynthesis();
+        return;
+      }
+      currentPhase = "deciding";
+      if (availableNetworkTools().length === 0) enterSynthesis();
     },
     complete() {
       currentPhase = "done";

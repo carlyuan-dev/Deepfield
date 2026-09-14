@@ -47,4 +47,26 @@ describe("createAgentRunControl", () => {
 
     expect(control.phase()).toBe("synthesizing");
   });
+
+  it("returns to deciding between batches and synthesizes after execution exhausts both budgets", () => {
+    const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
+    control.observeSnapshot(snapshot({ search: 2, fetch: 1 }));
+
+    control.recordToolDecisionTurn();
+    control.beginExecution();
+    control.observeSnapshot(snapshot({ search: 1, fetch: 1 }));
+    control.recordBatchEvidence({ successfulSearches: 1 });
+    control.completeBatch();
+
+    expect(control.phase()).toBe("deciding");
+    expect(control.availableNetworkTools()).toEqual(["web_search", "read_webpage"]);
+
+    control.recordToolDecisionTurn();
+    control.beginExecution();
+    control.observeSnapshot(snapshot({ search: 0, fetch: 0 }));
+    control.recordBatchEvidence({ successfulSearches: 1 });
+    control.completeBatch();
+
+    expect(control.phase()).toBe("synthesizing");
+  });
 });
