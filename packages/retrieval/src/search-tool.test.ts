@@ -10,6 +10,35 @@ function provider(timeRange: boolean) {
 }
 
 describe("web_search provider-aware date handling", () => {
+  it("formats large search results as bounded valid JSON for the model", async () => {
+    const results = Array.from({ length: 10 }, (_, index) => ({
+      title: `结果 ${index + 1} ${"标题".repeat(200)}`,
+      url: `https://example.com/${index + 1}?q=${"a".repeat(1200)}`,
+      snippet: "摘要".repeat(4000),
+      rank: index + 1,
+      provider: "test",
+    }));
+    const value: SearchProvider = {
+      id: "test",
+      capabilities: { timeRange: false },
+      search: async () => ({ provider: "test", results }),
+    };
+    const definition = createSearchWebDefinition(value);
+    const output = await definition.execute(
+      { query: "宇树科技", maxResults: 10 },
+      context,
+      new AbortController().signal,
+      () => {},
+    );
+
+    const formatted = definition.model?.formatOutput(output);
+    expect(formatted).toBeDefined();
+    expect(Buffer.byteLength(formatted ?? "", "utf8")).toBeLessThanOrEqual(12_000);
+    const parsed = JSON.parse(formatted ?? "") as { results: unknown[]; omittedResults: number };
+    expect(parsed.results.length).toBeGreaterThan(0);
+    expect(parsed.omittedResults).toBeGreaterThan(0);
+  });
+
   it("moves absolute dates into the actual query for providers without native timeRange", async () => {
     const fake = provider(false);
     const output = await createSearchWebDefinition(fake.value).execute(

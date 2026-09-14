@@ -31,7 +31,7 @@ function retrievalContext(traceId: string) {
 describe("utility tool runtime assembly (focused revision)", () => {
   it("constructs without duplicate grants and freezes the registry", () => {
     const runtime = makeRuntime();
-    expect(runtime.registry.list()).toHaveLength(10);
+    expect(runtime.registry.list()).toHaveLength(11);
     expect(() =>
       runtime.registry.register({
         identity: { name: "echo_probe", version: 1 },
@@ -59,6 +59,7 @@ describe("utility tool runtime assembly (focused revision)", () => {
       "fetch_pdf",
       "parse_html",
       "parse_pdf",
+      "read_webpage",
       "check_link_accessibility",
       "web_search",
     ]);
@@ -75,6 +76,28 @@ describe("utility tool runtime assembly (focused revision)", () => {
     expect(runtime.createAgentTools({ traceId: "search-trace", actor: "main_agent", networkEnabled: true }).map((tool) => tool.name)).toContain("web_search");
     expect(runtime.releaseTrace("search-trace")).toBe(true);
     expect(runtime.searchSessions.has("search-trace")).toBe(false);
+  });
+
+  it("exposes search and composed webpage reading only to a web-enabled agent", () => {
+    const runtime = makeRuntime(false);
+    const provider = { id: "test", capabilities: { timeRange: false }, search: async () => ({ provider: "test", results: [] }) };
+    runtime.bindSearchProvider("web-trace", provider);
+
+    const online = runtime.createAgentTools({
+      traceId: "web-trace",
+      actor: "main_agent",
+      networkEnabled: true,
+    }).map((tool) => tool.name);
+    const offline = runtime.createAgentTools({
+      traceId: "offline-trace",
+      actor: "main_agent",
+      networkEnabled: false,
+    }).map((tool) => tool.name);
+
+    expect(online).toEqual(expect.arrayContaining(["web_search", "read_webpage"]));
+    expect(online).not.toContain("fetch_url");
+    expect(offline).not.toContain("web_search");
+    expect(offline).not.toContain("read_webpage");
   });
 
   it("runs echo_probe directly when explicitly registered", async () => {

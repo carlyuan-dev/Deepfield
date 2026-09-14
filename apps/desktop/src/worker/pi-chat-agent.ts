@@ -24,8 +24,16 @@ const OFFLINE_SYSTEM_PROMPT = [
   "不要据此声称本地文件不可处理；本地附件能力不属于本轮联网状态说明。",
 ].join("\n");
 const ONLINE_SYSTEM_PROMPT = [
-  "本轮已开放联网工具 web_search 与 fetch_url。",
+  "本轮已开放联网工具 web_search 与 read_webpage。",
   "遇到最新信息或需要核实网页事实时，应使用这些工具，不得声称没有联网能力。",
+  "使用与用户相同的语言回答；用户使用中文时，最终回答必须使用中文。",
+  "调用工具前后的计划、进度和重试说明属于内部执行过程，不要把它们当作最终回答。",
+  "完成工具调用后必须基于已获得的信息给出可独立阅读的最终回答。",
+].join("\n");
+const SYNTHESIS_SYSTEM_PROMPT = [
+  "工具阶段已结束，本轮不能再调用任何工具。",
+  "请立即基于已有工具结果回答用户；即使部分工具失败，也要用用户的语言给出当前证据允许的最佳答案，并清楚说明无法确认的部分。",
+  "只输出最终回答，不输出搜索计划、重试过程或工具协议。",
 ].join("\n");
 
 export class PiChatAgentError extends Error {
@@ -97,6 +105,52 @@ function hasProviderFailure(messages: unknown[]): boolean {
   return false;
 }
 
+function assistantText(message: AssistantMessage): string {
+  return message.content
+    .filter((part): part is Extract<AssistantMessage["content"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
+function assistantTurnCount(messages: unknown[]): number {
+  return messages.filter(
+    (message) =>
+      typeof message === "object" &&
+      message !== null &&
+      (message as { role?: unknown }).role === "assistant",
+  ).length;
+}
+
+function hasToolCalls(message: AssistantMessage): boolean {
+  return message.content.some((part) => part.type === "toolCall");
+}
+
+function finalToolFreeAnswer(messages: unknown[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      (candidate as { role?: unknown }).role !== "assistant"
+    ) {
+      continue;
+    }
+    const assistant = candidate as AssistantMessage;
+    if (hasToolCalls(assistant)) {
+      return undefined;
+    }
+    return assistantText(assistant);
+  }
+  return undefined;
+}
+
+function isAcceptableFinalAnswer(text: string | undefined, userPrompt: string): text is string {
+  if (text === undefined || text.trim().length === 0) return false;
+  if (text.includes("<｜｜DSML｜｜") || text.includes("<|DSML|>")) return false;
+  const containsHan = /\p{Script=Han}/u;
+  return !containsHan.test(userPrompt) || containsHan.test(text);
+}
+
 export function createPiChatAgent(
   runtime: PiRuntime = defaultPiRuntime(),
   tools: AgentTool<any>[] = [],
@@ -154,7 +208,7 @@ export function createPiChatAgent(
                   networkEnabled: request.toolAccess.network === "enabled",
                 }),
               ];
-        let finalText = "";
+        let finalText: string | undefined;
         let startedEmitted = false;
         let sawAgentEnd = false;
         let providerFailure = false;
@@ -210,6 +264,21 @@ export function createPiChatAgent(
           getApiKey: (provider) => gateway.getApiKey(request.llm, provider),
           sessionId: request.context.conversationId,
           toolExecution: "sequential",
+          prepareNextTurnWithContext: ({ message, context, newMessages }) => {
+            if (
+              assistantTurnCount(newMessages) < request.toolAccess.maxAgentTurns - 1 ||
+              !hasToolCalls(message)
+            ) {
+              return undefined;
+            }
+            return {
+              context: {
+                ...context,
+                systemPrompt: `${context.systemPrompt}\n${SYNTHESIS_SYSTEM_PROMPT}`,
+                tools: [],
+              },
+            };
+          },
           shouldStopAfterTurn: ({ newMessages }) => newMessages.filter((message) => message.role === "assistant").length >= request.toolAccess.maxAgentTurns,
         });
 
@@ -235,18 +304,10 @@ export function createPiChatAgent(
             }
             return;
           }
-          if (
-            event.type === "message_update" &&
-            event.assistantMessageEvent.type === "text_delta"
-          ) {
-            finalText += event.assistantMessageEvent.delta;
-            emit({
-              requestId: request.requestId,
-              type: "text_delta",
-              delta: event.assistantMessageEvent.delta,
-            });
-            return;
-          }
+          // Assistant text that precedes a tool call is internal execution
+          // narration. Wait for agent_end so only the last tool-free turn can
+          // become user-visible answer text.
+          if (event.type === "message_update") return;
           if (event.type === "tool_execution_start") {
             if (activeActivities.has(event.toolCallId)) return;
             activitySequence += 1;
@@ -270,6 +331,7 @@ export function createPiChatAgent(
             if (hasProviderFailure(event.messages)) {
               providerFailure = true;
             }
+            finalText = finalToolFreeAnswer(event.messages);
           }
         });
 
@@ -291,7 +353,12 @@ export function createPiChatAgent(
           failActiveActivities();
           throw new PiChatAgentError("agent finished without a complete start/end sequence");
         }
+        if (!isAcceptableFinalAnswer(finalText, request.prompt)) {
+          failActiveActivities();
+          throw new PiChatAgentError("agent finished without a final answer");
+        }
         failActiveActivities();
+        emit({ requestId: request.requestId, type: "text_delta", delta: finalText });
         emitTerminal({ requestId: request.requestId, type: "completed", text: finalText });
       } finally {
         toolSessions?.releaseTrace(request.requestId);

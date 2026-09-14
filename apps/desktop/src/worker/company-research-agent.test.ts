@@ -11,7 +11,7 @@ describe("generic company research agent", () => {
     const events: CompanyResearchWorkerEvent[] = [];
     await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
     expect(received.toolAccess).toMatchObject({ network: "enabled", maxSearchCalls: 8, maxFetchCalls: 8 });
-    expect(received.context.systemPrompt).toContain("web_search 与 fetch_url");
+    expect(received.context.systemPrompt).toContain("web_search 与 read_webpage");
     expect(events.map((event) => event.type)).toEqual(["started", "text_delta", "completed"]);
   });
 

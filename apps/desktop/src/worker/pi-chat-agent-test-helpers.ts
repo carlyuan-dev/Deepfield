@@ -34,6 +34,16 @@ export function assistant(
   };
 }
 
+export function assistantWithTool(text: string, name = "web_search"): AssistantMessage {
+  return assistant(text, {
+    content: [
+      { type: "text", text },
+      { type: "toolCall", id: `call-${name}`, name, arguments: { query: "宇树科技" } },
+    ],
+    stopReason: "toolUse",
+  });
+}
+
 export function agentEnd(messages: AssistantMessage[]): AgentEvent {
   return { type: "agent_end", messages };
 }

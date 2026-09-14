@@ -54,6 +54,43 @@ export const SearchWebOutputSchema = Type.Object(
 );
 export type SearchWebOutput = Static<typeof SearchWebOutputSchema>;
 
+const MAX_MODEL_SEARCH_OUTPUT_BYTES = 12_000;
+const MAX_MODEL_SEARCH_RESULTS = 8;
+
+function clip(value: string | undefined, maximum: number): string | undefined {
+  if (value === undefined) return undefined;
+  return value.length <= maximum ? value : `${value.slice(0, Math.max(0, maximum - 1))}…`;
+}
+
+function formatSearchOutputForModel(output: SearchWebOutput): string {
+  const results: Array<Record<string, unknown>> = [];
+  const payload = {
+    query: output.query,
+    provider: output.provider,
+    results,
+    omittedResults: output.results.length,
+  };
+  for (const result of output.results.slice(0, MAX_MODEL_SEARCH_RESULTS)) {
+    const candidate = {
+      title: clip(result.title, 300),
+      url: result.url,
+      snippet: clip(result.snippet, 900),
+      rank: result.rank,
+      ...(result.date === undefined ? {} : { date: result.date }),
+      ...(result.publishedAt === undefined ? {} : { publishedAt: result.publishedAt }),
+      ...(result.sourceName === undefined ? {} : { sourceName: clip(result.sourceName, 200) }),
+    };
+    results.push(candidate);
+    payload.omittedResults = output.results.length - results.length;
+    if (Buffer.byteLength(JSON.stringify(payload), "utf8") > MAX_MODEL_SEARCH_OUTPUT_BYTES) {
+      results.pop();
+      payload.omittedResults = output.results.length - results.length;
+      break;
+    }
+  }
+  return JSON.stringify(payload);
+}
+
 function mapProviderError(error: SearchProviderError): ToolExecutionError {
   switch (error.code) {
     case "unauthorized":
@@ -99,6 +136,7 @@ export function createSearchWebDefinition(
     retry: { maxRetries: 0, backoffMs: 0 },
     concurrency: 2,
     meter: { category: "search", countsBytes: false, countsTime: true },
+    model: { formatOutput: formatSearchOutputForModel },
     async execute(input, context, signal) {
       try {
         const activeProvider = typeof provider === "function" ? provider(context.traceId) : provider;

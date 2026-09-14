@@ -3,6 +3,7 @@ import type { ToolActivityView } from "../state/chat.js";
 
 const TOOL_LABELS: Readonly<Record<string, string>> = {
   web_search: "联网搜索",
+  read_webpage: "读取网页",
   get_current_datetime: "获取日期时间",
   calculator: "计算器",
   convert_timezone: "转换时区",

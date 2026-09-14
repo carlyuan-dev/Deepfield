@@ -7,6 +7,7 @@ import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-cata
 import {
   agentEnd,
   assistant,
+  assistantWithTool,
   capture,
   FakePiAgent,
   makeRuntime,
@@ -17,9 +18,113 @@ import {
 } from "./pi-chat-agent-test-helpers.js";
 
 describe("pi chat agent", () => {
+  it("keeps tool-turn narration private and emits only the final tool-free answer", async () => {
+    const planning = assistantWithTool("I'll search recent sources.");
+    const retrying = assistantWithTool("Some calls failed; retrying.", "read_webpage");
+    const answerText = "近三个月，宇树科技公布了新的人形机器人进展。[来源](https://example.com)";
+    const answer = assistant(answerText);
+    const fake = new FakePiAgent({
+      events: [
+        { type: "agent_start" },
+        textDelta("I'll search recent sources."),
+        { type: "message_end", message: planning },
+        textDelta("Some calls failed; retrying."),
+        { type: "message_end", message: retrying },
+        textDelta("近三个月，宇树科技公布了新的人形机器人进展。"),
+        { type: "message_end", message: answer },
+        agentEnd([planning, retrying, answer]),
+      ],
+    });
+
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+
+    expect(result.error).toBeUndefined();
+    expect(result.events.filter((event) => event.type === "text_delta")).toEqual([
+      { requestId: "req-1", type: "text_delta", delta: answerText },
+    ]);
+    expect(result.events.at(-1)).toEqual({
+      requestId: "req-1",
+      type: "completed",
+      text: answerText,
+    });
+    expect(JSON.stringify(result.events)).not.toContain("I'll search");
+    expect(JSON.stringify(result.events)).not.toContain("retrying");
+  });
+
+  it("fails instead of persisting narration when the run ends on a tool-using turn", async () => {
+    const planning = assistantWithTool("I'll retry the failed calls.");
+    const fake = new FakePiAgent({
+      events: [
+        { type: "agent_start" },
+        textDelta("I'll retry the failed calls."),
+        { type: "message_end", message: planning },
+        agentEnd([planning]),
+      ],
+    });
+
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect(result.events.some((event) => event.type === "completed")).toBe(false);
+    expect(JSON.stringify(result.events)).not.toContain("I'll retry");
+  });
+
+  it("reserves the last agent turn for tool-free synthesis", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
+    });
+    await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+    const options = fake.receivedOptions;
+    const toolTurn = assistantWithTool("继续搜索");
+    const fiveAssistantTurns = Array.from({ length: 5 }, () => assistant("过程"));
+
+    expect(options?.prepareNextTurnWithContext).toBeDefined();
+    const update = await options?.prepareNextTurnWithContext?.({
+      message: toolTurn,
+      toolResults: [],
+      context: {
+        systemPrompt: "原始系统提示",
+        model: stubModel,
+        messages: [],
+        tools: [{ name: "web_search" }],
+      },
+      newMessages: fiveAssistantTurns,
+    } as never);
+
+    expect(update?.context?.tools).toEqual([]);
+    expect(update?.context?.systemPrompt).toContain("工具阶段已结束");
+    expect(await options?.shouldStopAfterTurn?.({
+      message: toolTurn,
+      toolResults: [],
+      context: update?.context,
+      newMessages: fiveAssistantTurns,
+    } as never)).toBe(false);
+    expect(await options?.shouldStopAfterTurn?.({
+      message: assistant("收尾"),
+      toolResults: [],
+      context: update?.context,
+      newMessages: [...fiveAssistantTurns, assistant("收尾")],
+    } as never)).toBe(true);
+  });
+
+  it.each([
+    ["空白答案", "   "],
+    ["DSML 工具协议", '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="web_search"></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>'],
+    ["与中文问题不一致的纯英文答案", "I could not verify the requested information."],
+  ])("rejects a final turn containing only %s", async (_label, finalText) => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant(finalText)])],
+    });
+
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect(result.events.some((event) => event.type === "completed")).toBe(false);
+  });
+
   it("adds non-persisted offline and local-date context to each Pi session", async () => {
     const fake = new FakePiAgent({
-      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+      events: [{ type: "agent_start" }, agentEnd([assistant("好的")])],
     });
     const agent = createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {
       clock: () => new Date("2026-09-08T16:30:00.000Z"),
@@ -44,7 +149,7 @@ describe("pi chat agent", () => {
 
   it("adds online tool guidance and marks started events for web-enabled runs", async () => {
     const fake = new FakePiAgent({
-      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+      events: [{ type: "agent_start" }, agentEnd([assistant("好的")])],
     });
     const toolSessions = {
       createAgentTools: () => [],
@@ -61,7 +166,7 @@ describe("pi chat agent", () => {
     const systemPrompt = fake.receivedOptions?.initialState?.systemPrompt;
     expect(systemPrompt).not.toContain("本轮未启用联网搜索");
     expect(systemPrompt).toContain("web_search");
-    expect(systemPrompt).toContain("fetch_url");
+    expect(systemPrompt).toContain("read_webpage");
     expect(events[0]).toEqual({ requestId: "req-1", type: "started", webSearch: true });
   });
 
@@ -102,8 +207,6 @@ describe("pi chat agent", () => {
     expect(result.events.filter((event) => event.type === "started")).toHaveLength(1);
     expect(result.events).toEqual([
       { requestId: "req-1", type: "started" },
-      { requestId: "req-1", type: "text_delta", delta: "你" },
-      { requestId: "req-1", type: "text_delta", delta: "好" },
       {
         requestId: "req-1",
         type: "tool_activity",
@@ -120,6 +223,7 @@ describe("pi chat agent", () => {
         status: "completed",
         summary: "example.com",
       },
+      { requestId: "req-1", type: "text_delta", delta: "你好" },
       { requestId: "req-1", type: "completed", text: "你好" },
     ]);
     const serialized = JSON.stringify(result.events);
@@ -208,7 +312,7 @@ describe("pi chat agent", () => {
 
   it("does not abort on a normal completion and cleans up listeners", async () => {
     const fake = new FakePiAgent({
-      events: [{ type: "agent_start" }, agentEnd([assistant("ok")])],
+      events: [{ type: "agent_start" }, agentEnd([assistant("好的")])],
     });
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeUndefined();
@@ -235,7 +339,7 @@ describe("pi chat agent skill invocation", () => {
   const skillEvents = [
     { type: "agent_start" as const },
     textDelta("你"),
-    agentEnd([assistant("ok")]),
+    agentEnd([assistant("好的")]),
   ];
 
   it("formats the prompt through the injected catalog and reports the skill on started", async () => {

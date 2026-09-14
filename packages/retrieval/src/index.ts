@@ -51,6 +51,12 @@ export {
   type LinkToolDeps,
 } from "./link-tool.js";
 export {
+  MAX_READ_WEBPAGE_TEXT_CHARS,
+  ReadWebpageOutputSchema,
+  createReadWebpageDefinition,
+  type ReadWebpageOutput,
+} from "./read-webpage-tool.js";
+export {
   createParseHtmlDefinition,
   ParseHtmlInputSchema,
   ParseHtmlOutputSchema,

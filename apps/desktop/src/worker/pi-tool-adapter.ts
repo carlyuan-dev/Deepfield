@@ -128,10 +128,18 @@ function toAgentTool(
           details: { executionId },
         };
       }
-      if (result.status === "cancelled") {
-        throw new PiToolExecutionError("tool execution cancelled");
-      }
-      throw new PiToolExecutionError("tool execution failed");
+      const failure = result.failure ?? {
+        code: "cancelled",
+        retryable: false,
+        attempts: result.attempts,
+      };
+      throw new PiToolExecutionError(
+        `tool_failed ${JSON.stringify({
+          code: failure.code,
+          retryable: failure.retryable,
+          attempts: failure.attempts,
+        })}`,
+      );
     },
   };
 }

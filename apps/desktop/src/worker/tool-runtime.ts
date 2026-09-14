@@ -28,6 +28,7 @@ import {
   createNodeHttpAdapter,
   createParseHtmlDefinition,
   createParsePdfDefinition,
+  createReadWebpageDefinition,
   createSearchWebDefinition,
   type SearchProvider,
 } from "@deepfield/retrieval";
@@ -142,7 +143,7 @@ export function createTrustedToolSet(actor: ToolActor, networkEnabled = false): 
   }
   if (networkEnabled && (actor === "main_agent" || actor === "capability")) grants.push(
     { identity: { name: "web_search", version: 1 }, actor, effect: "network.read.public" },
-    { identity: { name: "fetch_url", version: 1 }, actor, effect: "network.read.public" },
+    { identity: { name: "read_webpage", version: 1 }, actor, effect: "network.read.public" },
   );
   if (PROBE_GRANTS[actor]) {
     grants.push({
@@ -311,6 +312,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
   registry.register(createFetchPdfDefinition({ transport, store: resourceStore }));
   registry.register(createParseHtmlDefinition({ store: resourceStore }));
   registry.register(createParsePdfDefinition({ store: resourceStore }));
+  registry.register(createReadWebpageDefinition({ transport, store: resourceStore }));
   registry.register(createCheckLinkAccessibilityDefinition({ transport }));
   const searchSessions = new SearchSessionRegistry();
   registry.register(createSearchWebDefinition((traceId) => searchSessions.get(traceId)));

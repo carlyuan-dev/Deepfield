@@ -4,6 +4,7 @@ import {
   FakeAuditSink,
   FakeRetryClock,
   ToolBudgetLedger,
+  ToolExecutionError,
   ToolPolicy,
   ToolRegistry,
   ToolRunner,
@@ -11,7 +12,7 @@ import {
 } from "@deepfield/tool-platform";
 import type { ToolDefinition, ToolRunContext } from "@deepfield/tool-platform";
 import { createPiChatAgent } from "./pi-chat-agent.js";
-import { FakePiAgent, makeRuntime, request, stubModel } from "./pi-chat-agent-test-helpers.js";
+import { assistant, FakePiAgent, makeRuntime, request, stubModel } from "./pi-chat-agent-test-helpers.js";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { createPiAgentTools, deterministicOutputText, type PiToolAdapterContext } from "./pi-tool-adapter.js";
 import { createToolRuntime } from "./tool-runtime.js";
@@ -163,6 +164,32 @@ describe("pi tool adapter", () => {
     expect(String(error)).not.toContain("apiKey");
   });
 
+  it.each(["timeout", "authentication_failed"] as const)(
+    "preserves the safe %s failure classification for the model",
+    async (failureCode) => {
+      const registry = new ToolRegistry();
+      registry.register(
+        lookupFactDefinition(async () => {
+          throw new ToolExecutionError(failureCode);
+        }),
+      );
+      const audit = new FakeAuditSink();
+      const runner = makeRunner(registry, audit);
+      const tools = createPiAgentTools(registry, runner, context());
+
+      await expect(
+        tools[0]!.execute(
+          "pi-call-1",
+          { subject: "robot" },
+          new AbortController().signal,
+          () => {},
+        ),
+      ).rejects.toThrow(
+        `tool_failed {"code":"${failureCode}","retryable":false,"attempts":1}`,
+      );
+    },
+  );
+
   it("shares one runner and audit gate between direct and Pi paths", async () => {
     let calls = 0;
     const registry = new ToolRegistry();
@@ -207,13 +234,13 @@ describe("pi tool adapter", () => {
 
   it("keeps createPiChatAgent tools default to [] and injects explicit tools", async () => {
     const defaultAgent = new FakePiAgent({
-      events: [{ type: "agent_start" } as AgentEvent, { type: "agent_end", messages: [] }],
+      events: [{ type: "agent_start" } as AgentEvent, { type: "agent_end", messages: [assistant("完成")] }],
     });
     await createPiChatAgent(makeRuntime(defaultAgent, stubModel)).run(request(), () => {}, new AbortController().signal);
     expect((defaultAgent.receivedOptions?.initialState as { tools?: unknown[] }).tools).toEqual([]);
 
     const explicitAgent = new FakePiAgent({
-      events: [{ type: "agent_start" } as AgentEvent, { type: "agent_end", messages: [] }],
+      events: [{ type: "agent_start" } as AgentEvent, { type: "agent_end", messages: [assistant("完成")] }],
     });
     const registry = new ToolRegistry();
     registry.register(lookupFactDefinition());

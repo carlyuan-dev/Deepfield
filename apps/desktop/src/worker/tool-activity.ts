@@ -8,6 +8,8 @@ const KNOWN_TOOL_NAMES = new Set([
   "list_conversations",
   "read_conversation",
   "search_conversations",
+  "web_search",
+  "read_webpage",
   "fetch_url",
   "fetch_pdf",
   "parse_html",
@@ -61,6 +63,11 @@ function timeZone(args: Record<string, unknown> | undefined): string | undefined
 function summaryFor(toolName: string, args: unknown): string | undefined {
   const input = record(args);
   switch (toolName) {
+    case "web_search": {
+      const query = input?.["query"];
+      return typeof query === "string" ? clippedLine(query) : "公开网页";
+    }
+    case "read_webpage":
     case "fetch_url":
     case "fetch_pdf":
     case "check_link_accessibility":
