@@ -15,7 +15,7 @@ import {
 export const SearchWebInputSchema = Type.Object(
   {
     query: Type.String({ minLength: 1, maxLength: MAX_QUERY_LENGTH }),
-    maxResults: Type.Integer({ minimum: 1, maximum: MAX_RESULTS }),
+    maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_RESULTS })),
     timeRange: Type.Optional(
       Type.Object(
         {
@@ -112,24 +112,20 @@ export function createSearchWebDefinition(
         ) {
           throw new ToolExecutionError("invalid_input");
         }
-        if (input.timeRange !== undefined && !activeProvider.capabilities.timeRange) {
-          throw new ToolExecutionError("invalid_input");
-        }
-        assertValidSearchRequest({
-          query: input.query,
-          maxResults: input.maxResults,
-          ...(input.timeRange !== undefined ? { timeRange: input.timeRange } : {}),
-        });
-        const response = await activeProvider.search(
-          {
-            query: input.query,
-            maxResults: input.maxResults,
-            ...(input.timeRange !== undefined ? { timeRange: input.timeRange } : {}),
-          },
-          signal,
-        );
+        const maxResults = input.maxResults ?? 5;
+        const useNativeTimeRange = input.timeRange !== undefined && activeProvider.capabilities.timeRange;
+        const query = input.timeRange !== undefined && !useNativeTimeRange
+          ? `${input.query} ${input.timeRange.from} 至 ${input.timeRange.to}`
+          : input.query;
+        const request = {
+          query,
+          maxResults,
+          ...(useNativeTimeRange ? { timeRange: input.timeRange } : {}),
+        };
+        assertValidSearchRequest(request);
+        const response = await activeProvider.search(request, signal);
         return {
-          query: input.query,
+          query,
           provider: response.provider,
           results: response.results,
         };

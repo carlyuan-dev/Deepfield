@@ -233,7 +233,7 @@ describe("web_search definition (focused revision)", () => {
     expect(JSON.stringify(output)).not.toContain("sk-test");
   });
 
-  it("fails closed on illegal timeRange and unsupported capability at the tool boundary", async () => {
+  it("fails closed on illegal timeRange and falls back for unsupported capability", async () => {
     const { transport, requests } = scriptedTransport([() => jsonResponse(200, { organic: [] })]);
     const serper = createSerperProvider({ client: clientFor(transport, SERPER_ENDPOINT), token: "sk-test" });
     const definition = createSearchWebDefinition(serper);
@@ -255,15 +255,13 @@ describe("web_search definition (focused revision)", () => {
       ),
     );
     expect(reversed).toMatchObject({ code: "invalid_input" });
-    const unsupported = await errorOf(
-      definition.execute(
-        { query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-03-31" } },
-        { traceId: "t", actor: "main_agent" },
-        new AbortController().signal,
-        () => {},
-      ),
+    const unsupported = await definition.execute(
+      { query: "x", maxResults: 5, timeRange: { from: "2026-03-01", to: "2026-03-31" } },
+      { traceId: "t", actor: "main_agent" },
+      new AbortController().signal,
+      () => {},
     );
-    expect(unsupported).toMatchObject({ code: "invalid_input" });
-    expect(requests).toHaveLength(0); // nothing reached the transport
+    expect(unsupported.query).toBe("x 2026-03-01 至 2026-03-31");
+    expect(requests).toHaveLength(1);
   });
 });
