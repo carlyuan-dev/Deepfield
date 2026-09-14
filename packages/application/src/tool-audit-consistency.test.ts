@@ -63,6 +63,7 @@ describe("SqliteToolAudit finish consistency (focused revision)", () => {
       finish: () => {
         finishCalls += 1;
       },
+      recordSynthetic: () => {},
       getById: () => undefined,
           listRecent: () => [], listByConversation: () => [],
     };

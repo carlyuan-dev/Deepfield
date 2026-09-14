@@ -126,6 +126,35 @@ describe("utility tool runtime assembly (focused revision)", () => {
     ]);
   });
 
+  it("records synthetic terminal activity without entering the runner pipeline", async () => {
+    const audit = new FakeAuditSink();
+    const runtime = createToolRuntime({ audit });
+    await runtime.recordSynthetic({
+      executionId: "skip-1",
+      traceId: "req-1",
+      actor: "main_agent",
+      tool: { name: "web_search", version: 1 },
+      status: "skipped",
+      errorCode: "budget_trimmed",
+      agentTurnIndex: 2,
+      batchId: "batch-2",
+      toolCallId: "call-5",
+      attempts: 0,
+      budgetConsumed: false,
+    });
+    expect(audit.records).toEqual([
+      {
+        kind: "synthetic",
+        record: expect.objectContaining({
+          executionId: "skip-1",
+          status: "skipped",
+          attempts: 0,
+          budgetConsumed: false,
+        }),
+      },
+    ]);
+  });
+
   it("keeps tool sets actor-scoped", () => {
     const runtime = makeRuntime();
     const mainTools = runtime.createAgentTools({ traceId: "t1", actor: "main_agent", projectId: "p1" });

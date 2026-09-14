@@ -5,6 +5,7 @@ import {
   type ToolAuditStart,
 } from "@deepfield/tool-platform";
 import type { ToolExecutionRepository } from "@deepfield/persistence";
+import type { ToolSyntheticAuditRecord } from "@deepfield/contracts";
 
 export class SqliteToolAuditError extends Error {
   constructor(message: string) {
@@ -40,6 +41,9 @@ export class SqliteToolAudit implements ToolAuditSink {
         actor: record.actor,
         toolName: record.tool.name,
         toolVersion: record.tool.version,
+        ...(record.agentTurnIndex !== undefined ? { agentTurnIndex: record.agentTurnIndex } : {}),
+        ...(record.batchId !== undefined ? { batchId: record.batchId } : {}),
+        ...(record.toolCallId !== undefined ? { toolCallId: record.toolCallId } : {}),
         startedAt: new Date().toISOString(),
       });
     } catch {
@@ -85,6 +89,7 @@ export class SqliteToolAudit implements ToolAuditSink {
         retries: Math.max(record.attempts - 1, 0),
         bytesReceived: 0,
         resultCount: 0,
+        budgetConsumed: record.attempts > 0,
         finishedAt: new Date().toISOString(),
         ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
       });
@@ -93,6 +98,31 @@ export class SqliteToolAudit implements ToolAuditSink {
         throw error;
       }
       throw new SqliteToolAuditError("failed to persist tool audit finish");
+    }
+  }
+
+  async recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void> {
+    try {
+      const timestamp = new Date().toISOString();
+      this.#repos.recordSynthetic({
+        id: record.executionId,
+        traceId: record.traceId,
+        ...(record.projectId !== undefined ? { projectId: record.projectId } : {}),
+        actor: record.actor,
+        toolName: record.tool.name,
+        toolVersion: record.tool.version,
+        status: record.status,
+        ...(record.errorCode !== undefined ? { errorCode: record.errorCode } : {}),
+        agentTurnIndex: record.agentTurnIndex,
+        batchId: record.batchId,
+        toolCallId: record.toolCallId,
+        attempts: 0,
+        budgetConsumed: false,
+        startedAt: timestamp,
+        finishedAt: timestamp,
+      });
+    } catch {
+      throw new SqliteToolAuditError("failed to persist synthetic tool audit");
     }
   }
 }

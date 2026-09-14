@@ -19,4 +19,5 @@ export type {
   ToolExecutionRepository,
   ToolExecutionStart,
   ToolExecutionStatus,
+  ToolExecutionSynthetic,
 } from "./types.js";

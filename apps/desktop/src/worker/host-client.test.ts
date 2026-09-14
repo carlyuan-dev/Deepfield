@@ -169,6 +169,39 @@ describe("host client", () => {
     client.dispose();
   });
 
+  it("RemoteToolAuditSink sends synthetic activity over its dedicated RPC", async () => {
+    const posted: unknown[] = [];
+    const client = new HostClient({ postMessage: (value) => posted.push(value), timeoutMs: 1000 });
+    const sink = new RemoteToolAuditSink(client);
+    const request = sink.recordSynthetic({
+      executionId: "skip-1",
+      traceId: "req-1",
+      actor: "main_agent",
+      tool: { name: "web_search", version: 1 },
+      status: "skipped",
+      errorCode: "budget_trimmed",
+      agentTurnIndex: 2,
+      batchId: "batch-2",
+      toolCallId: "call-5",
+      attempts: 0,
+      budgetConsumed: false,
+    });
+    expect(posted[0]).toMatchObject({
+      kind: "host.request",
+      method: "audit.synthetic",
+      payload: {
+        executionId: "skip-1",
+        traceId: "req-1",
+        status: "skipped",
+        errorCode: "budget_trimmed",
+        attempts: 0,
+        budgetConsumed: false,
+      },
+    });
+    void request.catch(() => {});
+    client.dispose();
+  });
+
   it("secret client only requests the allowlisted provider and never logs keys", async () => {
     const posted: unknown[] = [];
     const client = new HostClient({ postMessage: (v) => posted.push(v), timeoutMs: 1000 });

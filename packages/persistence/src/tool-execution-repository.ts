@@ -5,6 +5,7 @@ import type {
   ToolExecutionRepository,
   ToolExecutionRow,
   ToolExecutionStart,
+  ToolExecutionSynthetic,
 } from "./types.js";
 import type { ConversationId } from "@deepfield/contracts";
 import { sanitizeSummary } from "./summary-sanitizer.js";
@@ -46,6 +47,21 @@ function requireNonNegativeInteger(value: unknown): number {
   return value;
 }
 
+function requireBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    invalid();
+  }
+  return value;
+}
+
+function optionalNonEmptyString(value: unknown): string | null {
+  return value === undefined ? null : requireNonEmptyString(value);
+}
+
+function optionalNonNegativeInteger(value: unknown): number | null {
+  return value === undefined ? null : requireNonNegativeInteger(value);
+}
+
 /** Canonical UTC ISO date that really exists on the calendar (round-trip check). */
 function requireCanonicalIso(value: unknown): string {
   if (typeof value !== "string" || !CANONICAL_ISO.test(value)) {
@@ -72,11 +88,17 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
       const startedAt = requireCanonicalIso(record.startedAt);
       const projectId =
         record.projectId === undefined ? null : requireNonEmptyString(record.projectId);
+      const agentTurnIndex = optionalNonNegativeInteger(record.agentTurnIndex);
+      const batchId = optionalNonEmptyString(record.batchId);
+      const toolCallId = optionalNonEmptyString(record.toolCallId);
+      const budgetConsumed = record.budgetConsumed === undefined
+        ? 0
+        : Number(requireBoolean(record.budgetConsumed));
       const inputSummary = sanitizeSummary(record.inputSummary);
       try {
         db.prepare(
-          "INSERT INTO tool_executions(id, trace_id, project_id, actor, tool_name, tool_version, status, input_summary_json, started_at) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)",
-        ).run(id, traceId, projectId, actor, toolName, toolVersion, inputSummary ?? null, startedAt);
+          "INSERT INTO tool_executions(id, trace_id, project_id, actor, tool_name, tool_version, status, agent_turn_index, batch_id, tool_call_id, budget_consumed, input_summary_json, started_at) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)",
+        ).run(id, traceId, projectId, actor, toolName, toolVersion, agentTurnIndex, batchId, toolCallId, budgetConsumed, inputSummary ?? null, startedAt);
       } catch (error) {
         if ((error as Error).message.includes("UNIQUE constraint failed")) {
           throw new ToolExecutionError("duplicate", "tool execution already exists");
@@ -97,6 +119,9 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
       const finishedAt = requireCanonicalIso(record.finishedAt);
       const durationMs =
         record.durationMs === undefined ? null : requireNonNegativeInteger(record.durationMs);
+      const budgetConsumed = record.budgetConsumed === undefined
+        ? null
+        : Number(requireBoolean(record.budgetConsumed));
       let errorCode: string | null = null;
       if (record.errorCode !== undefined) {
         if (!TOOL_FAILURE_CODES.has(record.errorCode)) {
@@ -116,7 +141,7 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
       try {
         const result = db
           .prepare(
-            "UPDATE tool_executions SET status = ?, output_summary_json = ?, error_code = ?, attempts = ?, retries = ?, bytes_received = ?, result_count = ?, finished_at = ?, duration_ms = ? WHERE id = ? AND status = 'running'",
+            "UPDATE tool_executions SET status = ?, output_summary_json = ?, error_code = ?, attempts = ?, retries = ?, bytes_received = ?, result_count = ?, finished_at = ?, duration_ms = ?, budget_consumed = COALESCE(?, budget_consumed) WHERE id = ? AND status = 'running'",
           )
           .run(
             record.status,
@@ -128,6 +153,7 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
             resultCount,
             finishedAt,
             durationMs,
+            budgetConsumed,
             id,
           );
         if (result.changes !== 1) {
@@ -141,6 +167,40 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
           throw error;
         }
         throw new ToolExecutionError("persistence", "failed to persist tool execution finish");
+      }
+    },
+
+    recordSynthetic(record: ToolExecutionSynthetic): void {
+      const id = requireNonEmptyString(record.id);
+      const traceId = requireNonEmptyString(record.traceId);
+      const projectId = record.projectId === undefined ? null : requireNonEmptyString(record.projectId);
+      const actor = requireNonEmptyString(record.actor);
+      const toolName = requireNonEmptyString(record.toolName);
+      const toolVersion = requirePositiveInteger(record.toolVersion);
+      if (record.status !== "skipped" && record.status !== "reused") invalid();
+      const agentTurnIndex = requireNonNegativeInteger(record.agentTurnIndex);
+      const batchId = requireNonEmptyString(record.batchId);
+      const toolCallId = requireNonEmptyString(record.toolCallId);
+      if (record.attempts !== 0 || record.budgetConsumed !== false) invalid();
+      let errorCode: string | null = null;
+      if (record.status === "skipped") {
+        if (record.errorCode !== "budget_trimmed") invalid();
+        errorCode = "budget_trimmed";
+      } else if (record.errorCode !== undefined) {
+        if (!TOOL_FAILURE_CODES.has(record.errorCode)) invalid();
+        errorCode = record.errorCode;
+      }
+      const startedAt = requireCanonicalIso(record.startedAt);
+      const finishedAt = requireCanonicalIso(record.finishedAt);
+      try {
+        db.prepare(
+          "INSERT INTO tool_executions(id, trace_id, project_id, actor, tool_name, tool_version, status, agent_turn_index, batch_id, tool_call_id, budget_consumed, error_code, attempts, retries, bytes_received, result_count, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, 0, 0, ?, ?)",
+        ).run(id, traceId, projectId, actor, toolName, toolVersion, record.status, agentTurnIndex, batchId, toolCallId, errorCode, startedAt, finishedAt);
+      } catch (error) {
+        if ((error as Error).message.includes("UNIQUE constraint failed")) {
+          throw new ToolExecutionError("duplicate", "tool execution already exists");
+        }
+        throw new ToolExecutionError("persistence", "failed to persist synthetic tool execution");
       }
     },
 

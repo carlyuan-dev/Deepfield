@@ -5,7 +5,11 @@ export type DraftStatus = "streaming" | "done" | "failed";
 export interface ToolActivityView {
   callKey: string;
   name: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "skipped" | "reused";
+  agentTurnIndex?: number;
+  batchId?: string;
+  toolCallId?: string;
+  budgetConsumed?: boolean;
   summary?: string;
   durationMs?: number;
   errorCode?: string;
@@ -73,6 +77,10 @@ function toView(message: ChatMessage): ChatMessageView {
       callKey: execution.callKey,
       name: execution.name,
       status: execution.status,
+      ...(execution.agentTurnIndex === undefined ? {} : { agentTurnIndex: execution.agentTurnIndex }),
+      ...(execution.batchId === undefined ? {} : { batchId: execution.batchId }),
+      ...(execution.toolCallId === undefined ? {} : { toolCallId: execution.toolCallId }),
+      ...(execution.budgetConsumed === undefined ? {} : { budgetConsumed: execution.budgetConsumed }),
       ...(execution.durationMs === undefined ? {} : { durationMs: execution.durationMs }),
       ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
     })),
@@ -249,6 +257,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             name: event.name,
             status: event.status,
             ...(event.summary === undefined ? {} : { summary: event.summary }),
+            ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
+            ...(event.agentTurnIndex === undefined ? {} : { agentTurnIndex: event.agentTurnIndex }),
+            ...(event.batchId === undefined ? {} : { batchId: event.batchId }),
+            ...(event.toolCallId === undefined ? {} : { toolCallId: event.toolCallId }),
+            ...(event.budgetConsumed === undefined ? {} : { budgetConsumed: event.budgetConsumed }),
           };
           if (activityIndex < 0) {
             draft = { ...draft, toolActivities: [...draft.toolActivities, activity] };

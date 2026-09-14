@@ -86,6 +86,10 @@ describe("migration 2", () => {
       "tool_name",
       "tool_version",
       "status",
+      "agent_turn_index",
+      "batch_id",
+      "tool_call_id",
+      "budget_consumed",
       "input_summary_json",
       "output_summary_json",
       "error_code",
@@ -166,6 +170,82 @@ describe("migration 2", () => {
   });
 });
 
+describe("migration 10", () => {
+  it("preserves legacy executions while adding batch scope and a non-consumed default", () => {
+    const { db, cleanup } = openRaw();
+    migrate(db);
+    db.prepare(
+      "INSERT INTO tool_executions(id, trace_id, actor, tool_name, tool_version, status, attempts, retries, bytes_received, result_count, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "legacy-exec",
+      "legacy-trace",
+      "main_agent",
+      "web_search",
+      1,
+      "completed",
+      1,
+      0,
+      0,
+      0,
+      ISO,
+      ISO,
+    );
+    db.exec(`
+      CREATE TABLE tool_executions_v9(
+        id TEXT PRIMARY KEY,
+        trace_id TEXT NOT NULL,
+        project_id TEXT,
+        actor TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        tool_version INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','completed','failed','cancelled')),
+        input_summary_json TEXT,
+        output_summary_json TEXT,
+        error_code TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        retries INTEGER NOT NULL DEFAULT 0,
+        bytes_received INTEGER NOT NULL DEFAULT 0,
+        result_count INTEGER NOT NULL DEFAULT 0,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        duration_ms INTEGER
+      );
+      INSERT INTO tool_executions_v9(
+        id, trace_id, project_id, actor, tool_name, tool_version, status,
+        input_summary_json, output_summary_json, error_code, attempts, retries,
+        bytes_received, result_count, started_at, finished_at, duration_ms
+      )
+      SELECT
+        id, trace_id, project_id, actor, tool_name, tool_version, status,
+        input_summary_json, output_summary_json, error_code, attempts, retries,
+        bytes_received, result_count, started_at, finished_at, duration_ms
+      FROM tool_executions;
+      DROP TABLE tool_executions;
+      ALTER TABLE tool_executions_v9 RENAME TO tool_executions;
+      DELETE FROM schema_migrations WHERE version = 10;
+    `);
+
+    migrate(db);
+
+    const row = db.prepare(
+      "SELECT trace_id, agent_turn_index, batch_id, tool_call_id, budget_consumed FROM tool_executions WHERE id = ?",
+    ).get("legacy-exec") as Record<string, unknown>;
+    expect(row).toEqual({
+      trace_id: "legacy-trace",
+      agent_turn_index: null,
+      batch_id: null,
+      tool_call_id: null,
+      budget_consumed: 0,
+    });
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version=10").get() as {
+        n: number;
+      }).n,
+    ).toBe(1);
+    cleanup();
+  });
+});
+
 describe("tool execution repository", () => {
   it("starts a running record atomically and rejects duplicate ids", () => {
     const { repos, cleanup } = openTemp();
@@ -180,6 +260,96 @@ describe("tool execution repository", () => {
       attempts: 0,
     });
     expect(() => start(repos, "exec-1")).toThrow(ToolExecutionError);
+    cleanup();
+  });
+  it("records skipped and reused calls as terminal non-executions with their batch scope", () => {
+    const { repos, cleanup } = openTemp();
+    repos.toolExecutions.recordSynthetic({
+      id: "skip-1",
+      traceId: "req-1",
+      actor: "main_agent",
+      toolName: "web_search",
+      toolVersion: 1,
+      status: "skipped",
+      errorCode: "budget_trimmed",
+      agentTurnIndex: 2,
+      batchId: "batch-2",
+      toolCallId: "call-5",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: ISO,
+      finishedAt: ISO,
+    });
+    repos.toolExecutions.recordSynthetic({
+      id: "reuse-1",
+      traceId: "req-1",
+      actor: "main_agent",
+      toolName: "web_search",
+      toolVersion: 1,
+      status: "reused",
+      agentTurnIndex: 2,
+      batchId: "batch-2",
+      toolCallId: "call-6",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: ISO,
+      finishedAt: ISO,
+    });
+
+    expect(repos.toolExecutions.listRecent(10)).toMatchObject([
+      {
+        id: "skip-1",
+        status: "skipped",
+        errorCode: "budget_trimmed",
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId: "call-5",
+        attempts: 0,
+        budgetConsumed: false,
+        finishedAt: ISO,
+      },
+      {
+        id: "reuse-1",
+        status: "reused",
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId: "call-6",
+        attempts: 0,
+        budgetConsumed: false,
+        finishedAt: ISO,
+      },
+    ]);
+    cleanup();
+  });
+
+  it("rejects synthetic records that imply execution or use contradictory reason codes", () => {
+    const { repos, cleanup } = openTemp();
+    const base = {
+      id: "synthetic-bad",
+      traceId: "req-1",
+      actor: "main_agent",
+      toolName: "web_search",
+      toolVersion: 1,
+      status: "skipped",
+      errorCode: "budget_trimmed",
+      agentTurnIndex: 1,
+      batchId: "batch-1",
+      toolCallId: "call-1",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: ISO,
+      finishedAt: ISO,
+    } as const;
+    expect(() => repos.toolExecutions.recordSynthetic({ ...base, attempts: 1 } as never)).toThrow(
+      ToolExecutionError,
+    );
+    expect(() =>
+      repos.toolExecutions.recordSynthetic({ ...base, budgetConsumed: true } as never),
+    ).toThrow(ToolExecutionError);
+    expect(() =>
+      repos.toolExecutions.recordSynthetic({ ...base, errorCode: "timeout" } as never),
+    ).toThrow(ToolExecutionError);
+    expect(repos.toolExecutions.getById(base.id)).toBeUndefined();
     cleanup();
   });
   it("finishes a running execution and survives a reopen", () => {

@@ -3,7 +3,7 @@ import { sanitizeSummary } from "./summary-sanitizer.js";
 import type { ToolExecution, ToolExecutionRow, ToolExecutionStatus } from "./types.js";
 
 const CANONICAL_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const TERMINAL_STATUSES: readonly ToolExecutionStatus[] = ["completed", "failed", "cancelled"];
+const TERMINAL_STATUSES: readonly ToolExecutionStatus[] = ["completed", "failed", "cancelled", "skipped", "reused"];
 
 function persistence(): never {
   throw new ToolExecutionError("persistence", "stored tool execution data is invalid");
@@ -56,6 +56,18 @@ export function validateRow(row: ToolExecutionRow): void {
   rowNonEmptyString(row.actor);
   rowNonEmptyString(row.tool_name);
   rowPositiveInteger(row.tool_version);
+  if (row.agent_turn_index !== null) {
+    rowNonNegativeInteger(row.agent_turn_index);
+  }
+  if (row.batch_id !== null) {
+    rowNonEmptyString(row.batch_id);
+  }
+  if (row.tool_call_id !== null) {
+    rowNonEmptyString(row.tool_call_id);
+  }
+  if (row.budget_consumed !== 0 && row.budget_consumed !== 1) {
+    persistence();
+  }
   rowNonNegativeInteger(row.attempts);
   rowNonNegativeInteger(row.retries);
   rowNonNegativeInteger(row.bytes_received);
@@ -67,7 +79,11 @@ export function validateRow(row: ToolExecutionRow): void {
   if (row.duration_ms !== null) {
     rowNonNegativeInteger(row.duration_ms);
   }
-  if (row.error_code !== null && !TOOL_FAILURE_CODES.has(row.error_code)) {
+  if (
+    row.error_code !== null &&
+    row.error_code !== "budget_trimmed" &&
+    !TOOL_FAILURE_CODES.has(row.error_code)
+  ) {
     persistence();
   }
   if (row.status !== "running" && !TERMINAL_STATUSES.includes(row.status)) {
@@ -89,6 +105,29 @@ export function validateRow(row: ToolExecutionRow): void {
   }
   if (row.status === "failed" && row.error_code === null) {
     persistence();
+  }
+  if (row.status === "skipped" && row.error_code !== "budget_trimmed") {
+    persistence();
+  }
+  if (row.status === "reused" && row.error_code === "budget_trimmed") {
+    persistence();
+  }
+  if (row.status === "skipped" || row.status === "reused") {
+    if (
+      row.agent_turn_index === null ||
+      row.batch_id === null ||
+      row.tool_call_id === null ||
+      row.attempts !== 0 ||
+      row.retries !== 0 ||
+      row.bytes_received !== 0 ||
+      row.result_count !== 0 ||
+      row.budget_consumed !== 0 ||
+      row.input_summary_json !== null ||
+      row.output_summary_json !== null ||
+      row.duration_ms !== null
+    ) {
+      persistence();
+    }
   }
 }
 
@@ -117,6 +156,10 @@ export function rowToExecution(row: ToolExecutionRow): ToolExecution {
     toolName: row.tool_name,
     toolVersion: row.tool_version,
     status: row.status,
+    ...(row.agent_turn_index !== null ? { agentTurnIndex: row.agent_turn_index } : {}),
+    ...(row.batch_id !== null ? { batchId: row.batch_id } : {}),
+    ...(row.tool_call_id !== null ? { toolCallId: row.tool_call_id } : {}),
+    budgetConsumed: row.budget_consumed === 1,
     ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
     attempts: row.attempts,
     retries: row.retries,

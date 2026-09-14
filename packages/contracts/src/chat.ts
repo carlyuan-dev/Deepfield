@@ -53,8 +53,45 @@ export const ToolActivityStatusSchema = Type.Union([
   Type.Literal("running"),
   Type.Literal("completed"),
   Type.Literal("failed"),
+  Type.Literal("skipped"),
+  Type.Literal("reused"),
 ]);
 export type ToolActivityStatus = Static<typeof ToolActivityStatusSchema>;
+
+const toolActivityFields = {
+  requestId: Type.String(),
+  type: Type.Literal("tool_activity"),
+  callKey: Type.String({ minLength: 1, maxLength: 64 }),
+  name: Type.String({ minLength: 1, maxLength: 48 }),
+  summary: Type.Optional(Type.String({ maxLength: 96 })),
+  errorCode: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  agentTurnIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+  batchId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+};
+
+const ToolActivityEventSchema = Type.Union([
+  Type.Object(
+    {
+      ...toolActivityFields,
+      status: Type.Union([
+        Type.Literal("running"),
+        Type.Literal("completed"),
+        Type.Literal("failed"),
+      ]),
+      budgetConsumed: Type.Optional(Type.Boolean()),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...toolActivityFields,
+      status: Type.Union([Type.Literal("skipped"), Type.Literal("reused")]),
+      budgetConsumed: Type.Literal(false),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 export const AgentWorkerEventSchema = Type.Union([
   Type.Object(
@@ -70,17 +107,7 @@ export const AgentWorkerEventSchema = Type.Union([
     { requestId: Type.String(), type: Type.Literal("text_delta"), delta: Type.String() },
     { additionalProperties: false },
   ),
-  Type.Object(
-    {
-      requestId: Type.String(),
-      type: Type.Literal("tool_activity"),
-      callKey: Type.String({ minLength: 1, maxLength: 64 }),
-      name: Type.String({ minLength: 1, maxLength: 48 }),
-      status: ToolActivityStatusSchema,
-      summary: Type.Optional(Type.String({ maxLength: 96 })),
-    },
-    { additionalProperties: false },
-  ),
+  ToolActivityEventSchema,
   Type.Object(
     { requestId: Type.String(), type: Type.Literal("completed"), text: Type.String() },
     { additionalProperties: false },
@@ -110,7 +137,11 @@ export interface ChatMessage {
 export interface ChatToolExecution {
   callKey: string;
   name: string;
-  status: "completed" | "failed";
+  status: ToolActivityStatus;
+  agentTurnIndex?: number;
+  batchId?: string;
+  toolCallId?: string;
+  budgetConsumed?: boolean;
   durationMs?: number;
   errorCode?: string;
 }

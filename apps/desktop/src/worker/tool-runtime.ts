@@ -16,7 +16,7 @@ import type {
   ToolDefinition,
   ToolGrant,
 } from "@deepfield/tool-platform";
-import type { ToolExecutionEvent, ToolExecutionResult, ToolRunRequest } from "@deepfield/contracts";
+import type { ToolExecutionEvent, ToolExecutionResult, ToolRunRequest, ToolSyntheticAuditRecord } from "@deepfield/contracts";
 import {
   MAX_PDF_BYTES,
   ResourceStore,
@@ -267,6 +267,8 @@ export interface PiToolContext {
   actor: ToolActor;
   projectId?: string;
   networkEnabled?: boolean;
+  agentTurnIndex?: number;
+  batchId?: string;
 }
 
 export interface UtilityToolRuntime extends ToolRuntime {
@@ -280,6 +282,8 @@ export interface UtilityToolRuntime extends ToolRuntime {
     signal: AbortSignal,
   ): Promise<ToolExecutionResult>;
   createAgentTools(context: PiToolContext): ReturnType<typeof createPiAgentTools>;
+  /** Persist a skipped/reused terminal call without dispatching ToolRunner or a Provider. */
+  recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void>;
   traceLedgerCount(): number;
   tracePool: TraceBudgetPool;
   searchSessions: SearchSessionRegistry;
@@ -379,11 +383,19 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
         emit,
       );
     },
+    async recordSynthetic(record): Promise<void> {
+      if (options.audit.recordSynthetic === undefined) {
+        throw new Error("synthetic tool audit is unavailable");
+      }
+      await options.audit.recordSynthetic(record);
+    },
     createAgentTools(context) {
       return createPiAgentTools(registry, runner, {
         traceId: context.traceId,
         actor: context.actor,
         ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+        ...(context.agentTurnIndex !== undefined ? { agentTurnIndex: context.agentTurnIndex } : {}),
+        ...(context.batchId !== undefined ? { batchId: context.batchId } : {}),
         toolSet: context.networkEnabled === true
           ? createTrustedToolSet(context.actor, true)
           : toolSetByActor.get(context.actor) ?? createTrustedToolSet(context.actor),

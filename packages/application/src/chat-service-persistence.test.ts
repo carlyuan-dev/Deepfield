@@ -65,6 +65,68 @@ describe("chat service persistence guarantees", () => {
     expect(JSON.stringify(messages)).not.toContain("never");
   });
 
+  it("restores batch-scoped skipped and reused activity without exposing stored summaries", () => {
+    const db = openTestDb(); dbs.push(db); const conversation = makeConversation(db);
+    (db.repos.messages.append as any)(conversation.id, "user", "问题", "req-batch");
+    (db.repos.messages.append as any)(conversation.id, "assistant", "回答", "req-batch");
+    db.repos.toolExecutions.recordSynthetic({
+      id: "skip-history",
+      traceId: "req-batch",
+      actor: "main_agent",
+      toolName: "web_search",
+      toolVersion: 1,
+      status: "skipped",
+      errorCode: "budget_trimmed",
+      agentTurnIndex: 3,
+      batchId: "batch-3",
+      toolCallId: "call-7",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: "2026-09-14T00:00:00.000Z",
+      finishedAt: "2026-09-14T00:00:00.000Z",
+    });
+    db.repos.toolExecutions.recordSynthetic({
+      id: "reuse-history",
+      traceId: "req-batch",
+      actor: "main_agent",
+      toolName: "read_webpage",
+      toolVersion: 1,
+      status: "reused",
+      agentTurnIndex: 3,
+      batchId: "batch-3",
+      toolCallId: "call-8",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: "2026-09-14T00:00:00.000Z",
+      finishedAt: "2026-09-14T00:00:00.000Z",
+    });
+
+    const messages = new ChatService(db.repos, {} as never, {} as never, {} as never).listMessages(conversation.id);
+    expect(messages[1]?.toolExecutions).toEqual([
+      {
+        callKey: "reuse-history",
+        name: "read_webpage",
+        status: "reused",
+        agentTurnIndex: 3,
+        batchId: "batch-3",
+        toolCallId: "call-8",
+        budgetConsumed: false,
+      },
+      {
+        callKey: "skip-history",
+        name: "web_search",
+        status: "skipped",
+        errorCode: "budget_trimmed",
+        agentTurnIndex: 3,
+        batchId: "batch-3",
+        toolCallId: "call-7",
+        budgetConsumed: false,
+      },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("inputSummary");
+    expect(JSON.stringify(messages)).not.toContain("outputSummary");
+  });
+
   it("rolls back and emits chat_persistence_failed when the assistant insert fails", async () => {
     const db = openTestDb();
     dbs.push(db);

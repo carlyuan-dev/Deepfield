@@ -89,7 +89,7 @@ export interface MessageRepository {
   listByConversation(conversationId: ConversationId, limit?: number): ChatMessage[];
 }
 
-export type ToolExecutionStatus = "running" | "completed" | "failed" | "cancelled";
+export type ToolExecutionStatus = "running" | "completed" | "failed" | "cancelled" | "skipped" | "reused";
 
 export interface ToolExecution {
   id: string;
@@ -99,6 +99,10 @@ export interface ToolExecution {
   toolName: string;
   toolVersion: number;
   status: ToolExecutionStatus;
+  agentTurnIndex?: number;
+  batchId?: string;
+  toolCallId?: string;
+  budgetConsumed: boolean;
   inputSummary?: unknown;
   outputSummary?: unknown;
   errorCode?: string;
@@ -118,6 +122,10 @@ export interface ToolExecutionStart {
   actor: string;
   toolName: string;
   toolVersion: number;
+  agentTurnIndex?: number;
+  batchId?: string;
+  toolCallId?: string;
+  budgetConsumed?: boolean;
   inputSummary?: unknown;
   startedAt: string;
 }
@@ -133,11 +141,31 @@ export interface ToolExecutionFinish {
   resultCount: number;
   finishedAt: string;
   durationMs?: number;
+  budgetConsumed?: boolean;
+}
+
+export interface ToolExecutionSynthetic {
+  id: string;
+  traceId: string;
+  projectId?: string;
+  actor: string;
+  toolName: string;
+  toolVersion: number;
+  status: "skipped" | "reused";
+  agentTurnIndex: number;
+  batchId: string;
+  toolCallId: string;
+  errorCode?: string;
+  attempts: 0;
+  budgetConsumed: false;
+  startedAt: string;
+  finishedAt: string;
 }
 
 export interface ToolExecutionRepository {
   start(record: ToolExecutionStart): void;
   finish(record: ToolExecutionFinish): void;
+  recordSynthetic(record: ToolExecutionSynthetic): void;
   getById(id: string): ToolExecution | undefined;
   listRecent(limit: number): ToolExecution[];
   listByConversation(conversationId: ConversationId, limit?: number): ToolExecution[];
@@ -222,6 +250,10 @@ export interface ToolExecutionRow {
   tool_name: string;
   tool_version: number;
   status: ToolExecutionStatus;
+  agent_turn_index: number | null;
+  batch_id: string | null;
+  tool_call_id: string | null;
+  budget_consumed: number;
   input_summary_json: string | null;
   output_summary_json: string | null;
   error_code: string | null;

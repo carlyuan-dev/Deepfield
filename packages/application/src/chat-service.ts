@@ -142,13 +142,20 @@ export class ChatService {
       const associated = byRequest.get(message.requestId) ?? [];
       return {
         ...message,
-        toolExecutions: associated.map((tool) => ({
-          callKey: tool.id,
-          name: tool.toolName,
-          status: tool.status === "completed" ? "completed" as const : "failed" as const,
-          ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
-          ...(tool.errorCode === undefined ? {} : { errorCode: tool.errorCode }),
-        })),
+        toolExecutions: associated.map((tool) => {
+          const status = tool.status === "cancelled" ? "failed" as const : tool.status;
+          return {
+            callKey: tool.id,
+            name: tool.toolName,
+            status,
+            ...(tool.agentTurnIndex === undefined ? {} : { agentTurnIndex: tool.agentTurnIndex }),
+            ...(tool.batchId === undefined ? {} : { batchId: tool.batchId }),
+            ...(tool.toolCallId === undefined ? {} : { toolCallId: tool.toolCallId }),
+            budgetConsumed: tool.budgetConsumed,
+            ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+            ...(tool.errorCode === undefined ? {} : { errorCode: tool.errorCode }),
+          };
+        }),
       };
     });
   }

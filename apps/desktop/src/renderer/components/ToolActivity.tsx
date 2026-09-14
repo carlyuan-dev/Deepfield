@@ -22,6 +22,8 @@ const STATUS_LABELS: Readonly<Record<ToolActivityView["status"], string>> = {
   running: "调用中",
   completed: "已完成",
   failed: "调用失败",
+  skipped: "已跳过",
+  reused: "已复用",
 };
 
 function labelFor(name: string): string {

@@ -94,6 +94,8 @@ function toAgentTool(
     traceId: context.traceId,
     actor: context.actor,
     ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+    ...(context.agentTurnIndex !== undefined ? { agentTurnIndex: context.agentTurnIndex } : {}),
+    ...(context.batchId !== undefined ? { batchId: context.batchId } : {}),
     toolSet: context.toolSet,
   };
   return {
@@ -110,7 +112,7 @@ function toAgentTool(
           tool: definition.identity,
           input: params as unknown as JsonObject,
         },
-        runContext,
+        { ...runContext, toolCallId },
         signal ?? new AbortController().signal,
         (event: ToolExecutionEvent) => {
           if (event.type === "progress" && onUpdate !== undefined) {

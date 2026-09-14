@@ -7,6 +7,9 @@ export interface ExecutorScope {
   readonly traceId: string;
   readonly actor: ToolActor;
   readonly projectId?: string;
+  readonly agentTurnIndex?: number;
+  readonly batchId?: string;
+  readonly toolCallId?: string;
   /** Immutable ToolSet authorization fingerprint (stable string). */
   readonly toolSetFingerprint?: string;
 }
@@ -75,6 +78,9 @@ export function snapshotScope(input: {
   traceId: unknown;
   actor: unknown;
   projectId?: unknown;
+  agentTurnIndex?: unknown;
+  batchId?: unknown;
+  toolCallId?: unknown;
   toolSetFingerprint?: unknown;
 }): ExecutorScope | undefined {
   if (typeof input.traceId !== "string" || input.traceId.length === 0) {
@@ -83,12 +89,24 @@ export function snapshotScope(input: {
   if (typeof input.actor !== "string" || !TOOL_ACTORS.has(input.actor as ToolActor)) {
     return undefined;
   }
+  if (input.agentTurnIndex !== undefined && (!Number.isInteger(input.agentTurnIndex) || (input.agentTurnIndex as number) < 0)) {
+    return undefined;
+  }
+  if (input.batchId !== undefined && (typeof input.batchId !== "string" || input.batchId.length === 0)) {
+    return undefined;
+  }
+  if (input.toolCallId !== undefined && (typeof input.toolCallId !== "string" || input.toolCallId.length === 0)) {
+    return undefined;
+  }
   return Object.freeze({
     traceId: input.traceId,
     actor: input.actor as ToolActor,
     ...(typeof input.projectId === "string" && input.projectId.length > 0
       ? { projectId: input.projectId }
       : {}),
+    ...(input.agentTurnIndex !== undefined ? { agentTurnIndex: input.agentTurnIndex as number } : {}),
+    ...(typeof input.batchId === "string" ? { batchId: input.batchId } : {}),
+    ...(typeof input.toolCallId === "string" ? { toolCallId: input.toolCallId } : {}),
     ...(typeof input.toolSetFingerprint === "string" && input.toolSetFingerprint.length > 0
       ? { toolSetFingerprint: input.toolSetFingerprint }
       : {}),
@@ -143,6 +161,9 @@ export function snapshotExecutionInput(
     traceId: context.traceId,
     actor: context.actor,
     projectId: context.projectId,
+    agentTurnIndex: context.agentTurnIndex,
+    batchId: context.batchId,
+    toolCallId: context.toolCallId,
     toolSetFingerprint: context.toolSet?.fingerprint(),
   });
   if (scope === undefined || scope.traceId !== traceId) {

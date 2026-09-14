@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
+import type { ToolSyntheticAuditRecord } from "@deepfield/contracts";
 import { SqliteToolAudit } from "@deepfield/application";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
 import {
@@ -21,12 +22,15 @@ function fakeAudit(options: FakeAuditOptions = {}): {
   audit: ToolAuditSink;
   starts: ToolAuditStart[];
   finishes: ToolAuditFinish[];
+  synthetic: ToolSyntheticAuditRecord[];
 } {
   const starts: ToolAuditStart[] = [];
   const finishes: ToolAuditFinish[] = [];
+  const synthetic: ToolSyntheticAuditRecord[] = [];
   return {
     starts,
     finishes,
+    synthetic,
     audit: {
       async start(record) {
         starts.push(record);
@@ -39,6 +43,9 @@ function fakeAudit(options: FakeAuditOptions = {}): {
         if (options.finishGate) {
           await options.finishGate.promise;
         }
+      },
+      async recordSynthetic(record) {
+        synthetic.push(record);
       },
     },
   };
@@ -284,12 +291,40 @@ describe("tool worker host", () => {
       method: "audit.finish",
       payload: { executionId: "exec-1", traceId: "trace-1", status: "failed", attempts: 2, errorCode: "rate_limited" },
     });
+    host.handleRequest({
+      hostRequestId: "h3",
+      kind: "host.request",
+      method: "audit.synthetic",
+      payload: {
+        executionId: "skip-1",
+        traceId: "trace-1",
+        actor: "main_agent",
+        toolName: "web_search",
+        toolVersion: 1,
+        status: "skipped",
+        errorCode: "budget_trimmed",
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId: "call-5",
+        attempts: 0,
+        budgetConsumed: false,
+      },
+    });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
     const record = repositories.toolExecutions.getById("exec-1");
     expect(record?.status).toBe("failed");
     expect(record?.errorCode).toBe("rate_limited");
+    expect(repositories.toolExecutions.getById("skip-1")).toMatchObject({
+      status: "skipped",
+      attempts: 0,
+      budgetConsumed: false,
+      agentTurnIndex: 2,
+      batchId: "batch-2",
+      toolCallId: "call-5",
+      errorCode: "budget_trimmed",
+    });
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });

@@ -7,6 +7,7 @@ import {
   type HostConversationSummary,
   type HostReply,
   type HostRpcMethod,
+  type ToolSyntheticAuditRecord,
 } from "@deepfield/contracts";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
 import type { ConversationReader } from "@deepfield/utility-tools";
@@ -201,6 +202,9 @@ export class RemoteToolAuditSink implements ToolAuditSink {
       actor: record.actor,
       toolName: record.tool.name,
       toolVersion: record.tool.version,
+      ...(record.agentTurnIndex !== undefined ? { agentTurnIndex: record.agentTurnIndex } : {}),
+      ...(record.batchId !== undefined ? { batchId: record.batchId } : {}),
+      ...(record.toolCallId !== undefined ? { toolCallId: record.toolCallId } : {}),
     });
   }
 
@@ -212,6 +216,24 @@ export class RemoteToolAuditSink implements ToolAuditSink {
       attempts: record.attempts,
       ...(record.failure !== undefined ? { errorCode: record.failure.code } : {}),
       ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
+    });
+  }
+
+  async recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void> {
+    await this.#client.request("audit.synthetic", {
+      executionId: record.executionId,
+      traceId: record.traceId,
+      ...(record.projectId !== undefined ? { projectId: record.projectId } : {}),
+      actor: record.actor,
+      toolName: record.tool.name,
+      toolVersion: record.tool.version,
+      status: record.status,
+      ...(record.errorCode !== undefined ? { errorCode: record.errorCode } : {}),
+      agentTurnIndex: record.agentTurnIndex,
+      batchId: record.batchId,
+      toolCallId: record.toolCallId,
+      attempts: 0,
+      budgetConsumed: false,
     });
   }
 }

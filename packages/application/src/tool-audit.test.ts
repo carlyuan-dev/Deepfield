@@ -54,6 +54,23 @@ describe("SqliteToolAudit", () => {
     expect(record?.outputSummary).toBeUndefined();
   });
 
+  it("persists optional turn, batch, and tool-call scope for admitted executions", async () => {
+    const { db, audit } = openAuditDb();
+    await audit.start({
+      ...startRecord,
+      executionId: "scoped-exec",
+      agentTurnIndex: 4,
+      batchId: "batch-4",
+      toolCallId: "call-9",
+    } as ToolAuditStart & { agentTurnIndex: number; batchId: string; toolCallId: string });
+    expect(db.repos.toolExecutions.getById("scoped-exec")).toMatchObject({
+      agentTurnIndex: 4,
+      batchId: "batch-4",
+      toolCallId: "call-9",
+      budgetConsumed: false,
+    });
+  });
+
   it("finishes with completed and mapped counters", async () => {
     const { db, audit } = openAuditDb();
     await audit.start(startRecord);
@@ -195,6 +212,7 @@ describe("SqliteToolAudit", () => {
       finish: (record) => {
         captured = record;
       },
+      recordSynthetic: () => {},
       getById: () => undefined,
           listRecent: () => [], listByConversation: () => [],
     };
@@ -218,6 +236,7 @@ describe("SqliteToolAudit", () => {
       finish: () => {
         throw new ToolExecutionError("not_found", "tool execution not found");
       },
+      recordSynthetic: () => {},
       getById: () => undefined,
           listRecent: () => [], listByConversation: () => [],
     };

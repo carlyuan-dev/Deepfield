@@ -37,6 +37,35 @@ export type JsonValue = Static<typeof JsonValueSchema>;
 export const JsonObjectSchema = Type.Object({}, { additionalProperties: JsonValueSchema });
 export type JsonObject = Static<typeof JsonObjectSchema>;
 
+export const ToolExecutionBatchScopeSchema = Type.Object(
+  {
+    agentTurnIndex: Type.Integer({ minimum: 0 }),
+    batchId: Type.String({ minLength: 1, maxLength: 64 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
+export type ToolExecutionBatchScope = Static<typeof ToolExecutionBatchScopeSchema>;
+
+export const SyntheticToolExecutionStatusSchema = Type.Union([
+  Type.Literal("skipped"),
+  Type.Literal("reused"),
+]);
+export type SyntheticToolExecutionStatus = Static<typeof SyntheticToolExecutionStatusSchema>;
+
+/** Safe worker-to-host audit record for a call that was never dispatched. */
+export interface ToolSyntheticAuditRecord extends ToolExecutionBatchScope {
+  executionId: string;
+  traceId: string;
+  projectId?: string;
+  actor: string;
+  tool: ToolIdentity;
+  status: SyntheticToolExecutionStatus;
+  errorCode?: string;
+  attempts: 0;
+  budgetConsumed: false;
+}
+
 export const ToolCallRequestSchema = Type.Object(
   {
     executionId: Type.String({ minLength: 1 }),

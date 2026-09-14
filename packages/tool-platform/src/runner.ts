@@ -165,6 +165,9 @@ export class ToolRunner {
         actor: scope.actor,
         tool,
         attempts: 0,
+        ...(scope.agentTurnIndex !== undefined ? { agentTurnIndex: scope.agentTurnIndex } : {}),
+        ...(scope.batchId !== undefined ? { batchId: scope.batchId } : {}),
+        ...(scope.toolCallId !== undefined ? { toolCallId: scope.toolCallId } : {}),
       });
     } catch {
       ledger.release(token);

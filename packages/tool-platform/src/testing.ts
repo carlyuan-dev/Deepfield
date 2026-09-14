@@ -1,3 +1,4 @@
+import type { ToolSyntheticAuditRecord } from "@deepfield/contracts";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "./audit.js";
 import type { RetryClock } from "./retry.js";
 
@@ -62,7 +63,8 @@ export class FakeRetryClock implements RetryClock {
 
 export type FakeAuditRecord =
   | { kind: "start"; record: ToolAuditStart }
-  | { kind: "finish"; record: ToolAuditFinish };
+  | { kind: "finish"; record: ToolAuditFinish }
+  | { kind: "synthetic"; record: ToolSyntheticAuditRecord };
 
 /** Deterministic audit double with failure injection and optional start/finish gates. */
 export class FakeAuditSink implements ToolAuditSink {
@@ -121,6 +123,10 @@ export class FakeAuditSink implements ToolAuditSink {
     if (this.#finishGate !== undefined) {
       await this.#finishGate.promise;
     }
+  }
+
+  async recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void> {
+    this.records.push({ kind: "synthetic", record });
   }
 
   startSeen(): Promise<void> {

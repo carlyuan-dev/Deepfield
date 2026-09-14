@@ -6,6 +6,7 @@ import {
   CompanyDraftSchema,
   CreateIndustryResearchItemInputSchema,
   DEFAULT_DEEPSEEK_MODEL_ID,
+  HostRequestSchema,
   SkillSummarySchema,
 } from "./index.js";
 
@@ -117,6 +118,62 @@ describe("agent worker request schema", () => {
     expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "text_delta", delta: "d", extra: 1 })).toBe(false);
     expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "completed", text: "t", extra: 1 })).toBe(false);
     expect(Value.Check(AgentWorkerEventSchema, { requestId: "r", type: "failed", code: "c", message: "m", extra: 1 })).toBe(false);
+  });
+
+  it("accepts batch-scoped skipped and reused tool activity without claiming budget consumption", () => {
+    const skipped = {
+      requestId: "req-1",
+      type: "tool_activity",
+      callKey: "call-5",
+      name: "web_search",
+      status: "skipped",
+      errorCode: "budget_trimmed",
+      agentTurnIndex: 2,
+      batchId: "batch-2",
+      toolCallId: "call-5",
+      budgetConsumed: false,
+    } as const;
+    expect(Value.Check(AgentWorkerEventSchema, skipped)).toBe(true);
+    expect(
+      Value.Check(AgentWorkerEventSchema, {
+        requestId: "req-1",
+        type: "tool_activity",
+        callKey: "call-6",
+        name: "web_search",
+        toolCallId: "call-6",
+        status: "reused",
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        budgetConsumed: false,
+      }),
+    ).toBe(true);
+    expect(Value.Check(AgentWorkerEventSchema, { ...skipped, budgetConsumed: true })).toBe(false);
+  });
+
+  it("accepts only truthful terminal records on the dedicated synthetic audit RPC", () => {
+    const request = {
+      hostRequestId: "host-1",
+      kind: "host.request",
+      method: "audit.synthetic",
+      payload: {
+        executionId: "skip-1",
+        traceId: "req-1",
+        actor: "main_agent",
+        toolName: "web_search",
+        toolVersion: 1,
+        status: "skipped",
+        errorCode: "budget_trimmed",
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId: "call-5",
+        attempts: 0,
+        budgetConsumed: false,
+      },
+    } as const;
+    expect(Value.Check(HostRequestSchema, request)).toBe(true);
+    expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, attempts: 1 } })).toBe(false);
+    expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, budgetConsumed: true } })).toBe(false);
+    expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, errorCode: "timeout" } })).toBe(false);
   });
 
   it("exports the fixed deepseek model id", () => {

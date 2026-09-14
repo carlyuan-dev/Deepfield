@@ -13,6 +13,9 @@ export interface ToolRunContext {
   traceId: string;
   actor: ToolActor;
   projectId?: string;
+  agentTurnIndex?: number;
+  batchId?: string;
+  toolCallId?: string;
   toolSet?: ToolSet;
   /**
    * Immutable authorization fingerprint of the ToolSet snapshot captured by

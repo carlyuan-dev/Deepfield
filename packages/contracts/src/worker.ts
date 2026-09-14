@@ -100,6 +100,9 @@ export const HostAuditStartPayloadSchema = Type.Object(
     actor: ToolActorSchema,
     toolName: Type.String({ minLength: 1 }),
     toolVersion: Type.Integer({ minimum: 1 }),
+    agentTurnIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    batchId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   },
   { additionalProperties: false },
 );
@@ -141,6 +144,40 @@ export const HostAuditFinishPayloadSchema = Type.Union([
   ),
 ]);
 export type HostAuditFinishPayload = Static<typeof HostAuditFinishPayloadSchema>;
+
+const hostAuditSyntheticFields = {
+  executionId: Type.String({ minLength: 1 }),
+  traceId: Type.String({ minLength: 1 }),
+  projectId: Type.Optional(Type.String({ minLength: 1 })),
+  actor: ToolActorSchema,
+  toolName: Type.String({ minLength: 1 }),
+  toolVersion: Type.Integer({ minimum: 1 }),
+  agentTurnIndex: Type.Integer({ minimum: 0 }),
+  batchId: Type.String({ minLength: 1, maxLength: 64 }),
+  toolCallId: Type.String({ minLength: 1, maxLength: 128 }),
+  attempts: Type.Literal(0),
+  budgetConsumed: Type.Literal(false),
+};
+
+export const HostAuditSyntheticPayloadSchema = Type.Union([
+  Type.Object(
+    {
+      ...hostAuditSyntheticFields,
+      status: Type.Literal("skipped"),
+      errorCode: Type.Literal("budget_trimmed"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...hostAuditSyntheticFields,
+      status: Type.Literal("reused"),
+      errorCode: Type.Optional(ToolFailureCodeSchema),
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type HostAuditSyntheticPayload = Static<typeof HostAuditSyntheticPayloadSchema>;
 
 export const HostSecretRequestPayloadSchema = Type.Object(
   { provider: Type.Literal("deepseek") },
@@ -229,6 +266,15 @@ export const HostRequestSchema = Type.Union([
     {
       hostRequestId: Type.String({ minLength: 1 }),
       kind: Type.Literal("host.request"),
+      method: Type.Literal("audit.synthetic"),
+      payload: HostAuditSyntheticPayloadSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.request"),
       method: Type.Literal("secret.getProviderKey"),
       payload: HostSecretRequestPayloadSchema,
     },
@@ -282,6 +328,7 @@ export type HostRequest = Static<typeof HostRequestSchema>;
 export const HostRpcMethodSchema = Type.Union([
   Type.Literal("audit.start"),
   Type.Literal("audit.finish"),
+  Type.Literal("audit.synthetic"),
   Type.Literal("secret.getProviderKey"),
   Type.Literal("conversation.listRecent"),
   Type.Literal("conversation.read"),
@@ -309,6 +356,16 @@ export const HostReplySchema = Type.Union([
       hostRequestId: Type.String({ minLength: 1 }),
       kind: Type.Literal("host.reply"),
       method: Type.Literal("audit.start"),
+      ok: Type.Literal(true),
+      payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hostRequestId: Type.String({ minLength: 1 }),
+      kind: Type.Literal("host.reply"),
+      method: Type.Literal("audit.synthetic"),
       ok: Type.Literal(true),
       payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }),
     },

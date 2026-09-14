@@ -26,6 +26,7 @@ export interface ToolWorkerHost {
 const HOST_RPC_METHODS = new Set<HostRpcMethod>([
   "audit.start",
   "audit.finish",
+  "audit.synthetic",
   "secret.getProviderKey",
   "conversation.listRecent",
   "conversation.read",
@@ -101,6 +102,13 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           actor: request.payload.actor,
           tool: { name: request.payload.toolName, version: request.payload.toolVersion },
           attempts: 0,
+          ...(request.payload.agentTurnIndex !== undefined
+            ? { agentTurnIndex: request.payload.agentTurnIndex }
+            : {}),
+          ...(request.payload.batchId !== undefined ? { batchId: request.payload.batchId } : {}),
+          ...(request.payload.toolCallId !== undefined
+            ? { toolCallId: request.payload.toolCallId }
+            : {}),
         });
         if (!disposed) {
           reply(options.postMessage, {
@@ -148,6 +156,39 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
             hostRequestId,
             kind: "host.reply",
             method: "audit.finish",
+            ok: true,
+            payload: { acknowledged: true },
+          });
+        }
+        return;
+      }
+      if (method === "audit.synthetic") {
+        if (options.audit.recordSynthetic === undefined) {
+          throw new Error("synthetic audit unavailable");
+        }
+        await options.audit.recordSynthetic({
+          executionId: request.payload.executionId,
+          traceId: request.payload.traceId,
+          ...(request.payload.projectId !== undefined
+            ? { projectId: request.payload.projectId }
+            : {}),
+          actor: request.payload.actor,
+          tool: { name: request.payload.toolName, version: request.payload.toolVersion },
+          status: request.payload.status,
+          ...(request.payload.errorCode !== undefined
+            ? { errorCode: request.payload.errorCode }
+            : {}),
+          agentTurnIndex: request.payload.agentTurnIndex,
+          batchId: request.payload.batchId,
+          toolCallId: request.payload.toolCallId,
+          attempts: 0,
+          budgetConsumed: false,
+        });
+        if (!disposed) {
+          reply(options.postMessage, {
+            hostRequestId,
+            kind: "host.reply",
+            method: "audit.synthetic",
             ok: true,
             payload: { acknowledged: true },
           });
