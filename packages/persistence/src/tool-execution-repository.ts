@@ -6,6 +6,7 @@ import type {
   ToolExecutionRow,
   ToolExecutionStart,
 } from "./types.js";
+import type { ConversationId } from "@deepfield/contracts";
 import { sanitizeSummary } from "./summary-sanitizer.js";
 import { TOOL_FAILURE_CODES, ToolExecutionError } from "./tool-execution-errors.js";
 import { rowToExecution } from "./tool-execution-row-validation.js";
@@ -168,6 +169,21 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
           throw error;
         }
         throw new ToolExecutionError("persistence", "failed to list tool executions");
+      }
+    },
+
+    listByConversation(conversationId: ConversationId, limit = 100): ToolExecution[] {
+      try {
+        const rows = db.prepare(`
+          SELECT DISTINCT t.* FROM tool_executions t
+          JOIN messages m ON m.request_id = t.trace_id
+          WHERE m.conversation_id = ?
+          ORDER BY t.started_at ASC, t.id ASC LIMIT ?
+        `).all(requireNonEmptyString(conversationId), requirePositiveInteger(limit)) as unknown as ToolExecutionRow[];
+        return rows.map(rowToExecution);
+      } catch (error) {
+        if (error instanceof ToolExecutionError) throw error;
+        throw new ToolExecutionError("persistence", "failed to list conversation tool executions");
       }
     },
   };

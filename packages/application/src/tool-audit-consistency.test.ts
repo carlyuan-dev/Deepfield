@@ -64,7 +64,7 @@ describe("SqliteToolAudit finish consistency (focused revision)", () => {
         finishCalls += 1;
       },
       getById: () => undefined,
-      listRecent: () => [],
+          listRecent: () => [], listByConversation: () => [],
     };
     const audit = new SqliteToolAudit(capturing);
     await audit.start(startRecord);

@@ -83,5 +83,6 @@ export function toMessage(row: MessageRow): ChatMessage {
     role: row.role,
     content: row.content,
     createdAt: row.created_at,
+    ...(row.request_id !== null ? { requestId: row.request_id } : {}),
   };
 }

@@ -81,7 +81,7 @@ export class ChatService {
     let updated: Conversation = conversation;
     try {
       userMessage = this.repositories.runInTransaction(() => {
-        const message = this.repositories.messages.append(conversation.id, "user", content);
+        const message = this.repositories.messages.append(conversation.id, "user", content, requestId);
         // Every persisted user message refreshes the Conversation's recency;
         // the deterministic title is only generated for the first message.
         updated = this.repositories.conversations.activate(
@@ -130,7 +130,27 @@ export class ChatService {
     if (!conversation) {
       throw new ChatServiceError("conversation not found");
     }
-    return this.repositories.messages.listByConversation(conversation.id);
+    const messages = this.repositories.messages.listByConversation(conversation.id);
+    const tools = this.repositories.toolExecutions.listByConversation(conversation.id);
+    const byRequest = new Map<string, typeof tools>();
+    for (const tool of tools) {
+      const current = byRequest.get(tool.traceId) ?? [];
+      current.push(tool); byRequest.set(tool.traceId, current);
+    }
+    return messages.map((message) => {
+      if (message.role !== "assistant" || message.requestId === undefined) return message;
+      const associated = byRequest.get(message.requestId) ?? [];
+      return {
+        ...message,
+        toolExecutions: associated.map((tool) => ({
+          callKey: tool.id,
+          name: tool.toolName,
+          status: tool.status === "completed" ? "completed" as const : "failed" as const,
+          ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+          ...(tool.errorCode === undefined ? {} : { errorCode: tool.errorCode }),
+        })),
+      };
+    });
   }
 
   private async consume(
@@ -176,7 +196,7 @@ export class ChatService {
           try {
             // Standalone Chat has no CapabilityItem: persist the assistant reply only.
             this.repositories.runInTransaction(() => {
-              this.repositories.messages.append(conversationId, "assistant", event.text);
+              this.repositories.messages.append(conversationId, "assistant", event.text, request.requestId);
             });
           } catch {
             fail("chat_persistence_failed");

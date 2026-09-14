@@ -103,6 +103,16 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  requestId?: string;
+  toolExecutions?: ChatToolExecution[];
+}
+
+export interface ChatToolExecution {
+  callKey: string;
+  name: string;
+  status: "completed" | "failed";
+  durationMs?: number;
+  errorCode?: string;
 }
 
 export interface ChatSendResult {

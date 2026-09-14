@@ -196,7 +196,7 @@ describe("SqliteToolAudit", () => {
         captured = record;
       },
       getById: () => undefined,
-      listRecent: () => [],
+          listRecent: () => [], listByConversation: () => [],
     };
     const audit = new SqliteToolAudit(capturing);
     await audit.start(startRecord);
@@ -219,7 +219,7 @@ describe("SqliteToolAudit", () => {
         throw new ToolExecutionError("not_found", "tool execution not found");
       },
       getById: () => undefined,
-      listRecent: () => [],
+          listRecent: () => [], listByConversation: () => [],
     };
     const audit = new SqliteToolAudit(failingRepository);
     const clock = new FakeRetryClock();

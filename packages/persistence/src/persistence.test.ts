@@ -102,6 +102,16 @@ describe("standalone conversation persistence", () => {
     expect(messages.map((message) => message.content)).toEqual(["第一条", "第二条"]);
   });
 
+  it("round-trips optional requestId and finds tool executions for its conversation", () => {
+    const { db } = openTestDb(); const repos = createRepositories(db);
+    const conversation = repos.conversations.create();
+    (repos.messages.append as any)(conversation.id, "user", "问题", "req-1");
+    repos.toolExecutions.start({ id: "tool-1", traceId: "req-1", actor: "main_agent", toolName: "web_search", toolVersion: 1, startedAt: "2026-09-14T00:00:00.000Z" });
+    repos.toolExecutions.finish({ id: "tool-1", status: "failed", errorCode: "timeout", attempts: 1, retries: 0, bytesReceived: 0, resultCount: 0, finishedAt: "2026-09-14T00:00:01.000Z", durationMs: 1000 });
+    expect(repos.messages.listByConversation(conversation.id)[0]).toMatchObject({ requestId: "req-1" });
+    expect((repos.toolExecutions as any).listByConversation(conversation.id)).toMatchObject([{ traceId: "req-1", toolName: "web_search", status: "failed", errorCode: "timeout", durationMs: 1000 }]);
+  });
+
   it("returns the newest N messages in chronological order", () => {
     const { db } = openTestDb();
     const repos = createRepositories(db);

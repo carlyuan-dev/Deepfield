@@ -84,7 +84,7 @@ export interface ConversationRepository {
 }
 
 export interface MessageRepository {
-  append(conversationId: ConversationId, role: "user" | "assistant", content: string): ChatMessage;
+  append(conversationId: ConversationId, role: "user" | "assistant", content: string, requestId?: string): ChatMessage;
   listByConversation(conversationId: ConversationId, limit?: number): ChatMessage[];
 }
 
@@ -139,6 +139,7 @@ export interface ToolExecutionRepository {
   finish(record: ToolExecutionFinish): void;
   getById(id: string): ToolExecution | undefined;
   listRecent(limit: number): ToolExecution[];
+  listByConversation(conversationId: ConversationId, limit?: number): ToolExecution[];
 }
 
 export interface Repositories {
@@ -209,6 +210,7 @@ export interface MessageRow {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  request_id: string | null;
 }
 
 export interface ToolExecutionRow {

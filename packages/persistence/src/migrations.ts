@@ -241,6 +241,15 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 9,
+    up(db) {
+      db.exec(`
+        ALTER TABLE messages ADD COLUMN request_id TEXT;
+        CREATE INDEX idx_messages_request_id ON messages(request_id);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

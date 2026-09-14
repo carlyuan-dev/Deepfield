@@ -10,6 +10,7 @@ export function createMessageRepository(db: DatabaseSync): MessageRepository {
       conversationId: ConversationId,
       role: "user" | "assistant",
       content: string,
+      requestId?: string,
     ): ChatMessage {
       const message: ChatMessage = {
         id: randomUUID() as MessageId,
@@ -17,10 +18,11 @@ export function createMessageRepository(db: DatabaseSync): MessageRepository {
         role,
         content,
         createdAt: new Date().toISOString(),
+        ...(requestId === undefined ? {} : { requestId }),
       };
       db.prepare(
-        "INSERT INTO messages(id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-      ).run(message.id, message.conversationId, message.role, message.content, message.createdAt);
+        "INSERT INTO messages(id, conversation_id, role, content, created_at, request_id) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(message.id, message.conversationId, message.role, message.content, message.createdAt, requestId ?? null);
       return message;
     },
 
@@ -39,7 +41,7 @@ export function createMessageRepository(db: DatabaseSync): MessageRepository {
       const rows = db
         .prepare(
           `SELECT * FROM (
-             SELECT id, conversation_id, role, content, created_at, rowid
+             SELECT id, conversation_id, role, content, created_at, request_id, rowid
              FROM messages
              WHERE conversation_id = ?
              ORDER BY created_at DESC, rowid DESC

@@ -48,6 +48,21 @@ describe("chat service persistence guarantees", () => {
       type: "completed",
       text: "测试回复",
     });
+    expect(db.repos.messages.listByConversation(conversation.id)).toMatchObject([
+      { role: "user", requestId: "req-1" },
+      { role: "assistant", requestId: "req-1" },
+    ]);
+  });
+
+  it("returns bounded safe tool history on the associated assistant message", async () => {
+    const db = openTestDb(); dbs.push(db); const conversation = makeConversation(db);
+    (db.repos.messages.append as any)(conversation.id, "user", "问题", "req-history");
+    (db.repos.messages.append as any)(conversation.id, "assistant", "回答", "req-history");
+    db.repos.toolExecutions.start({ id: "tool-history", traceId: "req-history", actor: "main_agent", toolName: "fetch_url", toolVersion: 1, inputSummary: { secret: "never" }, startedAt: "2026-09-14T00:00:00.000Z" });
+    db.repos.toolExecutions.finish({ id: "tool-history", status: "failed", errorCode: "timeout", attempts: 1, retries: 0, bytesReceived: 0, resultCount: 0, finishedAt: "2026-09-14T00:00:02.000Z", durationMs: 2000 });
+    const messages = new ChatService(db.repos, {} as never, {} as never, {} as never).listMessages(conversation.id);
+    expect(messages[1]).toMatchObject({ toolExecutions: [{ callKey: "tool-history", name: "fetch_url", status: "failed", durationMs: 2000, errorCode: "timeout" }] });
+    expect(JSON.stringify(messages)).not.toContain("never");
   });
 
   it("rolls back and emits chat_persistence_failed when the assistant insert fails", async () => {
