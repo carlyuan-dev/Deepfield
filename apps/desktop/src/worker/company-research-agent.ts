@@ -58,7 +58,6 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
         const previewFilter = new CompanyResearchRawFilter();
         let terminalText: string | undefined;
         let terminalSeen = false;
-        let failedToolSeen = false;
         const chatRequest: AgentWorkerRequest = {
           requestId: request.requestId,
           kind: "chat.prompt",
@@ -75,7 +74,6 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
               const delta = previewFilter.push(event.delta);
               if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });
             } else if (event.type === "tool_activity") {
-              if (event.status === "failed") failedToolSeen = true;
               const { requestId: _requestId, ...activity } = event;
               emit({ ...identity, stage: "raw", ...activity });
             } else if (event.type === "completed") {
@@ -85,12 +83,12 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
               if (tail) emit({ ...identity, stage: "raw", type: "text_delta", delta: tail });
             } else if (event.type === "failed") {
               terminalSeen = true;
-              throw new RawResearchFailure(failedToolSeen ? "tool_failed" : "model_failed");
+              throw new RawResearchFailure("model_failed");
             }
           }, signal);
         } catch (error) {
           if (error instanceof RawResearchFailure) throw error;
-          throw new RawResearchFailure(failedToolSeen ? "tool_failed" : "model_failed");
+          throw new RawResearchFailure("model_failed");
         }
         if (!terminalSeen || terminalText === undefined) throw new RawResearchFailure("incomplete_response");
         const report = validateRawReport(terminalText, /\p{Script=Han}/u.test(prompt.input));

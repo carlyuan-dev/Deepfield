@@ -66,6 +66,25 @@ describe("generic company research agent", () => {
     expect(events.at(-1)).toMatchObject({ type: "failed", code: "protocol_leak" });
   });
 
+  it("does not misclassify a later model failure because an earlier tool failed", async () => {
+    const rawAgent: ChatAgent = { async run(request, emit) {
+      emit({ requestId: request.requestId, type: "tool_activity", callKey: "tool-1", name: "read_webpage", status: "failed", errorCode: "unsupported_content_type" });
+      emit({ requestId: request.requestId, type: "failed", code: "agent_error", message: "agent execution failed" });
+    } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: "model_failed" });
+  });
+
+  it("does not misclassify a missing terminal because an earlier tool failed", async () => {
+    const rawAgent: ChatAgent = { async run(request, emit) {
+      emit({ requestId: request.requestId, type: "tool_activity", callKey: "tool-1", name: "read_webpage", status: "failed", errorCode: "unsupported_content_type" });
+    } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: "incomplete_response" });
+  });
+
   it("structures in one no-tool model call without a Search snapshot", async () => {
     const completeText = vi.fn(async () => '{"coreSummary":[],"sections":[]}');
     const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
