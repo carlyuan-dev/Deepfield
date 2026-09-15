@@ -69,6 +69,9 @@ export function validateRow(row: ToolExecutionRow): void {
     persistence();
   }
   rowNonNegativeInteger(row.attempts);
+  if (row.budget_consumed === 1 && row.attempts < 1) {
+    persistence();
+  }
   rowNonNegativeInteger(row.retries);
   rowNonNegativeInteger(row.bytes_received);
   rowNonNegativeInteger(row.result_count);

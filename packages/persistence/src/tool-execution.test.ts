@@ -428,6 +428,37 @@ describe("tool execution repository", () => {
     });
     cleanup();
   });
+
+  it("rejects a corrupted zero-attempt row that claims consumed budget", () => {
+    const { db, repos, cleanup } = openTemp();
+    start(repos, "corrupt-zero-attempt");
+    repos.toolExecutions.finish({
+      id: "corrupt-zero-attempt",
+      status: "failed",
+      errorCode: "timeout",
+      attempts: 0,
+      retries: 0,
+      bytesReceived: 0,
+      resultCount: 0,
+      budgetConsumed: false,
+      finishedAt: ISO,
+    });
+    expect(repos.toolExecutions.getById("corrupt-zero-attempt")).toMatchObject({
+      status: "failed",
+      attempts: 0,
+      budgetConsumed: false,
+      errorCode: "timeout",
+    });
+
+    db.prepare(
+      "UPDATE tool_executions SET budget_consumed = 1 WHERE id = ?",
+    ).run("corrupt-zero-attempt");
+
+    expect(() => repos.toolExecutions.getById("corrupt-zero-attempt")).toThrow(
+      "stored tool execution data is invalid",
+    );
+    cleanup();
+  });
   it("finishes a running execution and survives a reopen", () => {
     const dir = mkdtempSync(join(tmpdir(), "df-tool-reopen-"));
     const path = join(dir, "t.sqlite");
