@@ -264,6 +264,77 @@ describe("app conversation chat", () => {
     expect(screen.getByText("调用失败")).toBeTruthy();
   });
 
+  it("collapses persisted budget-trimmed calls by batch while retaining rows when expanded", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c1", "对话一", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([
+      { ...chatMessage("m1", "user", "查资料"), requestId: "req-history" },
+      {
+        ...chatMessage("m2", "assistant", "已完成"),
+        requestId: "req-history",
+        toolExecutions: [
+          {
+            callKey: "search-1",
+            name: "web_search",
+            status: "completed",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            budgetConsumed: true,
+          },
+          {
+            callKey: "search-2",
+            name: "web_search",
+            status: "skipped",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            errorCode: "budget_trimmed",
+            budgetConsumed: false,
+          },
+          {
+            callKey: "search-3",
+            name: "web_search",
+            status: "skipped",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            errorCode: "budget_trimmed",
+            budgetConsumed: false,
+          },
+          {
+            callKey: "search-4",
+            name: "web_search",
+            status: "skipped",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            errorCode: "budget_trimmed",
+            budgetConsumed: false,
+          },
+          {
+            callKey: "search-5",
+            name: "web_search",
+            status: "reused",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            budgetConsumed: false,
+          },
+        ],
+      },
+    ]);
+    const { user } = await renderApp(fake);
+
+    const activityToggle = await screen.findByRole("button", { name: "已调用 5 个工具" });
+    await user.click(activityToggle);
+    expect(screen.getByText("3 个搜索因本轮额度跳过")).toBeTruthy();
+    expect(screen.queryByText("调用失败")).toBeNull();
+
+    const batchToggle = screen.getByRole("button", { name: /第 1 轮工具调用/ });
+    expect(batchToggle.getAttribute("aria-expanded")).toBe("false");
+    await user.click(batchToggle);
+    expect(within(screen.getByLabelText("工具调用")).getAllByRole("listitem")).toHaveLength(5);
+    expect(screen.getAllByText("已跳过")).toHaveLength(3);
+    expect(screen.getByText("已复用")).toBeTruthy();
+  });
+
   it("restores the composer when a send is rejected", async () => {
     const fake = makeFakeApi();
     const active = conversation("c1", "对话一", true);

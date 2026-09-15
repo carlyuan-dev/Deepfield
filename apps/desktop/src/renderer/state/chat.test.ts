@@ -49,6 +49,51 @@ describe("chat reducer", () => {
     expect(visibleMessages(state).map((message) => message.content)).toEqual(["a", "b"]);
   });
 
+  it("restores persisted skipped and reused tool activities with their batch metadata", () => {
+    const state = loadedConversation("c1", [
+      {
+        ...persisted("m1", "assistant", "已完成"),
+        toolExecutions: [
+          {
+            callKey: "search-trimmed",
+            name: "web_search",
+            status: "skipped",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            errorCode: "budget_trimmed",
+            budgetConsumed: false,
+          },
+          {
+            callKey: "search-reused",
+            name: "web_search",
+            status: "reused",
+            agentTurnIndex: 1,
+            batchId: "search-batch-1",
+            budgetConsumed: false,
+          },
+        ],
+      },
+    ]);
+
+    expect(state.messages[0]?.toolActivities).toEqual([
+      expect.objectContaining({
+        callKey: "search-trimmed",
+        status: "skipped",
+        agentTurnIndex: 1,
+        batchId: "search-batch-1",
+        errorCode: "budget_trimmed",
+        budgetConsumed: false,
+      }),
+      expect.objectContaining({
+        callKey: "search-reused",
+        status: "reused",
+        agentTurnIndex: 1,
+        batchId: "search-batch-1",
+        budgetConsumed: false,
+      }),
+    ]);
+  });
+
   it("appends the local user message immediately with a pending marker and disables sending", () => {
     const state = chatReducer(loadedConversation("c1"), {
       type: "USER_SUBMIT",

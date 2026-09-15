@@ -289,6 +289,33 @@
   list-style: none;
 }
 
+.tool-activity-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-activity-batch {
+  min-width: 0;
+}
+
+.tool-activity-batch-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.tool-activity-batch-summary {
+  color: var(--muted);
+}
+
 .tool-activity-row {
   display: grid;
   grid-template-columns: minmax(110px, auto) minmax(0, 1fr) auto;
@@ -319,4 +346,13 @@
 
 .tool-activity-status.failed {
   color: var(--danger);
+}
+
+.tool-activity-status.skipped {
+  color: #9a6b18;
+}
+
+.tool-activity-status.reused,
+.tool-activity-status.not-executed {
+  color: var(--muted);
 }
