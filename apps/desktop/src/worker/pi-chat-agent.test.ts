@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
 import { FakeAuditSink, type ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import { MAIN_AGENT_SYSTEM_PROMPT } from "@deepfield/application";
@@ -77,7 +77,11 @@ describe("pi chat agent", () => {
     },
   });
 
-  const makeBudgetedNetworkTools = (searchLimit: number, fetchLimit: number) => {
+  const makeBudgetedNetworkTools = (
+    searchLimit: number,
+    fetchLimit: number,
+    options: { searchFailure?: string } = {},
+  ) => {
     let searchRemaining = searchLimit;
     let fetchRemaining = fetchLimit;
     const executions: string[] = [];
@@ -93,6 +97,17 @@ describe("pi chat agent", () => {
             async execute(toolCallId: string) {
               executions.push(toolCallId);
               searchRemaining -= 1;
+              if (options.searchFailure !== undefined) {
+                throw new Error(
+                  `tool_failed ${JSON.stringify({
+                    code: "timeout",
+                    message: options.searchFailure,
+                    retryable: false,
+                    attempts: 1,
+                    budgetConsumed: true,
+                  })}`,
+                );
+              }
               return {
                 content: [{
                   type: "text" as const,
@@ -139,6 +154,24 @@ describe("pi chat agent", () => {
     };
   };
 
+  const messageText = (message: Message): string => {
+    if (typeof message.content === "string") return message.content;
+    return message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+  };
+
+  const expectPlainTextEvidence = (
+    providerRequest: ReturnType<typeof makeRecordingInstalledPiRuntime>["requests"][number] | undefined,
+    evidence: string,
+  ) => {
+    const evidenceMessages = providerRequest?.messages.filter((message) =>
+      message.role !== "toolResult" && messageText(message).includes(evidence)
+    ) ?? [];
+    expect(evidenceMessages.length).toBeGreaterThan(0);
+    expect(evidenceMessages.every((message) =>
+      typeof message.content === "string" || message.content.every((part) => part.type === "text")
+    )).toBe(true);
+  };
+
   const expectToolFreeFinalizationRequest = (
     providerRequest: ReturnType<typeof makeRecordingInstalledPiRuntime>["requests"][number] | undefined,
   ) => {
@@ -152,6 +185,26 @@ describe("pi chat agent", () => {
     expect(providerRequest?.messages.some((message) =>
       message.role === "assistant" && message.content.some((part) => part.type === "toolCall")
     )).toBe(false);
+  };
+
+  const expectIncrementallyStreamedAnswer = (
+    events: AgentWorkerEvent[],
+    finalText: string,
+  ) => {
+    const deltas = events.flatMap((event) => event.type === "text_delta" ? [event.delta] : []);
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas).not.toContain(finalText);
+    expect(deltas.join("")).toBe(finalText);
+  };
+
+  const expectImmediateFinalizationInstruction = (
+    providerRequest: ReturnType<typeof makeRecordingInstalledPiRuntime>["requests"][number] | undefined,
+  ) => {
+    const instruction = providerRequest?.messages.at(-1);
+    expect(instruction?.role).toBe("user");
+    expect(instruction === undefined ? "" : messageText(instruction)).toMatch(
+      /^请(?:立即)?基于本轮(?:已经)?获得的(?:工具结果|文本证据).*(?:组织|形成|生成|输出).*(?:最终答案|最终成稿)/u,
+    );
   };
 
   it("streams an offline final answer as provider text deltas without duplicating it", async () => {
@@ -245,13 +298,20 @@ describe("pi chat agent", () => {
       arguments: { query: "recent evidence" },
     };
     const { sessions } = makeBudgetedNetworkTools(2, 1);
-    const finalText = "这是基于现有证据形成的最终答案。";
+    const finalText = "这是基于现有证据形成的最终答案，包含结论、来源说明和仍待确认的事项，供用户直接阅读并继续判断。";
     const recording = makeRecordingInstalledPiRuntime([
-      assistant("", { content: [searchCall], stopReason: "toolUse" }),
+      assistant("工具阶段正在搜索", {
+        content: [
+          { type: "text", text: "工具阶段正在搜索" },
+          searchCall,
+        ],
+        stopReason: "toolUse",
+      }),
       assistant("工具阶段已经自然停止"),
       assistant(finalText),
     ]);
     const webRequest = request({ webSearch: true });
+    webRequest.prompt = "请研究目标公司的近期进展";
     webRequest.toolAccess = {
       network: "enabled",
       maxAgentTurns: 6,
@@ -268,12 +328,16 @@ describe("pi chat agent", () => {
     expect(result.error).toBeUndefined();
     expect(recording.requests).toHaveLength(3);
     const finalRequest = recording.requests.at(-1);
+    expectPlainTextEvidence(finalRequest, "evidence-snippet");
+    const finalizationText = finalRequest?.messages.map(messageText).join("\n") ?? "";
+    expect(finalizationText).toContain("请研究目标公司的近期进展");
+    expect(finalizationText).toContain("历史用户");
+    expect(finalizationText).toContain("历史助手");
+    expect(finalizationText).not.toContain("工具阶段正在搜索");
+    expect(finalizationText).not.toContain("工具阶段已经自然停止");
+    expectImmediateFinalizationInstruction(finalRequest);
     expectToolFreeFinalizationRequest(finalRequest);
-    expect(JSON.stringify(finalRequest?.messages)).toContain("evidence-snippet");
-    expect(finalRequest?.messages.at(-1)?.role).toBe("user");
-    expect(JSON.stringify(finalRequest?.messages.at(-1))).toContain("最终答案");
-    expect(result.events.flatMap((event) => event.type === "text_delta" ? [event.delta] : []).join(""))
-      .toBe(finalText);
+    expectIncrementallyStreamedAnswer(result.events, finalText);
     expect(result.events.at(-1)).toEqual({
       requestId: "req-1",
       type: "completed",
@@ -286,7 +350,7 @@ describe("pi chat agent", () => {
       limit: "agent turn",
       maxAgentTurns: 2,
       maxSearchCalls: 2,
-      maxFetchCalls: 0,
+      maxFetchCalls: 1,
       prompt: "研究目标公司",
       toolCall: {
         type: "toolCall" as const,
@@ -299,7 +363,7 @@ describe("pi chat agent", () => {
       limit: "search",
       maxAgentTurns: 6,
       maxSearchCalls: 1,
-      maxFetchCalls: 0,
+      maxFetchCalls: 1,
       prompt: "研究目标公司",
       toolCall: {
         type: "toolCall" as const,
@@ -311,7 +375,7 @@ describe("pi chat agent", () => {
     {
       limit: "fetch",
       maxAgentTurns: 6,
-      maxSearchCalls: 0,
+      maxSearchCalls: 1,
       maxFetchCalls: 1,
       prompt: "研究 https://evidence.test/source",
       toolCall: {
@@ -329,9 +393,10 @@ describe("pi chat agent", () => {
     toolCall,
   }) => {
     const { sessions } = makeBudgetedNetworkTools(maxSearchCalls, maxFetchCalls);
+    const finalText = "达到上限后形成的最终答案，包含现有结论、证据边界和仍待确认的事项，供用户直接阅读并继续判断。";
     const recording = makeRecordingInstalledPiRuntime([
       assistant("", { content: [toolCall], stopReason: "toolUse" }),
-      assistant("达到上限后的最终答案"),
+      assistant(finalText),
     ]);
     const webRequest = request({ webSearch: true });
     webRequest.prompt = prompt;
@@ -348,16 +413,16 @@ describe("pi chat agent", () => {
       webRequest,
     );
 
-    expect(result.error).toBeUndefined();
     expect(recording.requests).toHaveLength(2);
     const finalRequest = recording.requests.at(-1);
-    expect(finalRequest?.messages.at(-1)?.role).toBe("user");
-    expect(JSON.stringify(finalRequest?.messages.at(-1))).toContain("最终答案");
+    expectImmediateFinalizationInstruction(finalRequest);
     expectToolFreeFinalizationRequest(finalRequest);
+    expectIncrementallyStreamedAnswer(result.events, finalText);
+    expect(result.error).toBeUndefined();
     expect(result.events.at(-1)).toEqual({
       requestId: "req-1",
       type: "completed",
-      text: "达到上限后的最终答案",
+      text: finalText,
     });
   });
 
@@ -398,6 +463,86 @@ describe("pi chat agent", () => {
     expect(result.error).toBeInstanceOf(PiChatAgentError);
     expect((result.error as PiChatAgentError).code).toBe("invalid_final_tool_use");
     expect(result.events.some((event) => event.type === "completed")).toBe(false);
+  });
+
+  it("converts a terminal tool failure into ordinary text evidence for finalization", async () => {
+    const failedCall = {
+      type: "toolCall" as const,
+      id: "terminal-failed-search",
+      name: "web_search",
+      arguments: { query: "target company" },
+    };
+    const { sessions, executions } = makeBudgetedNetworkTools(1, 1, {
+      searchFailure: "terminal-search-failed",
+    });
+    const finalText = "工具失败后仍基于当前事实形成最终答案。";
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("", { content: [failedCall], stopReason: "toolUse" }),
+      assistant(finalText),
+    ]);
+    const webRequest = request({ webSearch: true });
+    webRequest.toolAccess = {
+      network: "enabled",
+      maxAgentTurns: 6,
+      maxSearchCalls: 1,
+      maxFetchCalls: 1,
+    };
+
+    const result = await capture(
+      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      undefined,
+      webRequest,
+    );
+
+    expect(recording.requests).toHaveLength(2);
+    expect(executions).toEqual(["terminal-failed-search"]);
+    expectPlainTextEvidence(recording.requests.at(-1), "terminal-search-failed");
+    expectImmediateFinalizationInstruction(recording.requests.at(-1));
+    expectToolFreeFinalizationRequest(recording.requests.at(-1));
+    expect(result.error).toBeUndefined();
+    expect(result.events.at(-1)).toEqual({ requestId: "req-1", type: "completed", text: finalText });
+  });
+
+  it("converts a terminal budget-trimmed result into ordinary text evidence without another tool round", async () => {
+    const admittedCall = {
+      type: "toolCall" as const,
+      id: "admitted-search",
+      name: "web_search",
+      arguments: { query: "first query" },
+    };
+    const trimmedCall = {
+      type: "toolCall" as const,
+      id: "trimmed-search",
+      name: "web_search",
+      arguments: { query: "overflow query" },
+    };
+    const { sessions, executions } = makeBudgetedNetworkTools(1, 1);
+    const finalText = "额度裁剪后基于当前事实形成最终答案。";
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("", { content: [admittedCall, trimmedCall], stopReason: "toolUse" }),
+      assistant(finalText),
+    ]);
+    const webRequest = request({ webSearch: true });
+    webRequest.toolAccess = {
+      network: "enabled",
+      maxAgentTurns: 6,
+      maxSearchCalls: 1,
+      maxFetchCalls: 1,
+    };
+
+    const result = await capture(
+      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      undefined,
+      webRequest,
+    );
+
+    expect(recording.requests).toHaveLength(2);
+    expect(executions).toEqual(["admitted-search"]);
+    expectPlainTextEvidence(recording.requests.at(-1), "budget_trimmed");
+    expectImmediateFinalizationInstruction(recording.requests.at(-1));
+    expectToolFreeFinalizationRequest(recording.requests.at(-1));
+    expect(result.error).toBeUndefined();
+    expect(result.events.at(-1)).toEqual({ requestId: "req-1", type: "completed", text: finalText });
   });
 
   it("keeps tool-turn narration private and emits only the final tool-free answer", async () => {
