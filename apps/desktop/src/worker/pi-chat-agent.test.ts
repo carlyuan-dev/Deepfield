@@ -202,9 +202,14 @@ describe("pi chat agent", () => {
   ) => {
     const instruction = providerRequest?.messages.at(-1);
     expect(instruction?.role).toBe("user");
-    expect(instruction === undefined ? "" : messageText(instruction)).toMatch(
-      /^请(?:立即)?基于本轮(?:已经)?获得的(?:工具结果|文本证据).*(?:组织|形成|生成|输出).*(?:最终答案|最终成稿)/u,
-    );
+    const instructionText = instruction === undefined ? "" : messageText(instruction);
+    const evidenceLead = /^请(?:立即)?基于本轮(?:已经)?获得的(?:工具结果|文本证据)/u;
+    expect(instructionText).toMatch(evidenceLead);
+    expect(instructionText).toMatch(/(?:最终答案|最终成稿)/u);
+    const beforeFinalTarget = instructionText.split(/(?:最终答案|最终成稿)/u)[0] ?? "";
+    const actionClause = beforeFinalTarget.replace(evidenceLead, "");
+    expect(actionClause).toMatch(/(?:组织|形成|生成|输出)/u);
+    expect(actionClause).not.toMatch(/(?:不|别|勿|莫|无须|无需|禁止|拒绝|避免|停止)/u);
   };
 
   it("streams an offline final answer as provider text deltas without duplicating it", async () => {
