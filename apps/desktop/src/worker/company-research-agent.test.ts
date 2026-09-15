@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerRequest, CompanyResearchWorkerEvent } from "@deepfield/contracts";
+import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import type { ChatAgent } from "./message-loop.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
 import { PiChatAgentError } from "./pi-chat-agent.js";
@@ -9,12 +12,245 @@ import {
   assistant,
   assistantWithTool,
   FakePiAgent,
+  makeRecordingInstalledPiRuntime,
   makeRuntime,
   stubModel,
   textDelta,
 } from "./pi-chat-agent-test-helpers.js";
 
+const budgetSnapshot = (
+  searchLimit: number,
+  fetchLimit: number,
+  searchRemaining: number,
+  fetchRemaining: number,
+): ToolBudgetSnapshot => ({
+  total: {
+    limit: searchLimit + fetchLimit,
+    reserved: 0,
+    consumed: searchLimit + fetchLimit - searchRemaining - fetchRemaining,
+    remaining: searchRemaining + fetchRemaining,
+    exhausted: searchRemaining + fetchRemaining === 0,
+  },
+  categories: {
+    search: {
+      limit: searchLimit,
+      reserved: 0,
+      consumed: searchLimit - searchRemaining,
+      remaining: searchRemaining,
+      exhausted: searchRemaining === 0,
+    },
+    fetch: {
+      limit: fetchLimit,
+      reserved: 0,
+      consumed: fetchLimit - fetchRemaining,
+      remaining: fetchRemaining,
+      exhausted: fetchRemaining === 0,
+    },
+    link_check: { reserved: 0, consumed: 0, exhausted: false },
+    parse: { reserved: 0, consumed: 0, exhausted: false },
+    none: { reserved: 0, consumed: 0, exhausted: false },
+  },
+});
+
+function makeResearchToolSessions(
+  searchLimit: number,
+  fetchLimit: number,
+  failedFetchCallId?: string,
+) {
+  let searchRemaining = searchLimit;
+  let fetchRemaining = fetchLimit;
+  const executions: string[] = [];
+  return {
+    executions,
+    sessions: {
+      createAgentTools: () => [
+        {
+          name: "web_search",
+          description: "search",
+          label: "search",
+          parameters: Type.Object({ query: Type.String() }),
+          async execute(toolCallId: string) {
+            executions.push(toolCallId);
+            searchRemaining -= 1;
+            return {
+              content: [{
+                type: "text" as const,
+                text: JSON.stringify({
+                  results: [{
+                    title: `证据 ${toolCallId}`,
+                    url: `https://evidence.test/${toolCallId}`,
+                    snippet: `公开资料 ${toolCallId}`,
+                  }],
+                }),
+              }],
+              details: {},
+            };
+          },
+        },
+        {
+          name: "read_webpage",
+          description: "fetch",
+          label: "fetch",
+          parameters: Type.Object({ url: Type.String() }),
+          async execute(toolCallId: string, params: unknown) {
+            executions.push(toolCallId);
+            fetchRemaining -= 1;
+            if (toolCallId === failedFetchCallId) {
+              throw new Error(
+                `tool_failed ${JSON.stringify({
+                  code: "timeout",
+                  message: "末次网页读取超时",
+                  retryable: false,
+                  attempts: 1,
+                  budgetConsumed: true,
+                })}`,
+              );
+            }
+            return {
+              content: [{
+                type: "text" as const,
+                text: JSON.stringify({ url: params, text: `网页正文 ${toolCallId}` }),
+              }],
+              details: {},
+            };
+          },
+        },
+      ],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(
+        searchLimit,
+        fetchLimit,
+        searchRemaining,
+        fetchRemaining,
+      ),
+      recordSynthetic: async () => undefined,
+      releaseTrace: () => true,
+    },
+  };
+}
+
+function toolTurn(calls: AssistantMessage["content"]): AssistantMessage {
+  return assistant("", { content: calls, stopReason: "toolUse" });
+}
+
 describe("generic company research agent", () => {
+  it("returns one legal raw report after exactly eight searches and eight webpage reads", async () => {
+    const searchTurns = Array.from({ length: 4 }, (_, turn) => toolTurn(
+      Array.from({ length: 2 }, (_unused, slot) => {
+        const index = turn * 2 + slot + 1;
+        return {
+          type: "toolCall" as const,
+          id: `search-${index}`,
+          name: "web_search",
+          arguments: { query: `宇树科技证据 ${index}` },
+        };
+      }),
+    ));
+    const fetchTurns = Array.from({ length: 4 }, (_, turn) => toolTurn(
+      Array.from({ length: 2 }, (_unused, slot) => {
+        const index = turn * 2 + slot + 1;
+        return {
+          type: "toolCall" as const,
+          id: `fetch-${index}`,
+          name: "read_webpage",
+          arguments: { url: `https://evidence.test/search-${index}` },
+        };
+      }),
+    ));
+    const rawReport = "# 宇树科技调研报告\n\n基于公开资料，公司持续推进人形机器人商业化。[来源](https://evidence.test/search-1)";
+    const recording = makeRecordingInstalledPiRuntime([
+      ...searchTurns,
+      ...fetchTurns,
+      assistant(rawReport),
+    ]);
+    const { sessions, executions } = makeResearchToolSessions(8, 8);
+    const events: CompanyResearchWorkerEvent[] = [];
+
+    await createCompanyResearchAgent({ piRuntime: recording.runtime, toolSessions: sessions }).run(
+      rawResearchRequest(),
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+
+    expect(executions).toEqual([
+      ...Array.from({ length: 8 }, (_, index) => `search-${index + 1}`),
+      ...Array.from({ length: 8 }, (_, index) => `fetch-${index + 1}`),
+    ]);
+    expect(recording.requests.filter((request) => request.tools.length === 0)).toHaveLength(1);
+    expect(recording.requests.at(-1)).toMatchObject({ tools: [], toolChoice: "none" });
+    expect(events.filter((event) => event.type === "tool_activity" && event.name === "web_search" && event.status === "completed")).toHaveLength(8);
+    expect(events.filter((event) => event.type === "tool_activity" && event.name === "read_webpage" && event.status === "completed")).toHaveLength(8);
+    expect(events.filter((event) => event.type === "tool_activity" && event.name === "research_synthesis" && event.status === "running")).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({ type: "completed", stage: "raw", text: rawReport });
+  });
+
+  it("uses existing evidence to complete the raw report when the final tool fails", async () => {
+    const search = toolTurn([{
+      type: "toolCall",
+      id: "search-1",
+      name: "web_search",
+      arguments: { query: "宇树科技商业化" },
+    }]);
+    const finalFetch = toolTurn([{
+      type: "toolCall",
+      id: "fetch-last",
+      name: "read_webpage",
+      arguments: { url: "https://evidence.test/search-1" },
+    }]);
+    const rawReport = "# 宇树科技调研报告\n\n现有公开证据支持其持续推进商业化；末次网页未能核验，相关细节仍待确认。";
+    const recording = makeRecordingInstalledPiRuntime([
+      search,
+      finalFetch,
+      assistant(rawReport),
+    ]);
+    const { sessions } = makeResearchToolSessions(1, 1, "fetch-last");
+    const request = rawResearchRequest();
+    request.toolAccess = {
+      network: "enabled",
+      maxAgentTurns: 12,
+      maxSearchCalls: 1,
+      maxFetchCalls: 1,
+    };
+    const events: CompanyResearchWorkerEvent[] = [];
+
+    await createCompanyResearchAgent({ piRuntime: recording.runtime, toolSessions: sessions }).run(
+      request,
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+
+    expect(recording.requests).toHaveLength(3);
+    expect(JSON.stringify(recording.requests.at(-1)?.messages)).toContain("末次网页读取超时");
+    expect(recording.requests.at(-1)).toMatchObject({ tools: [], toolChoice: "none" });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_activity",
+      name: "read_webpage",
+      toolCallId: "fetch-last",
+      status: "failed",
+      errorCode: "timeout",
+    }));
+    expect(events.at(-1)).toMatchObject({ type: "completed", stage: "raw", text: rawReport });
+  });
+
+  it("rejects a protocol-marked finalization instead of returning a polluted raw report", async () => {
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("资料已足够，可以开始成稿。"),
+      assistant("<｜｜DSML｜｜ calls>private</｜｜DSML｜｜ calls>"),
+    ]);
+    const { sessions } = makeResearchToolSessions(8, 8);
+    const events: CompanyResearchWorkerEvent[] = [];
+
+    await createCompanyResearchAgent({ piRuntime: recording.runtime, toolSessions: sessions }).run(
+      rawResearchRequest(),
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+
+    expect(recording.requests.filter((request) => request.tools.length === 0)).toHaveLength(1);
+    expect(events.some((event) => event.type === "completed")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "failed", stage: "raw", code: "protocol_leak" });
+  });
+
   it("runs raw research through standard web tools and streams the report", async () => {
     let received!: AgentWorkerRequest;
     const rawAgent: ChatAgent = { async run(request, emit) { received = request; emit({ requestId: request.requestId, type: "text_delta", delta: "报告 [来源](https://example.com)" }); emit({ requestId: request.requestId, type: "completed", text: "报告 [来源](https://example.com)" }); } };
