@@ -344,6 +344,10 @@
   color: var(--accent);
 }
 
+.tool-activity-status.completed {
+  color: #2f7d4a;
+}
+
 .tool-activity-status.failed {
   color: var(--danger);
 }

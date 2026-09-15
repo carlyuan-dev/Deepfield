@@ -165,6 +165,9 @@ export function ToolActivity({ activities, terminal }: ToolActivityProps) {
 
   if (activities.length === 0) return null;
   const title = `${terminal ? "已调用" : "正在调用"} ${activities.length} 个工具`;
+  const collapsedSummaries = [trimSummary(activities), failureSummary(activities)].filter(
+    (summary): summary is string => summary !== undefined,
+  );
 
   return (
     <section className="tool-activity" aria-label="工具调用">
@@ -178,6 +181,11 @@ export function ToolActivity({ activities, terminal }: ToolActivityProps) {
           {expanded ? "↑" : "↓"}
         </span>
         <span>{title}</span>
+        {!expanded && collapsedSummaries.length > 0 && (
+          <span aria-hidden="true" className="tool-activity-batch-summary">
+            {collapsedSummaries.join("；")}
+          </span>
+        )}
       </button>
       {expanded && (
         <div className="tool-activity-groups">

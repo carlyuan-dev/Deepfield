@@ -323,6 +323,8 @@ describe("app conversation chat", () => {
     const { user } = await renderApp(fake);
 
     const activityToggle = await screen.findByRole("button", { name: "已调用 5 个工具" });
+    expect(activityToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("3 个搜索因本轮额度跳过")).toBeTruthy();
     await user.click(activityToggle);
     expect(screen.getByText("3 个搜索因本轮额度跳过")).toBeTruthy();
     expect(screen.queryByText("调用失败")).toBeNull();
