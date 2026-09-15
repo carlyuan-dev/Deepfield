@@ -50,6 +50,7 @@ export type ToolExecutionBatchScope = Static<typeof ToolExecutionBatchScopeSchem
 export const SyntheticToolExecutionStatusSchema = Type.Union([
   Type.Literal("skipped"),
   Type.Literal("reused"),
+  Type.Literal("failed"),
 ]);
 export type SyntheticToolExecutionStatus = Static<typeof SyntheticToolExecutionStatusSchema>;
 

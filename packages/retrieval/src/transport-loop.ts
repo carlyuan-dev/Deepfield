@@ -30,6 +30,7 @@ export async function performFetch(
   connectTimeoutMs: number,
   controller: AbortController,
   headers: Record<string, string>,
+  onExternalDispatch?: () => void,
 ): Promise<{
   statusCode: number;
   finalUrl: string;
@@ -49,6 +50,7 @@ export async function performFetch(
     }
     let response: TransportResponse;
     try {
+      onExternalDispatch?.();
       response = await adapter.request(
         {
           protocol: current.protocol,

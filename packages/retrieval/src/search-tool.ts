@@ -98,7 +98,9 @@ function mapProviderError(error: SearchProviderError): ToolExecutionError {
     case "rate_limited":
       return new ToolExecutionError("rate_limited");
     case "timeout":
-      return new ToolExecutionError("timeout");
+      // Provider timeouts are safe for a later, model-directed attempt. The
+      // Runner still performs no hidden retry because this tool has maxRetries 0.
+      return new ToolExecutionError("timeout", { httpStatus: 408 });
     case "cancelled":
       return new ToolExecutionError("cancelled");
     case "response_too_large":

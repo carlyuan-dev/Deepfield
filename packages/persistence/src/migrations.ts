@@ -277,7 +277,7 @@ const MIGRATIONS: readonly Migration[] = [
           agent_turn_index INTEGER,
           batch_id TEXT,
           tool_call_id TEXT,
-          budget_consumed INTEGER NOT NULL DEFAULT 0 CHECK(budget_consumed IN (0,1)),
+          budget_consumed INTEGER DEFAULT 0 CHECK(budget_consumed IS NULL OR budget_consumed IN (0,1)),
           input_summary_json TEXT,
           output_summary_json TEXT,
           error_code TEXT,
@@ -301,6 +301,68 @@ const MIGRATIONS: readonly Migration[] = [
         FROM tool_executions;
         DROP TABLE tool_executions;
         ALTER TABLE tool_executions_v10 RENAME TO tool_executions;
+        CREATE INDEX idx_tool_executions_trace_id ON tool_executions(trace_id);
+        CREATE INDEX idx_tool_executions_project_id ON tool_executions(project_id);
+        CREATE INDEX idx_tool_executions_started_at_id ON tool_executions(started_at, id);
+      `);
+    },
+  },
+  {
+    version: 11,
+    up(db) {
+      const toolExecutionsTable = db
+        .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tool_executions'")
+        .get();
+      if (toolExecutionsTable === undefined) return;
+      // v10 backfilled every legacy row with 0 even though no authoritative
+      // dispatch fact existed. Preserve that uncertainty for unscoped rows;
+      // all new writes remain explicitly 0/1 through the repository.
+      db.exec(`
+        CREATE TABLE tool_executions_v11(
+          id TEXT PRIMARY KEY,
+          trace_id TEXT NOT NULL,
+          project_id TEXT,
+          actor TEXT NOT NULL,
+          tool_name TEXT NOT NULL,
+          tool_version INTEGER NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('running','completed','failed','cancelled','skipped','reused')),
+          agent_turn_index INTEGER,
+          batch_id TEXT,
+          tool_call_id TEXT,
+          budget_consumed INTEGER DEFAULT 0 CHECK(budget_consumed IS NULL OR budget_consumed IN (0,1)),
+          input_summary_json TEXT,
+          output_summary_json TEXT,
+          error_code TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          bytes_received INTEGER NOT NULL DEFAULT 0,
+          result_count INTEGER NOT NULL DEFAULT 0,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          duration_ms INTEGER
+        );
+        INSERT INTO tool_executions_v11(
+          id, trace_id, project_id, actor, tool_name, tool_version, status,
+          agent_turn_index, batch_id, tool_call_id, budget_consumed,
+          input_summary_json, output_summary_json, error_code, attempts, retries,
+          bytes_received, result_count, started_at, finished_at, duration_ms
+        )
+        SELECT
+          id, trace_id, project_id, actor, tool_name, tool_version, status,
+          agent_turn_index, batch_id, tool_call_id,
+          CASE
+            WHEN budget_consumed = 0
+              AND agent_turn_index IS NULL
+              AND batch_id IS NULL
+              AND tool_call_id IS NULL
+            THEN NULL
+            ELSE budget_consumed
+          END,
+          input_summary_json, output_summary_json, error_code, attempts, retries,
+          bytes_received, result_count, started_at, finished_at, duration_ms
+        FROM tool_executions;
+        DROP TABLE tool_executions;
+        ALTER TABLE tool_executions_v11 RENAME TO tool_executions;
         CREATE INDEX idx_tool_executions_trace_id ON tool_executions(trace_id);
         CREATE INDEX idx_tool_executions_project_id ON tool_executions(project_id);
         CREATE INDEX idx_tool_executions_started_at_id ON tool_executions(started_at, id);

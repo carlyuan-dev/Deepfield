@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
   AgentEvent,
@@ -158,21 +159,49 @@ interface CachedPiToolOutcome {
   error?: unknown;
   errorCode?: string;
   retryable?: boolean;
+  budgetConsumed?: boolean;
 }
 
-function parseToolFailure(error: unknown): { code?: string; retryable?: boolean } {
+function parseToolFailure(error: unknown): {
+  code?: string;
+  retryable?: boolean;
+  budgetConsumed?: boolean;
+} {
   const message = error instanceof Error ? error.message : String(error);
   const jsonStart = message.indexOf("{");
   if (jsonStart < 0) return {};
   try {
-    const parsed = JSON.parse(message.slice(jsonStart)) as { code?: unknown; retryable?: unknown };
+    const parsed = JSON.parse(message.slice(jsonStart)) as {
+      code?: unknown;
+      retryable?: unknown;
+      budgetConsumed?: unknown;
+    };
     return {
       ...(typeof parsed.code === "string" ? { code: parsed.code } : {}),
       ...(typeof parsed.retryable === "boolean" ? { retryable: parsed.retryable } : {}),
+      ...(typeof parsed.budgetConsumed === "boolean"
+        ? { budgetConsumed: parsed.budgetConsumed }
+        : {}),
     };
   } catch {
     return {};
   }
+}
+
+function resultBudgetConsumed(result: AgentToolResult<unknown>): boolean | undefined {
+  if (typeof result.details !== "object" || result.details === null) return undefined;
+  const value = (result.details as Record<string, unknown>).budgetConsumed;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function scopedActivityCallKey(
+  requestId: string,
+  scope: ToolExecutionBatchScope,
+): string {
+  return `tool-${createHash("sha256")
+    .update(`${requestId}\0${scope.batchId}\0${scope.toolCallId}`)
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 function reusedToolResult(result: AgentToolResult<unknown>): AgentToolResult<unknown> {
@@ -426,7 +455,7 @@ export function createPiChatAgent(
           if (scope === undefined) return;
           syntheticRecorded.add(decision.id);
           await toolSessions.recordSynthetic({
-            executionId: `synthetic:${request.requestId}:${scope.batchId}:${decision.id}`,
+            executionId: scopedActivityCallKey(request.requestId, scope),
             traceId: request.requestId,
             actor: toolActor,
             tool: { name: decision.name, version: 1 },
@@ -444,11 +473,9 @@ export function createPiChatAgent(
             async execute(toolCallId, params, executeSignal, onUpdate) {
               const decision = decisionsByCallId.get(toolCallId);
               if (decision?.disposition === "reused") {
-                const cached =
-                  (decision.priorResult?.result as CachedPiToolOutcome | undefined) ??
-                  (decision.reusedFromId === undefined
-                    ? undefined
-                    : outcomesByCallId.get(decision.reusedFromId));
+                const cached = decision.reusedFromId !== undefined
+                  ? outcomesByCallId.get(decision.reusedFromId)
+                  : decision.priorResult?.result as CachedPiToolOutcome | undefined;
                 if (cached === undefined) {
                   throw new Error("tool_failed {\"code\":\"tool_error\",\"message\":\"cached tool result unavailable\",\"retryable\":false,\"attempts\":0}");
                 }
@@ -460,7 +487,12 @@ export function createPiChatAgent(
               }
               try {
                 const result = await tool.execute(toolCallId, params, executeSignal, onUpdate);
-                const outcome: CachedPiToolOutcome = { status: "completed", result };
+                const budgetConsumed = resultBudgetConsumed(result);
+                const outcome: CachedPiToolOutcome = {
+                  status: "completed",
+                  result,
+                  ...(budgetConsumed === undefined ? {} : { budgetConsumed }),
+                };
                 outcomesByCallId.set(toolCallId, outcome);
                 if (decision?.normalizedKey !== undefined) {
                   priorResults.set(decision.normalizedKey, {
@@ -482,10 +514,14 @@ export function createPiChatAgent(
                   error,
                   ...(failure.code === undefined ? {} : { errorCode: failure.code }),
                   ...(failure.retryable === undefined ? {} : { retryable: failure.retryable }),
+                  ...(failure.budgetConsumed === undefined
+                    ? {}
+                    : { budgetConsumed: failure.budgetConsumed }),
                 };
                 outcomesByCallId.set(toolCallId, outcome);
-                if (decision?.normalizedKey !== undefined) {
-                  priorResults.set(decision.normalizedKey, {
+                const failedResultKey = decision?.failureKey ?? decision?.normalizedKey;
+                if (failedResultKey !== undefined) {
+                  priorResults.set(failedResultKey, {
                     status: "failed",
                     ...(failure.retryable === undefined
                       ? {}
@@ -635,7 +671,11 @@ export function createPiChatAgent(
             if (!syntheticRecorded.has(toolCall.id)) {
               syntheticRecorded.add(toolCall.id);
               await toolSessions.recordSynthetic({
-                executionId: `synthetic:${request.requestId}:${plan.batchId}:${toolCall.id}`,
+                executionId: scopedActivityCallKey(request.requestId, {
+                  agentTurnIndex: plan.turnIndex,
+                  batchId: plan.batchId,
+                  toolCallId: toolCall.id,
+                }),
                 traceId: request.requestId,
                 actor: toolActor,
                 tool: { name: toolCall.name, version: 1 },
@@ -791,7 +831,7 @@ export function createPiChatAgent(
         }
         signal.addEventListener("abort", abort, { once: true });
 
-        const unsubscribe = agent.subscribe((event) => {
+        const unsubscribe = agent.subscribe(async (event) => {
           if (event.type === "agent_start") {
             if (!startedEmitted) {
               startedEmitted = true;
@@ -829,12 +869,15 @@ export function createPiChatAgent(
           if (event.type === "tool_execution_start") {
             if (activeActivities.has(event.toolCallId)) return;
             activitySequence += 1;
+            const scope = batchScopeByCallId.get(event.toolCallId);
             const activity = {
-              callKey: `activity-${activitySequence}`,
+              callKey: scope === undefined
+                ? `activity-${activitySequence}`
+                : scopedActivityCallKey(request.requestId, scope),
               ...safeToolActivity(event.toolName, event.args),
             };
             activeActivities.set(event.toolCallId, activity);
-            emitActivity(activity, "running");
+            emitActivity(activity, "running", scope);
             return;
           }
           if (event.type === "tool_execution_end") {
@@ -842,25 +885,57 @@ export function createPiChatAgent(
             if (activity === undefined) return;
             const decision = decisionsByCallId.get(event.toolCallId);
             const scope = batchScopeByCallId.get(event.toolCallId);
-            if (decision?.disposition === "skipped") {
+            const preDispatchValidationFailure =
+              event.isError &&
+              scope !== undefined &&
+              toolSessions !== undefined &&
+              NETWORK_TOOL_NAMES.has(event.toolName) &&
+              !beforeToolCallSeen.has(event.toolCallId) &&
+              !outcomesByCallId.has(event.toolCallId);
+            if (preDispatchValidationFailure) {
+              if (!syntheticRecorded.has(event.toolCallId)) {
+                syntheticRecorded.add(event.toolCallId);
+                await toolSessions.recordSynthetic({
+                  executionId: activity.callKey,
+                  traceId: request.requestId,
+                  actor: toolActor,
+                  tool: { name: event.toolName, version: 1 },
+                  status: "failed",
+                  errorCode: "invalid_input",
+                  ...scope,
+                  attempts: 0,
+                  budgetConsumed: false,
+                });
+              }
+              emitActivity(activity, "failed", {
+                errorCode: "invalid_input",
+                ...scope,
+                budgetConsumed: false,
+              });
+            } else if (decision?.disposition === "skipped") {
               emitActivity(activity, "skipped", {
                 errorCode: "budget_trimmed",
                 ...scope,
                 budgetConsumed: false,
               });
             } else if (decision?.disposition === "reused") {
-              const outcome =
-                (decision.priorResult?.result as CachedPiToolOutcome | undefined) ??
-                (decision.reusedFromId === undefined
-                  ? undefined
-                  : outcomesByCallId.get(decision.reusedFromId));
+              const outcome = decision.reusedFromId !== undefined
+                ? outcomesByCallId.get(decision.reusedFromId)
+                : decision.priorResult?.result as CachedPiToolOutcome | undefined;
               emitActivity(activity, "reused", {
                 ...(outcome?.errorCode === undefined ? {} : { errorCode: outcome.errorCode }),
                 ...scope,
                 budgetConsumed: false,
               });
             } else {
-              emitActivity(activity, event.isError ? "failed" : "completed", scope);
+              const outcome = outcomesByCallId.get(event.toolCallId);
+              emitActivity(activity, event.isError ? "failed" : "completed", {
+                ...(outcome?.errorCode === undefined ? {} : { errorCode: outcome.errorCode }),
+                ...scope,
+                ...(outcome?.budgetConsumed === undefined
+                  ? {}
+                  : { budgetConsumed: outcome.budgetConsumed }),
+              });
             }
             activeActivities.delete(event.toolCallId);
             return;

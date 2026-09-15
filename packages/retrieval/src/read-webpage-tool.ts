@@ -52,7 +52,12 @@ export function createReadWebpageDefinition(
     timeoutMs: 40_000,
     retry: { maxRetries: 0, backoffMs: 0 },
     concurrency: 2,
-    meter: { category: "fetch", countsBytes: true, countsTime: true },
+    meter: {
+      category: "fetch",
+      countsBytes: true,
+      countsTime: true,
+      commitOn: "external_dispatch",
+    },
     model: {
       formatOutput: (output) => JSON.stringify(output),
     },

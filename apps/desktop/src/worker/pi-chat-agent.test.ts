@@ -4,6 +4,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
 import { FakeAuditSink, type ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import { MAIN_AGENT_SYSTEM_PROMPT } from "@deepfield/application";
+import { SearchProviderError } from "@deepfield/retrieval";
 import { createPiChatAgent, PiChatAgentError, type SkillCatalogProvider } from "./pi-chat-agent.js";
 import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { createToolRuntime } from "./tool-runtime.js";
@@ -584,7 +585,16 @@ describe("pi chat agent", () => {
         record: expect.objectContaining({ status: "completed", budgetConsumed: true }),
       }),
     ]);
-    expect(audit.records.filter((record) => record.kind === "synthetic")).toEqual([
+    const synthetic = audit.records.filter((record) => record.kind === "synthetic");
+    expect(synthetic).toEqual([
+      expect.objectContaining({
+        record: expect.objectContaining({
+          status: "failed",
+          toolCallId: "invalid-first",
+          errorCode: "invalid_input",
+          budgetConsumed: false,
+        }),
+      }),
       expect.objectContaining({
         record: expect.objectContaining({
           status: "reused",
@@ -593,6 +603,7 @@ describe("pi chat agent", () => {
         }),
       }),
     ]);
+    expect(synthetic[1]?.record).not.toHaveProperty("errorCode");
     expect(result.events.filter((event) => event.type === "tool_activity").map((event) => event.status)).toEqual([
       "running",
       "failed",
@@ -601,9 +612,194 @@ describe("pi chat agent", () => {
       "running",
       "reused",
     ]);
+    const invalidLive = result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "invalid-first" &&
+        event.status === "failed",
+    );
+    const invalidPersisted = audit.records.find(
+      (record) => record.kind === "synthetic" && record.record.toolCallId === "invalid-first",
+    );
+    expect(invalidLive).toMatchObject({
+      status: "failed",
+      errorCode: "invalid_input",
+      budgetConsumed: false,
+      agentTurnIndex: 1,
+      batchId: "batch-1",
+    });
+    expect(invalidPersisted?.record.executionId).toBe(
+      invalidLive?.type === "tool_activity" ? invalidLive.callKey : undefined,
+    );
+    expect(result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "valid-second" &&
+        event.status === "completed",
+    )).toMatchObject({ budgetConsumed: true, agentTurnIndex: 1, batchId: "batch-1" });
+    expect(result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "valid-second" &&
+        event.status === "running",
+    )).toMatchObject({ agentTurnIndex: 1, batchId: "batch-1" });
     expect(nextTurnSystemPrompt).toContain(
       'batch_summary: {"requested":3,"executed":1,"reused":1,"skipped":0',
     );
+  });
+
+  it("retries a provider timeout on a later model turn and binds its duplicate to the fresh success", async () => {
+    let providerCalls = 0;
+    const provider = {
+      id: "test",
+      capabilities: { timeRange: false },
+      async search() {
+        providerCalls += 1;
+        if (providerCalls === 1) throw new SearchProviderError("timeout");
+        return {
+          provider: "test",
+          results: [{
+            title: "fresh result",
+            url: "https://a.test/",
+            snippet: "fresh snippet",
+            rank: 1,
+            provider: "test",
+          }],
+        };
+      },
+    };
+    const first = assistant("", {
+      content: [{ type: "toolCall", id: "timeout-first", name: "web_search", arguments: { query: "same", maxResults: 3 } }],
+      stopReason: "toolUse",
+    });
+    const retry = assistant("", {
+      content: [
+        { type: "toolCall", id: "retry-source", name: "web_search", arguments: { query: "same", maxResults: 3 } },
+        { type: "toolCall", id: "retry-duplicate", name: "web_search", arguments: { query: " same ", maxResults: 3 } },
+      ],
+      stopReason: "toolUse",
+    });
+    const audit = new FakeAuditSink();
+    const result = await capture(
+      createPiChatAgent(
+        makeInstalledPiRuntime([first, retry, assistant("工具草稿"), assistant("最终答案")]),
+        [],
+        undefined,
+        {},
+        createToolRuntime({ audit }),
+        undefined,
+        () => provider,
+      ),
+      undefined,
+      request({ webSearch: true }),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(providerCalls).toBe(2);
+    expect(audit.records.filter((record) => record.kind === "finish")).toEqual([
+      expect.objectContaining({
+        record: expect.objectContaining({
+          status: "failed",
+          failure: expect.objectContaining({ code: "timeout", retryable: true }),
+          budgetConsumed: true,
+        }),
+      }),
+      expect.objectContaining({
+        record: expect.objectContaining({ status: "completed", budgetConsumed: true }),
+      }),
+    ]);
+    const reused = audit.records.filter((record) => record.kind === "synthetic");
+    expect(reused).toEqual([
+      expect.objectContaining({
+        record: expect.objectContaining({
+          status: "reused",
+          toolCallId: "retry-duplicate",
+          budgetConsumed: false,
+        }),
+      }),
+    ]);
+    expect(reused[0]?.record).not.toHaveProperty("errorCode");
+    expect(result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "timeout-first" &&
+        event.status === "failed",
+    )).toMatchObject({ errorCode: "timeout", budgetConsumed: true });
+    expect(result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "retry-duplicate" &&
+        event.status === "reused",
+    )).toMatchObject({ budgetConsumed: false });
+  });
+
+  it("dispatches a corrected date range after a pre-dispatch invalid range failure", async () => {
+    let providerCalls = 0;
+    const provider = {
+      id: "test",
+      capabilities: { timeRange: true },
+      async search() {
+        providerCalls += 1;
+        return {
+          provider: "test",
+          results: [{
+            title: "corrected result",
+            url: "https://a.test/",
+            snippet: "corrected snippet",
+            rank: 1,
+            provider: "test",
+          }],
+        };
+      },
+    };
+    const reversed = assistant("", {
+      content: [{
+        type: "toolCall",
+        id: "reversed-range",
+        name: "web_search",
+        arguments: {
+          query: "same",
+          maxResults: 3,
+          timeRange: { from: "2026-09-14", to: "2026-06-14" },
+        },
+      }],
+      stopReason: "toolUse",
+    });
+    const corrected = assistant("", {
+      content: [{
+        type: "toolCall",
+        id: "corrected-range",
+        name: "web_search",
+        arguments: {
+          query: "same",
+          maxResults: 3,
+          timeRange: { from: "2026-06-14", to: "2026-09-14" },
+        },
+      }],
+      stopReason: "toolUse",
+    });
+    const audit = new FakeAuditSink();
+    const result = await capture(
+      createPiChatAgent(
+        makeInstalledPiRuntime([reversed, corrected, assistant("工具草稿"), assistant("最终答案")]),
+        [],
+        undefined,
+        {},
+        createToolRuntime({ audit }),
+        undefined,
+        () => provider,
+      ),
+      undefined,
+      request({ webSearch: true }),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(providerCalls).toBe(1);
+    expect(result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "reversed-range" &&
+        event.status === "failed",
+    )).toMatchObject({ errorCode: "invalid_input", budgetConsumed: false });
+    expect(result.events.find(
+      (event) => event.type === "tool_activity" &&
+        event.toolCallId === "corrected-range" &&
+        event.status === "completed",
+    )).toMatchObject({ budgetConsumed: true });
   });
 
   it("assigns utility-only and following search turns distinct scopes in the installed Pi loop", async () => {

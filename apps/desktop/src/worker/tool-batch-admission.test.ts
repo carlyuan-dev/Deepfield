@@ -50,10 +50,16 @@ describe("planToolBatch", () => {
   });
 
   it("reuses an exact successful query without spending quota", () => {
+    const key = planToolBatch({
+      calls: [search("  Unitree  ")],
+      snapshot: snapshot({ search: 1, fetch: 1 }),
+      priorResults: new Map(),
+      turnIndex: 1,
+    }).admitted[0]!.normalizedKey!;
     const plan = planToolBatch({
       calls: [search("  Unitree  ")],
       snapshot: snapshot({ search: 1, fetch: 1 }),
-      priorResults: new Map([["web_search:unitree", completedSearchResult]]),
+      priorResults: new Map([[key, completedSearchResult]]),
       turnIndex: 2,
     });
 
@@ -76,14 +82,82 @@ describe("planToolBatch", () => {
   });
 
   it("allows a retryable prior failure to spend a new category slot", () => {
+    const key = planToolBatch({
+      calls: [search("Unitree")],
+      snapshot: snapshot({ search: 1, fetch: 1 }),
+      priorResults: new Map(),
+      turnIndex: 1,
+    }).admitted[0]!.normalizedKey!;
     const plan = planToolBatch({
       calls: [search("Unitree")],
       snapshot: snapshot({ search: 1, fetch: 1 }),
-      priorResults: new Map([["web_search:unitree", { status: "failed", retryable: true }]]),
+      priorResults: new Map([[key, { status: "failed", retryable: true }]]),
       turnIndex: 4,
     });
 
     expect(plan.admitted).toHaveLength(1);
+  });
+
+  it("does not reuse an invalid date-range failure for corrected search arguments", () => {
+    const reversed = {
+      id: "reversed",
+      name: "web_search",
+      input: {
+        query: "Unitree",
+        maxResults: 3,
+        timeRange: { from: "2026-09-14", to: "2026-06-14" },
+      },
+    } satisfies ToolBatchCall;
+    const first = planToolBatch({
+      calls: [reversed],
+      snapshot: snapshot({ search: 1, fetch: 1 }),
+      priorResults: new Map(),
+      turnIndex: 5,
+    });
+    const failed = { status: "failed", retryable: false } satisfies PriorToolResult;
+    const corrected = {
+      ...reversed,
+      id: "corrected",
+      input: {
+        ...reversed.input,
+        timeRange: { from: "2026-06-14", to: "2026-09-14" },
+      },
+    } satisfies ToolBatchCall;
+
+    const second = planToolBatch({
+      calls: [corrected],
+      snapshot: snapshot({ search: 1, fetch: 1 }),
+      priorResults: new Map([[first.admitted[0]!.failureKey!, failed]]),
+      turnIndex: 6,
+    });
+
+    expect(second.admitted.map((call) => call.id)).toEqual(["corrected"]);
+    expect(second.reused).toHaveLength(0);
+  });
+
+  it("binds a same-batch duplicate only to the current admitted source", () => {
+    const failed = { status: "failed", retryable: true } satisfies PriorToolResult;
+    const key = planToolBatch({
+      calls: [search("Unitree")],
+      snapshot: snapshot({ search: 1, fetch: 1 }),
+      priorResults: new Map(),
+      turnIndex: 1,
+    }).admitted[0]!.failureKey!;
+    const plan = planToolBatch({
+      calls: [
+        { id: "retry", name: "web_search", input: { query: "Unitree" } },
+        { id: "duplicate", name: "web_search", input: { query: " unitree " } },
+      ],
+      snapshot: snapshot({ search: 1, fetch: 1 }),
+      priorResults: new Map([[key, failed]]),
+      turnIndex: 7,
+    });
+
+    expect(plan.admitted.map((call) => call.id)).toEqual(["retry"]);
+    expect(plan.reused).toEqual([
+      expect.objectContaining({ id: "duplicate", reusedFromId: "retry" }),
+    ]);
+    expect(plan.reused[0]?.priorResult).toBeUndefined();
   });
 
   it("does not reuse a same-batch call that was trimmed before dispatch", () => {
@@ -91,7 +165,7 @@ describe("planToolBatch", () => {
       calls: [search("Unitree"), search(" unitree ")],
       snapshot: snapshot({ search: 0, fetch: 1 }),
       priorResults: new Map(),
-      turnIndex: 5,
+      turnIndex: 8,
     });
 
     expect(plan.admitted).toHaveLength(0);

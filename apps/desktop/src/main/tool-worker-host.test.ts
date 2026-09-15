@@ -330,6 +330,25 @@ describe("tool worker host", () => {
         budgetConsumed: false,
       },
     });
+    host.handleRequest({
+      hostRequestId: "h4",
+      kind: "host.request",
+      method: "audit.synthetic",
+      payload: {
+        executionId: "invalid-call-key",
+        traceId: "trace-1",
+        actor: "main_agent",
+        toolName: "web_search",
+        toolVersion: 1,
+        status: "failed",
+        errorCode: "invalid_input",
+        agentTurnIndex: 2,
+        batchId: "batch-2",
+        toolCallId: "invalid-first",
+        attempts: 0,
+        budgetConsumed: false,
+      },
+    });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
@@ -345,6 +364,13 @@ describe("tool worker host", () => {
       batchId: "batch-2",
       toolCallId: "call-5",
       errorCode: "budget_trimmed",
+    });
+    expect(repositories.toolExecutions.getById("invalid-call-key")).toMatchObject({
+      status: "failed",
+      errorCode: "invalid_input",
+      attempts: 0,
+      budgetConsumed: false,
+      toolCallId: "invalid-first",
     });
     db.close();
     rmSync(dir, { recursive: true, force: true });

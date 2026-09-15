@@ -177,7 +177,7 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
       const actor = requireNonEmptyString(record.actor);
       const toolName = requireNonEmptyString(record.toolName);
       const toolVersion = requirePositiveInteger(record.toolVersion);
-      if (record.status !== "skipped" && record.status !== "reused") invalid();
+      if (record.status !== "skipped" && record.status !== "reused" && record.status !== "failed") invalid();
       const agentTurnIndex = requireNonNegativeInteger(record.agentTurnIndex);
       const batchId = requireNonEmptyString(record.batchId);
       const toolCallId = requireNonEmptyString(record.toolCallId);
@@ -186,6 +186,9 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
       if (record.status === "skipped") {
         if (record.errorCode !== "budget_trimmed") invalid();
         errorCode = "budget_trimmed";
+      } else if (record.status === "failed") {
+        if (record.errorCode !== "invalid_input") invalid();
+        errorCode = "invalid_input";
       } else if (record.errorCode !== undefined) {
         if (!TOOL_FAILURE_CODES.has(record.errorCode)) invalid();
         errorCode = record.errorCode;

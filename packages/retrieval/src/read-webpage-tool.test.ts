@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { ToolSet } from "@deepfield/tool-platform";
+import {
+  FakeAuditSink,
+  FakeRetryClock,
+  ToolBudgetLedger,
+  ToolPolicy,
+  ToolRegistry,
+  ToolRunner,
+  ToolSet,
+} from "@deepfield/tool-platform";
 import { ResourceStore } from "./resource-store.js";
-import { TransportError } from "./http-transport.js";
+import { SafeHttpTransport, TransportError } from "./http-transport.js";
+import { UrlPolicy } from "./url-policy.js";
 import {
   MAX_READ_WEBPAGE_TEXT_CHARS,
   createReadWebpageDefinition,
@@ -72,5 +81,71 @@ describe("read_webpage tool", () => {
         () => undefined,
       ),
     ).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("does not consume fetch quota when URL policy blocks before transport dispatch", async () => {
+    let adapterCalls = 0;
+    const definition = createReadWebpageDefinition({
+      store: new ResourceStore(),
+      transport: new SafeHttpTransport({
+        policy: new UrlPolicy(),
+        adapter: {
+          async request() {
+            adapterCalls += 1;
+            throw new Error("transport must not run");
+          },
+        },
+        maxBodyBytes: 1024,
+      }),
+    });
+    const registry = new ToolRegistry();
+    registry.register(definition);
+    registry.freeze();
+    const clock = new FakeRetryClock();
+    const audit = new FakeAuditSink();
+    const budget = new ToolBudgetLedger(
+      { maxCalls: 1, categoryCalls: { fetch: 1 } },
+      () => clock.now(),
+    );
+    const runner = new ToolRunner({
+      registry,
+      policy: new ToolPolicy(),
+      budget,
+      audit,
+      clock,
+    });
+
+    const result = await runner.execute(
+      {
+        executionId: "blocked-read",
+        traceId: "trace-blocked-read",
+        tool: { name: "read_webpage", version: 1 },
+        input: { url: "http://127.0.0.1" },
+      },
+      {
+        traceId: "trace-blocked-read",
+        actor: "main_agent",
+        toolSet: context().toolSet,
+      },
+      new AbortController().signal,
+      () => undefined,
+    );
+
+    expect(result).toMatchObject({
+      status: "failed",
+      budgetConsumed: false,
+      failure: { code: "url_blocked" },
+    });
+    expect(adapterCalls).toBe(0);
+    expect(budget.snapshot().categories.fetch).toMatchObject({ consumed: 0, remaining: 1 });
+    expect(audit.records.filter((record) => record.kind === "finish")).toEqual([
+      expect.objectContaining({
+        record: expect.objectContaining({
+          executionId: "blocked-read",
+          status: "failed",
+          budgetConsumed: false,
+        }),
+      }),
+    ]);
   });
 });

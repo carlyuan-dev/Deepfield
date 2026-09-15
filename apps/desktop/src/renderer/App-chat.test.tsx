@@ -337,6 +337,30 @@ describe("app conversation chat", () => {
     expect(screen.getByText("已复用")).toBeTruthy();
   });
 
+  it("renders unknown legacy failure consumption as a failure rather than unexecuted", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c1", "对话一", true);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.chat.listMessages.mockResolvedValue([
+      { ...chatMessage("m1", "user", "查资料"), requestId: "req-history" },
+      {
+        ...chatMessage("m2", "assistant", "未能完成"),
+        requestId: "req-history",
+        toolExecutions: [{
+          callKey: "legacy-timeout",
+          name: "web_search",
+          status: "failed",
+          errorCode: "timeout",
+        }],
+      },
+    ]);
+    const { user } = await renderApp(fake);
+
+    await user.click(await screen.findByRole("button", { name: "已调用 1 个工具" }));
+    expect(screen.getByText("调用失败")).toBeTruthy();
+    expect(screen.queryByText("未执行")).toBeNull();
+  });
+
   it("restores the composer when a send is rejected", async () => {
     const fake = makeFakeApi();
     const active = conversation("c1", "对话一", true);

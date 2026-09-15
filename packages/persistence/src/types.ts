@@ -102,7 +102,7 @@ export interface ToolExecution {
   agentTurnIndex?: number;
   batchId?: string;
   toolCallId?: string;
-  budgetConsumed: boolean;
+  budgetConsumed?: boolean;
   inputSummary?: unknown;
   outputSummary?: unknown;
   errorCode?: string;
@@ -151,7 +151,7 @@ export interface ToolExecutionSynthetic {
   actor: string;
   toolName: string;
   toolVersion: number;
-  status: "skipped" | "reused";
+  status: "skipped" | "reused" | "failed";
   agentTurnIndex: number;
   batchId: string;
   toolCallId: string;
@@ -253,7 +253,7 @@ export interface ToolExecutionRow {
   agent_turn_index: number | null;
   batch_id: string | null;
   tool_call_id: string | null;
-  budget_consumed: number;
+  budget_consumed: number | null;
   input_summary_json: string | null;
   output_summary_json: string | null;
   error_code: string | null;

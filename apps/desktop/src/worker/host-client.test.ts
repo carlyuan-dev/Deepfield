@@ -187,20 +187,20 @@ describe("host client", () => {
     client.dispose();
   });
 
-  it("RemoteToolAuditSink sends synthetic activity over its dedicated RPC", async () => {
+  it("RemoteToolAuditSink sends pre-dispatch failures over the dedicated synthetic RPC", async () => {
     const posted: unknown[] = [];
     const client = new HostClient({ postMessage: (value) => posted.push(value), timeoutMs: 1000 });
     const sink = new RemoteToolAuditSink(client);
     const request = sink.recordSynthetic({
-      executionId: "skip-1",
+      executionId: "invalid-call-key",
       traceId: "req-1",
       actor: "main_agent",
       tool: { name: "web_search", version: 1 },
-      status: "skipped",
-      errorCode: "budget_trimmed",
-      agentTurnIndex: 2,
-      batchId: "batch-2",
-      toolCallId: "call-5",
+      status: "failed",
+      errorCode: "invalid_input",
+      agentTurnIndex: 1,
+      batchId: "batch-1",
+      toolCallId: "invalid-first",
       attempts: 0,
       budgetConsumed: false,
     });
@@ -208,10 +208,10 @@ describe("host client", () => {
       kind: "host.request",
       method: "audit.synthetic",
       payload: {
-        executionId: "skip-1",
+        executionId: "invalid-call-key",
         traceId: "req-1",
-        status: "skipped",
-        errorCode: "budget_trimmed",
+        status: "failed",
+        errorCode: "invalid_input",
         attempts: 0,
         budgetConsumed: false,
       },

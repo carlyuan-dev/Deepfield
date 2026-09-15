@@ -65,7 +65,7 @@ export function validateRow(row: ToolExecutionRow): void {
   if (row.tool_call_id !== null) {
     rowNonEmptyString(row.tool_call_id);
   }
-  if (row.budget_consumed !== 0 && row.budget_consumed !== 1) {
+  if (row.budget_consumed !== null && row.budget_consumed !== 0 && row.budget_consumed !== 1) {
     persistence();
   }
   rowNonNegativeInteger(row.attempts);
@@ -115,7 +115,11 @@ export function validateRow(row: ToolExecutionRow): void {
   if (row.status === "reused" && row.error_code === "budget_trimmed") {
     persistence();
   }
-  if (row.status === "skipped" || row.status === "reused") {
+  const syntheticFailed = row.status === "failed" && row.attempts === 0;
+  if (syntheticFailed && row.error_code !== "invalid_input") {
+    persistence();
+  }
+  if (row.status === "skipped" || row.status === "reused" || syntheticFailed) {
     if (
       row.agent_turn_index === null ||
       row.batch_id === null ||
@@ -162,7 +166,9 @@ export function rowToExecution(row: ToolExecutionRow): ToolExecution {
     ...(row.agent_turn_index !== null ? { agentTurnIndex: row.agent_turn_index } : {}),
     ...(row.batch_id !== null ? { batchId: row.batch_id } : {}),
     ...(row.tool_call_id !== null ? { toolCallId: row.tool_call_id } : {}),
-    budgetConsumed: row.budget_consumed === 1,
+    ...(row.budget_consumed === null
+      ? {}
+      : { budgetConsumed: row.budget_consumed === 1 }),
     ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
     attempts: row.attempts,
     retries: row.retries,

@@ -65,7 +65,7 @@ describe("chat service persistence guarantees", () => {
     expect(JSON.stringify(messages)).not.toContain("never");
   });
 
-  it("restores batch-scoped skipped and reused activity without exposing stored summaries", () => {
+  it("restores batch-scoped skipped, reused and pre-dispatch failed activity", () => {
     const db = openTestDb(); dbs.push(db); const conversation = makeConversation(db);
     (db.repos.messages.append as any)(conversation.id, "user", "问题", "req-batch");
     (db.repos.messages.append as any)(conversation.id, "assistant", "回答", "req-batch");
@@ -100,9 +100,35 @@ describe("chat service persistence guarantees", () => {
       startedAt: "2026-09-14T00:00:00.000Z",
       finishedAt: "2026-09-14T00:00:00.000Z",
     });
+    db.repos.toolExecutions.recordSynthetic({
+      id: "invalid-call-key",
+      traceId: "req-batch",
+      actor: "main_agent",
+      toolName: "web_search",
+      toolVersion: 1,
+      status: "failed",
+      errorCode: "invalid_input",
+      agentTurnIndex: 1,
+      batchId: "batch-1",
+      toolCallId: "invalid-first",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: "2026-09-14T00:00:00.000Z",
+      finishedAt: "2026-09-14T00:00:00.000Z",
+    });
 
     const messages = new ChatService(db.repos, {} as never, {} as never, {} as never).listMessages(conversation.id);
     expect(messages[1]?.toolExecutions).toEqual([
+      {
+        callKey: "invalid-call-key",
+        name: "web_search",
+        status: "failed",
+        errorCode: "invalid_input",
+        agentTurnIndex: 1,
+        batchId: "batch-1",
+        toolCallId: "invalid-first",
+        budgetConsumed: false,
+      },
       {
         callKey: "reuse-history",
         name: "read_webpage",

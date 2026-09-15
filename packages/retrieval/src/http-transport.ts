@@ -79,6 +79,8 @@ export interface FetchOptions {
   method?: "GET" | "HEAD";
   signal: AbortSignal;
   maxBodyBytes?: number;
+  /** Called only after policy/abort checks, immediately before transport I/O. */
+  onExternalDispatch?: () => void;
 }
 
 export interface FetchResult {
@@ -194,7 +196,13 @@ export class SafeHttpTransport {
     });
     try {
       return await Promise.race([
-        this.#run(urlString, method, maxBodyBytes, controller),
+        this.#run(
+          urlString,
+          method,
+          maxBodyBytes,
+          controller,
+          fetchOptions.onExternalDispatch,
+        ),
         deadlinePromise,
         abortPromise,
       ]);
@@ -222,6 +230,7 @@ export class SafeHttpTransport {
     method: "GET" | "HEAD",
     maxBodyBytes: number,
     controller: AbortController,
+    onExternalDispatch?: () => void,
   ): Promise<FetchResult> {
     return performFetch(
       this.#policy,
@@ -233,6 +242,7 @@ export class SafeHttpTransport {
       this.#connectTimeoutMs,
       controller,
       { ...ALLOWED_HEADERS },
+      onExternalDispatch,
     );
   }
 

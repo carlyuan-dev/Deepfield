@@ -18,6 +18,7 @@ export interface PriorToolResult {
 export interface PlannedToolCall extends ToolBatchCall {
   disposition: PlannedDisposition;
   normalizedKey?: string;
+  failureKey?: string;
   priorResult?: PriorToolResult;
   reusedFromId?: string;
 }
@@ -53,6 +54,19 @@ function normalizeAsciiQuery(value: string): string {
     .replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, canonicalize(child)]),
+    );
+  }
+  return value;
+}
+
 function normalizedKey(call: ToolBatchCall): string | undefined {
   if (call.name === "web_search" && typeof call.input.query === "string") {
     return `web_search:${normalizeAsciiQuery(call.input.query)}`;
@@ -65,6 +79,16 @@ function normalizedKey(call: ToolBatchCall): string | undefined {
     }
   }
   return undefined;
+}
+
+function normalizedFailureKey(call: ToolBatchCall, reuseKey: string | undefined): string | undefined {
+  if (call.name === "web_search" && typeof call.input.query === "string") {
+    return `web_search_failure:${JSON.stringify(canonicalize({
+      ...call.input,
+      query: normalizeAsciiQuery(call.input.query),
+    }))}`;
+  }
+  return reuseKey;
 }
 
 function canReuse(result: PriorToolResult | undefined): boolean {
@@ -89,15 +113,25 @@ export function planToolBatch({ calls, snapshot, priorResults, turnIndex }: Plan
 
   for (const call of calls) {
     const key = normalizedKey(call);
-    const plannedBase = key === undefined ? { ...call } : { ...call, normalizedKey: key };
+    const failureKey = normalizedFailureKey(call, key);
+    const plannedBase = {
+      ...call,
+      ...(key === undefined ? {} : { normalizedKey: key }),
+      ...(failureKey === undefined ? {} : { failureKey }),
+    };
     const firstCallId = key === undefined ? undefined : firstCallByKey.get(key);
-    const priorResult = key === undefined ? undefined : priorResults.get(key);
+    const reusableSuccess = key === undefined ? undefined : priorResults.get(key);
+    const priorResult = reusableSuccess?.status === "completed"
+      ? reusableSuccess
+      : failureKey === undefined
+        ? reusableSuccess
+        : priorResults.get(failureKey) ?? reusableSuccess;
     if (firstCallId !== undefined || canReuse(priorResult)) {
       reused.push({
         ...plannedBase,
         disposition: "reused",
         ...(firstCallId === undefined ? {} : { reusedFromId: firstCallId }),
-        ...(priorResult === undefined ? {} : { priorResult }),
+        ...(firstCallId === undefined && priorResult !== undefined ? { priorResult } : {}),
       });
       continue;
     }

@@ -183,6 +183,14 @@ export const HostAuditSyntheticPayloadSchema = Type.Union([
     },
     { additionalProperties: false },
   ),
+  Type.Object(
+    {
+      ...hostAuditSyntheticFields,
+      status: Type.Literal("failed"),
+      errorCode: Type.Literal("invalid_input"),
+    },
+    { additionalProperties: false },
+  ),
 ]);
 export type HostAuditSyntheticPayload = Static<typeof HostAuditSyntheticPayloadSchema>;
 

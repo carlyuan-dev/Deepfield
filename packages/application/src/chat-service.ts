@@ -151,7 +151,9 @@ export class ChatService {
             ...(tool.agentTurnIndex === undefined ? {} : { agentTurnIndex: tool.agentTurnIndex }),
             ...(tool.batchId === undefined ? {} : { batchId: tool.batchId }),
             ...(tool.toolCallId === undefined ? {} : { toolCallId: tool.toolCallId }),
-            budgetConsumed: tool.budgetConsumed,
+            ...(tool.budgetConsumed === undefined
+              ? {}
+              : { budgetConsumed: tool.budgetConsumed }),
             ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
             ...(tool.errorCode === undefined ? {} : { errorCode: tool.errorCode }),
           };

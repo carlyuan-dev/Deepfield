@@ -104,10 +104,12 @@ function makeFetchDefinition(
       signal.addEventListener("abort", onAbort, { once: true });
       try {
         onProgress?.({ kind: "fetching" });
-        context.markBudgetConsumed?.();
         result = await deps.transport.fetch(input.url, {
           signal,
           maxBodyBytes: options.maxBytes,
+          ...(context.markBudgetConsumed === undefined
+            ? {}
+            : { onExternalDispatch: context.markBudgetConsumed }),
         });
         const mime = result.contentType;
         if (!options.acceptedMime.includes(mime)) {

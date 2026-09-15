@@ -171,7 +171,7 @@ describe("migration 2", () => {
 });
 
 describe("migration 10", () => {
-  it("preserves legacy executions while adding batch scope and a non-consumed default", () => {
+  it("preserves legacy executions with unknown consumption while adding batch scope", () => {
     const { db, cleanup } = openRaw();
     migrate(db);
     db.prepare(
@@ -222,7 +222,7 @@ describe("migration 10", () => {
       FROM tool_executions;
       DROP TABLE tool_executions;
       ALTER TABLE tool_executions_v9 RENAME TO tool_executions;
-      DELETE FROM schema_migrations WHERE version = 10;
+      DELETE FROM schema_migrations WHERE version >= 10;
     `);
 
     migrate(db);
@@ -235,13 +235,52 @@ describe("migration 10", () => {
       agent_turn_index: null,
       batch_id: null,
       tool_call_id: null,
-      budget_consumed: 0,
+      budget_consumed: null,
     });
+    expect(createRepositories(db).toolExecutions.getById("legacy-exec")).not.toHaveProperty(
+      "budgetConsumed",
+    );
     expect(
       (db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version=10").get() as {
         n: number;
       }).n,
     ).toBe(1);
+    cleanup();
+  });
+});
+
+describe("migration 11", () => {
+  it("recovers unknown consumption from a previously migrated unscoped zero", () => {
+    const { db, cleanup } = openRaw();
+    migrate(db);
+    db.prepare(
+      "INSERT INTO tool_executions(id, trace_id, actor, tool_name, tool_version, status, budget_consumed, error_code, attempts, retries, bytes_received, result_count, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "v10-timeout",
+      "legacy-trace",
+      "main_agent",
+      "web_search",
+      1,
+      "failed",
+      0,
+      "timeout",
+      1,
+      0,
+      0,
+      0,
+      ISO,
+      ISO,
+    );
+    db.exec("DELETE FROM schema_migrations WHERE version = 11;");
+
+    migrate(db);
+
+    expect(db.prepare(
+      "SELECT budget_consumed FROM tool_executions WHERE id = 'v10-timeout'",
+    ).get()).toEqual({ budget_consumed: null });
+    expect(createRepositories(db).toolExecutions.getById("v10-timeout")).not.toHaveProperty(
+      "budgetConsumed",
+    );
     cleanup();
   });
 });
@@ -350,6 +389,36 @@ describe("tool execution repository", () => {
       repos.toolExecutions.recordSynthetic({ ...base, errorCode: "timeout" } as never),
     ).toThrow(ToolExecutionError);
     expect(repos.toolExecutions.getById(base.id)).toBeUndefined();
+    cleanup();
+  });
+
+  it("persists a Pi pre-dispatch validation failure as non-consumed synthetic activity", () => {
+    const { repos, cleanup } = openTemp();
+    repos.toolExecutions.recordSynthetic({
+      id: "invalid-call-key",
+      traceId: "req-1",
+      actor: "main_agent",
+      toolName: "web_search",
+      toolVersion: 1,
+      status: "failed",
+      errorCode: "invalid_input",
+      agentTurnIndex: 1,
+      batchId: "batch-1",
+      toolCallId: "invalid-first",
+      attempts: 0,
+      budgetConsumed: false,
+      startedAt: ISO,
+      finishedAt: ISO,
+    });
+
+    expect(repos.toolExecutions.getById("invalid-call-key")).toMatchObject({
+      id: "invalid-call-key",
+      status: "failed",
+      errorCode: "invalid_input",
+      toolCallId: "invalid-first",
+      attempts: 0,
+      budgetConsumed: false,
+    });
     cleanup();
   });
   it("finishes a running execution and survives a reopen", () => {

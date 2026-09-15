@@ -174,6 +174,19 @@ describe("agent worker request schema", () => {
     expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, attempts: 1 } })).toBe(false);
     expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, budgetConsumed: true } })).toBe(false);
     expect(Value.Check(HostRequestSchema, { ...request, payload: { ...request.payload, errorCode: "timeout" } })).toBe(false);
+    expect(Value.Check(HostRequestSchema, {
+      ...request,
+      payload: {
+        ...request.payload,
+        executionId: "invalid-1",
+        status: "failed",
+        errorCode: "invalid_input",
+      },
+    })).toBe(true);
+    expect(Value.Check(HostRequestSchema, {
+      ...request,
+      payload: { ...request.payload, status: "failed", errorCode: "timeout" },
+    })).toBe(false);
   });
 
   it("exports the fixed deepseek model id", () => {
