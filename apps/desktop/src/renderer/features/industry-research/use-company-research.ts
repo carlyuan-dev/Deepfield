@@ -46,7 +46,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     let current = EMPTY_VIEW;
     let revision = 0;
     let detailTicket = 0;
-    let refreshing: Promise<void> | undefined;
+    let refreshing: Promise<boolean> | undefined;
     const publish = (patch: Partial<View>) => {
       if (!alive) return;
       current = { ...current, ...patch };
@@ -76,14 +76,14 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
       }
     };
 
-    const refresh = (): Promise<void> => {
+    const refresh = (): Promise<boolean> => {
       if (refreshing) return refreshing;
       refreshing = (async () => {
         while (alive) {
           const requestedRevision = revision;
           try {
             const snapshot = await api.companyResearch.getState(itemId, companyId);
-            if (!alive) return;
+            if (!alive) return false;
             // Deltas have no sequence/offset. Never replay onto a snapshot that
             // may include them already; re-read after an in-flight event.
             if (requestedRevision !== revision) continue;
@@ -106,14 +106,15 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
             } else {
               void loadDetail(selectedRunId);
             }
-            return;
+            return true;
           } catch {
-            if (!alive) return;
+            if (!alive) return false;
             if (requestedRevision !== revision) continue;
             publish({ loading: false, error: "加载调研状态失败，请重试" });
-            return;
+            return false;
           }
         }
+        return false;
       })().finally(() => { refreshing = undefined; });
       return refreshing;
     };
@@ -208,8 +209,18 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           await api.companyResearch.deleteRun(itemId, companyId, deletedId);
           if (!alive) return;
           ++revision;
-          await refresh();
+          const refreshed = await refresh();
           if (!alive) return;
+          if (!refreshed) {
+            ++detailTicket;
+            publish({
+              state: { ...current.state, runs: current.state.runs.filter((run) => run.id !== deletedId) },
+              selectedRunId: undefined,
+              selectedRun: undefined,
+              streamedRaw: undefined,
+            });
+            return;
+          }
           const remaining = current.state.runs;
           const next = remaining[deletedIndex] ?? remaining[deletedIndex - 1] ?? remaining[0];
           const retained = current.selectedRun?.id === next?.id ? current.selectedRun : undefined;

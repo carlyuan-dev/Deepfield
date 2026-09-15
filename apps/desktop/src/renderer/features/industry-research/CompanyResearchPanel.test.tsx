@@ -370,6 +370,25 @@ describe("two-stage company research", () => {
     expect(screen.queryByLabelText("报告版本")).toBeNull();
   });
 
+  it("does not restore a deleted report when the authoritative refresh fails", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const deleted = researchRun({ rawReportText: "已经删除的报告正文" });
+    const initial: CompanyResearchState = { runs: [researchSummary(deleted)], globalActiveRun: null };
+    fake.companyResearch.getState
+      .mockResolvedValueOnce(initial)
+      .mockRejectedValueOnce(new Error("private refresh failure"));
+    fake.companyResearch.getRun.mockResolvedValue(deleted);
+    fake.companyResearch.deleteRun.mockResolvedValue(undefined);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText("已经删除的报告正文")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    await user.click(within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }));
+    expect(await screen.findByText("加载调研状态失败，请重试")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
+    expect(screen.queryByText("已经删除的报告正文")).toBeNull();
+    expect(screen.queryByLabelText("报告版本")).toBeNull();
+  });
+
   it("disables report deletion while any company research is active", async () => {
     const fake = makeFakeApi();
     const run = researchRun();
