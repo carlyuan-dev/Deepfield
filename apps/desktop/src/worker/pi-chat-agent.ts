@@ -589,11 +589,11 @@ export function createPiChatAgent(
           toolExecution: "sequential",
           beforeToolCall: async ({ assistantMessage, toolCall }) => {
             const plan = planAssistantToolBatch(assistantMessage);
+            if (plan !== undefined) beforeToolCallSeen.add(toolCall.id);
             if (!online || toolSessions === undefined || !NETWORK_TOOL_NAMES.has(toolCall.name)) {
               return undefined;
             }
             if (plan === undefined) return undefined;
-            beforeToolCallSeen.add(toolCall.id);
             let decision = decisionsByCallId.get(toolCall.id);
             if (
               decision?.disposition === "reused" &&
@@ -605,9 +605,22 @@ export function createPiChatAgent(
               // Pi validates each call before invoking this hook. A same-batch
               // source absent here was rejected by Pi and cannot supply a
               // reusable outcome, so this valid duplicate becomes admitted.
-              const { reusedFromId: _invalidSourceId, ...validDuplicate } = decision;
+              const { reusedFromId: invalidSourceId, ...validDuplicate } = decision;
               decision = { ...validDuplicate, disposition: "admitted" };
               decisionsByCallId.set(toolCall.id, decision);
+              for (const [siblingId, sibling] of decisionsByCallId) {
+                if (
+                  siblingId !== toolCall.id &&
+                  sibling.disposition === "reused" &&
+                  sibling.priorResult === undefined &&
+                  sibling.reusedFromId === invalidSourceId
+                ) {
+                  decisionsByCallId.set(siblingId, {
+                    ...sibling,
+                    reusedFromId: toolCall.id,
+                  });
+                }
+              }
             }
             if (
               decision !== undefined &&
@@ -714,7 +727,9 @@ export function createPiChatAgent(
                   latestBatchSummary = {
                     requested: currentDecisions.length,
                     executed: currentDecisions.filter(
-                      (decision) => decision.disposition === "admitted",
+                      (decision) =>
+                        decision.disposition === "admitted" &&
+                        beforeToolCallSeen.has(decision.id),
                     ).length,
                     reused: currentDecisions.filter(
                       (decision) => decision.disposition === "reused",

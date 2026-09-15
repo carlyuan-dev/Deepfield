@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
-import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
+import { FakeAuditSink, type ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import { MAIN_AGENT_SYSTEM_PROMPT } from "@deepfield/application";
 import { createPiChatAgent, PiChatAgentError, type SkillCatalogProvider } from "./pi-chat-agent.js";
 import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
+import { createToolRuntime } from "./tool-runtime.js";
 import {
   agentEnd,
   assistant,
@@ -524,60 +525,85 @@ describe("pi chat agent", () => {
     ]);
   });
 
-  it("does not reuse an invalid earlier Pi call as the source for a valid duplicate", async () => {
-    let executions = 0;
-    const tool = {
-      name: "web_search",
-      description: "search",
-      label: "search",
-      parameters: Type.Object({
-        query: Type.String({ minLength: 1 }),
-        maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
-      }),
-      async execute() {
-        executions += 1;
-        return { content: [{ type: "text" as const, text: '{"results":[{"url":"https://a.test"}]}' }], details: {} };
+  it("promotes only the first valid sibling after an invalid duplicate source in the installed Pi loop", async () => {
+    let providerCalls = 0;
+    const provider = {
+      id: "test",
+      capabilities: { timeRange: false },
+      async search() {
+        providerCalls += 1;
+        return {
+          provider: "test",
+          results: [{
+            title: "result",
+            url: "https://a.test/",
+            snippet: "snippet",
+            rank: 1,
+            provider: "test",
+          }],
+        };
       },
     };
-    const synthetic: Array<{ status: string; toolCallId: string }> = [];
-    const toolSessions = {
-      createAgentTools: () => [tool],
-      bindSearchProvider: () => undefined,
-      budgetSnapshot: () => budgetSnapshot(2, 2),
-      recordSynthetic: async (record: { status: string; toolCallId: string }) => {
-        synthetic.push(record);
-      },
-      releaseTrace: () => true,
-    };
+    const audit = new FakeAuditSink();
+    const toolSessions = createToolRuntime({ audit });
     const toolTurn = assistant("", {
       content: [
         { type: "toolCall", id: "invalid-first", name: "web_search", arguments: { query: "same", maxResults: 0 } },
         { type: "toolCall", id: "valid-second", name: "web_search", arguments: { query: "same", maxResults: 3 } },
+        { type: "toolCall", id: "valid-third", name: "web_search", arguments: { query: "same", maxResults: 3 } },
       ],
       stopReason: "toolUse",
     });
+    let nextTurnSystemPrompt = "";
 
     const result = await capture(
       createPiChatAgent(
-        makeInstalledPiRuntime([toolTurn, assistant("工具草稿"), assistant("最终答案")]),
+        makeInstalledPiRuntime([
+          toolTurn,
+          (context) => {
+            nextTurnSystemPrompt = context.systemPrompt ?? "";
+            return assistant("工具草稿");
+          },
+          assistant("最终答案"),
+        ]),
         [],
         undefined,
         {},
         toolSessions,
+        undefined,
+        () => provider,
       ),
       undefined,
       request({ webSearch: true }),
     );
 
     expect(result.error).toBeUndefined();
-    expect(executions).toBe(1);
-    expect(synthetic).toEqual([]);
+    expect(providerCalls).toBe(1);
+    expect(audit.records.filter((record) => record.kind === "finish")).toEqual([
+      expect.objectContaining({
+        record: expect.objectContaining({ status: "completed", budgetConsumed: true }),
+      }),
+    ]);
+    expect(audit.records.filter((record) => record.kind === "synthetic")).toEqual([
+      expect.objectContaining({
+        record: expect.objectContaining({
+          status: "reused",
+          toolCallId: "valid-third",
+          budgetConsumed: false,
+        }),
+      }),
+    ]);
     expect(result.events.filter((event) => event.type === "tool_activity").map((event) => event.status)).toEqual([
       "running",
       "failed",
       "running",
       "completed",
+      "running",
+      "reused",
     ]);
+    expect(nextTurnSystemPrompt).toContain(
+      'batch_summary: {"requested":3,"executed":1,"reused":1,"skipped":0',
+    );
   });
 
   it("assigns utility-only and following search turns distinct scopes in the installed Pi loop", async () => {

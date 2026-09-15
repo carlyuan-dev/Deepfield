@@ -1,7 +1,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentOptions, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { createFauxCore } from "@earendil-works/pi-ai";
-import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, FauxResponseStep, Model, Usage } from "@earendil-works/pi-ai";
 import {
   type AgentWorkerEvent,
   type AgentWorkerRequest,
@@ -155,7 +155,7 @@ export function makeRuntime(agent: FakePiAgent, model?: Model<Api>): PiRuntime {
   };
 }
 
-export function makeInstalledPiRuntime(responses: AssistantMessage[]): PiRuntime {
+export function makeInstalledPiRuntime(responses: FauxResponseStep[]): PiRuntime {
   const faux = createFauxCore({
     api: "openai-completions",
     provider: "deepfield-llm-1",
