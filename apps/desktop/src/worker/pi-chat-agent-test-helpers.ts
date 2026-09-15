@@ -1,7 +1,15 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentOptions, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { createFauxCore } from "@earendil-works/pi-ai";
-import type { Api, AssistantMessage, FauxResponseStep, Model, Usage } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  FauxResponseStep,
+  Message,
+  Model,
+  SimpleStreamOptions,
+  Usage,
+} from "@earendil-works/pi-ai";
 import {
   type AgentWorkerEvent,
   type AgentWorkerRequest,
@@ -168,6 +176,44 @@ export function makeInstalledPiRuntime(responses: FauxResponseStep[]): PiRuntime
       streamFn: faux.streamSimple as never,
     }),
     createAgent: (options) => new Agent(options),
+  };
+}
+
+export interface RecordedPiRequest {
+  systemPrompt: string;
+  messages: Message[];
+  tools: Array<{ name: string }>;
+  toolChoice: SimpleStreamOptions["toolChoice"];
+}
+
+export function makeRecordingInstalledPiRuntime(responses: FauxResponseStep[]): {
+  runtime: PiRuntime;
+  requests: RecordedPiRequest[];
+} {
+  const faux = createFauxCore({
+    api: "openai-completions",
+    provider: "deepfield-llm-1",
+    tokensPerSecond: 100_000,
+  });
+  const requests: RecordedPiRequest[] = [];
+  faux.setResponses(responses);
+  return {
+    runtime: {
+      createSession: () => ({
+        model: faux.getModel() as Model<Api>,
+        streamFn: (model, context, options) => {
+          requests.push({
+            systemPrompt: context.systemPrompt ?? "",
+            messages: structuredClone(context.messages),
+            tools: (context.tools ?? []).map((tool) => ({ name: tool.name })),
+            toolChoice: options?.toolChoice,
+          });
+          return faux.streamSimple(model, context, options);
+        },
+      }),
+      createAgent: (options) => new Agent(options),
+    },
+    requests,
   };
 }
 

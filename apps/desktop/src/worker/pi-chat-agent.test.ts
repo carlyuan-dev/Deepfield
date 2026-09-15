@@ -16,6 +16,7 @@ import {
   FakePiAgent,
   makeRuntime,
   makeInstalledPiRuntime,
+  makeRecordingInstalledPiRuntime,
   request,
   stubModel,
   textDelta,
@@ -41,6 +42,117 @@ describe("pi chat agent", () => {
       none: { reserved: 0, consumed: 0, exhausted: false },
     },
   });
+
+  const budgetSnapshotFor = (
+    searchLimit: number,
+    fetchLimit: number,
+    searchRemaining: number,
+    fetchRemaining: number,
+  ): ToolBudgetSnapshot => ({
+    total: {
+      limit: searchLimit + fetchLimit,
+      reserved: 0,
+      consumed: searchLimit + fetchLimit - searchRemaining - fetchRemaining,
+      remaining: searchRemaining + fetchRemaining,
+      exhausted: searchRemaining + fetchRemaining === 0,
+    },
+    categories: {
+      search: {
+        limit: searchLimit,
+        reserved: 0,
+        consumed: searchLimit - searchRemaining,
+        remaining: searchRemaining,
+        exhausted: searchRemaining === 0,
+      },
+      fetch: {
+        limit: fetchLimit,
+        reserved: 0,
+        consumed: fetchLimit - fetchRemaining,
+        remaining: fetchRemaining,
+        exhausted: fetchRemaining === 0,
+      },
+      link_check: { reserved: 0, consumed: 0, exhausted: false },
+      parse: { reserved: 0, consumed: 0, exhausted: false },
+      none: { reserved: 0, consumed: 0, exhausted: false },
+    },
+  });
+
+  const makeBudgetedNetworkTools = (searchLimit: number, fetchLimit: number) => {
+    let searchRemaining = searchLimit;
+    let fetchRemaining = fetchLimit;
+    const executions: string[] = [];
+    return {
+      executions,
+      sessions: {
+        createAgentTools: () => [
+          {
+            name: "web_search",
+            description: "search",
+            label: "search",
+            parameters: Type.Object({ query: Type.String() }),
+            async execute(toolCallId: string) {
+              executions.push(toolCallId);
+              searchRemaining -= 1;
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: searchRemaining === 0
+                    ? '{"results":[]}'
+                    : '{"results":[{"title":"evidence-title","url":"https://evidence.test/source","snippet":"evidence-snippet"}]}',
+                }],
+                details: {},
+              };
+            },
+          },
+          {
+            name: "read_webpage",
+            description: "fetch",
+            label: "fetch",
+            parameters: Type.Object({ url: Type.String() }),
+            async execute(toolCallId: string, params: unknown) {
+              executions.push(toolCallId);
+              fetchRemaining -= 1;
+              const url = typeof params === "object" && params !== null &&
+                typeof (params as { url?: unknown }).url === "string"
+                ? (params as { url: string }).url
+                : "";
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: JSON.stringify({ url, text: "fetched-evidence" }),
+                }],
+                details: {},
+              };
+            },
+          },
+        ],
+        bindSearchProvider: () => undefined,
+        budgetSnapshot: () => budgetSnapshotFor(
+          searchLimit,
+          fetchLimit,
+          searchRemaining,
+          fetchRemaining,
+        ),
+        recordSynthetic: async () => undefined,
+        releaseTrace: () => true,
+      },
+    };
+  };
+
+  const expectToolFreeFinalizationRequest = (
+    providerRequest: ReturnType<typeof makeRecordingInstalledPiRuntime>["requests"][number] | undefined,
+  ) => {
+    expect(providerRequest).toBeDefined();
+    expect(providerRequest?.tools).toEqual([]);
+    expect(providerRequest?.toolChoice).toBe("none");
+    expect(providerRequest?.systemPrompt).not.toContain("本轮已开放联网工具");
+    expect(providerRequest?.systemPrompt).not.toContain("web_search");
+    expect(providerRequest?.systemPrompt).not.toContain("read_webpage");
+    expect(providerRequest?.messages.some((message) => message.role === "toolResult")).toBe(false);
+    expect(providerRequest?.messages.some((message) =>
+      message.role === "assistant" && message.content.some((part) => part.type === "toolCall")
+    )).toBe(false);
+  };
 
   it("streams an offline final answer as provider text deltas without duplicating it", async () => {
     const answer = assistant("你好");
@@ -123,6 +235,169 @@ describe("pi chat agent", () => {
     expect(events.at(-1)).toEqual({ requestId: "req-1", type: "completed", text: "最终答案" });
     expect(JSON.stringify(events)).not.toContain("正在搜索");
     expect(JSON.stringify(events)).not.toContain("工具阶段草稿");
+  });
+
+  it("uses a clean tool-disabled provider request after natural tool stopping and streams the validated answer", async () => {
+    const searchCall = {
+      type: "toolCall" as const,
+      id: "natural-search",
+      name: "web_search",
+      arguments: { query: "recent evidence" },
+    };
+    const { sessions } = makeBudgetedNetworkTools(2, 1);
+    const finalText = "这是基于现有证据形成的最终答案。";
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("", { content: [searchCall], stopReason: "toolUse" }),
+      assistant("工具阶段已经自然停止"),
+      assistant(finalText),
+    ]);
+    const webRequest = request({ webSearch: true });
+    webRequest.toolAccess = {
+      network: "enabled",
+      maxAgentTurns: 6,
+      maxSearchCalls: 2,
+      maxFetchCalls: 1,
+    };
+
+    const result = await capture(
+      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      undefined,
+      webRequest,
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(recording.requests).toHaveLength(3);
+    const finalRequest = recording.requests.at(-1);
+    expectToolFreeFinalizationRequest(finalRequest);
+    expect(JSON.stringify(finalRequest?.messages)).toContain("evidence-snippet");
+    expect(finalRequest?.messages.at(-1)?.role).toBe("user");
+    expect(JSON.stringify(finalRequest?.messages.at(-1))).toContain("最终答案");
+    expect(result.events.flatMap((event) => event.type === "text_delta" ? [event.delta] : []).join(""))
+      .toBe(finalText);
+    expect(result.events.at(-1)).toEqual({
+      requestId: "req-1",
+      type: "completed",
+      text: finalText,
+    });
+  });
+
+  it.each([
+    {
+      limit: "agent turn",
+      maxAgentTurns: 2,
+      maxSearchCalls: 2,
+      maxFetchCalls: 0,
+      prompt: "研究目标公司",
+      toolCall: {
+        type: "toolCall" as const,
+        id: "agent-turn-search",
+        name: "web_search",
+        arguments: { query: "target company" },
+      },
+    },
+    {
+      limit: "search",
+      maxAgentTurns: 6,
+      maxSearchCalls: 1,
+      maxFetchCalls: 0,
+      prompt: "研究目标公司",
+      toolCall: {
+        type: "toolCall" as const,
+        id: "last-search",
+        name: "web_search",
+        arguments: { query: "target company" },
+      },
+    },
+    {
+      limit: "fetch",
+      maxAgentTurns: 6,
+      maxSearchCalls: 0,
+      maxFetchCalls: 1,
+      prompt: "研究 https://evidence.test/source",
+      toolCall: {
+        type: "toolCall" as const,
+        id: "last-fetch",
+        name: "read_webpage",
+        arguments: { url: "https://evidence.test/source" },
+      },
+    },
+  ])("enters the same finalization immediately at the $limit limit", async ({
+    maxAgentTurns,
+    maxSearchCalls,
+    maxFetchCalls,
+    prompt,
+    toolCall,
+  }) => {
+    const { sessions } = makeBudgetedNetworkTools(maxSearchCalls, maxFetchCalls);
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("", { content: [toolCall], stopReason: "toolUse" }),
+      assistant("达到上限后的最终答案"),
+    ]);
+    const webRequest = request({ webSearch: true });
+    webRequest.prompt = prompt;
+    webRequest.toolAccess = {
+      network: "enabled",
+      maxAgentTurns,
+      maxSearchCalls,
+      maxFetchCalls,
+    };
+
+    const result = await capture(
+      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      undefined,
+      webRequest,
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(recording.requests).toHaveLength(2);
+    const finalRequest = recording.requests.at(-1);
+    expect(finalRequest?.messages.at(-1)?.role).toBe("user");
+    expect(JSON.stringify(finalRequest?.messages.at(-1))).toContain("最终答案");
+    expectToolFreeFinalizationRequest(finalRequest);
+    expect(result.events.at(-1)).toEqual({
+      requestId: "req-1",
+      type: "completed",
+      text: "达到上限后的最终答案",
+    });
+  });
+
+  it("does not execute or continue after a finalization response returns another tool intent", async () => {
+    const firstCall = {
+      type: "toolCall" as const,
+      id: "limit-search",
+      name: "web_search",
+      arguments: { query: "target company" },
+    };
+    const forbiddenFinalCall = {
+      type: "toolCall" as const,
+      id: "forbidden-final-search",
+      name: "web_search",
+      arguments: { query: "one more search" },
+    };
+    const { sessions, executions } = makeBudgetedNetworkTools(1, 0);
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("", { content: [firstCall], stopReason: "toolUse" }),
+      assistant("", { content: [forbiddenFinalCall], stopReason: "toolUse" }),
+    ]);
+    const webRequest = request({ webSearch: true });
+    webRequest.toolAccess = {
+      network: "enabled",
+      maxAgentTurns: 6,
+      maxSearchCalls: 1,
+      maxFetchCalls: 0,
+    };
+
+    const result = await capture(
+      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      undefined,
+      webRequest,
+    );
+
+    expect(executions).toEqual(["limit-search"]);
+    expect(recording.requests).toHaveLength(2);
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect((result.error as PiChatAgentError).code).toBe("invalid_final_tool_use");
+    expect(result.events.some((event) => event.type === "completed")).toBe(false);
   });
 
   it("keeps tool-turn narration private and emits only the final tool-free answer", async () => {
