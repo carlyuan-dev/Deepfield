@@ -175,6 +175,37 @@ function parseToolFailure(error: unknown): { code?: string; retryable?: boolean 
   }
 }
 
+function reusedToolResult(result: AgentToolResult<unknown>): AgentToolResult<unknown> {
+  const details =
+    typeof result.details === "object" && result.details !== null
+      ? result.details as Record<string, unknown>
+      : {};
+  return { ...result, details: { ...details, budgetConsumed: false } };
+}
+
+function reusedToolFailure(outcome: CachedPiToolOutcome): Error {
+  const raw = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+  const jsonStart = raw.indexOf("{");
+  let parsed: Record<string, unknown> = {};
+  if (jsonStart >= 0) {
+    try {
+      const candidate = JSON.parse(raw.slice(jsonStart)) as unknown;
+      if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
+        parsed = candidate as Record<string, unknown>;
+      }
+    } catch {
+      // Fall back to a fixed safe failure below.
+    }
+  }
+  return new Error(`tool_failed ${JSON.stringify({
+    code: outcome.errorCode ?? "tool_error",
+    message: typeof parsed.message === "string" ? parsed.message : "tool execution failed",
+    retryable: outcome.retryable ?? false,
+    attempts: typeof parsed.attempts === "number" ? parsed.attempts : 0,
+    budgetConsumed: false,
+  })}`);
+}
+
 function toolResultFailureCode(result: unknown): string | undefined {
   if (typeof result !== "object" || result === null) return undefined;
   const content = (result as { content?: unknown }).content;
@@ -187,6 +218,41 @@ function toolResultFailureCode(result: unknown): string | undefined {
     if (match?.[1] !== undefined) return match[1];
   }
   return undefined;
+}
+
+function usableUrlsInText(text: string): string[] {
+  const urls = new Set<string>();
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/giu)) {
+    const candidate = match[0].replace(/[),.;!?，。；！？]+$/u, "");
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") urls.add(parsed.href);
+    } catch {
+      // Ignore malformed URL-shaped text.
+    }
+  }
+  return [...urls];
+}
+
+function parsedToolResult(result: unknown): Record<string, unknown> | undefined {
+  if (typeof result !== "object" || result === null) return undefined;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content.flatMap((part) =>
+    typeof part === "object" && part !== null &&
+    (part as { type?: unknown }).type === "text" &&
+    typeof (part as { text?: unknown }).text === "string"
+      ? [(part as { text: string }).text]
+      : [],
+  ).join("");
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const NETWORK_TOOL_NAMES = new Set(["web_search", "read_webpage"]);
@@ -286,6 +352,7 @@ export function createPiChatAgent(
         const decisionsByCallId = new Map<string, PlannedToolCall>();
         const outcomesByCallId = new Map<string, CachedPiToolOutcome>();
         const syntheticRecorded = new Set<string>();
+        const beforeToolCallSeen = new Set<string>();
         const runPolicy = {
           ...WEB_CHAT_POLICY,
           toolDecisionTurns: Math.max(0, request.toolAccess.maxAgentTurns - 1),
@@ -301,6 +368,16 @@ export function createPiChatAgent(
             maxCalls: request.toolAccess.maxSearchCalls + request.toolAccess.maxFetchCalls + 8,
             categoryCalls: { search: request.toolAccess.maxSearchCalls, fetch: request.toolAccess.maxFetchCalls },
           });
+          control.recordKnownUrls([
+            ...usableUrlsInText(request.prompt),
+            ...request.context.messages.flatMap((message) =>
+              usableUrlsInText(
+                typeof message.content === "string"
+                  ? message.content
+                  : JSON.stringify(message.content),
+              ),
+            ),
+          ]);
           control.observeSnapshot(toolSessions.budgetSnapshot(request.requestId));
         }
         const rawRequestTools =
@@ -315,6 +392,31 @@ export function createPiChatAgent(
                   batchScopeFor: (toolCallId) => batchScopeByCallId.get(toolCallId),
                 }),
               ];
+        const planAssistantToolBatch = (assistantMessage: AssistantMessage): ToolBatchPlan | undefined => {
+          if (!online || toolSessions === undefined || !hasToolCalls(assistantMessage)) return undefined;
+          const existing = plans.get(assistantMessage);
+          if (existing !== undefined) return existing;
+          const snapshot = toolSessions.budgetSnapshot(request.requestId);
+          control.observeSnapshot(snapshot);
+          const plan = planToolBatch({
+            calls: assistantToolCalls(assistantMessage),
+            snapshot,
+            priorResults,
+            turnIndex: control.turns().toolDecisionUsed + 1,
+          });
+          plans.set(assistantMessage, plan);
+          for (const decision of [...plan.admitted, ...plan.skipped, ...plan.reused]) {
+            decisionsByCallId.set(decision.id, decision);
+            batchScopeByCallId.set(decision.id, {
+              agentTurnIndex: plan.turnIndex,
+              batchId: plan.batchId,
+              toolCallId: decision.id,
+            });
+          }
+          control.recordToolDecisionTurn();
+          control.beginExecution();
+          return plan;
+        };
         const recordReused = async (
           decision: PlannedToolCall,
           outcome: CachedPiToolOutcome,
@@ -352,9 +454,9 @@ export function createPiChatAgent(
                 }
                 await recordReused(decision, cached);
                 if (cached.status === "completed" && cached.result !== undefined) {
-                  return cached.result;
+                  return reusedToolResult(cached.result);
                 }
-                throw cached.error;
+                throw reusedToolFailure(cached);
               }
               try {
                 const result = await tool.execute(toolCallId, params, executeSignal, onUpdate);
@@ -486,33 +588,27 @@ export function createPiChatAgent(
           sessionId: request.context.conversationId,
           toolExecution: "sequential",
           beforeToolCall: async ({ assistantMessage, toolCall }) => {
+            const plan = planAssistantToolBatch(assistantMessage);
             if (!online || toolSessions === undefined || !NETWORK_TOOL_NAMES.has(toolCall.name)) {
               return undefined;
             }
-            let plan = plans.get(assistantMessage);
-            if (plan === undefined) {
-              const snapshot = toolSessions.budgetSnapshot(request.requestId);
-              control.observeSnapshot(snapshot);
-              const turnIndex = control.turns().toolDecisionUsed + 1;
-              plan = planToolBatch({
-                calls: assistantToolCalls(assistantMessage),
-                snapshot,
-                priorResults,
-                turnIndex,
-              });
-              plans.set(assistantMessage, plan);
-              for (const decision of [...plan.admitted, ...plan.skipped, ...plan.reused]) {
-                decisionsByCallId.set(decision.id, decision);
-                batchScopeByCallId.set(decision.id, {
-                  agentTurnIndex: plan.turnIndex,
-                  batchId: plan.batchId,
-                  toolCallId: decision.id,
-                });
-              }
-              control.recordToolDecisionTurn();
-              control.beginExecution();
-            }
+            if (plan === undefined) return undefined;
+            beforeToolCallSeen.add(toolCall.id);
             let decision = decisionsByCallId.get(toolCall.id);
+            if (
+              decision?.disposition === "reused" &&
+              decision.priorResult === undefined &&
+              decision.reusedFromId !== undefined &&
+              !beforeToolCallSeen.has(decision.reusedFromId) &&
+              !outcomesByCallId.has(decision.reusedFromId)
+            ) {
+              // Pi validates each call before invoking this hook. A same-batch
+              // source absent here was rejected by Pi and cannot supply a
+              // reusable outcome, so this valid duplicate becomes admitted.
+              const { reusedFromId: _invalidSourceId, ...validDuplicate } = decision;
+              decision = { ...validDuplicate, disposition: "admitted" };
+              decisionsByCallId.set(toolCall.id, decision);
+            }
             if (
               decision !== undefined &&
               decision.disposition !== "skipped" &&
@@ -555,8 +651,11 @@ export function createPiChatAgent(
               assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns - 1;
             const toolPhaseFinished = online && !streamAnswer && !hasToolCalls(message);
             if (online && hasToolCalls(message)) {
-              const plan = plans.get(message);
-              const admittedCallIds = new Set(plan?.admitted.map((call) => call.id) ?? []);
+              const admittedCallIds = new Set(
+                assistantToolCalls(message)
+                  .filter((call) => decisionsByCallId.get(call.id)?.disposition === "admitted")
+                  .map((call) => call.id),
+              );
               for (const result of toolResults) {
                 const code = toolResultFailureCode(result);
                 const toolName = (result as { toolName?: unknown }).toolName;
@@ -567,19 +666,39 @@ export function createPiChatAgent(
                   control.disableNetworkTool(toolName);
                 }
               }
-              const successfulSearches = toolResults.filter(
-                (result) =>
-                  admittedCallIds.has(String((result as { toolCallId?: unknown }).toolCallId)) &&
+              let successfulSearches = 0;
+              let successfulFetches = 0;
+              const knownUrls = new Set<string>();
+              for (const result of toolResults) {
+                if (
+                  !admittedCallIds.has(String((result as { toolCallId?: unknown }).toolCallId)) ||
+                  (result as { isError?: unknown }).isError === true
+                ) continue;
+                const payload = parsedToolResult(result);
+                if (
                   (result as { toolName?: unknown }).toolName === "web_search" &&
-                  (result as { isError?: unknown }).isError !== true,
-              ).length;
-              const successfulFetches = toolResults.filter(
-                (result) =>
-                  admittedCallIds.has(String((result as { toolCallId?: unknown }).toolCallId)) &&
+                  Array.isArray(payload?.results) && payload.results.length > 0
+                ) {
+                  successfulSearches += 1;
+                  for (const item of payload.results) {
+                    if (typeof item !== "object" || item === null) continue;
+                    const url = (item as { url?: unknown }).url;
+                    if (typeof url === "string") {
+                      for (const usable of usableUrlsInText(url)) knownUrls.add(usable);
+                    }
+                  }
+                }
+                if (
                   (result as { toolName?: unknown }).toolName === "read_webpage" &&
-                  (result as { isError?: unknown }).isError !== true,
-              ).length;
-              control.recordBatchEvidence({ successfulSearches, successfulFetches });
+                  typeof payload?.text === "string" && payload.text.trim().length > 0
+                ) {
+                  successfulFetches += 1;
+                  if (typeof payload.url === "string") {
+                    for (const usable of usableUrlsInText(payload.url)) knownUrls.add(usable);
+                  }
+                }
+              }
+              control.recordBatchEvidence({ successfulSearches, successfulFetches, knownUrls });
             }
             if (online && toolSessions !== undefined) {
               const snapshot = toolSessions.budgetSnapshot(request.requestId);
@@ -683,6 +802,12 @@ export function createPiChatAgent(
                 type: "text_delta",
                 delta: event.assistantMessageEvent.delta,
               });
+            }
+            return;
+          }
+          if (event.type === "message_end") {
+            if (event.message.role === "assistant") {
+              planAssistantToolBatch(event.message);
             }
             return;
           }

@@ -4,6 +4,7 @@ import { Value } from "typebox/value";
 import { ToolExecutionEventSchema, ToolExecutionResultSchema } from "@deepfield/contracts";
 import type { ToolCallRequest, ToolExecutionEvent } from "@deepfield/contracts";
 import { ToolBudgetLedger } from "./budget.js";
+import { ToolExecutionError } from "./errors.js";
 import type { ToolDefinition, ToolRunContext } from "./definition.js";
 import { ToolPolicy } from "./policy.js";
 import { ToolRegistry } from "./registry.js";
@@ -214,6 +215,29 @@ describe("ToolRunner failure paths never execute unauthorized tools", () => {
       remaining: 0,
       exhausted: true,
     });
+    expect((result as { budgetConsumed?: boolean }).budgetConsumed).toBe(true);
+  });
+
+  it("reports authoritative consumption for an invalid_input raised after dispatch", async () => {
+    const { runner, call, context, signal } = setup({
+      definition: echoDefinition({
+        meter: {
+          category: "none",
+          countsBytes: false,
+          countsTime: true,
+          commitOn: "external_dispatch",
+        },
+        execute: async (_input, executionContext) => {
+          executionContext.markBudgetConsumed?.();
+          throw new ToolExecutionError("invalid_input");
+        },
+      }),
+    });
+
+    const result = await runner.execute(call, context, signal, () => {});
+
+    expect(result.status).toBe("failed");
+    expect((result as { budgetConsumed?: boolean }).budgetConsumed).toBe(true);
   });
 
   it("rejects invalid input with a single terminal and zero executor calls", async () => {
@@ -237,6 +261,7 @@ describe("ToolRunner failure paths never execute unauthorized tools", () => {
       expect(result.failure.code).toBe("invalid_input");
     }
     expect(executorCalls).toBe(0);
+    expect((result as { budgetConsumed?: boolean }).budgetConsumed).toBe(false);
     expect(events.map((event) => event.type)).toEqual(["accepted", "failed"]);
     expect(events.filter(isTerminal)).toHaveLength(1);
   });

@@ -62,6 +62,7 @@ const completedResult = {
   status: "completed",
   output: { resourceId: "res-1" },
   attempts: 1,
+  budgetConsumed: true,
 };
 
 describe("ToolExecutionResultSchema", () => {
@@ -78,6 +79,7 @@ describe("ToolExecutionResultSchema", () => {
         status: "failed",
         failure: { code: "url_blocked", message: "blocked", retryable: false, attempts: 1 },
         attempts: 1,
+        budgetConsumed: false,
       }),
     ).toBe(true);
   });

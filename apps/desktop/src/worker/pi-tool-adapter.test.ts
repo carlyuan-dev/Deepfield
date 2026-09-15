@@ -101,7 +101,7 @@ describe("pi tool adapter", () => {
     const tools = createPiAgentTools(registry, runner, context(), { executionIdFactory: () => "pi-exec-1" });
     const result = await tools[0]!.execute("pi-call-1", { subject: "robot" }, new AbortController().signal, () => {});
     expect(result.content[0]).toEqual({ type: "text", text: "fact: fact for robot" });
-    expect(result.details).toEqual({ executionId: "pi-exec-1" });
+    expect(result.details).toEqual({ executionId: "pi-exec-1", budgetConsumed: true });
     expect(audit.records.some((record) => record.kind === "start")).toBe(true);
     expect(audit.records.some((record) => record.kind === "finish")).toBe(true);
   });
@@ -195,6 +195,21 @@ describe("pi tool adapter", () => {
     expect(String(error)).not.toContain("apiKey");
   });
 
+  it("uses the runner's authoritative consumption bit for after-dispatch invalid_input", async () => {
+    const registry = new ToolRegistry();
+    registry.register(
+      lookupFactDefinition(async (_input, executionContext) => {
+        executionContext.markBudgetConsumed?.();
+        throw new ToolExecutionError("invalid_input");
+      }),
+    );
+    const tools = createPiAgentTools(registry, makeRunner(registry, new FakeAuditSink()), context());
+
+    await expect(
+      tools[0]!.execute("pi-call-1", { subject: "robot" }, new AbortController().signal, () => {}),
+    ).rejects.toThrow(/"code":"invalid_input".*"budgetConsumed":true/);
+  });
+
   it.each(["timeout", "authentication_failed", "budget_exceeded"] as const)(
     "preserves the safe %s failure classification for the model",
     async (failureCode) => {
@@ -223,7 +238,7 @@ describe("pi tool adapter", () => {
               ? "authentication failed"
               : "budget exceeded"
         }","retryable":false,"attempts":1,"budgetConsumed":${
-          failureCode === "budget_exceeded" ? "false" : "true"
+          "true"
         }${
           failureCode === "budget_exceeded"
             ? ',"instruction":"Do not call this tool again in this run. Use the results already collected and answer the user."'

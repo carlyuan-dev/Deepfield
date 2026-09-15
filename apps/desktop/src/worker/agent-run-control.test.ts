@@ -23,9 +23,19 @@ function snapshot(remaining: { search: number; fetch: number }): ToolBudgetSnaps
 }
 
 describe("createAgentRunControl", () => {
-  it("keeps fetch available after search exhaustion", () => {
+  it("enters synthesis when search is unavailable and there is no usable URL to fetch", () => {
     const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
 
+    control.observeSnapshot(snapshot({ search: 0, fetch: 2 }));
+
+    expect(control.availableNetworkTools()).toEqual([]);
+    expect(control.phase()).toBe("synthesizing");
+  });
+
+  it("keeps fetch available after search exhaustion when a usable URL is known", () => {
+    const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
+
+    control.recordKnownUrls(["https://example.test/article"]);
     control.observeSnapshot(snapshot({ search: 0, fetch: 2 }));
 
     expect(control.availableNetworkTools()).toEqual(["read_webpage"]);
@@ -42,6 +52,7 @@ describe("createAgentRunControl", () => {
 
   it("disables a fatal tool category without spending or hiding the other quota", () => {
     const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000);
+    control.recordKnownUrls(["https://example.test/article"]);
     control.observeSnapshot(snapshot({ search: 3, fetch: 2 }));
 
     expect(control.disableNetworkTool("web_search")).toBe(true);

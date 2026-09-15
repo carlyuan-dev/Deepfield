@@ -94,6 +94,7 @@ const resultFields = {
   traceId: Type.String({ minLength: 1 }),
   tool: ToolIdentitySchema,
   attempts: Type.Integer({ minimum: 1 }),
+  budgetConsumed: Type.Boolean(),
   durationMs: Type.Optional(Type.Number({ minimum: 0 })),
 };
 

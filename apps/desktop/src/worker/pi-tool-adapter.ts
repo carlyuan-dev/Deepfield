@@ -134,7 +134,7 @@ function toAgentTool(
             : deterministicOutputText(result.output);
         return {
           content: [{ type: "text", text }],
-          details: { executionId },
+          details: { executionId, budgetConsumed: result.budgetConsumed },
         };
       }
       const failure = result.failure ?? {
@@ -149,15 +149,7 @@ function toAgentTool(
           message: failure.message,
           retryable: failure.retryable,
           attempts: failure.attempts,
-          budgetConsumed: ![
-            "invalid_input",
-            "tool_not_found",
-            "tool_not_allowed",
-            "permission_denied",
-            "confirmation_required",
-            "budget_exceeded",
-            "audit_failed",
-          ].includes(failure.code),
+          budgetConsumed: result.budgetConsumed,
           ...(failure.code === "budget_exceeded"
             ? { instruction: "Do not call this tool again in this run. Use the results already collected and answer the user." }
             : {}),

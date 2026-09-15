@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Type } from "typebox";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
@@ -12,6 +13,7 @@ import {
   capture,
   FakePiAgent,
   makeRuntime,
+  makeInstalledPiRuntime,
   request,
   stubModel,
   textDelta,
@@ -231,10 +233,12 @@ describe("pi chat agent", () => {
       recordSynthetic: async () => undefined,
       releaseTrace: () => true,
     };
+    const webRequest = request({ webSearch: true });
+    webRequest.prompt = "核对 https://example.test/article";
     await capture(
       createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
       undefined,
-      request({ webSearch: true }),
+      webRequest,
     );
     const update = await fake.receivedOptions?.prepareNextTurnWithContext?.({
       message: assistantWithTool("继续搜索"),
@@ -258,6 +262,96 @@ describe("pi chat agent", () => {
     expect(update?.context?.tools?.map((tool) => tool.name)).toEqual(["read_webpage"]);
     expect(update?.context?.systemPrompt).toContain("web_search: remaining 0 of 4");
     expect(update?.context?.systemPrompt).toContain("read_webpage: remaining 2 of 3");
+  });
+
+  it.each(["prompt", "history"] as const)(
+    "preserves fetch after terminal search when a usable URL comes from %s",
+    async (source) => {
+      const fake = new FakePiAgent({
+        events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
+      });
+      const toolSessions = {
+        createAgentTools: () => [{ name: "web_search" } as never, { name: "read_webpage" } as never],
+        bindSearchProvider: () => undefined,
+        budgetSnapshot: () => budgetSnapshot(0, 2),
+        recordSynthetic: async () => undefined,
+        releaseTrace: () => true,
+      };
+      const webRequest = request({ webSearch: true });
+      if (source === "prompt") webRequest.prompt = "打开 https://example.test/article";
+      else webRequest.context.messages = [{ role: "user", content: "此前链接 https://example.test/article", timestamp: 1 }];
+
+      await capture(
+        createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
+        undefined,
+        webRequest,
+      );
+
+      expect(fake.receivedOptions?.initialState?.tools?.map((tool) => tool.name)).toEqual(["read_webpage"]);
+    },
+  );
+
+  it("starts in synthesis when search is terminal and no usable URL exists", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
+    });
+    const toolSessions = {
+      createAgentTools: () => [{ name: "web_search" } as never, { name: "read_webpage" } as never],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(0, 2),
+      recordSynthetic: async () => undefined,
+      releaseTrace: () => true,
+    };
+
+    await capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
+      undefined,
+      request({ webSearch: true }),
+    );
+
+    expect(fake.receivedOptions?.initialState?.tools).toEqual([]);
+    expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("phase: synthesizing");
+  });
+
+  it("keeps fetch available when the terminal search result supplies a usable URL", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
+    });
+    let snapshots = 0;
+    const toolSessions = {
+      createAgentTools: () => [{ name: "web_search" } as never, { name: "read_webpage" } as never],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => {
+        snapshots += 1;
+        return snapshots < 3 ? budgetSnapshot(1, 1) : budgetSnapshot(0, 1);
+      },
+      recordSynthetic: async () => undefined,
+      releaseTrace: () => true,
+    };
+    await capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
+      undefined,
+      request({ webSearch: true }),
+    );
+    const call = { type: "toolCall" as const, id: "terminal-search", name: "web_search", arguments: { query: "one" } };
+    const batch = assistant("", { content: [call], stopReason: "toolUse" });
+    await fake.receivedOptions?.beforeToolCall?.({ assistantMessage: batch, toolCall: call, args: call.arguments } as never);
+    const update = await fake.receivedOptions?.prepareNextTurnWithContext?.({
+      message: batch,
+      toolResults: [{
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.name,
+        content: [{ type: "text", text: '{"results":[{"url":"https://example.test/article"}]}' }],
+        isError: false,
+        timestamp: 1000,
+      }],
+      context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [] },
+      newMessages: [batch],
+    } as never);
+
+    expect(update?.context?.tools?.map((tool) => tool.name)).toEqual(["read_webpage"]);
+    expect(update?.context?.systemPrompt).toContain("phase: deciding");
   });
 
   it("plans one assistant tool batch once and trims only overflow calls", async () => {
@@ -364,8 +458,188 @@ describe("pi chat agent", () => {
     expect(executions).toBe(1);
     expect(outputs).toHaveLength(2);
     expect(outputs[1]?.content).toEqual(outputs[0]?.content);
+    expect(outputs[1]?.details).toEqual({ toolCallId: "search-a", budgetConsumed: false });
     expect(synthetic).toEqual([
       expect.objectContaining({ status: "reused", toolCallId: "search-b" }),
+    ]);
+  });
+
+  it("reuses a non-retryable failure with per-call budgetConsumed false", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
+    });
+    let executions = 0;
+    const synthetic: Array<{ status: string; toolCallId: string; budgetConsumed: boolean }> = [];
+    const toolSessions = {
+      createAgentTools: () => [{
+        name: "web_search",
+        description: "search",
+        label: "search",
+        parameters: {} as never,
+        async execute() {
+          executions += 1;
+          throw new Error('tool_failed {"code":"invalid_input","message":"invalid tool input","retryable":false,"attempts":1,"budgetConsumed":true}');
+        },
+      }],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(2, 2),
+      recordSynthetic: async (record: { status: string; toolCallId: string; budgetConsumed: boolean }) => {
+        synthetic.push(record);
+      },
+      releaseTrace: () => true,
+    };
+    await capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
+      undefined,
+      request({ webSearch: true }),
+    );
+    const calls = ["failed-a", "failed-b"].map((id) => ({
+      type: "toolCall" as const,
+      id,
+      name: "web_search",
+      arguments: { query: "same" },
+    }));
+    const batch = assistant("", { content: calls, stopReason: "toolUse" });
+    const wrapped = fake.receivedOptions?.initialState?.tools?.[0];
+    const failures: string[] = [];
+    for (const call of calls) {
+      await fake.receivedOptions?.beforeToolCall?.({
+        assistantMessage: batch,
+        toolCall: call,
+        args: call.arguments,
+        context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [] },
+      } as never);
+      try {
+        await wrapped?.execute(call.id, call.arguments, undefined, undefined);
+      } catch (error) {
+        failures.push(String(error));
+      }
+    }
+
+    expect(executions).toBe(1);
+    expect(failures[0]).toContain('"budgetConsumed":true');
+    expect(failures[1]).toContain('"budgetConsumed":false');
+    expect(synthetic).toEqual([
+      expect.objectContaining({ status: "reused", toolCallId: "failed-b", budgetConsumed: false }),
+    ]);
+  });
+
+  it("does not reuse an invalid earlier Pi call as the source for a valid duplicate", async () => {
+    let executions = 0;
+    const tool = {
+      name: "web_search",
+      description: "search",
+      label: "search",
+      parameters: Type.Object({
+        query: Type.String({ minLength: 1 }),
+        maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
+      }),
+      async execute() {
+        executions += 1;
+        return { content: [{ type: "text" as const, text: '{"results":[{"url":"https://a.test"}]}' }], details: {} };
+      },
+    };
+    const synthetic: Array<{ status: string; toolCallId: string }> = [];
+    const toolSessions = {
+      createAgentTools: () => [tool],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(2, 2),
+      recordSynthetic: async (record: { status: string; toolCallId: string }) => {
+        synthetic.push(record);
+      },
+      releaseTrace: () => true,
+    };
+    const toolTurn = assistant("", {
+      content: [
+        { type: "toolCall", id: "invalid-first", name: "web_search", arguments: { query: "same", maxResults: 0 } },
+        { type: "toolCall", id: "valid-second", name: "web_search", arguments: { query: "same", maxResults: 3 } },
+      ],
+      stopReason: "toolUse",
+    });
+
+    const result = await capture(
+      createPiChatAgent(
+        makeInstalledPiRuntime([toolTurn, assistant("工具草稿"), assistant("最终答案")]),
+        [],
+        undefined,
+        {},
+        toolSessions,
+      ),
+      undefined,
+      request({ webSearch: true }),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(executions).toBe(1);
+    expect(synthetic).toEqual([]);
+    expect(result.events.filter((event) => event.type === "tool_activity").map((event) => event.status)).toEqual([
+      "running",
+      "failed",
+      "running",
+      "completed",
+    ]);
+  });
+
+  it("assigns utility-only and following search turns distinct scopes in the installed Pi loop", async () => {
+    const observedScopes: Array<{ callId: string; turn: number | undefined }> = [];
+    const toolSessions = {
+      createAgentTools: (context: { batchScopeFor?: (toolCallId: string) => { agentTurnIndex: number } | undefined }) => [
+        {
+          name: "calculator",
+          description: "calculate",
+          label: "calculate",
+          parameters: Type.Object({ value: Type.Number() }),
+          async execute(toolCallId: string) {
+            observedScopes.push({ callId: toolCallId, turn: context.batchScopeFor?.(toolCallId)?.agentTurnIndex });
+            return { content: [{ type: "text" as const, text: "2" }], details: {} };
+          },
+        },
+        {
+          name: "web_search",
+          description: "search",
+          label: "search",
+          parameters: Type.Object({ query: Type.String() }),
+          async execute(toolCallId: string) {
+            observedScopes.push({ callId: toolCallId, turn: context.batchScopeFor?.(toolCallId)?.agentTurnIndex });
+            return { content: [{ type: "text" as const, text: '{"results":[{"url":"https://a.test"}]}' }], details: {} };
+          },
+        },
+      ],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(2, 2),
+      recordSynthetic: async () => undefined,
+      releaseTrace: () => true,
+    };
+    const utilityTurn = assistant("", {
+      content: [{ type: "toolCall", id: "utility-1", name: "calculator", arguments: { value: 1 } }],
+      stopReason: "toolUse",
+    });
+    const searchTurn = assistant("", {
+      content: [{ type: "toolCall", id: "search-2", name: "web_search", arguments: { query: "news" } }],
+      stopReason: "toolUse",
+    });
+
+    const result = await capture(
+      createPiChatAgent(
+        makeInstalledPiRuntime([
+          utilityTurn,
+          searchTurn,
+          assistant("工具草稿"),
+          assistant("最终答案"),
+        ]),
+        [],
+        undefined,
+        {},
+        toolSessions,
+      ),
+      undefined,
+      request({ webSearch: true }),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(observedScopes).toEqual([
+      { callId: "utility-1", turn: 1 },
+      { callId: "search-2", turn: 2 },
     ]);
   });
 
@@ -433,6 +707,56 @@ describe("pi chat agent", () => {
     expect(finalUpdate?.context?.systemPrompt).toContain("phase: synthesizing");
   });
 
+  it("treats two distinct successful empty search payloads as empty evidence", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
+    });
+    const toolSessions = {
+      createAgentTools: () => [{ name: "web_search" } as never],
+      bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(3, 2),
+      recordSynthetic: async () => undefined,
+      releaseTrace: () => true,
+    };
+    await capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
+      undefined,
+      request({ webSearch: true }),
+    );
+    let update: { context?: { systemPrompt: string; tools?: unknown[] } } | undefined;
+    for (const [index, query] of ["empty one", "empty two"].entries()) {
+      const call = {
+        type: "toolCall" as const,
+        id: `empty-${index}`,
+        name: "web_search",
+        arguments: { query },
+      };
+      const batch = assistant("", { content: [call], stopReason: "toolUse" });
+      await fake.receivedOptions?.beforeToolCall?.({
+        assistantMessage: batch,
+        toolCall: call,
+        args: call.arguments,
+        context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [] },
+      } as never);
+      update = await fake.receivedOptions?.prepareNextTurnWithContext?.({
+        message: batch,
+        toolResults: [{
+          role: "toolResult",
+          toolCallId: call.id,
+          toolName: call.name,
+          content: [{ type: "text", text: '{"results":[]}' }],
+          isError: false,
+          timestamp: 1000,
+        }],
+        context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [] },
+        newMessages: [batch],
+      } as never);
+    }
+
+    expect(update?.context?.tools).toEqual([]);
+    expect(update?.context?.systemPrompt).toContain("phase: synthesizing");
+  });
+
   it("closes search after authentication failure while preserving fetch", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
@@ -446,10 +770,12 @@ describe("pi chat agent", () => {
       recordSynthetic: async () => undefined,
       releaseTrace: () => true,
     };
+    const webRequest = request({ webSearch: true });
+    webRequest.prompt = "核对 https://example.test/article";
     await capture(
       createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions),
       undefined,
-      request({ webSearch: true }),
+      webRequest,
     );
 
     const update = await fake.receivedOptions?.prepareNextTurnWithContext?.({
@@ -491,7 +817,13 @@ describe("pi chat agent", () => {
       label: "fetch",
       parameters: {} as never,
       async execute() {
-        return { content: [{ type: "text" as const, text: "page" }], details: {} };
+        return {
+          content: [{
+            type: "text" as const,
+            text: '{"url":"https://a.test/","text":"page","title":"a","truncated":false,"characterCount":4}',
+          }],
+          details: {},
+        };
       },
     };
     const synthetic: Array<{ status: string; toolCallId: string }> = [];

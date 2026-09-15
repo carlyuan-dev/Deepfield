@@ -47,6 +47,7 @@ export function invalidInputPlaceholder(): ToolExecutionResult {
     status: "failed",
     failure: makeToolFailure("invalid_input", 1, false),
     attempts: 1,
+    budgetConsumed: false,
   };
 }
 

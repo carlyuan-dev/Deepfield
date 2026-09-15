@@ -90,17 +90,17 @@ export class ToolRunner {
       return result;
     };
     // Single-line result builders keep this hot-path file under 300 lines.
-    const fail = (failure: ToolFailure): ToolExecutionResult => {
+    const fail = (failure: ToolFailure, budgetConsumed = false): ToolExecutionResult => {
       emit({ type: "failed", failure });
-      return settle({ executionId, traceId, tool, status: "failed", failure, attempts: failure.attempts, durationMs: this.#clock.now() - startedAt });
+      return settle({ executionId, traceId, tool, status: "failed", failure, attempts: failure.attempts, budgetConsumed, durationMs: this.#clock.now() - startedAt });
     };
-    const cancel = (failure: ToolFailure): ToolExecutionResult => {
+    const cancel = (failure: ToolFailure, budgetConsumed = false): ToolExecutionResult => {
       emit({ type: "cancelled", failure });
-      return settle({ executionId, traceId, tool, status: "cancelled", failure, attempts: failure.attempts, durationMs: this.#clock.now() - startedAt });
+      return settle({ executionId, traceId, tool, status: "cancelled", failure, attempts: failure.attempts, budgetConsumed, durationMs: this.#clock.now() - startedAt });
     };
-    const complete = (output: unknown, attempts: number): ToolExecutionResult => {
+    const complete = (output: unknown, attempts: number, budgetConsumed: boolean): ToolExecutionResult => {
       emit({ type: "completed" });
-      return settle({ executionId, traceId, tool, status: "completed", output: output as never, attempts, durationMs: this.#clock.now() - startedAt });
+      return settle({ executionId, traceId, tool, status: "completed", output: output as never, attempts, budgetConsumed, durationMs: this.#clock.now() - startedAt });
     };
 
     emit({ type: "accepted" });
@@ -296,7 +296,7 @@ export class ToolRunner {
       }
       releaseConcurrency();
       releaseGlobal();
-      return complete(output, attempts);
+      return complete(output, attempts, budgetConsumed);
     }
 
     ledger.release(token);
@@ -313,6 +313,8 @@ export class ToolRunner {
       failure: terminalFailure,
       durationMs: this.#clock.now() - startedAt,
     });
-    return status === "cancelled" ? cancel(terminalFailure) : fail(terminalFailure);
+    return status === "cancelled"
+      ? cancel(terminalFailure, budgetConsumed)
+      : fail(terminalFailure, budgetConsumed);
   }
 }

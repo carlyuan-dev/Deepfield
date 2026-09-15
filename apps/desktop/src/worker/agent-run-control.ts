@@ -34,6 +34,7 @@ export interface AgentRunControl {
   requestSynthesis(): boolean;
   observeSnapshot(snapshot: ToolBudgetSnapshot): void;
   observeDeadline(now: number): void;
+  recordKnownUrls(urls: Iterable<string>): void;
   recordToolDecisionTurn(): void;
   recordBatchEvidence(evidence: {
     successfulSearches?: number;
@@ -91,6 +92,20 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
     !disabledNetworkTools.has(tool) &&
     hasCapacity(snapshot, tool === "web_search" ? "search" : "fetch");
 
+  const searchUnavailableWithoutUrl = (): boolean =>
+    !networkToolEnabled("web_search") &&
+    networkToolEnabled("read_webpage") &&
+    knownUrls.size === 0;
+
+  const synthesizeIfTerminal = (): void => {
+    if (
+      currentPhase === "deciding" &&
+      (availableNetworkTools().length === 0 || searchUnavailableWithoutUrl())
+    ) {
+      enterSynthesis();
+    }
+  };
+
   return {
     phase: () => currentPhase,
     deadlineAt: () => deadlineAt,
@@ -111,20 +126,19 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
     disableNetworkTool(tool) {
       if (disabledNetworkTools.has(tool)) return false;
       disabledNetworkTools.add(tool);
-      if (currentPhase === "deciding" && availableNetworkTools().length === 0) {
-        enterSynthesis();
-      }
+      synthesizeIfTerminal();
       return true;
     },
     requestSynthesis: enterSynthesis,
     observeSnapshot(nextSnapshot) {
       snapshot = nextSnapshot;
-      if (currentPhase === "deciding" && availableNetworkTools().length === 0) {
-        enterSynthesis();
-      }
+      synthesizeIfTerminal();
     },
     observeDeadline(now) {
       if (now >= deadlineAt) enterSynthesis();
+    },
+    recordKnownUrls(urls) {
+      for (const url of urls) knownUrls.add(url);
     },
     recordToolDecisionTurn() {
       if (currentPhase !== "deciding") return;
@@ -153,7 +167,7 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
         return;
       }
       currentPhase = "deciding";
-      if (availableNetworkTools().length === 0) enterSynthesis();
+      synthesizeIfTerminal();
     },
     complete() {
       currentPhase = "done";
