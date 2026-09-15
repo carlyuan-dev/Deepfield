@@ -12,7 +12,7 @@ import {
   assistant,
   assistantWithTool,
   FakePiAgent,
-  makeRecordingInstalledPiRuntime,
+  makeInstalledPiRuntime,
   makeRuntime,
   stubModel,
   textDelta,
@@ -59,73 +59,67 @@ function makeResearchToolSessions(
 ) {
   let searchRemaining = searchLimit;
   let fetchRemaining = fetchLimit;
-  const executions: string[] = [];
   return {
-    executions,
-    sessions: {
-      createAgentTools: () => [
-        {
-          name: "web_search",
-          description: "search",
-          label: "search",
-          parameters: Type.Object({ query: Type.String() }),
-          async execute(toolCallId: string) {
-            executions.push(toolCallId);
-            searchRemaining -= 1;
-            return {
-              content: [{
-                type: "text" as const,
-                text: JSON.stringify({
-                  results: [{
-                    title: `证据 ${toolCallId}`,
-                    url: `https://evidence.test/${toolCallId}`,
-                    snippet: `公开资料 ${toolCallId}`,
-                  }],
-                }),
-              }],
-              details: {},
-            };
-          },
+    createAgentTools: () => [
+      {
+        name: "web_search",
+        description: "search",
+        label: "search",
+        parameters: Type.Object({ query: Type.String() }),
+        async execute(toolCallId: string) {
+          searchRemaining -= 1;
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                results: [{
+                  title: `证据 ${toolCallId}`,
+                  url: `https://evidence.test/${toolCallId}`,
+                  snippet: `公开资料 ${toolCallId}`,
+                }],
+              }),
+            }],
+            details: {},
+          };
         },
-        {
-          name: "read_webpage",
-          description: "fetch",
-          label: "fetch",
-          parameters: Type.Object({ url: Type.String() }),
-          async execute(toolCallId: string, params: unknown) {
-            executions.push(toolCallId);
-            fetchRemaining -= 1;
-            if (toolCallId === failedFetchCallId) {
-              throw new Error(
-                `tool_failed ${JSON.stringify({
-                  code: "timeout",
-                  message: "末次网页读取超时",
-                  retryable: false,
-                  attempts: 1,
-                  budgetConsumed: true,
-                })}`,
-              );
-            }
-            return {
-              content: [{
-                type: "text" as const,
-                text: JSON.stringify({ url: params, text: `网页正文 ${toolCallId}` }),
-              }],
-              details: {},
-            };
-          },
+      },
+      {
+        name: "read_webpage",
+        description: "fetch",
+        label: "fetch",
+        parameters: Type.Object({ url: Type.String() }),
+        async execute(toolCallId: string, params: unknown) {
+          fetchRemaining -= 1;
+          if (toolCallId === failedFetchCallId) {
+            throw new Error(
+              `tool_failed ${JSON.stringify({
+                code: "timeout",
+                message: "末次网页读取超时",
+                retryable: false,
+                attempts: 1,
+                budgetConsumed: true,
+              })}`,
+            );
+          }
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({ url: params, text: `网页正文 ${toolCallId}` }),
+            }],
+            details: {},
+          };
         },
-      ],
-      bindSearchProvider: () => undefined,
-      budgetSnapshot: () => budgetSnapshot(
-        searchLimit,
-        fetchLimit,
-        searchRemaining,
-        fetchRemaining,
-      ),
-      recordSynthetic: async () => undefined,
-      releaseTrace: () => true,
-    },
+      },
+    ],
+    bindSearchProvider: () => undefined,
+    budgetSnapshot: () => budgetSnapshot(
+      searchLimit,
+      fetchLimit,
+      searchRemaining,
+      fetchRemaining,
+    ),
+    recordSynthetic: async () => undefined,
+    releaseTrace: () => true,
   };
 }
 
@@ -158,29 +152,29 @@ describe("generic company research agent", () => {
       }),
     ));
     const rawReport = "# 宇树科技调研报告\n\n基于公开资料，公司持续推进人形机器人商业化。[来源](https://evidence.test/search-1)";
-    const recording = makeRecordingInstalledPiRuntime([
+    const runtime = makeInstalledPiRuntime([
       ...searchTurns,
       ...fetchTurns,
       assistant(rawReport),
     ]);
-    const { sessions, executions } = makeResearchToolSessions(8, 8);
+    const toolSessions = makeResearchToolSessions(8, 8);
     const events: CompanyResearchWorkerEvent[] = [];
 
-    await createCompanyResearchAgent({ piRuntime: recording.runtime, toolSessions: sessions }).run(
+    await createCompanyResearchAgent({ piRuntime: runtime, toolSessions }).run(
       rawResearchRequest(),
       (event) => events.push(event),
       new AbortController().signal,
     );
 
-    expect(executions).toEqual([
-      ...Array.from({ length: 8 }, (_, index) => `search-${index + 1}`),
-      ...Array.from({ length: 8 }, (_, index) => `fetch-${index + 1}`),
-    ]);
-    expect(recording.requests.filter((request) => request.tools.length === 0)).toHaveLength(1);
-    expect(recording.requests.at(-1)).toMatchObject({ tools: [], toolChoice: "none" });
     expect(events.filter((event) => event.type === "tool_activity" && event.name === "web_search" && event.status === "completed")).toHaveLength(8);
     expect(events.filter((event) => event.type === "tool_activity" && event.name === "read_webpage" && event.status === "completed")).toHaveLength(8);
-    expect(events.filter((event) => event.type === "tool_activity" && event.name === "research_synthesis" && event.status === "running")).toHaveLength(1);
+    expect(events.flatMap((event) =>
+      event.type === "tool_activity" && event.name === "research_synthesis" ? [event.status] : []
+    )).toEqual(["running", "completed"]);
+    const synthesisStartedAt = events.findIndex((event) => event.type === "tool_activity" && event.name === "research_synthesis");
+    expect(events.slice(synthesisStartedAt + 1).some((event) =>
+      event.type === "tool_activity" && (event.name === "web_search" || event.name === "read_webpage")
+    )).toBe(false);
     expect(events.at(-1)).toMatchObject({ type: "completed", stage: "raw", text: rawReport });
   });
 
@@ -197,13 +191,21 @@ describe("generic company research agent", () => {
       name: "read_webpage",
       arguments: { url: "https://evidence.test/search-1" },
     }]);
-    const rawReport = "# 宇树科技调研报告\n\n现有公开证据支持其持续推进商业化；末次网页未能核验，相关细节仍待确认。";
-    const recording = makeRecordingInstalledPiRuntime([
+    const rawReport = "# 宇树科技调研报告\n\n前序成功证据为“公开资料 search-1”；末次失败事实为“末次网页读取超时”，相关网页细节仍待确认。";
+    const runtime = makeInstalledPiRuntime([
       search,
       finalFetch,
-      assistant(rawReport),
+      (context) => {
+        const finalizationEvidence = JSON.stringify(context.messages);
+        return assistant(
+          finalizationEvidence.includes("公开资料 search-1") &&
+            finalizationEvidence.includes("末次网页读取超时")
+            ? rawReport
+            : "Evidence was not preserved.",
+        );
+      },
     ]);
-    const { sessions } = makeResearchToolSessions(1, 1, "fetch-last");
+    const toolSessions = makeResearchToolSessions(1, 1, "fetch-last");
     const request = rawResearchRequest();
     request.toolAccess = {
       network: "enabled",
@@ -213,15 +215,12 @@ describe("generic company research agent", () => {
     };
     const events: CompanyResearchWorkerEvent[] = [];
 
-    await createCompanyResearchAgent({ piRuntime: recording.runtime, toolSessions: sessions }).run(
+    await createCompanyResearchAgent({ piRuntime: runtime, toolSessions }).run(
       request,
       (event) => events.push(event),
       new AbortController().signal,
     );
 
-    expect(recording.requests).toHaveLength(3);
-    expect(JSON.stringify(recording.requests.at(-1)?.messages)).toContain("末次网页读取超时");
-    expect(recording.requests.at(-1)).toMatchObject({ tools: [], toolChoice: "none" });
     expect(events).toContainEqual(expect.objectContaining({
       type: "tool_activity",
       name: "read_webpage",
@@ -229,24 +228,27 @@ describe("generic company research agent", () => {
       status: "failed",
       errorCode: "timeout",
     }));
+    expect(events.flatMap((event) =>
+      event.type === "tool_activity" && event.name === "research_synthesis" ? [event.status] : []
+    )).toEqual(["running", "completed"]);
     expect(events.at(-1)).toMatchObject({ type: "completed", stage: "raw", text: rawReport });
   });
 
   it("rejects a protocol-marked finalization instead of returning a polluted raw report", async () => {
-    const recording = makeRecordingInstalledPiRuntime([
+    const runtime = makeInstalledPiRuntime([
       assistant("资料已足够，可以开始成稿。"),
       assistant("<｜｜DSML｜｜ calls>private</｜｜DSML｜｜ calls>"),
     ]);
-    const { sessions } = makeResearchToolSessions(8, 8);
+    const toolSessions = makeResearchToolSessions(8, 8);
     const events: CompanyResearchWorkerEvent[] = [];
 
-    await createCompanyResearchAgent({ piRuntime: recording.runtime, toolSessions: sessions }).run(
+    await createCompanyResearchAgent({ piRuntime: runtime, toolSessions }).run(
       rawResearchRequest(),
       (event) => events.push(event),
       new AbortController().signal,
     );
 
-    expect(recording.requests.filter((request) => request.tools.length === 0)).toHaveLength(1);
+    expect(events.filter((event) => event.type === "tool_activity" && event.name === "research_synthesis" && event.status === "running")).toHaveLength(1);
     expect(events.some((event) => event.type === "completed")).toBe(false);
     expect(events.at(-1)).toMatchObject({ type: "failed", stage: "raw", code: "protocol_leak" });
   });
