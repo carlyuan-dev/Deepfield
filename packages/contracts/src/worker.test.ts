@@ -523,7 +523,7 @@ describe("two-stage company research protocol", () => {
     const diagnostic = {
       requestId: "research-1", runId: "run-1", traceId: "research-1", stage: "raw",
       type: "model_diagnostic", phase: "synthesizing", agentTurns: 12,
-      searchCalls: 8, fetchCalls: 7, inputChars: 12000, outputChars: 0,
+      searchCalls: 8, fetchCalls: 7, maxModelInputCharsEstimate: 12000, outputChars: 0,
       stopReason: "error", errorCategory: "invalid_final_empty",
       startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:10.000Z", durationMs: 10000,
     };

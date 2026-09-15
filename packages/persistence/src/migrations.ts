@@ -384,10 +384,10 @@ const MIGRATIONS: readonly Migration[] = [
           agent_turns INTEGER NOT NULL CHECK(agent_turns >= 0),
           search_calls INTEGER NOT NULL CHECK(search_calls >= 0),
           fetch_calls INTEGER NOT NULL CHECK(fetch_calls >= 0),
-          input_chars INTEGER NOT NULL CHECK(input_chars >= 0),
+          max_model_input_chars_estimate INTEGER NOT NULL CHECK(max_model_input_chars_estimate >= 0),
           output_chars INTEGER NOT NULL CHECK(output_chars >= 0),
           stop_reason TEXT NOT NULL CHECK(stop_reason IN ('stop','length','tool_use','error','aborted','unknown')),
-          error_category TEXT CHECK(error_category IS NULL OR error_category IN ('provider_failed','stream_failed','incomplete_lifecycle','invalid_final_empty','invalid_final_protocol','invalid_final_language')),
+          error_category TEXT CHECK(error_category IS NULL OR error_category IN ('provider_failed','stream_failed','incomplete_lifecycle','invalid_final_empty','invalid_final_protocol','invalid_final_language','invalid_final_tool_use')),
           started_at TEXT NOT NULL,
           finished_at TEXT NOT NULL,
           duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0)

@@ -244,6 +244,7 @@ const RawFailureCodeSchema = Type.Union([
 export const CompanyResearchModelErrorCategorySchema = Type.Union([
   Type.Literal("provider_failed"), Type.Literal("stream_failed"), Type.Literal("incomplete_lifecycle"),
   Type.Literal("invalid_final_empty"), Type.Literal("invalid_final_protocol"), Type.Literal("invalid_final_language"),
+  Type.Literal("invalid_final_tool_use"),
 ]);
 export type CompanyResearchModelErrorCategory = Static<typeof CompanyResearchModelErrorCategorySchema>;
 export const CompanyResearchModelDiagnosticSchema = Type.Object({
@@ -254,7 +255,7 @@ export const CompanyResearchModelDiagnosticSchema = Type.Object({
   agentTurns: Type.Integer({ minimum: 0, maximum: 1000 }),
   searchCalls: Type.Integer({ minimum: 0, maximum: 1000 }),
   fetchCalls: Type.Integer({ minimum: 0, maximum: 1000 }),
-  inputChars: Type.Integer({ minimum: 0, maximum: 100_000_000 }),
+  maxModelInputCharsEstimate: Type.Integer({ minimum: 0, maximum: 100_000_000 }),
   outputChars: Type.Integer({ minimum: 0, maximum: 100_000_000 }),
   stopReason: Type.Union([
     Type.Literal("stop"), Type.Literal("length"), Type.Literal("tool_use"),

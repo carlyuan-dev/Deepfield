@@ -42,6 +42,7 @@ function mapPiFailure(error: PiChatAgentError): RawFailureCode {
     case "invalid_final_empty": return "empty_report";
     case "invalid_final_protocol": return "protocol_leak";
     case "invalid_final_language": return "language_validation_failed";
+    case "invalid_final_tool_use": return "incomplete_response";
     case "incomplete_lifecycle": return "incomplete_response";
     case "provider_failed":
     case "stream_failed": return "model_failed";
@@ -62,25 +63,31 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
         if (request.stage === "structure") {
           const startedMs = Date.now();
           let text = "";
-          try {
-            text = await gateway.completeText(request.llm, prompt.instructions, prompt.input, signal);
-            if (!text.trim()) throw new Error("empty");
-          } catch (error) {
+          const emitStructureDiagnostic = (
+            stopReason: "stop" | "error" | "aborted",
+            errorCategory?: PiChatAgentError["code"],
+          ): void => {
             const finishedMs = Date.now();
             emit({ ...identity, type: "model_diagnostic", traceId: request.requestId, phase: "structuring",
               agentTurns: 1, searchCalls: 0, fetchCalls: 0,
-              inputChars: prompt.instructions.length + prompt.input.length, outputChars: text.length,
-              stopReason: signal.aborted ? "aborted" : "error", errorCategory: "provider_failed",
+              maxModelInputCharsEstimate: prompt.instructions.length + prompt.input.length,
+              outputChars: text.length, stopReason,
+              ...(errorCategory === undefined ? {} : { errorCategory }),
               startedAt: new Date(startedMs).toISOString(), finishedAt: new Date(finishedMs).toISOString(),
               durationMs: Math.max(0, finishedMs - startedMs) });
+          };
+          try {
+            text = await gateway.completeText(request.llm, prompt.instructions, prompt.input, signal);
+          } catch (error) {
+            if (signal.aborted) emitStructureDiagnostic("aborted");
+            else emitStructureDiagnostic("error", "provider_failed");
             throw error;
           }
-          const finishedMs = Date.now();
-          emit({ ...identity, type: "model_diagnostic", traceId: request.requestId, phase: "structuring",
-            agentTurns: 1, searchCalls: 0, fetchCalls: 0,
-            inputChars: prompt.instructions.length + prompt.input.length, outputChars: text.length,
-            stopReason: "stop", startedAt: new Date(startedMs).toISOString(), finishedAt: new Date(finishedMs).toISOString(),
-            durationMs: Math.max(0, finishedMs - startedMs) });
+          if (!text.trim()) {
+            emitStructureDiagnostic("stop", "invalid_final_empty");
+            throw new Error("invalid structure completion");
+          }
+          emitStructureDiagnostic("stop");
           emit({ ...identity, type: "completed", text });
           return;
         }

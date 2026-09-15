@@ -29,7 +29,7 @@ describe("company research model diagnostic repository", () => {
     const diagnostic: CompanyResearchModelDiagnostic = {
       requestId: "request-1", runId: f.run.id, traceId: "trace-1", stage: "raw", type: "model_diagnostic",
       phase: "synthesizing", agentTurns: 12, searchCalls: 8, fetchCalls: 7,
-      inputChars: 12000, outputChars: 0, stopReason: "error", errorCategory: "invalid_final_empty",
+      maxModelInputCharsEstimate: 12000, outputChars: 0, stopReason: "error", errorCategory: "invalid_final_empty",
       startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:10.000Z", durationMs: 10000,
     };
     f.repos.companyResearchDiagnostics.record(diagnostic);
@@ -43,7 +43,7 @@ describe("company research model diagnostic repository", () => {
     const f = fixture();
     expect(() => f.repos.companyResearchDiagnostics.record({
       requestId: "request-1", runId: f.run.id, traceId: "trace-1", stage: "raw", type: "model_diagnostic",
-      phase: "deciding", agentTurns: 1, searchCalls: 0, fetchCalls: 0, inputChars: 1, outputChars: 0,
+      phase: "deciding", agentTurns: 1, searchCalls: 0, fetchCalls: 0, maxModelInputCharsEstimate: 1, outputChars: 0,
       stopReason: "unknown", startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:00.001Z", durationMs: 1,
       apiKey: "secret",
     } as never)).toThrow();

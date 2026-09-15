@@ -93,6 +93,7 @@ describe("generic company research agent", () => {
     ["invalid_final_empty", "empty_report"],
     ["invalid_final_protocol", "protocol_leak"],
     ["invalid_final_language", "language_validation_failed"],
+    ["invalid_final_tool_use", "incomplete_response"],
   ] as const)("maps Pi %s to safe research failure %s", async (piCode, researchCode) => {
     const rawAgent: ChatAgent = { async run() { throw new PiChatAgentError(piCode, "sanitized"); } };
     const events: CompanyResearchWorkerEvent[] = [];
@@ -123,6 +124,68 @@ describe("generic company research agent", () => {
     expect(completeText).toHaveBeenCalledWith(request.llm, expect.stringContaining("不能访问互联网"), expect.stringContaining(request.rawReportText), expect.any(AbortSignal));
     expect(events.map((event) => event.type)).toEqual(["started", "model_diagnostic", "completed"]);
     expect(events[1]).toMatchObject({ phase: "structuring", searchCalls: 0, fetchCalls: 0, stopReason: "stop" });
+  });
+
+  it("classifies an empty structure completion without calling it a provider failure", async () => {
+    const request = structureResearchRequest();
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({
+      gateway: { completeText: vi.fn(async () => "") } as never,
+      rawAgent: {} as never,
+    }).run(request, (event) => events.push(event), new AbortController().signal);
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "model_diagnostic",
+      phase: "structuring",
+      stopReason: "stop",
+      errorCategory: "invalid_final_empty",
+      outputChars: 0,
+    }));
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: "structuring_failed" });
+  });
+
+  it("records a mid-flight structure cancellation as aborted without provider failure", async () => {
+    let rejectCompletion!: (error: Error) => void;
+    const completeText = vi.fn(() => new Promise<string>((_resolve, reject) => {
+      rejectCompletion = reject;
+    }));
+    const request = structureResearchRequest();
+    const events: CompanyResearchWorkerEvent[] = [];
+    const controller = new AbortController();
+    const run = createCompanyResearchAgent({ gateway: { completeText } as never, rawAgent: {} as never })
+      .run(request, (event) => events.push(event), controller.signal);
+    await vi.waitFor(() => expect(completeText).toHaveBeenCalledOnce());
+    controller.abort();
+    rejectCompletion(new Error("provider body must stay private"));
+    await run;
+
+    const diagnostic = events.find((event) => event.type === "model_diagnostic");
+    expect(diagnostic).toMatchObject({ stopReason: "aborted" });
+    expect(diagnostic).not.toHaveProperty("errorCategory");
+    expect(events.at(-1)).toMatchObject({ type: "cancelled" });
+  });
+
+  it("records a mid-flight raw cancellation as aborted without provider failure", async () => {
+    const fake = new FakePiAgent({ events: [], pending: true });
+    const request = rawResearchRequest();
+    request.toolAccess = {
+      network: "disabled",
+      maxAgentTurns: 12,
+      maxSearchCalls: 0,
+      maxFetchCalls: 0,
+    };
+    const events: CompanyResearchWorkerEvent[] = [];
+    const controller = new AbortController();
+    const run = createCompanyResearchAgent({ piRuntime: makeRuntime(fake, stubModel) })
+      .run(request, (event) => events.push(event), controller.signal);
+    await vi.waitFor(() => expect(fake.promptCallCount).toBe(1));
+    controller.abort();
+    await run;
+
+    const diagnostic = events.find((event) => event.type === "model_diagnostic");
+    expect(diagnostic).toMatchObject({ stopReason: "aborted" });
+    expect(diagnostic).not.toHaveProperty("errorCategory");
+    expect(events.at(-1)).toMatchObject({ type: "cancelled" });
   });
 
   it("keeps Chat-only formatting policy out of capability normal, retry, and synthesis prompts", async () => {

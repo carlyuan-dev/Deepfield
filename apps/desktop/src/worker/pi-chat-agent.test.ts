@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerEvent, AgentWorkerRequest } from "@deepfield/contracts";
@@ -1566,7 +1566,7 @@ describe("pi chat agent", () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toMatchObject({
       traceId: "req-1", phase: "deciding", errorCategory: "provider_failed",
-      stopReason: "error", inputChars: expect.any(Number), outputChars: 0,
+      stopReason: "error", maxModelInputCharsEstimate: expect.any(Number), outputChars: 0,
     });
     const serialized = JSON.stringify(diagnostics);
     expect(serialized).not.toContain("provider secret");
@@ -1595,9 +1595,82 @@ describe("pi chat agent", () => {
     });
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeInstanceOf(PiChatAgentError);
-    expect((result.error as PiChatAgentError).code).toBe("stream_failed");
+    expect((result.error as PiChatAgentError).code).toBe("provider_failed");
     expect(result.error?.message).not.toContain("provider auth failed");
     expect(result.error?.message).not.toContain("sk-secret-test-key");
+  });
+
+  it("preserves observed turn, stop, output, and expanded context when a later prompt rejects", async () => {
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const planning = assistantWithTool("先检索资料");
+    const largeToolResult = "检索正文".repeat(5000);
+    const fake = new FakePiAgent({
+      events: [],
+      beforeEvents: async (agent) => {
+        await agent.emit({ type: "agent_start" });
+        await agent.emit({ type: "message_end", message: planning });
+        await agent.receivedOptions?.prepareNextTurnWithContext?.({
+          message: planning,
+          toolResults: [{
+            role: "toolResult", toolCallId: "call-web_search", toolName: "web_search",
+            content: [{ type: "text", text: largeToolResult }], isError: false, timestamp: 1000,
+          }],
+          context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [] },
+          newMessages: [planning],
+        } as never);
+      },
+      reject: new Error("provider rejected with secret sk-never-store"),
+    });
+    const result = await capture(createPiChatAgent(
+      makeRuntime(fake, stubModel), [], undefined, {}, noOpToolSessions, undefined, undefined,
+      "capability", (diagnostic) => diagnostics.push(diagnostic as unknown as Record<string, unknown>),
+    ), undefined, request({ webSearch: true }));
+
+    expect((result.error as PiChatAgentError).code).toBe("provider_failed");
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      agentTurns: 1,
+      stopReason: "tool_use",
+      outputChars: "先检索资料".length,
+      errorCategory: "provider_failed",
+    });
+    expect(diagnostics[0]?.maxModelInputCharsEstimate).toEqual(expect.any(Number));
+    expect(diagnostics[0]?.maxModelInputCharsEstimate as number).toBeGreaterThan(largeToolResult.length);
+    expect(JSON.stringify(diagnostics)).not.toContain("sk-never-store");
+  });
+
+  it("records an aborted stop without a provider failure category", async () => {
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const controller = new AbortController();
+    const fake = new FakePiAgent({ events: [], pending: true });
+    const promise = capture(createPiChatAgent(
+      makeRuntime(fake, stubModel), [], undefined, {}, undefined, undefined, undefined,
+      "capability", (diagnostic) => diagnostics.push(diagnostic as unknown as Record<string, unknown>),
+    ), controller.signal);
+    await vi.waitFor(() => expect(fake.promptCallCount).toBe(1));
+    controller.abort();
+    await promise;
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ stopReason: "aborted" });
+    expect(diagnostics[0]).not.toHaveProperty("errorCategory");
+  });
+
+  it("records a diagnostic when runtime session creation throws", async () => {
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const runtime = {
+      createSession() { throw new Error("secret provider configuration"); },
+      createAgent() { throw new Error("unreachable"); },
+    };
+    const result = await capture(createPiChatAgent(
+      runtime as never, [], undefined, {}, undefined, undefined, undefined,
+      "capability", (diagnostic) => diagnostics.push(diagnostic as unknown as Record<string, unknown>),
+    ));
+
+    expect((result.error as PiChatAgentError).code).toBe("provider_failed");
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ stopReason: "unknown", errorCategory: "provider_failed" });
+    expect(JSON.stringify(diagnostics)).not.toContain("secret provider configuration");
   });
 
   it("throws a sanitized error when prompt resolves without agent_end", async () => {
@@ -1618,6 +1691,17 @@ describe("pi chat agent", () => {
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeInstanceOf(PiChatAgentError);
     expect((result.error as PiChatAgentError).code).toBe(code);
+  });
+
+  it("classifies a terminal assistant tool call separately from an empty answer", async () => {
+    const planning = assistantWithTool("");
+    const fake = new FakePiAgent({ events: [{ type: "agent_start" }, agentEnd([planning])] });
+    const result = await capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, noOpToolSessions),
+      undefined,
+      request({ webSearch: true }),
+    );
+    expect((result.error as PiChatAgentError).code).toBe("invalid_final_tool_use");
   });
 
   it("does not abort on a normal completion and cleans up listeners", async () => {

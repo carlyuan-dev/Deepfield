@@ -15,7 +15,7 @@ interface DiagnosticRow {
   agent_turns: number;
   search_calls: number;
   fetch_calls: number;
-  input_chars: number;
+  max_model_input_chars_estimate: number;
   output_chars: number;
   stop_reason: CompanyResearchModelDiagnostic["stopReason"];
   error_category: CompanyResearchModelDiagnostic["errorCategory"] | null;
@@ -33,7 +33,8 @@ function fromRow(row: DiagnosticRow): CompanyResearchModelDiagnostic {
   return valid({
     requestId: row.request_id, runId: row.run_id, traceId: row.trace_id, stage: row.stage,
     type: "model_diagnostic", phase: row.phase, agentTurns: row.agent_turns,
-    searchCalls: row.search_calls, fetchCalls: row.fetch_calls, inputChars: row.input_chars,
+    searchCalls: row.search_calls, fetchCalls: row.fetch_calls,
+    maxModelInputCharsEstimate: row.max_model_input_chars_estimate,
     outputChars: row.output_chars, stopReason: row.stop_reason,
     ...(row.error_category === null ? {} : { errorCategory: row.error_category }),
     startedAt: row.started_at, finishedAt: row.finished_at, durationMs: row.duration_ms,
@@ -47,10 +48,10 @@ export function createCompanyResearchDiagnosticRepository(db: DatabaseSync): Com
       const record = valid(value);
       db.prepare(`INSERT INTO company_research_model_diagnostics(
         request_id, run_id, trace_id, stage, phase, agent_turns, search_calls, fetch_calls,
-        input_chars, output_chars, stop_reason, error_category, started_at, finished_at, duration_ms
+        max_model_input_chars_estimate, output_chars, stop_reason, error_category, started_at, finished_at, duration_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(record.requestId, record.runId, record.traceId, record.stage, record.phase,
-          record.agentTurns, record.searchCalls, record.fetchCalls, record.inputChars,
+          record.agentTurns, record.searchCalls, record.fetchCalls, record.maxModelInputCharsEstimate,
           record.outputChars, record.stopReason, record.errorCategory ?? null,
           record.startedAt, record.finishedAt, record.durationMs);
     },
