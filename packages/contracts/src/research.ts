@@ -155,6 +155,16 @@ export const CompanyResearchStateSchema = Type.Object({
   active: Type.Optional(Type.Object({
     run: ActiveResearchRunSummarySchema,
     draftText: Type.String({ maxLength: 1_000_000 }),
+    latestActivity: Type.Optional(Type.Object({
+      callKey: Type.String({ minLength: 1, maxLength: 64 }),
+      name: Type.String({ minLength: 1, maxLength: 48 }),
+      summary: Type.Optional(Type.String({ maxLength: 96 })),
+      status: Type.Union([
+        Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed"),
+        Type.Literal("skipped"), Type.Literal("reused"),
+      ]),
+      errorCode: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    }, { additionalProperties: false })),
   }, { additionalProperties: false })),
   runs: Type.Array(ResearchRunSummarySchema),
   // Required even when the selected target is idle; null explicitly means free.
@@ -206,10 +216,40 @@ const RawTextDeltaSchema = Type.Object({
   type: Type.Literal("text_delta"),
   delta: Type.String({ maxLength: 1_000_000 }),
 }, { additionalProperties: false });
+const ResearchToolActivitySchema = Type.Object({
+  ...EventIdentity,
+  stage: Type.Literal("raw"),
+  type: Type.Literal("tool_activity"),
+  callKey: Type.String({ minLength: 1, maxLength: 64 }),
+  name: Type.String({ minLength: 1, maxLength: 48 }),
+  summary: Type.Optional(Type.String({ maxLength: 96 })),
+  status: Type.Union([
+    Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed"),
+    Type.Literal("skipped"), Type.Literal("reused"),
+  ]),
+  errorCode: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  agentTurnIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+  batchId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  budgetConsumed: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false });
+const RawFailureCodeSchema = Type.Union([
+  Type.Literal("tool_failed"),
+  Type.Literal("model_failed"),
+  Type.Literal("empty_report"),
+  Type.Literal("protocol_leak"),
+  Type.Literal("language_validation_failed"),
+  Type.Literal("incomplete_response"),
+]);
 export const CompanyResearchWorkerEventSchema = Type.Union([
   Type.Object({ ...EventIdentity, type: Type.Literal("started") }, { additionalProperties: false }),
   RawTextDeltaSchema,
+  ResearchToolActivitySchema,
   Type.Object({ ...EventIdentity, type: Type.Literal("completed"), text: ReportTextSchema }, { additionalProperties: false }),
+  Type.Object({
+    ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("failed"),
+    code: RawFailureCodeSchema, message: Type.Literal("company research failed"),
+  }, { additionalProperties: false }),
   Type.Object({
     ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("failed"),
     code: Type.Literal("research_failed"), message: Type.Literal("company research failed"),
@@ -235,10 +275,15 @@ export const CompanyResearchStateChangedEventSchema = Type.Object({
   itemId: IdSchema,
   companyId: IdSchema,
   runId: IdSchema,
-  // Only emitted after removing an empty raw-stage run; no provider diagnostics.
-  outcome: Type.Optional(Type.Union([Type.Literal("research_failed"), Type.Literal("web_search_failed"), Type.Literal("cancelled")])),
+  // Public fixed category only; provider diagnostics never cross this boundary.
+  outcome: Type.Optional(Type.Union([
+    Type.Literal("research_failed"), Type.Literal("web_search_failed"), Type.Literal("tool_failed"),
+    Type.Literal("model_failed"), Type.Literal("empty_report"), Type.Literal("protocol_leak"),
+    Type.Literal("language_validation_failed"), Type.Literal("incomplete_response"),
+    Type.Literal("protocol_error"), Type.Literal("storage_failed"), Type.Literal("cancelled"),
+  ])),
 }, { additionalProperties: false });
 export const CompanyResearchEventSchema = Type.Union([
-  CompanyResearchStateChangedEventSchema, RawTextDeltaSchema,
+  CompanyResearchStateChangedEventSchema, RawTextDeltaSchema, ResearchToolActivitySchema,
 ]);
 export type CompanyResearchEvent = Static<typeof CompanyResearchEventSchema>;

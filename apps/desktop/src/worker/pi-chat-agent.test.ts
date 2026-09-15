@@ -222,6 +222,39 @@ describe("pi chat agent", () => {
     } as never)).toBe(true);
   });
 
+  it("announces capability synthesis after the tool budget phase without exposing another tool", async () => {
+    const planning = assistantWithTool("继续搜索");
+    const final = assistant("最终报告");
+    const fake = new FakePiAgent({
+      events: [],
+      beforeEvents: async (agent) => {
+        await agent.emit({ type: "agent_start" });
+        await agent.emit({ type: "message_end", message: planning });
+        const update = await agent.receivedOptions?.prepareNextTurnWithContext?.({
+          message: planning,
+          toolResults: [],
+          context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [{ name: "web_search" }] },
+          newMessages: Array.from({ length: 5 }, () => assistant("过程")),
+        } as never);
+        expect(update?.context?.tools).toEqual([]);
+        await agent.emit(textDelta("最终报告"));
+        await agent.emit({ type: "message_end", message: final });
+        await agent.emit(agentEnd([planning, final]));
+      },
+    });
+    const result = await capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, noOpToolSessions, undefined, undefined, "capability"),
+      undefined,
+      request({ webSearch: true }),
+    );
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: "tool_activity", name: "research_synthesis", status: "running",
+      summary: "资料检索完成，正在生成原始报告…",
+    }));
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "tool_activity", name: "research_synthesis", status: "completed" }));
+    expect(result.events.at(-1)).toMatchObject({ type: "completed", text: "最终报告" });
+  });
+
   it("removes only exhausted search after a search budget rejection", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],

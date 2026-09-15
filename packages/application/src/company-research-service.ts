@@ -45,6 +45,14 @@ interface ActiveResearch {
   done: Promise<void>;
   llm: LlmRuntimeSnapshot;
   search?: SearchRuntimeSnapshot;
+  latestActivity?: Extract<CompanyResearchEvent, { type: "tool_activity" }>;
+}
+
+type ResearchFailureOutcome = Exclude<NonNullable<Extract<CompanyResearchEvent, { type: "state_changed" }>['outcome']>, "cancelled">;
+type ResearchOutcome = ResearchFailureOutcome | "cancelled";
+
+class ResearchConsumeFailure extends Error {
+  constructor(readonly outcome: ResearchFailureOutcome) { super(outcome); }
 }
 
 export const RAW_RESEARCH_POLICY = { network: "enabled", maxAgentTurns: 12, maxSearchCalls: 8, maxFetchCalls: 8 } as const;
@@ -174,9 +182,15 @@ export class CompanyResearchService {
         } : null,
       };
       if (active?.itemId === itemId && active.companyId === companyId) {
+        const latest = this.active?.run.id === active.id ? this.active.latestActivity : undefined;
         state.active = {
           run: active,
           draftText: this.active?.run.id === active.id ? this.active.rawDraftText : "",
+          ...(latest === undefined ? {} : { latestActivity: {
+            callKey: latest.callKey, name: latest.name, status: latest.status,
+            ...(latest.summary === undefined ? {} : { summary: latest.summary }),
+            ...(latest.errorCode === undefined ? {} : { errorCode: latest.errorCode }),
+          } }),
         };
       }
       return state;
@@ -256,6 +270,7 @@ export class CompanyResearchService {
   }
 
   private async consume(active: ActiveResearch): Promise<void> {
+    let failureOutcome: ResearchOutcome | undefined;
     try {
       while (this.active === active) {
         const request = this.request(active);
@@ -268,18 +283,24 @@ export class CompanyResearchService {
           if (event !== null && typeof event === "object" && (
             event.requestId !== request.requestId || event.runId !== request.runId || event.stage !== request.stage
           )) continue;
-          if (!Value.Check(CompanyResearchWorkerEventSchema, event)) throw new Error("invalid research event");
+          if (!Value.Check(CompanyResearchWorkerEventSchema, event)) throw new ResearchConsumeFailure("protocol_error");
           if (event.type === "started") continue;
           if (event.type === "text_delta") {
-            if (active.rawDraftText.length + event.delta.length > 1_000_000) throw new Error("research draft exceeds limit");
+            if (active.rawDraftText.length + event.delta.length > 1_000_000) throw new ResearchConsumeFailure("protocol_error");
             active.rawDraftText += event.delta;
+            this.emit(event);
+          } else if (event.type === "tool_activity") {
+            active.latestActivity = structuredClone(event);
             this.emit(event);
           } else if (event.type === "completed") {
             if (active.stage === "raw") {
-              active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeRaw(active.run.id, event.text));
+              try {
+                active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeRaw(active.run.id, event.text));
+              } catch { throw new ResearchConsumeFailure("storage_failed"); }
               active.stage = "structure";
               active.dispatched = false;
               active.rawDraftText = "";
+              delete active.latestActivity;
               rawCompleted = true;
               this.stateChanged(active.run);
               // A listener may cancel at the durable boundary. Keep the reservation
@@ -288,34 +309,40 @@ export class CompanyResearchService {
               break;
             }
             const content = validateStructuredResearch(event.text, active.run.rawReportText!, active.run.template);
-            active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeStructured(active.run.id, content));
+            try {
+              active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeStructured(active.run.id, content));
+            } catch { throw new ResearchConsumeFailure("storage_failed"); }
             this.active = undefined;
             this.stateChanged(active.run);
             return;
           } else {
-            this.failActive(active, event.type === "cancelled" ? "cancelled" : event.code === "web_search_failed" ? "web_search_failed" : "research_failed");
+            this.failActive(active, event.type === "cancelled" ? "cancelled" : event.code as ResearchFailureOutcome);
             return;
           }
         }
         if (!rawCompleted) break;
       }
-    } catch {
+    } catch (error) {
       // No provider/candidate/storage exception crosses the application boundary.
+      failureOutcome = error instanceof ResearchConsumeFailure
+        ? error.outcome
+        : active.stage === "raw" ? "protocol_error" : "research_failed";
     }
-    this.failActive(active, active.cancelRequested ? "cancelled" : "research_failed");
+    this.failActive(active, active.cancelRequested ? "cancelled" : failureOutcome ?? (active.stage === "raw" ? "incomplete_response" : "research_failed"));
   }
 
-  private failActive(active: ActiveResearch, outcome: "research_failed" | "web_search_failed" | "cancelled"): void {
+  private failActive(active: ActiveResearch, outcome: ResearchOutcome): void {
     if (this.active !== active) return;
     let persisted = false;
     let deletedRaw = false;
+    let targetGone = false;
     try {
       this.repositories.runInTransaction(() => {
         const { id, itemId, companyId } = active.run;
         // A removed target has already durably deleted the run. There is no
         // transition left to perform, but releasing its reservation still notifies
         // other targets and wakes the profile queue.
-        if (!this.repositories.companyResearchRuns.getByIdForTarget(itemId, companyId, id)) return;
+        if (!this.repositories.companyResearchRuns.getByIdForTarget(itemId, companyId, id)) { targetGone = true; return; }
         if (active.stage === "raw") {
           this.repositories.companyResearchRuns.deleteResearching(id);
           deletedRaw = true;
@@ -328,10 +355,10 @@ export class CompanyResearchService {
     } finally {
       this.active = undefined;
     }
-    if (persisted) this.stateChanged(active.run, deletedRaw ? outcome : undefined);
+    if (persisted) this.stateChanged(active.run, targetGone || (!deletedRaw && outcome !== "storage_failed") ? undefined : outcome);
   }
 
-  private stateChanged(run: KeyResearchRun, outcome?: "research_failed" | "web_search_failed" | "cancelled"): void {
+  private stateChanged(run: KeyResearchRun, outcome?: ResearchOutcome): void {
     this.emit({
       type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id,
       ...(outcome === undefined ? {} : { outcome }),

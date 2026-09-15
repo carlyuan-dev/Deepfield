@@ -13,6 +13,18 @@ interface View {
   error: string | undefined;
 }
 const EMPTY_VIEW: View = { state: EMPTY_STATE, selectedRunId: undefined, selectedRun: undefined, streamedRaw: undefined, loading: true, detailLoading: false, pending: false, error: undefined };
+const RESEARCH_FAILURE_MESSAGES: Record<string, string> = {
+  research_failed: "调研未完成，请稍后重试",
+  web_search_failed: "联网搜索未成功，请检查 Search 配置或稍后重试",
+  tool_failed: "联网工具未能取得足够资料，请检查 Search 配置或稍后重试",
+  model_failed: "模型生成调研报告失败，请检查 LLM 配置或稍后重试",
+  empty_report: "模型未返回可用的调研报告，请重试",
+  protocol_leak: "模型返回了工具协议内容，未保存为报告，请重试",
+  language_validation_failed: "模型返回的报告语言不符合要求，请重试",
+  incomplete_response: "模型响应未完整结束，请重试",
+  protocol_error: "调研进程通信异常，请重试",
+  storage_failed: "调研结果保存失败，请重试",
+};
 interface Actions {
   start(input: StartCompanyResearchInput): Promise<void>;
   cancel(): Promise<void>;
@@ -112,13 +124,19 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         // Occupancy is global, including events for other targets.
         if (event.itemId === itemId && event.companyId === companyId) {
           ++detailTicket;
-          if ("outcome" in event && event.outcome === "research_failed") {
-            publish({ error: "调研未完成，请稍后重试" });
-          } else if (event.outcome === "web_search_failed") {
-            publish({ error: "DeepSeek 联网搜索未成功，请稍后重试" });
-          }
+          if (event.outcome && event.outcome !== "cancelled") publish({ error: RESEARCH_FAILURE_MESSAGES[event.outcome] ?? RESEARCH_FAILURE_MESSAGES.research_failed });
         }
         void refresh();
+      } else if (event.type === "tool_activity" && event.stage === "raw") {
+        const active = current.state.active;
+        if (active?.run.id === event.runId && active.run.status === "researching") {
+          publish({ state: { ...current.state, active: { ...active, latestActivity: {
+            callKey: event.callKey, name: event.name, status: event.status,
+            ...(event.summary === undefined ? {} : { summary: event.summary }),
+            ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
+          } } } });
+        }
+        if (refreshing || !active) { ++revision; void refresh(); }
       } else if (event.type === "text_delta" && event.stage === "raw") {
         const active = current.state.active;
         if (active?.run.id === event.runId && active.run.status === "researching") {

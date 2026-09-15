@@ -17,6 +17,36 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it("restores and updates the latest research tool activity beside the running status", async () => {
+    const fake = makeFakeApi();
+    const run = researchRun({ status: "researching" });
+    const state = activeResearch(run);
+    state.active!.latestActivity = { callKey: "tool-1", name: "web_search", summary: "宇树科技新品", status: "running" };
+    fake.companyResearch.getState.mockResolvedValue(state);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText("正在搜索：宇树科技新品")).toBeTruthy();
+    act(() => fake.emitResearch({
+      requestId: "r1", runId: run.id, stage: "raw", type: "tool_activity",
+      callKey: "tool-2", name: "read_webpage", summary: "unitree.com", status: "completed",
+    }));
+    expect(await screen.findByText("已读取网页：unitree.com")).toBeTruthy();
+  });
+
+  it.each([
+    ["tool_failed", "联网工具未能取得足够资料，请检查 Search 配置或稍后重试"],
+    ["model_failed", "模型生成调研报告失败，请检查 LLM 配置或稍后重试"],
+    ["empty_report", "模型未返回可用的调研报告，请重试"],
+    ["protocol_leak", "模型返回了工具协议内容，未保存为报告，请重试"],
+    ["language_validation_failed", "模型返回的报告语言不符合要求，请重试"],
+    ["incomplete_response", "模型响应未完整结束，请重试"],
+  ] as const)("shows the safe %s failure message", async (outcome, message) => {
+    const fake = makeFakeApi();
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText("还没有调研报告。");
+    act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: "failed-run", outcome }));
+    expect(await screen.findByText(message)).toBeTruthy();
+  });
+
   it("shows the specific search failure only for the current target without displaying provider text", async () => {
     const fake = makeFakeApi();
     render(<CompanyResearchPanel api={fake} {...context} />);
@@ -26,7 +56,7 @@ describe("two-stage company research", () => {
     await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("alert")).toBeNull();
     act(() => fake.emitResearch(failure));
-    expect(await screen.findByText("DeepSeek 联网搜索未成功，请稍后重试")).toBeTruthy();
+    expect(await screen.findByText("联网搜索未成功，请检查 Search 配置或稍后重试")).toBeTruthy();
     expect(screen.queryByText("调研未完成，请稍后重试")).toBeNull();
     expect(screen.queryByRole("tabpanel")).toBeNull();
   });

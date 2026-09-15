@@ -31,6 +31,23 @@ import {
 } from "./agent-worker-client-test-helpers.js";
 
 describe("agent worker client", () => {
+  it("routes research tool activity as a non-terminal research event", async () => {
+    const endpoint = new FakeEndpoint();
+    const client = new AgentWorkerClient(endpoint);
+    const req = rawResearchRequest();
+    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
+    const activity: CompanyResearchWorkerEvent = {
+      requestId: req.requestId, runId: req.runId, stage: "raw", type: "tool_activity",
+      callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running",
+    };
+    endpoint.emit(activity);
+    endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: "raw", type: "completed", text: "报告" });
+    expect((await iterator.next()).value).toEqual(activity);
+    expect((await iterator.next()).value).toMatchObject({ type: "completed", text: "报告" });
+    expect((await iterator.next()).done).toBe(true);
+    client.dispose();
+  });
+
   it("posts the explicit cancellation stage", () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);

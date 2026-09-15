@@ -501,4 +501,21 @@ describe("two-stage company research protocol", () => {
     expect(Value.Check(CompanyResearchEventSchema, { requestId: "research-1", runId: "run-1", stage: "raw", type: "text_delta", delta: "draft" })).toBe(true);
     expect(Value.Check(CompanyResearchEventSchema, { ...rawCompleted, stage: "structure", text: "unvalidated JSON" })).toBe(false);
   });
+
+  it("accepts research-scoped safe tool activity and fixed public failure categories", () => {
+    const activity = {
+      requestId: "research-1", runId: "run-1", stage: "raw", type: "tool_activity",
+      callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running",
+      agentTurnIndex: 1, budgetConsumed: true,
+    };
+    expect(Value.Check(CompanyResearchWorkerEventSchema, activity)).toBe(true);
+    expect(Value.Check(CompanyResearchEventSchema, activity)).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, { ...activity, apiKey: "secret" })).toBe(false);
+    for (const code of ["tool_failed", "model_failed", "empty_report", "protocol_leak", "language_validation_failed", "incomplete_response"]) {
+      expect(Value.Check(CompanyResearchWorkerEventSchema, {
+        requestId: "research-1", runId: "run-1", stage: "raw", type: "failed", code,
+        message: "company research failed",
+      })).toBe(true);
+    }
+  });
 });

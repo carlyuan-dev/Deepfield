@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { COMPANY_RESEARCH_TEMPLATES, type DesktopApi, type KeyResearchRun, type ResearchRunSummary } from "@deepfield/contracts";
+import { COMPANY_RESEARCH_TEMPLATES, type CompanyResearchState, type DesktopApi, type KeyResearchRun, type ResearchRunSummary } from "@deepfield/contracts";
 import { LinkifiedText } from "../../components/LinkifiedText.js";
 import { CompanyResearchModal, type ResearchContextProps } from "./CompanyResearchModal.js";
 import { StructuredResearchReport } from "./StructuredResearchReport.js";
@@ -31,6 +31,27 @@ function ReportTabs({ run, rawText }: { run: KeyResearchRun | undefined; rawText
   </>;
 }
 
+type ResearchActivity = NonNullable<NonNullable<CompanyResearchState["active"]>["latestActivity"]>;
+function activityLabel(activity: ResearchActivity): string {
+  if (activity.name === "research_synthesis") return activity.summary ?? "资料检索完成，正在生成原始报告…";
+  const subject = activity.summary ? `：${activity.summary}` : "";
+  if (activity.name === "web_search") {
+    if (activity.status === "running") return `正在搜索${subject}`;
+    if (activity.status === "failed") return `搜索失败${subject}`;
+    if (activity.status === "skipped") return `已跳过搜索${subject}`;
+    if (activity.status === "reused") return `复用搜索结果${subject}`;
+    return `已完成搜索${subject}`;
+  }
+  if (activity.name === "read_webpage") {
+    if (activity.status === "running") return `正在读取网页${subject}`;
+    if (activity.status === "failed") return `网页读取失败${subject}`;
+    if (activity.status === "skipped") return `已跳过网页${subject}`;
+    if (activity.status === "reused") return `复用网页内容${subject}`;
+    return `已读取网页${subject}`;
+  }
+  return activity.summary ?? `${activity.name} · ${activity.status}`;
+}
+
 // The target key resets modal/tab state immediately as well as hook subscriptions.
 export function CompanyResearchPanel(props: CompanyResearchPanelProps) {
   return <ResearchTarget key={`${props.itemId}:${props.companyId}`} {...props} />;
@@ -57,7 +78,9 @@ function ResearchTarget({ api, itemId, companyId, ...context }: CompanyResearchP
     {research.error && !modalOpen && <p className="error" role="alert">{research.error} <button onClick={research.reload}>重新加载</button></p>}
     {research.loading ? <p className="muted">加载调研状态…</p> : <>
       {active && <div className="company-research-status" role="status">
-        <div><strong>{active.run.status === "researching" ? "正在联网调研…" : "正在整理结构化报告…"}</strong><span>{research.elapsedLabel}</span></div>
+        <div><div className="company-research-status-line"><span className="company-research-spinner" aria-hidden="true" /><strong>{active.run.status === "researching" ? "正在联网调研…" : "正在整理结构化报告…"}</strong>
+          {active.latestActivity && <span className="company-research-activity">{activityLabel(active.latestActivity)}</span>}</div>
+          <span>{research.elapsedLabel}</span></div>
         <button disabled={research.pending} onClick={() => void research.cancel()}>取消调研</button>
       </div>}
       {!active && research.state.runs.length > 0 && <label className="company-report-version">报告版本<select value={research.selectedRunId} onChange={(event) => research.selectRun(event.target.value)}>

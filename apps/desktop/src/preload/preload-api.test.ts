@@ -251,9 +251,11 @@ describe("preload api", () => {
       type: "state_changed",
     };
     const rawDelta: CompanyResearchEvent = { requestId: "rr", runId: "run-1", stage: "raw", type: "text_delta", delta: "# raw" };
+    const activity: CompanyResearchEvent = { requestId: "rr", runId: "run-1", stage: "raw", type: "tool_activity", callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running" };
     for (const listener of [...(researchSet ?? [])]) {
       listener({}, validResearch);
       listener({}, rawDelta);
+      listener({}, activity);
       listener({}, { ...validResearch, type: "text_delta" });
       listener({}, { ...validResearch, apiKey: "sk-secret" });
       listener({}, { ...rawDelta, stage: "structure" });
@@ -266,7 +268,7 @@ describe("preload api", () => {
       }
       listener({}, valid);
     }
-    expect(researchReceived).toEqual([validResearch, rawDelta]);
+    expect(researchReceived).toEqual([validResearch, rawDelta, activity]);
     unsubscribeResearch();
     expect(researchSet?.size).toBe(0);
 

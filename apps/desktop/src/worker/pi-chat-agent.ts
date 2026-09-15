@@ -560,6 +560,7 @@ export function createPiChatAgent(
         let streamedAnswer = "";
         let synthesisFollowUpPending = false;
         let synthesisFollowUpSent = false;
+        let synthesisActivityEmitted = false;
         let activitySequence = 0;
         const activeActivities = new Map<
           string,
@@ -793,7 +794,21 @@ export function createPiChatAgent(
                 }
               }
             }
-            if (mustReserveLastTurn || toolPhaseFinished) control.requestSynthesis();
+            if (mustReserveLastTurn || toolPhaseFinished) {
+              control.requestSynthesis();
+              if (toolActor === "capability" && !synthesisActivityEmitted && !adapterSettled) {
+                synthesisActivityEmitted = true;
+                emit({
+                  requestId: request.requestId,
+                  type: "tool_activity",
+                  callKey: "research-synthesis",
+                  name: "research_synthesis",
+                  summary: "资料检索完成，正在生成原始报告…",
+                  status: "running",
+                  budgetConsumed: false,
+                });
+              }
+            }
             if (!mustReserveLastTurn && !toolPhaseFinished && control.phase() !== "synthesizing") {
               return {
                 context: {
@@ -979,6 +994,17 @@ export function createPiChatAgent(
           throw new PiChatAgentError("agent finished without a final answer");
         }
         failActiveActivities();
+        if (synthesisActivityEmitted) {
+          emit({
+            requestId: request.requestId,
+            type: "tool_activity",
+            callKey: "research-synthesis",
+            name: "research_synthesis",
+            summary: "原始报告已生成",
+            status: "completed",
+            budgetConsumed: false,
+          });
+        }
         if (streamedAnswer.length === 0) {
           emit({ requestId: request.requestId, type: "text_delta", delta: finalText });
         } else if (finalText.startsWith(streamedAnswer) && finalText.length > streamedAnswer.length) {

@@ -18,6 +18,25 @@ export interface CompanyResearchAgent {
   run(request: CompanyResearchWorkerRequest, emit: (event: CompanyResearchWorkerEvent) => void, signal: AbortSignal): Promise<void>;
 }
 
+type RawFailureCode = "tool_failed" | "model_failed" | "empty_report" | "protocol_leak" | "language_validation_failed" | "incomplete_response";
+
+class RawResearchFailure extends Error {
+  constructor(readonly code: RawFailureCode) { super(code); }
+}
+
+function filteredReport(text: string): string {
+  const filter = new CompanyResearchRawFilter();
+  return filter.push(text) + filter.finish();
+}
+
+function validateRawReport(text: string, expectsChinese: boolean): string {
+  if (text.includes("<｜｜DSML｜｜") || text.includes("<|DSML|>")) throw new RawResearchFailure("protocol_leak");
+  const filtered = filteredReport(text);
+  if (!filtered.trim()) throw new RawResearchFailure("empty_report");
+  if (expectsChinese && !/\p{Script=Han}/u.test(filtered)) throw new RawResearchFailure("language_validation_failed");
+  return filtered;
+}
+
 export function createCompanyResearchAgent(options: CompanyResearchAgentOptions = {}): CompanyResearchAgent {
   const gateway = options.gateway ?? new PiModelGateway();
   const rawAgent = options.rawAgent ?? createPiChatAgent(options.piRuntime, [], undefined, {}, options.toolSessions, gateway, undefined, "capability");
@@ -36,8 +55,10 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
           emit({ ...identity, type: "completed", text });
           return;
         }
-        const filter = new CompanyResearchRawFilter();
-        let visible = "";
+        const previewFilter = new CompanyResearchRawFilter();
+        let terminalText: string | undefined;
+        let terminalSeen = false;
+        let failedToolSeen = false;
         const chatRequest: AgentWorkerRequest = {
           requestId: request.requestId,
           kind: "chat.prompt",
@@ -48,20 +69,37 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
           search: request.search,
           toolAccess: request.toolAccess,
         };
-        await rawAgent.run(chatRequest, (event) => {
-          if (event.type === "text_delta") {
-            const delta = filter.push(event.delta); visible += delta;
-            if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });
-          } else if (event.type === "completed") {
-            const tail = filter.finish(); visible += tail;
-            if (tail) emit({ ...identity, stage: "raw", type: "text_delta", delta: tail });
-          } else if (event.type === "failed") throw new Error("agent failed");
-        }, signal);
-        if (!visible.trim()) throw new Error("empty");
-        emit({ ...identity, type: "completed", text: visible });
-      } catch {
+        try {
+          await rawAgent.run(chatRequest, (event) => {
+            if (event.type === "text_delta") {
+              const delta = previewFilter.push(event.delta);
+              if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });
+            } else if (event.type === "tool_activity") {
+              if (event.status === "failed") failedToolSeen = true;
+              const { requestId: _requestId, ...activity } = event;
+              emit({ ...identity, stage: "raw", ...activity });
+            } else if (event.type === "completed") {
+              terminalSeen = true;
+              terminalText = event.text;
+              const tail = previewFilter.finish();
+              if (tail) emit({ ...identity, stage: "raw", type: "text_delta", delta: tail });
+            } else if (event.type === "failed") {
+              terminalSeen = true;
+              throw new RawResearchFailure(failedToolSeen ? "tool_failed" : "model_failed");
+            }
+          }, signal);
+        } catch (error) {
+          if (error instanceof RawResearchFailure) throw error;
+          throw new RawResearchFailure(failedToolSeen ? "tool_failed" : "model_failed");
+        }
+        if (!terminalSeen || terminalText === undefined) throw new RawResearchFailure("incomplete_response");
+        const report = validateRawReport(terminalText, /\p{Script=Han}/u.test(prompt.input));
+        emit({ ...identity, type: "completed", text: report });
+      } catch (error) {
         if (signal.aborted) emit({ ...identity, type: "cancelled" });
-        else emit({ ...identity, type: "failed", ...researchFailure(request.stage) });
+        else if (request.stage === "raw" && error instanceof RawResearchFailure) {
+          emit({ ...identity, stage: "raw", type: "failed", code: error.code, message: "company research failed" });
+        } else emit({ ...identity, type: "failed", ...researchFailure(request.stage) });
       }
     },
   };

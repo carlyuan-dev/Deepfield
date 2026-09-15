@@ -24,6 +24,48 @@ describe("generic company research agent", () => {
     expect(events.map((event) => event.type)).toEqual(["started", "text_delta", "completed"]);
   });
 
+  it("uses completion text as the canonical report while keeping deltas as preview only", async () => {
+    const rawAgent: ChatAgent = { async run(request, emit) {
+      emit({ requestId: request.requestId, type: "started" });
+      emit({ requestId: request.requestId, type: "text_delta", delta: "预览草稿" });
+      emit({ requestId: request.requestId, type: "completed", text: "最终报告" });
+    } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events).toContainEqual(expect.objectContaining({ type: "text_delta", delta: "预览草稿" }));
+    expect(events.at(-1)).toMatchObject({ type: "completed", text: "最终报告" });
+  });
+
+  it("accepts completion-only raw output", async () => {
+    const rawAgent: ChatAgent = { async run(request, emit) {
+      emit({ requestId: request.requestId, type: "started" });
+      emit({ requestId: request.requestId, type: "completed", text: "最终报告" });
+    } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events.at(-1)).toMatchObject({ type: "completed", text: "最终报告" });
+  });
+
+  it("rejects a delta-only run without a terminal event", async () => {
+    const rawAgent: ChatAgent = { async run(request, emit) {
+      emit({ requestId: request.requestId, type: "text_delta", delta: "看似完整的草稿" });
+    } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: "incomplete_response" });
+  });
+
+  it("forwards safe tool activity with research identity and classifies protocol leakage", async () => {
+    const rawAgent: ChatAgent = { async run(request, emit) {
+      emit({ requestId: request.requestId, type: "tool_activity", callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "completed", budgetConsumed: true });
+      emit({ requestId: request.requestId, type: "completed", text: '<｜｜DSML｜｜ calls>private</｜｜DSML｜｜ calls>' });
+    } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool_activity", stage: "raw", callKey: "tool-1", summary: "宇树科技" }));
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: "protocol_leak" });
+  });
+
   it("structures in one no-tool model call without a Search snapshot", async () => {
     const completeText = vi.fn(async () => '{"coreSummary":[],"sections":[]}');
     const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];

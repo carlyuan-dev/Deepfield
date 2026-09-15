@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompanyResearchWorkerRequest, LlmRuntimeSnapshot, ResearchRunId, SearchRuntimeSnapshot } from "@deepfield/contracts";
 import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY } from "./company-research-service.js";
+import type { CompanyResearchWorkerPort } from "./ports.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 
 const dbs: TestDb[] = []; afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
@@ -12,10 +13,10 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 function setup(structureText = JSON.stringify(valid)) {
   const db = openTestDb(); dbs.push(db); const item = db.repos.capabilityItems.create({ industry: "智能眼镜" }); const company = db.repos.companies.upsert({ name: "小米" }); db.repos.itemCompanies.add(item.id, company.id);
   const requests: CompanyResearchWorkerRequest[] = []; const persistedBeforeStructure: boolean[] = [];
-  const worker = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") { const persisted = db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId as ResearchRunId); persistedBeforeStructure.push(persisted?.schemaVersion === "company-research-report-v1" && persisted.rawReportText === "原始报告"); } return (async function* () { yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
+  const worker: CompanyResearchWorkerPort = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") { const persisted = db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId as ResearchRunId); persistedBeforeStructure.push(persisted?.schemaVersion === "company-research-report-v1" && persisted.rawReportText === "原始报告"); } return (async function* () { yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
   const profiles = { llmCalls: 0, searchCalls: 0, resolveActiveLlm: async () => { profiles.llmCalls++; return llm; }, resolveActiveSearch: async () => { profiles.searchCalls++; return search; } };
   let seq = 0; const service = new CompanyResearchService(db.repos, profiles, worker, { requestIdFactory: () => `r${++seq}`, now: () => new Date(2026, 8, 11) });
-  return { db, item, company, requests, persistedBeforeStructure, profiles, service };
+  return { db, item, company, requests, persistedBeforeStructure, profiles, service, worker };
 }
 
 describe("CompanyResearchService profile snapshots", () => {
@@ -35,5 +36,38 @@ describe("CompanyResearchService profile snapshots", () => {
     await f.service.retryStructuring(f.item.id, f.company.id, run.id); await flush();
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 0 });
     expect(f.requests.at(-1)).toMatchObject({ stage: "structure", toolAccess: STRUCTURE_RESEARCH_POLICY });
+  });
+
+  it("retains the latest safe tool activity in the in-memory state and emits it", async () => {
+    const f = setup();
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const activity = { requestId: "r1", runId: "run-ignored", stage: "raw", type: "tool_activity", callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running", budgetConsumed: true } as const;
+    f.worker.sendResearch = (request: CompanyResearchWorkerRequest) => (async function* () {
+      yield { ...activity, requestId: request.requestId, runId: request.runId };
+      await paused;
+      yield { requestId: request.requestId, runId: request.runId, stage: "raw", type: "failed", code: "tool_failed", message: "company research failed" } as const;
+    })();
+    const emitted: unknown[] = [];
+    f.service.subscribe((event) => emitted.push(event));
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await flush();
+    expect(f.service.getState(f.item.id, f.company.id).active?.latestActivity).toMatchObject({ callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running" });
+    expect(emitted).toContainEqual(expect.objectContaining({ type: "tool_activity", runId: run.id, callKey: "tool-1" }));
+    release();
+    await flush();
+    expect(emitted).toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "tool_failed" }));
+  });
+
+  it("classifies an invalid worker envelope as a safe protocol error", async () => {
+    const f = setup();
+    f.worker.sendResearch = (request) => (async function* () {
+      yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "unknown" } as never;
+    })();
+    const emitted: unknown[] = [];
+    f.service.subscribe((event) => emitted.push(event));
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await flush();
+    expect(emitted).toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "protocol_error" }));
   });
 });
