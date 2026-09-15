@@ -19,6 +19,7 @@ export const AgentContextSnapshotSchema = Type.Object(
   {
     conversationId: Type.String(),
     systemPrompt: Type.String(),
+    finalizationSystemPrompt: Type.Optional(Type.String()),
     messages: Type.Array(AgentContextMessageSchema),
   },
   { additionalProperties: false },

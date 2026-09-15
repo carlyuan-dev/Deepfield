@@ -715,7 +715,7 @@ export function createPiChatAgent(
         let agent!: PiAgentHandle;
         const initialMessages = mapHistoryMessages(request.context.messages, session.model);
         const synthesisSystemPrompt = [
-          request.context.systemPrompt,
+          request.context.finalizationSystemPrompt ?? request.context.systemPrompt,
           buildRuntimeSystemContext(runtimeContext),
           ...(toolActor === "main_agent" ? [CHAT_FORMATTING_SYSTEM_PROMPT] : []),
           SYNTHESIS_SYSTEM_PROMPT,

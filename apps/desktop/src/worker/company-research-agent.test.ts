@@ -13,6 +13,7 @@ import {
   assistantWithTool,
   FakePiAgent,
   makeInstalledPiRuntime,
+  makeRecordingInstalledPiRuntime,
   makeRuntime,
   stubModel,
   textDelta,
@@ -128,6 +129,54 @@ function toolTurn(calls: AssistantMessage["content"]): AssistantMessage {
 }
 
 describe("generic company research agent", () => {
+  it.each(["natural_stop", "budget_exhausted"] as const)(
+    "keeps research requirements but removes exploration instructions from %s finalization",
+    async (reason) => {
+      const request = rawResearchRequest();
+      request.toolAccess = {
+        network: "enabled", maxAgentTurns: 12, maxSearchCalls: 1,
+        maxFetchCalls: reason === "natural_stop" ? 2 : 1,
+      };
+      const report = "# 公司关键调研原始报告\n\n截至2026-06-30，研究范围为 Humanoid actuators；现有网页正文支持有限事实，尚未确认的内容保留为模块缺口。";
+      const recording = makeRecordingInstalledPiRuntime([
+        toolTurn([{ type: "toolCall", id: "source-search", name: "web_search", arguments: { query: "Humanoid actuators" } }]),
+        toolTurn([{ type: "toolCall", id: "source-fetch", name: "read_webpage", arguments: { url: "https://evidence.test/source-search" } }]),
+        ...(reason === "natural_stop" ? [assistant("现有资料已足够成稿。")] : []),
+        (context) => {
+          const instructions = context.systemPrompt ?? "";
+          const input = JSON.stringify(context.messages);
+          if (/必须使用网页搜索|web_search|read_webpage|再自主搜索|按需要执行多次搜索/u.test(instructions)) {
+            return toolTurn([{ type: "toolCall", id: "leaked-exploration", name: "web_search", arguments: { query: "follow leaked instruction" } }]);
+          }
+          const preservesRequirements =
+            instructions.includes("只研究目标公司、唯一研究方向及所选五个模块") &&
+            instructions.includes("不采纳截止日期之后才公开的信息") &&
+            instructions.includes("固定 Markdown 标题和顺序") &&
+            instructions.includes("每条事实必须紧跟一个且仅一个") &&
+            input.includes("Humanoid actuators") && input.includes("2026-06-30") &&
+            input.includes("# 公司关键调研原始报告") && input.includes("### 模块缺口") &&
+            input.includes("网页正文 source-fetch");
+          return assistant(preservesRequirements ? report : "Research requirements or evidence were lost.");
+        },
+      ]);
+      const events: CompanyResearchWorkerEvent[] = [];
+
+      await createCompanyResearchAgent({
+        piRuntime: recording.runtime,
+        toolSessions: makeResearchToolSessions(1, request.toolAccess.maxFetchCalls),
+      }).run(request, (event) => events.push(event), new AbortController().signal);
+
+      expect(events.at(-1)).toMatchObject({ type: "completed", stage: "raw", text: report });
+      expect(events.some((event) => event.type === "failed")).toBe(false);
+      expect(recording.requests).toHaveLength(reason === "natural_stop" ? 4 : 3);
+      expect(recording.requests[0]?.systemPrompt).toContain("必须使用网页搜索");
+      const finalRequest = recording.requests.at(-1);
+      expect(finalRequest?.systemPrompt).not.toMatch(/必须使用网页搜索|web_search|read_webpage/u);
+      expect(finalRequest?.tools).toEqual([]);
+      expect(finalRequest?.toolChoice).toBe("none");
+    },
+  );
+
   it("returns one legal raw report after exactly eight searches and eight webpage reads", async () => {
     const searchTurns = Array.from({ length: 4 }, (_, turn) => toolTurn(
       Array.from({ length: 2 }, (_unused, slot) => {

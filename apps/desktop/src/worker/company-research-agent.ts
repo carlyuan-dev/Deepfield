@@ -102,7 +102,14 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
           requestId: request.requestId,
           kind: "chat.prompt",
           prompt: prompt.input,
-          context: { conversationId: request.runId, systemPrompt: prompt.instructions, messages: [] },
+          context: {
+            conversationId: request.runId,
+            systemPrompt: prompt.instructions,
+            ...(prompt.finalizationInstructions === undefined ? {} : {
+              finalizationSystemPrompt: prompt.finalizationInstructions,
+            }),
+            messages: [],
+          },
           options: { webSearch: true },
           llm: request.llm,
           search: request.search,
