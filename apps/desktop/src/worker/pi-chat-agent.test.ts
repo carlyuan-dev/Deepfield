@@ -1307,7 +1307,7 @@ describe("pi chat agent", () => {
     expect(fake.promptedWith).toBe("当前问题");
   });
 
-  it("adds a restrained Markdown formatting policy without disabling useful structures", async () => {
+  it("keeps the restrained Markdown policy in main-agent normal, retry, and synthesis prompts", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("好的")])],
     });
@@ -1324,6 +1324,26 @@ describe("pi chat agent", () => {
     expect(systemPrompt).toContain("避免不必要的一级标题、重复的水平分隔线、装饰性 emoji 和过度加粗");
     expect(systemPrompt).toContain("仅在能提升可读性时使用 Markdown");
     expect(systemPrompt).toContain("可以使用有助于表达的表格、链接和代码");
+
+    const options = fake.receivedOptions;
+    const toolTurn = assistantWithTool("继续搜索");
+    const retryUpdate = await options?.prepareNextTurnWithContext?.({
+      message: toolTurn,
+      toolResults: [],
+      context: { systemPrompt: "原始系统提示", model: stubModel, messages: [], tools: [] },
+      newMessages: [toolTurn],
+    } as never);
+    expect(retryUpdate?.context?.systemPrompt).toContain("优先使用简洁段落和必要的列表");
+
+    const fiveAssistantTurns = Array.from({ length: 5 }, () => assistant("过程"));
+    const synthesisUpdate = await options?.prepareNextTurnWithContext?.({
+      message: toolTurn,
+      toolResults: [],
+      context: { systemPrompt: "原始系统提示", model: stubModel, messages: [], tools: [] },
+      newMessages: fiveAssistantTurns,
+    } as never);
+    expect(synthesisUpdate?.context?.systemPrompt).toContain("优先使用简洁段落和必要的列表");
+    expect(synthesisUpdate?.context?.systemPrompt).toContain("工具阶段已结束");
   });
 
   it("adds online tool guidance and marks started events for web-enabled runs", async () => {

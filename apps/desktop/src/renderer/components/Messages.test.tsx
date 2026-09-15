@@ -169,6 +169,29 @@ describe("Chat message rendering", () => {
     expect(answer?.textContent).toContain("危险链接");
   });
 
+  it("preserves footnote reference and return-link metadata", () => {
+    const { container } = render(
+      <Messages
+        messages={[
+          message("assistant", "结论有出处。[^1]\n\n[^1]: 脚注内容。"),
+        ]}
+      />,
+    );
+    const reference = container.querySelector<HTMLAnchorElement>("a[data-footnote-ref]");
+    const back = container.querySelector<HTMLAnchorElement>("a[data-footnote-backref]");
+
+    expect(reference).toBeTruthy();
+    expect(reference?.id).toBe("user-content-fnref-1");
+    expect(reference?.getAttribute("href")).toBe("#user-content-fn-1");
+    expect(reference?.getAttribute("aria-describedby")).toBe("footnote-label");
+    expect(container.querySelector(reference?.getAttribute("href") ?? "missing")).toBeTruthy();
+    expect(back).toBeTruthy();
+    expect(back?.classList.contains("data-footnote-backref")).toBe(true);
+    expect(back?.getAttribute("aria-label")).toBeTruthy();
+    expect(back?.getAttribute("href")).toBe(`#${reference?.id}`);
+    expect(container.querySelector(back?.getAttribute("href") ?? "missing")).toBe(reference);
+  });
+
   it("renders incomplete streaming Markdown safely and upgrades it when completed", () => {
     const { container, rerender } = render(
       <Messages messages={[message("assistant", "**尚未完成", "streaming")]} />,

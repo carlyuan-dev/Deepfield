@@ -545,7 +545,7 @@ export function createPiChatAgent(
           request.context.systemPrompt,
           buildRuntimeSystemContext(runtimeContext),
           online ? ONLINE_SYSTEM_PROMPT : OFFLINE_SYSTEM_PROMPT,
-          CHAT_FORMATTING_SYSTEM_PROMPT,
+          ...(toolActor === "main_agent" ? [CHAT_FORMATTING_SYSTEM_PROMPT] : []),
         ].join("\n");
         const composeSystemPrompt = (): string =>
           online

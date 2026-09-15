@@ -11,6 +11,10 @@ function MarkdownLink({
   children,
   node,
   markdownSource,
+  target: _target,
+  rel: _rel,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
+  ...remainingProps
 }: ComponentPropsWithoutRef<"a"> & ExtraProps & { markdownSource: string }) {
   if (!href) {
     return <>{children}</>;
@@ -28,9 +32,13 @@ function MarkdownLink({
   const suffix = bareUrl ? children.slice(String(linkText).length) : "";
   const linkHref = bareUrl ? String(linkText) : href;
   const external = HTTP_URL.test(linkHref);
+  const safeProps = Object.fromEntries(
+    Object.entries(remainingProps).filter(([name]) => !/^on/iu.test(name)),
+  ) as ComponentPropsWithoutRef<"a">;
   return (
     <Fragment>
       <a
+        {...safeProps}
         href={linkHref}
         title={title}
         {...(external ? { target: "_blank", rel: "noreferrer noopener" } : {})}
