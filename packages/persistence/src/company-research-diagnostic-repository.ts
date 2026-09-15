@@ -67,5 +67,11 @@ export function createCompanyResearchDiagnosticRepository(db: DatabaseSync): Com
       const rows = db.prepare(`${select} WHERE run_id = ? ORDER BY started_at ASC, request_id ASC`).all(runId) as unknown as DiagnosticRow[];
       return rows.map(fromRow);
     },
+    deleteByRunId(runId) {
+      const rows = db.prepare("SELECT DISTINCT trace_id FROM company_research_model_diagnostics WHERE run_id = ? ORDER BY trace_id ASC")
+        .all(runId) as unknown as Array<{ trace_id: string }>;
+      db.prepare("DELETE FROM company_research_model_diagnostics WHERE run_id = ?").run(runId);
+      return rows.map((row) => row.trace_id);
+    },
   };
 }

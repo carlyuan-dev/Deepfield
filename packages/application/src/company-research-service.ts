@@ -13,6 +13,7 @@ import {
   type CompanyResearchWorkerRequest,
   type KeyResearchRun,
   type ResearchRun,
+  type ResearchFailureCode,
   type ResearchRunId,
   type ResearchRunSummary,
   type StartCompanyResearchInput,
@@ -51,6 +52,11 @@ interface ActiveResearch {
 type ResearchFailureOutcome = Exclude<NonNullable<Extract<CompanyResearchEvent, { type: "state_changed" }>['outcome']>, "cancelled">;
 type ResearchOutcome = ResearchFailureOutcome | "cancelled";
 
+function persistedFailure(outcome: ResearchFailureOutcome): Exclude<ResearchFailureCode, "structuring_failed"> {
+  if (outcome === "web_search_failed" || outcome === "research_failed") return "tool_failed";
+  return outcome;
+}
+
 class ResearchConsumeFailure extends Error {
   constructor(readonly outcome: ResearchFailureOutcome) { super(outcome); }
 }
@@ -78,46 +84,71 @@ export class CompanyResearchService {
   }
 
   async start(itemId: string, companyId: string, input: StartCompanyResearchInput): Promise<KeyResearchRun> {
-    const today = formatLocalDate(this.now());
-    if (!Value.Check(StartCompanyResearchInputSchema, input) || !isRealDate(input.asOfDate) || input.asOfDate > today) {
-      throw new CompanyResearchServiceError("invalid company research input");
-    }
+    const { normalized, today } = this.normalizeInput(input);
     this.requireAvailable();
-    const { item, company, membership } = this.requireTarget(itemId, companyId);
+    const target = this.requireTarget(itemId, companyId);
     this.starting = true;
     try {
       let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
       catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
-      const focusScope = input.focusScope?.trim();
-      const normalized: StartCompanyResearchInput = {
-        direction: input.direction, asOfDate: input.asOfDate,
-        ...(focusScope ? { focusScope } : {}),
-      };
-      const context: CompanyResearchContext = {
-        ...normalized,
-        currentDate: today,
-        companyName: company.name,
-        ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
-        ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
-        ...(company.headquarters !== undefined ? { headquarters: company.headquarters } : {}),
-        ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
-        ...(company.officialWebsite !== undefined ? { officialWebsite: company.officialWebsite } : {}),
-        ...(company.stockListings !== undefined ? { stockListings: company.stockListings } : {}),
-        ...(company.businessTags !== undefined ? { businessTags: company.businessTags } : {}),
-        topicName: item.industry,
-        ...(item.researchScope !== undefined ? { topicScope: item.researchScope } : {}),
-        ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
-      };
+      const { context, template } = this.buildResearchSnapshots(target, normalized, today);
       try {
         const requestId = this.options.requestIdFactory();
         const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.createResearching(
-          item.id, company.id, normalized, context, getCompanyResearchTemplate(input.direction),
+          target.item.id, target.company.id, normalized, context, template,
         ));
         this.launch(run, requestId, llm, search);
         return structuredClone(run);
       } catch {
         throw new CompanyResearchServiceError("company research could not start");
+      }
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<ResearchRun> {
+    const { normalized, today } = this.normalizeInput(input);
+    const target = this.requireTarget(itemId, companyId);
+    const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
+      target.item.id, target.company.id, runId as ResearchRunId,
+    ));
+    if (
+      saved?.schemaVersion !== "company-research-report-v1" ||
+      (saved.status !== "research_failed" && saved.status !== "structure_failed")
+    ) throw new CompanyResearchServiceError("company research cannot be retried");
+    this.requireAvailable();
+    this.starting = true;
+    try {
+      if (saved.status === "structure_failed" && inputsEqual(saved, normalized)) {
+        let llm: LlmRuntimeSnapshot;
+        try { llm = await this.profiles.resolveActiveLlm(); }
+        catch { throw new CompanyResearchServiceError("请先配置并启用 LLM Profile"); }
+        try {
+          const requestId = this.options.requestIdFactory();
+          const active = this.repositories.runInTransaction(() =>
+            this.repositories.companyResearchRuns.retryStructuring(saved.id, this.now().toISOString()));
+          this.launch(active, requestId, llm);
+          return structuredClone(active);
+        } catch {
+          throw new CompanyResearchServiceError("company research could not retry");
+        }
+      }
+
+      let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
+      try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
+      catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
+      const { context, template } = this.buildResearchSnapshots(target, normalized, today);
+      try {
+        const requestId = this.options.requestIdFactory();
+        const active = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryResearching(
+          saved.id, normalized, context, template, this.now().toISOString(),
+        ));
+        this.launch(active, requestId, llm, search);
+        return structuredClone(active);
+      } catch {
+        throw new CompanyResearchServiceError("company research could not retry");
       }
     } finally {
       this.starting = false;
@@ -209,6 +240,26 @@ export class CompanyResearchService {
     ));
   }
 
+  deleteRun(itemId: string, companyId: string, runId: string): void {
+    const target = this.requireTarget(itemId, companyId);
+    const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
+      target.item.id, target.company.id, runId as ResearchRunId,
+    ));
+    if (saved === undefined || saved.status === "researching" || saved.status === "structuring") {
+      throw new CompanyResearchServiceError("company research cannot be deleted");
+    }
+    this.requireAvailable();
+    try {
+      this.repositories.runInTransaction(() => {
+        const traceIds = this.repositories.companyResearchDiagnostics.deleteByRunId(runId);
+        this.repositories.toolExecutions.deleteByTraceIds(traceIds);
+        this.repositories.companyResearchRuns.deleteTerminal(target.item.id, target.company.id, runId as ResearchRunId);
+      });
+    } catch {
+      throw new CompanyResearchServiceError("company research could not be deleted");
+    }
+  }
+
   cleanupAbandoned(): { failedResearching: number; failedStructuring: number } {
     if (this.active) throw new CompanyResearchServiceError("company research is already running");
     return this.read(() => this.repositories.companyResearchRuns.recoverAbandoned());
@@ -236,6 +287,46 @@ export class CompanyResearchService {
       if (!item || !company || !membership) throw new CompanyResearchServiceError("company research target not found");
       return { item, company, membership };
     });
+  }
+
+  private normalizeInput(input: StartCompanyResearchInput): { normalized: StartCompanyResearchInput; today: string } {
+    const today = formatLocalDate(this.now());
+    if (!Value.Check(StartCompanyResearchInputSchema, input) || !isRealDate(input.asOfDate) || input.asOfDate > today) {
+      throw new CompanyResearchServiceError("invalid company research input");
+    }
+    const focusScope = input.focusScope?.trim();
+    return {
+      today,
+      normalized: {
+        direction: input.direction, asOfDate: input.asOfDate,
+        ...(focusScope ? { focusScope } : {}),
+      },
+    };
+  }
+
+  private buildResearchSnapshots(
+    { item, company, membership }: ReturnType<CompanyResearchService["requireTarget"]>,
+    normalized: StartCompanyResearchInput,
+    today: string,
+  ): { context: CompanyResearchContext; template: ReturnType<typeof getCompanyResearchTemplate> } {
+    return {
+      context: {
+        ...normalized,
+        currentDate: today,
+        companyName: company.name,
+        ...(company.legalName !== undefined ? { legalName: company.legalName } : {}),
+        ...(company.aliases !== undefined ? { aliases: company.aliases } : {}),
+        ...(company.headquarters !== undefined ? { headquarters: company.headquarters } : {}),
+        ...(company.foundedAt !== undefined ? { foundedAt: company.foundedAt } : {}),
+        ...(company.officialWebsite !== undefined ? { officialWebsite: company.officialWebsite } : {}),
+        ...(company.stockListings !== undefined ? { stockListings: company.stockListings } : {}),
+        ...(company.businessTags !== undefined ? { businessTags: company.businessTags } : {}),
+        topicName: item.industry,
+        ...(item.researchScope !== undefined ? { topicScope: item.researchScope } : {}),
+        ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
+      },
+      template: getCompanyResearchTemplate(normalized.direction),
+    };
   }
 
   private read<T>(work: () => T): T {
@@ -319,7 +410,10 @@ export class CompanyResearchService {
             this.stateChanged(active.run);
             return;
           } else {
-            this.failActive(active, event.type === "cancelled" ? "cancelled" : event.code as ResearchFailureOutcome);
+            const outcome: ResearchOutcome = event.type === "cancelled"
+              ? "cancelled"
+              : event.stage === "structure" ? "research_failed" : event.code;
+            this.failActive(active, outcome);
             return;
           }
         }
@@ -336,9 +430,8 @@ export class CompanyResearchService {
 
   private failActive(active: ActiveResearch, outcome: ResearchOutcome): void {
     if (this.active !== active) return;
-    let persisted = false;
-    let deletedRaw = false;
     let targetGone = false;
+    let publicOutcome: ResearchOutcome = outcome;
     try {
       this.repositories.runInTransaction(() => {
         const { id, itemId, companyId } = active.run;
@@ -346,19 +439,21 @@ export class CompanyResearchService {
         // transition left to perform, but releasing its reservation still notifies
         // other targets and wakes the profile queue.
         if (!this.repositories.companyResearchRuns.getByIdForTarget(itemId, companyId, id)) { targetGone = true; return; }
-        if (active.stage === "raw") {
-          this.repositories.companyResearchRuns.deleteResearching(id);
-          deletedRaw = true;
+        if (outcome === "cancelled") this.repositories.companyResearchRuns.deleteActive(id);
+        else if (active.stage === "raw") {
+          const failure = persistedFailure(outcome);
+          publicOutcome = failure;
+          this.repositories.companyResearchRuns.failResearching(id, failure);
         } else this.repositories.companyResearchRuns.failStructuring(id);
       });
-      persisted = true;
     } catch {
       // If storage is unavailable, startup recovery owns the abandoned row.
       // getActive continues to reserve it; never announce an uncommitted transition.
+      publicOutcome = "storage_failed";
     } finally {
       this.active = undefined;
     }
-    if (persisted) this.stateChanged(active.run, targetGone || (!deletedRaw && outcome !== "storage_failed") ? undefined : outcome);
+    this.stateChanged(active.run, targetGone ? undefined : publicOutcome);
   }
 
   private stateChanged(run: KeyResearchRun, outcome?: ResearchOutcome): void {
@@ -387,4 +482,8 @@ function isRealDate(value: string): boolean {
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   return day <= days[month - 1]!;
+}
+
+function inputsEqual(run: KeyResearchRun, input: StartCompanyResearchInput): boolean {
+  return run.direction === input.direction && run.asOfDate === input.asOfDate && run.focusScope === input.focusScope;
 }

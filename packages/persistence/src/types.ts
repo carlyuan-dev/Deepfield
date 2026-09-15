@@ -93,6 +93,7 @@ export interface CompanyResearchDiagnosticRepository {
   getByRequestId(requestId: string): CompanyResearchModelDiagnostic | undefined;
   getByTraceId(traceId: string): CompanyResearchModelDiagnostic | undefined;
   listByRunId(runId: string): CompanyResearchModelDiagnostic[];
+  deleteByRunId(runId: string): string[];
 }
 
 export interface ConversationRepository {
@@ -192,6 +193,10 @@ export interface ToolExecutionRepository {
   listByConversation(conversationId: ConversationId, limit?: number): ToolExecution[];
 }
 
+export interface ToolExecutionCleanupRepository {
+  deleteByTraceIds(traceIds: readonly string[]): number;
+}
+
 export interface Repositories {
   capabilityItems: CapabilityItemRepository;
   companies: CompanyRepository;
@@ -200,7 +205,7 @@ export interface Repositories {
   companyResearchDiagnostics: CompanyResearchDiagnosticRepository;
   conversations: ConversationRepository;
   messages: MessageRepository;
-  toolExecutions: ToolExecutionRepository;
+  toolExecutions: ToolExecutionRepository & ToolExecutionCleanupRepository;
   runInTransaction<T>(work: () => T): T;
 }
 

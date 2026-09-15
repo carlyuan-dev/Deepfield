@@ -48,4 +48,21 @@ describe("company research model diagnostic repository", () => {
       apiKey: "secret",
     } as never)).toThrow();
   });
+
+  it("deletes only one run's diagnostics and returns its distinct trace ids", () => {
+    const f = fixture();
+    const base: CompanyResearchModelDiagnostic = {
+      requestId: "request-1", runId: f.run.id, traceId: "trace-1", stage: "raw", type: "model_diagnostic",
+      phase: "synthesizing", agentTurns: 1, searchCalls: 1, fetchCalls: 0,
+      maxModelInputCharsEstimate: 100, outputChars: 20, stopReason: "stop",
+      startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:01.000Z", durationMs: 1000,
+    };
+    f.repos.companyResearchDiagnostics.record(base);
+    f.repos.companyResearchDiagnostics.record({ ...base, requestId: "request-2" });
+    f.repos.companyResearchDiagnostics.record({ ...base, requestId: "request-other", runId: "other-run", traceId: "trace-other" });
+
+    expect(f.repos.companyResearchDiagnostics.deleteByRunId(f.run.id)).toEqual(["trace-1"]);
+    expect(f.repos.companyResearchDiagnostics.listByRunId(f.run.id)).toEqual([]);
+    expect(f.repos.companyResearchDiagnostics.getByRequestId("request-other")).toMatchObject({ runId: "other-run", traceId: "trace-other" });
+  });
 });

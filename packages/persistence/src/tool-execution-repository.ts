@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type {
   ToolExecution,
+  ToolExecutionCleanupRepository,
   ToolExecutionFinish,
   ToolExecutionRepository,
   ToolExecutionRow,
@@ -77,7 +78,7 @@ function requireCanonicalIso(value: unknown): string {
   return value;
 }
 
-export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRepository {
+export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRepository & ToolExecutionCleanupRepository {
   return {
     start(record: ToolExecutionStart): void {
       const id = requireNonEmptyString(record.id);
@@ -247,6 +248,18 @@ export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRe
       } catch (error) {
         if (error instanceof ToolExecutionError) throw error;
         throw new ToolExecutionError("persistence", "failed to list conversation tool executions");
+      }
+    },
+
+    deleteByTraceIds(traceIds: readonly string[]): number {
+      if (traceIds.length === 0) return 0;
+      const validTraceIds = traceIds.map(requireNonEmptyString);
+      const placeholders = validTraceIds.map(() => "?").join(", ");
+      try {
+        return Number(db.prepare(`DELETE FROM tool_executions WHERE trace_id IN (${placeholders})`).run(...validTraceIds).changes);
+      } catch (error) {
+        if (error instanceof ToolExecutionError) throw error;
+        throw new ToolExecutionError("persistence", "failed to delete tool executions");
       }
     },
   };

@@ -287,6 +287,19 @@ describe("migration 11", () => {
 });
 
 describe("tool execution repository", () => {
+  it("deletes executions for explicit trace ids only and treats an empty list as a no-op", () => {
+    const { repos, cleanup } = openTemp();
+    start(repos, "exec-a", { traceId: "trace-a" });
+    start(repos, "exec-b", { traceId: "trace-b" });
+    start(repos, "exec-c", { traceId: "trace-c" });
+    expect(repos.toolExecutions.deleteByTraceIds([])).toBe(0);
+    expect(repos.toolExecutions.deleteByTraceIds(["trace-a", "trace-b"])).toBe(2);
+    expect(repos.toolExecutions.getById("exec-a")).toBeUndefined();
+    expect(repos.toolExecutions.getById("exec-b")).toBeUndefined();
+    expect(repos.toolExecutions.getById("exec-c")).toMatchObject({ traceId: "trace-c" });
+    cleanup();
+  });
+
   it("starts a running record atomically and rejects duplicate ids", () => {
     const { repos, cleanup } = openTemp();
     start(repos, "exec-1");
