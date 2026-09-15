@@ -1307,6 +1307,25 @@ describe("pi chat agent", () => {
     expect(fake.promptedWith).toBe("当前问题");
   });
 
+  it("adds a restrained Markdown formatting policy without disabling useful structures", async () => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("好的")])],
+    });
+
+    await createPiChatAgent(makeRuntime(fake, stubModel)).run(
+      request({ webSearch: false }),
+      () => undefined,
+      new AbortController().signal,
+    );
+
+    const systemPrompt = fake.receivedOptions?.initialState?.systemPrompt ?? "";
+    expect(systemPrompt).toContain("使用与用户相同的语言回答");
+    expect(systemPrompt).toContain("优先使用简洁段落和必要的列表");
+    expect(systemPrompt).toContain("避免不必要的一级标题、重复的水平分隔线、装饰性 emoji 和过度加粗");
+    expect(systemPrompt).toContain("仅在能提升可读性时使用 Markdown");
+    expect(systemPrompt).toContain("可以使用有助于表达的表格、链接和代码");
+  });
+
   it("adds online tool guidance and marks started events for web-enabled runs", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("好的")])],

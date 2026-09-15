@@ -59,6 +59,12 @@ const SYNTHESIS_SYSTEM_PROMPT = [
 ].join("\n");
 const SYNTHESIS_USER_PROMPT =
   "请基于本轮已经获得的工具结果重新组织并输出最终答案。不要再描述搜索计划、调用过程或重试过程。";
+const CHAT_FORMATTING_SYSTEM_PROMPT = [
+  "使用与用户相同的语言回答。",
+  "优先使用简洁段落和必要的列表。",
+  "避免不必要的一级标题、重复的水平分隔线、装饰性 emoji 和过度加粗。",
+  "仅在能提升可读性时使用 Markdown；可以使用有助于表达的表格、链接和代码。",
+].join("\n");
 
 export class PiChatAgentError extends Error {
   constructor(message: string) {
@@ -539,6 +545,7 @@ export function createPiChatAgent(
           request.context.systemPrompt,
           buildRuntimeSystemContext(runtimeContext),
           online ? ONLINE_SYSTEM_PROMPT : OFFLINE_SYSTEM_PROMPT,
+          CHAT_FORMATTING_SYSTEM_PROMPT,
         ].join("\n");
         const composeSystemPrompt = (): string =>
           online

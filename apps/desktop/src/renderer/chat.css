@@ -94,6 +94,126 @@
   box-shadow: none;
 }
 
+.markdown-message {
+  min-width: 0;
+  white-space: normal;
+}
+
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message p,
+.markdown-message ul,
+.markdown-message ol,
+.markdown-message blockquote,
+.markdown-message pre,
+.markdown-message table,
+.markdown-message hr {
+  margin: 0.65em 0;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  margin: 0.9em 0 0.4em;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.markdown-message h1 {
+  font-size: 1.3em;
+}
+
+.markdown-message h2 {
+  font-size: 1.18em;
+}
+
+.markdown-message h3,
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  font-size: 1.05em;
+}
+
+.markdown-message ul,
+.markdown-message ol {
+  padding-inline-start: 1.5em;
+}
+
+.markdown-message li + li {
+  margin-top: 0.2em;
+}
+
+.markdown-message blockquote {
+  padding: 0.15em 0 0.15em 0.85em;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}
+
+.markdown-message blockquote > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown-message code {
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.markdown-message pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.markdown-message pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.markdown-message table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown-message th,
+.markdown-message td {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.markdown-message th {
+  background: var(--panel);
+  font-weight: 650;
+}
+
 .chat-thinking {
   display: inline-flex;
   align-items: center;

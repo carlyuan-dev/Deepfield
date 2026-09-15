@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type { ChatMessageView } from "../state/chat.js";
 import { LinkifiedText } from "./LinkifiedText.js";
+import { MarkdownMessage } from "./MarkdownMessage.js";
 import { ToolActivity } from "./ToolActivity.js";
 
 export interface MessagesProps {
@@ -54,7 +55,11 @@ export function Messages({
             }
           >
             {message.content.length > 0 ? (
-              <LinkifiedText text={message.content} />
+              message.role === "assistant" ? (
+                <MarkdownMessage content={message.content} />
+              ) : (
+                <LinkifiedText text={message.content} />
+              )
             ) : message.status === "streaming" ? (
               <span className="chat-thinking" role="status" aria-label="Deepfield 正在思考">
                 <span className="chat-thinking-spinner" aria-hidden="true" />
