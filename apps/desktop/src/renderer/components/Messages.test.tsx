@@ -53,13 +53,13 @@ describe("Chat message rendering", () => {
     expect(answer?.textContent).not.toContain("**重点**");
   });
 
-  it("renders adjacent labeled sources and bare URLs as separate secure anchors", () => {
+  it("renders adjacent labeled sources as separate secure anchors", () => {
     const { container } = render(
       <Messages
         messages={[
           message(
             "assistant",
-            "> 来源：[微博](https://weibo.example/a)、[网易](https://news.example/b)\n\nhttps://plain.example/path。",
+            "> 来源：[微博](https://weibo.example/a)、[网易](https://news.example/b)",
           ),
         ]}
       />,
@@ -69,7 +69,6 @@ describe("Chat message rendering", () => {
     expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["微博", "https://weibo.example/a"],
       ["网易", "https://news.example/b"],
-      ["https://plain.example/path", "https://plain.example/path"],
     ]);
     for (const link of links) {
       expect(link.getAttribute("target")).toBe("_blank");
@@ -77,6 +76,58 @@ describe("Chat message rendering", () => {
     }
     expect(container.querySelector(".assistant-content")?.textContent).toContain("来源：微博、网易");
     expect(container.querySelector(".assistant-content")?.textContent).not.toContain("](");
+  });
+
+  it("preserves the destination of an explicit link with a URL-shaped label", () => {
+    const { container } = render(
+      <Messages
+        messages={[
+          message(
+            "assistant",
+            "[https://label.example](https://actual.example/report)",
+          ),
+        ]}
+      />,
+    );
+    const link = container.querySelector(".assistant-content a");
+
+    expect(link?.textContent).toBe("https://label.example");
+    expect(link?.getAttribute("href")).toBe("https://actual.example/report");
+  });
+
+  it.each([
+    ["encoded", "https://actual.example/report%E3%80%82", "https://actual.example/report%E3%80%82"],
+    ["literal", "https://actual.example/report。", "https://actual.example/report%E3%80%82"],
+  ])(
+    "does not rewrite an explicit %s Chinese-punctuation destination from its label",
+    (_kind, destination, expectedHref) => {
+      const { container } = render(
+        <Messages
+          messages={[
+            message(
+              "assistant",
+              `[https://label.example/path。](${destination})`,
+            ),
+          ]}
+        />,
+      );
+      const link = container.querySelector(".assistant-content a");
+
+      expect(link?.textContent).toBe("https://label.example/path。");
+      expect(link?.getAttribute("href")).toBe(expectedHref);
+    },
+  );
+
+  it("excludes trailing Chinese sentence punctuation from a bare URL anchor", () => {
+    const { container } = render(
+      <Messages messages={[message("assistant", "https://plain.example/path。")]} />,
+    );
+    const answer = container.querySelector(".assistant-content");
+    const link = answer?.querySelector("a");
+
+    expect(link?.textContent).toBe("https://plain.example/path");
+    expect(link?.getAttribute("href")).toBe("https://plain.example/path");
+    expect(answer?.textContent).toBe("https://plain.example/path。");
   });
 
   it("renders GFM tables with semantic cells instead of pipe syntax", () => {
