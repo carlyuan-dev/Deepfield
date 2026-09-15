@@ -70,4 +70,22 @@ describe("CompanyResearchService profile snapshots", () => {
     await flush();
     expect(emitted).toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "protocol_error" }));
   });
+
+  it("persists a model diagnostic before deleting a failed raw run", async () => {
+    const f = setup();
+    f.worker.sendResearch = (request) => (async function* () {
+      yield {
+        requestId: request.requestId, runId: request.runId, traceId: request.requestId,
+        stage: request.stage, type: "model_diagnostic", phase: "synthesizing",
+        agentTurns: 12, searchCalls: 8, fetchCalls: 7, inputChars: 12000, outputChars: 0,
+        stopReason: "error", errorCategory: "invalid_final_empty",
+        startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:10.000Z", durationMs: 10000,
+      } as const;
+      yield { requestId: request.requestId, runId: request.runId, stage: "raw", type: "failed", code: "empty_report", message: "company research failed" } as const;
+    })();
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await flush();
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toBeUndefined();
+    expect(f.db.repos.companyResearchDiagnostics.getByRequestId("r1")).toMatchObject({ runId: run.id, traceId: "r1", errorCategory: "invalid_final_empty" });
+  });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentWorkerRequest, CompanyResearchWorkerEvent } from "@deepfield/contracts";
 import type { ChatAgent } from "./message-loop.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
+import { PiChatAgentError } from "./pi-chat-agent.js";
 import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
 import {
   agentEnd,
@@ -85,13 +86,43 @@ describe("generic company research agent", () => {
     expect(events.at(-1)).toMatchObject({ type: "failed", code: "incomplete_response" });
   });
 
+  it.each([
+    ["provider_failed", "model_failed"],
+    ["stream_failed", "model_failed"],
+    ["incomplete_lifecycle", "incomplete_response"],
+    ["invalid_final_empty", "empty_report"],
+    ["invalid_final_protocol", "protocol_leak"],
+    ["invalid_final_language", "language_validation_failed"],
+  ] as const)("maps Pi %s to safe research failure %s", async (piCode, researchCode) => {
+    const rawAgent: ChatAgent = { async run() { throw new PiChatAgentError(piCode, "sanitized"); } };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: researchCode });
+  });
+
+  it.each([
+    ["", "empty_report", "invalid_final_empty"],
+    ["<｜｜DSML｜｜ calls>private</｜｜DSML｜｜ calls>", "protocol_leak", "invalid_final_protocol"],
+    ["English only", "language_validation_failed", "invalid_final_language"],
+  ] as const)("makes default Pi validation %s reachable as %s", async (text, researchCode, diagnosticCode) => {
+    const answer = assistant(text);
+    const fake = new FakePiAgent({ events: [{ type: "agent_start" }, agentEnd([answer])] });
+    const request = rawResearchRequest();
+    request.toolAccess = { network: "disabled", maxAgentTurns: 12, maxSearchCalls: 0, maxFetchCalls: 0 };
+    const events: CompanyResearchWorkerEvent[] = [];
+    await createCompanyResearchAgent({ piRuntime: makeRuntime(fake, stubModel) }).run(request, (event) => events.push(event), new AbortController().signal);
+    expect(events).toContainEqual(expect.objectContaining({ type: "model_diagnostic", runId: request.runId, errorCategory: diagnosticCode }));
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: researchCode });
+  });
+
   it("structures in one no-tool model call without a Search snapshot", async () => {
     const completeText = vi.fn(async () => '{"coreSummary":[],"sections":[]}');
     const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
     expect(request).not.toHaveProperty("search");
     await createCompanyResearchAgent({ gateway: { completeText } as never, rawAgent: {} as never }).run(request, (event) => events.push(event), new AbortController().signal);
     expect(completeText).toHaveBeenCalledWith(request.llm, expect.stringContaining("不能访问互联网"), expect.stringContaining(request.rawReportText), expect.any(AbortSignal));
-    expect(events.map((event) => event.type)).toEqual(["started", "completed"]);
+    expect(events.map((event) => event.type)).toEqual(["started", "model_diagnostic", "completed"]);
+    expect(events[1]).toMatchObject({ phase: "structuring", searchCalls: 0, fetchCalls: 0, stopReason: "stop" });
   });
 
   it("keeps Chat-only formatting policy out of capability normal, retry, and synthesis prompts", async () => {

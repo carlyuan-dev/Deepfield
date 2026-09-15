@@ -222,6 +222,7 @@ describe("migration 10", () => {
       FROM tool_executions;
       DROP TABLE tool_executions;
       ALTER TABLE tool_executions_v9 RENAME TO tool_executions;
+      DROP TABLE company_research_model_diagnostics;
       DELETE FROM schema_migrations WHERE version >= 10;
     `);
 

@@ -292,6 +292,9 @@ export class CompanyResearchService {
           } else if (event.type === "tool_activity") {
             active.latestActivity = structuredClone(event);
             this.emit(event);
+          } else if (event.type === "model_diagnostic") {
+            try { this.repositories.companyResearchDiagnostics.record(event); }
+            catch { throw new ResearchConsumeFailure("storage_failed"); }
           } else if (event.type === "completed") {
             if (active.stage === "raw") {
               try {

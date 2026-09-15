@@ -369,6 +369,34 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 12,
+    up(db) {
+      // Deliberately detached from company_research_runs: failed raw runs are
+      // deleted, while their bounded model diagnostics must remain inspectable.
+      db.exec(`
+        CREATE TABLE company_research_model_diagnostics(
+          request_id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          trace_id TEXT NOT NULL,
+          stage TEXT NOT NULL CHECK(stage IN ('raw','structure')),
+          phase TEXT NOT NULL CHECK(phase IN ('deciding','synthesizing','structuring')),
+          agent_turns INTEGER NOT NULL CHECK(agent_turns >= 0),
+          search_calls INTEGER NOT NULL CHECK(search_calls >= 0),
+          fetch_calls INTEGER NOT NULL CHECK(fetch_calls >= 0),
+          input_chars INTEGER NOT NULL CHECK(input_chars >= 0),
+          output_chars INTEGER NOT NULL CHECK(output_chars >= 0),
+          stop_reason TEXT NOT NULL CHECK(stop_reason IN ('stop','length','tool_use','error','aborted','unknown')),
+          error_category TEXT CHECK(error_category IS NULL OR error_category IN ('provider_failed','stream_failed','incomplete_lifecycle','invalid_final_empty','invalid_final_protocol','invalid_final_language')),
+          started_at TEXT NOT NULL,
+          finished_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0)
+        );
+        CREATE INDEX idx_company_research_diagnostics_trace ON company_research_model_diagnostics(trace_id);
+        CREATE INDEX idx_company_research_diagnostics_run ON company_research_model_diagnostics(run_id, started_at, request_id);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

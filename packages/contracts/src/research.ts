@@ -241,10 +241,36 @@ const RawFailureCodeSchema = Type.Union([
   Type.Literal("language_validation_failed"),
   Type.Literal("incomplete_response"),
 ]);
+export const CompanyResearchModelErrorCategorySchema = Type.Union([
+  Type.Literal("provider_failed"), Type.Literal("stream_failed"), Type.Literal("incomplete_lifecycle"),
+  Type.Literal("invalid_final_empty"), Type.Literal("invalid_final_protocol"), Type.Literal("invalid_final_language"),
+]);
+export type CompanyResearchModelErrorCategory = Static<typeof CompanyResearchModelErrorCategorySchema>;
+export const CompanyResearchModelDiagnosticSchema = Type.Object({
+  ...EventIdentity,
+  type: Type.Literal("model_diagnostic"),
+  traceId: IdSchema,
+  phase: Type.Union([Type.Literal("deciding"), Type.Literal("synthesizing"), Type.Literal("structuring")]),
+  agentTurns: Type.Integer({ minimum: 0, maximum: 1000 }),
+  searchCalls: Type.Integer({ minimum: 0, maximum: 1000 }),
+  fetchCalls: Type.Integer({ minimum: 0, maximum: 1000 }),
+  inputChars: Type.Integer({ minimum: 0, maximum: 100_000_000 }),
+  outputChars: Type.Integer({ minimum: 0, maximum: 100_000_000 }),
+  stopReason: Type.Union([
+    Type.Literal("stop"), Type.Literal("length"), Type.Literal("tool_use"),
+    Type.Literal("error"), Type.Literal("aborted"), Type.Literal("unknown"),
+  ]),
+  errorCategory: Type.Optional(CompanyResearchModelErrorCategorySchema),
+  startedAt: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", maxLength: 24 }),
+  finishedAt: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", maxLength: 24 }),
+  durationMs: Type.Integer({ minimum: 0, maximum: 2_147_483_647 }),
+}, { additionalProperties: false });
+export type CompanyResearchModelDiagnostic = Static<typeof CompanyResearchModelDiagnosticSchema>;
 export const CompanyResearchWorkerEventSchema = Type.Union([
   Type.Object({ ...EventIdentity, type: Type.Literal("started") }, { additionalProperties: false }),
   RawTextDeltaSchema,
   ResearchToolActivitySchema,
+  CompanyResearchModelDiagnosticSchema,
   Type.Object({ ...EventIdentity, type: Type.Literal("completed"), text: ReportTextSchema }, { additionalProperties: false }),
   Type.Object({
     ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("failed"),

@@ -4,7 +4,7 @@ import { buildCompanyResearchPrompt } from "./company-research-prompt.js";
 import { buildCompanyResearchStructuringPrompt } from "./company-research-structuring-prompt.js";
 import { researchFailure } from "./message-loop-types.js";
 import { CompanyResearchRawFilter } from "./company-research-raw-filter.js";
-import { createPiChatAgent, type PiRuntime, type PiToolSessionProvider } from "./pi-chat-agent.js";
+import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "./pi-chat-agent.js";
 import { PiModelGateway, type ModelGateway } from "../shared/model-gateway.js";
 
 export interface CompanyResearchAgentOptions {
@@ -37,9 +37,19 @@ function validateRawReport(text: string, expectsChinese: boolean): string {
   return filtered;
 }
 
+function mapPiFailure(error: PiChatAgentError): RawFailureCode {
+  switch (error.code) {
+    case "invalid_final_empty": return "empty_report";
+    case "invalid_final_protocol": return "protocol_leak";
+    case "invalid_final_language": return "language_validation_failed";
+    case "incomplete_lifecycle": return "incomplete_response";
+    case "provider_failed":
+    case "stream_failed": return "model_failed";
+  }
+}
+
 export function createCompanyResearchAgent(options: CompanyResearchAgentOptions = {}): CompanyResearchAgent {
   const gateway = options.gateway ?? new PiModelGateway();
-  const rawAgent = options.rawAgent ?? createPiChatAgent(options.piRuntime, [], undefined, {}, options.toolSessions, gateway, undefined, "capability");
   return {
     async run(request, emit, signal) {
       const identity = { requestId: request.requestId, runId: request.runId, stage: request.stage };
@@ -50,11 +60,34 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
           ? buildCompanyResearchPrompt(request.context, request.template)
           : buildCompanyResearchStructuringPrompt(request);
         if (request.stage === "structure") {
-          const text = await gateway.completeText(request.llm, prompt.instructions, prompt.input, signal);
-          if (!text.trim()) throw new Error("empty");
+          const startedMs = Date.now();
+          let text = "";
+          try {
+            text = await gateway.completeText(request.llm, prompt.instructions, prompt.input, signal);
+            if (!text.trim()) throw new Error("empty");
+          } catch (error) {
+            const finishedMs = Date.now();
+            emit({ ...identity, type: "model_diagnostic", traceId: request.requestId, phase: "structuring",
+              agentTurns: 1, searchCalls: 0, fetchCalls: 0,
+              inputChars: prompt.instructions.length + prompt.input.length, outputChars: text.length,
+              stopReason: signal.aborted ? "aborted" : "error", errorCategory: "provider_failed",
+              startedAt: new Date(startedMs).toISOString(), finishedAt: new Date(finishedMs).toISOString(),
+              durationMs: Math.max(0, finishedMs - startedMs) });
+            throw error;
+          }
+          const finishedMs = Date.now();
+          emit({ ...identity, type: "model_diagnostic", traceId: request.requestId, phase: "structuring",
+            agentTurns: 1, searchCalls: 0, fetchCalls: 0,
+            inputChars: prompt.instructions.length + prompt.input.length, outputChars: text.length,
+            stopReason: "stop", startedAt: new Date(startedMs).toISOString(), finishedAt: new Date(finishedMs).toISOString(),
+            durationMs: Math.max(0, finishedMs - startedMs) });
           emit({ ...identity, type: "completed", text });
           return;
         }
+        const rawAgent = options.rawAgent ?? createPiChatAgent(
+          options.piRuntime, [], undefined, {}, options.toolSessions, gateway, undefined, "capability",
+          (diagnostic) => emit({ ...identity, type: "model_diagnostic", ...diagnostic }),
+        );
         const previewFilter = new CompanyResearchRawFilter();
         let terminalText: string | undefined;
         let terminalSeen = false;
@@ -88,6 +121,7 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
           }, signal);
         } catch (error) {
           if (error instanceof RawResearchFailure) throw error;
+          if (error instanceof PiChatAgentError) throw new RawResearchFailure(mapPiFailure(error));
           throw new RawResearchFailure("model_failed");
         }
         if (!terminalSeen || terminalText === undefined) throw new RawResearchFailure("incomplete_response");

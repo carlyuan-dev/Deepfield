@@ -67,7 +67,10 @@ const CHAT_FORMATTING_SYSTEM_PROMPT = [
 ].join("\n");
 
 export class PiChatAgentError extends Error {
-  constructor(message: string) {
+  constructor(
+    readonly code: "provider_failed" | "stream_failed" | "incomplete_lifecycle" | "invalid_final_empty" | "invalid_final_protocol" | "invalid_final_language",
+    message: string,
+  ) {
     super(message);
     this.name = "PiChatAgentError";
   }
@@ -109,6 +112,21 @@ export interface PiToolSessionProvider {
   releaseTrace(traceId: string): boolean;
 }
 
+export interface PiRunDiagnostic {
+  traceId: string;
+  phase: "deciding" | "synthesizing";
+  agentTurns: number;
+  searchCalls: number;
+  fetchCalls: number;
+  inputChars: number;
+  outputChars: number;
+  stopReason: "stop" | "length" | "tool_use" | "error" | "aborted" | "unknown";
+  errorCategory?: PiChatAgentError["code"];
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+}
+
 export function defaultPiRuntime(gateway: ModelGateway = new PiModelGateway()): PiRuntime {
   return {
     createSession(snapshot) {
@@ -137,6 +155,18 @@ function hasProviderFailure(messages: unknown[]): boolean {
     }
   }
   return false;
+}
+
+function normalizedStopReason(messages: unknown[]): PiRunDiagnostic["stopReason"] {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const value = messages[index];
+    if (typeof value !== "object" || value === null || (value as { role?: unknown }).role !== "assistant") continue;
+    const reason = (value as { stopReason?: unknown }).stopReason;
+    if (reason === "stop" || reason === "length" || reason === "error" || reason === "aborted") return reason;
+    if (reason === "toolUse") return "tool_use";
+    return "unknown";
+  }
+  return "unknown";
 }
 
 function assistantText(message: AssistantMessage): string {
@@ -334,11 +364,14 @@ function finalToolFreeAnswer(messages: unknown[]): string | undefined {
   return undefined;
 }
 
-function isAcceptableFinalAnswer(text: string | undefined, userPrompt: string): text is string {
-  if (text === undefined || text.trim().length === 0) return false;
-  if (text.includes("<｜｜DSML｜｜") || text.includes("<|DSML|>")) return false;
+function validateFinalAnswer(text: string | undefined, userPrompt: string):
+  | { ok: true; text: string }
+  | { ok: false; code: PiChatAgentError["code"] } {
+  if (text === undefined || text.trim().length === 0) return { ok: false, code: "invalid_final_empty" };
+  if (text.includes("<｜｜DSML｜｜") || text.includes("<|DSML|>")) return { ok: false, code: "invalid_final_protocol" };
   const containsHan = /\p{Script=Han}/u;
-  return !containsHan.test(userPrompt) || containsHan.test(text);
+  if (containsHan.test(userPrompt) && !containsHan.test(text)) return { ok: false, code: "invalid_final_language" };
+  return { ok: true, text };
 }
 
 export function createPiChatAgent(
@@ -350,6 +383,7 @@ export function createPiChatAgent(
   gateway: ModelGateway = new PiModelGateway(),
   searchProviderFactory: (snapshot: NonNullable<AgentWorkerRequest["search"]>) => SearchProvider = createSearchProvider,
   toolActor: "main_agent" | "capability" = "main_agent",
+  diagnosticSink?: (diagnostic: PiRunDiagnostic) => void,
 ): ChatAgent {
   return {
     async run(
@@ -357,9 +391,46 @@ export function createPiChatAgent(
       emit: (event: AgentWorkerEvent) => void,
       signal: AbortSignal,
     ): Promise<void> {
+      const diagnosticStartedMs = Date.now();
+      let diagnosticPhase: PiRunDiagnostic["phase"] = "deciding";
+      let diagnosticAgentTurns = 0;
+      let diagnosticOutputChars = 0;
+      let diagnosticStopReason: PiRunDiagnostic["stopReason"] = "unknown";
+      let diagnosticReported = false;
+      const inputChars = request.prompt.length + request.context.systemPrompt.length + request.context.messages.reduce((total, message) => total + message.content.length, 0);
+      const reportDiagnostic = (errorCategory?: PiChatAgentError["code"]): void => {
+        if (diagnosticReported || diagnosticSink === undefined) return;
+        diagnosticReported = true;
+        let searchCalls = 0;
+        let fetchCalls = 0;
+        if (request.toolAccess.network === "enabled" && toolSessions !== undefined) {
+          try {
+            const snapshot = toolSessions.budgetSnapshot(request.requestId);
+            searchCalls = snapshot.categories.search.consumed;
+            fetchCalls = snapshot.categories.fetch.consumed;
+          } catch {
+            // Diagnostics remain useful when the tool session is already gone.
+          }
+        }
+        const finishedMs = Date.now();
+        try {
+          diagnosticSink({
+            traceId: request.requestId, phase: diagnosticPhase, agentTurns: diagnosticAgentTurns,
+            searchCalls, fetchCalls, inputChars, outputChars: diagnosticOutputChars,
+            stopReason: diagnosticStopReason,
+            ...(errorCategory === undefined ? {} : { errorCategory }),
+            startedAt: new Date(diagnosticStartedMs).toISOString(),
+            finishedAt: new Date(finishedMs).toISOString(),
+            durationMs: Math.max(0, finishedMs - diagnosticStartedMs),
+          });
+        } catch {
+          // Observability must never change the model result.
+        }
+      };
       const session = runtime.createSession(request.llm);
       if (!session) {
-        throw new PiChatAgentError("configured model is not available");
+        reportDiagnostic("provider_failed");
+        throw new PiChatAgentError("provider_failed", "configured model is not available");
       }
 
       const skillName = request.options.skillName;
@@ -368,14 +439,16 @@ export function createPiChatAgent(
         prompt = request.prompt;
       } else {
         if (!skills) {
-          throw new PiChatAgentError("agent execution failed");
+          reportDiagnostic("stream_failed");
+          throw new PiChatAgentError("stream_failed", "agent execution failed");
         }
         try {
           prompt = (await skills.get()).formatInvocation(skillName, request.prompt);
         } catch {
           // Unknown skills and catalog load failures map to the same fixed,
           // non-sensitive chat failure as any other agent execution error.
-          throw new PiChatAgentError("agent execution failed");
+          reportDiagnostic("stream_failed");
+          throw new PiChatAgentError("stream_failed", "agent execution failed");
         }
       }
 
@@ -398,7 +471,7 @@ export function createPiChatAgent(
         };
         const control = createAgentRunControl(runPolicy, Number.POSITIVE_INFINITY);
         if (request.toolAccess.network === "enabled") {
-          if (request.search === undefined || toolSessions === undefined) throw new PiChatAgentError("search is not configured");
+          if (request.search === undefined || toolSessions === undefined) throw new PiChatAgentError("stream_failed", "search is not configured");
           toolSessions.bindSearchProvider(request.requestId, searchProviderFactory(request.search), {
             maxCalls: request.toolAccess.maxSearchCalls + request.toolAccess.maxFetchCalls + 8,
             categoryCalls: { search: request.toolAccess.maxSearchCalls, fetch: request.toolAccess.maxFetchCalls },
@@ -796,6 +869,9 @@ export function createPiChatAgent(
             }
             if (mustReserveLastTurn || toolPhaseFinished) {
               control.requestSynthesis();
+            }
+            if (control.phase() === "synthesizing") {
+              diagnosticPhase = "synthesizing";
               if (toolActor === "capability" && !synthesisActivityEmitted && !adapterSettled) {
                 synthesisActivityEmitted = true;
                 emit({
@@ -849,7 +925,7 @@ export function createPiChatAgent(
           // Pi's abort() is a no-op before an active run exists; never start a
           // prompt that is already meant to be cancelled.
           abort();
-          throw new PiChatAgentError("agent execution aborted before start");
+          throw new PiChatAgentError("stream_failed", "agent execution aborted before start");
         }
         signal.addEventListener("abort", abort, { once: true });
 
@@ -964,10 +1040,13 @@ export function createPiChatAgent(
           }
           if (event.type === "agent_end") {
             sawAgentEnd = true;
+            diagnosticAgentTurns = assistantTurnCount(event.messages);
+            diagnosticStopReason = normalizedStopReason(event.messages);
             if (hasProviderFailure(event.messages)) {
               providerFailure = true;
             }
             finalText = finalToolFreeAnswer(event.messages);
+            diagnosticOutputChars = finalText?.length ?? 0;
           }
         });
 
@@ -975,7 +1054,7 @@ export function createPiChatAgent(
           await agent.prompt(prompt);
         } catch {
           failActiveActivities();
-          throw new PiChatAgentError("agent execution failed");
+          throw new PiChatAgentError("stream_failed", "agent execution failed");
         } finally {
           signal.removeEventListener("abort", abort);
           unsubscribe();
@@ -983,16 +1062,18 @@ export function createPiChatAgent(
 
         if (providerFailure) {
           failActiveActivities();
-          throw new PiChatAgentError("agent execution failed");
+          throw new PiChatAgentError("provider_failed", "agent execution failed");
         }
         if (!startedEmitted || !sawAgentEnd) {
           failActiveActivities();
-          throw new PiChatAgentError("agent finished without a complete start/end sequence");
+          throw new PiChatAgentError("incomplete_lifecycle", "agent finished without a complete start/end sequence");
         }
-        if (!isAcceptableFinalAnswer(finalText, request.prompt)) {
+        const finalAnswer = validateFinalAnswer(finalText, request.prompt);
+        if (!finalAnswer.ok) {
           failActiveActivities();
-          throw new PiChatAgentError("agent finished without a final answer");
+          throw new PiChatAgentError(finalAnswer.code, "agent finished without a final answer");
         }
+        const acceptedFinalText = finalAnswer.text;
         failActiveActivities();
         if (synthesisActivityEmitted) {
           emit({
@@ -1006,15 +1087,19 @@ export function createPiChatAgent(
           });
         }
         if (streamedAnswer.length === 0) {
-          emit({ requestId: request.requestId, type: "text_delta", delta: finalText });
-        } else if (finalText.startsWith(streamedAnswer) && finalText.length > streamedAnswer.length) {
+          emit({ requestId: request.requestId, type: "text_delta", delta: acceptedFinalText });
+        } else if (acceptedFinalText.startsWith(streamedAnswer) && acceptedFinalText.length > streamedAnswer.length) {
           emit({
             requestId: request.requestId,
             type: "text_delta",
-            delta: finalText.slice(streamedAnswer.length),
+            delta: acceptedFinalText.slice(streamedAnswer.length),
           });
         }
-        emitTerminal({ requestId: request.requestId, type: "completed", text: finalText });
+        emitTerminal({ requestId: request.requestId, type: "completed", text: acceptedFinalText });
+        reportDiagnostic();
+      } catch (error) {
+        reportDiagnostic(error instanceof PiChatAgentError ? error.code : "stream_failed");
+        throw error;
       } finally {
         toolSessions?.releaseTrace(request.requestId);
       }

@@ -962,6 +962,41 @@ describe("pi chat agent", () => {
     expect(finalUpdate?.context?.systemPrompt).toContain("phase: synthesizing");
   });
 
+  it("announces synthesis when batch completion itself moves capability control to synthesis", async () => {
+    const fake = new FakePiAgent({ events: [], pending: true });
+    const tool = {
+      name: "web_search", description: "search", label: "search", parameters: {} as never,
+      async execute() { return { content: [{ type: "text" as const, text: '{"results":[]}' }], details: {} }; },
+    };
+    const toolSessions = {
+      createAgentTools: () => [tool], bindSearchProvider: () => undefined,
+      budgetSnapshot: () => budgetSnapshot(3, 2), recordSynthetic: async () => undefined, releaseTrace: () => true,
+    };
+    const controller = new AbortController();
+    const resultPromise = capture(
+      createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions, undefined, undefined, "capability"),
+      controller.signal,
+      request({ webSearch: true }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const wrapped = fake.receivedOptions?.initialState?.tools?.[0];
+    for (let turn = 1; turn <= 3; turn += 1) {
+      const call = { type: "toolCall" as const, id: `auto-${turn}`, name: "web_search", arguments: { query: "same query" } };
+      const batch = assistant("", { content: [call], stopReason: "toolUse" });
+      await fake.receivedOptions?.beforeToolCall?.({ assistantMessage: batch, toolCall: call, args: call.arguments, context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [] } } as never);
+      const output = await wrapped?.execute(call.id, call.arguments, undefined, undefined);
+      await fake.receivedOptions?.prepareNextTurnWithContext?.({
+        message: batch,
+        toolResults: [{ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output?.content ?? [], isError: false, timestamp: 1000 }],
+        context: { systemPrompt: "sys", model: stubModel, messages: [], tools: [wrapped] },
+        newMessages: [batch],
+      } as never);
+    }
+    controller.abort();
+    const result = await resultPromise;
+    expect(result.events.filter((event) => event.type === "tool_activity" && event.name === "research_synthesis" && event.status === "running")).toHaveLength(1);
+  });
+
   it("treats two distinct successful empty search payloads as empty evidence", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
@@ -1511,10 +1546,32 @@ describe("pi chat agent", () => {
     });
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect((result.error as PiChatAgentError).code).toBe("provider_failed");
     expect(result.events.some((event) => event.type === "completed")).toBe(false);
     expect(result.error?.message).not.toContain("provider exploded");
     expect(result.error?.message).not.toContain("sk-secret-test-key");
     expect(result.error?.message).not.toContain("当前问题");
+  });
+
+  it("emits one bounded diagnostic classification without provider error text", async () => {
+    const diagnostics: unknown[] = [];
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant("", { stopReason: "error", errorMessage: "provider secret sk-test" })])],
+    });
+    const result = await capture(createPiChatAgent(
+      makeRuntime(fake, stubModel), [], undefined, {}, undefined, undefined, undefined, "capability",
+      (diagnostic) => diagnostics.push(diagnostic),
+    ));
+    expect((result.error as PiChatAgentError).code).toBe("provider_failed");
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      traceId: "req-1", phase: "deciding", errorCategory: "provider_failed",
+      stopReason: "error", inputChars: expect.any(Number), outputChars: 0,
+    });
+    const serialized = JSON.stringify(diagnostics);
+    expect(serialized).not.toContain("provider secret");
+    expect(serialized).not.toContain("sk-test");
+    expect(serialized).not.toContain("当前问题");
   });
 
   it("throws for aborted or errorMessage assistant outcomes", async () => {
@@ -1526,6 +1583,7 @@ describe("pi chat agent", () => {
       const fake = new FakePiAgent({ events: [agentEnd([assistant("", overrides)])] });
       const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
       expect(result.error).toBeInstanceOf(PiChatAgentError);
+      expect((result.error as PiChatAgentError).code).toBe("provider_failed");
       expect(result.events.some((event) => event.type === "completed")).toBe(false);
     }
   });
@@ -1537,6 +1595,7 @@ describe("pi chat agent", () => {
     });
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect((result.error as PiChatAgentError).code).toBe("stream_failed");
     expect(result.error?.message).not.toContain("provider auth failed");
     expect(result.error?.message).not.toContain("sk-secret-test-key");
   });
@@ -1545,7 +1604,20 @@ describe("pi chat agent", () => {
     const fake = new FakePiAgent({ events: [{ type: "agent_start" }, textDelta("hi")] });
     const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
     expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect((result.error as PiChatAgentError).code).toBe("incomplete_lifecycle");
     expect(result.events.some((event) => event.type === "completed")).toBe(false);
+  });
+
+  it.each([
+    ["", "invalid_final_empty"],
+    ["<｜｜DSML｜｜ calls>private</｜｜DSML｜｜ calls>", "invalid_final_protocol"],
+    ["English only", "invalid_final_language"],
+  ] as const)("classifies invalid final output as %s -> %s", async (text, code) => {
+    const answer = assistant(text);
+    const fake = new FakePiAgent({ events: [{ type: "agent_start" }, agentEnd([answer])] });
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+    expect(result.error).toBeInstanceOf(PiChatAgentError);
+    expect((result.error as PiChatAgentError).code).toBe(code);
   });
 
   it("does not abort on a normal completion and cleans up listeners", async () => {

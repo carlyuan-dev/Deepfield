@@ -15,6 +15,7 @@ import type {
   ResearchRun,
   ActiveResearchRunSummary,
   CompanyResearchContext,
+  CompanyResearchModelDiagnostic,
   CompanyResearchTemplateSnapshot,
   KeyResearchRun,
   ResearchRunSummary,
@@ -72,6 +73,13 @@ export interface CompanyResearchRunRepository {
   getActive(): ActiveResearchRunSummary | undefined;
   /** Completed and structure_failed summaries, newest terminal artifact first. */
   listRuns(itemId: CapabilityItemId, companyId: CompanyId): ResearchRunSummary[];
+}
+
+export interface CompanyResearchDiagnosticRepository {
+  record(diagnostic: CompanyResearchModelDiagnostic): void;
+  getByRequestId(requestId: string): CompanyResearchModelDiagnostic | undefined;
+  getByTraceId(traceId: string): CompanyResearchModelDiagnostic | undefined;
+  listByRunId(runId: string): CompanyResearchModelDiagnostic[];
 }
 
 export interface ConversationRepository {
@@ -176,6 +184,7 @@ export interface Repositories {
   companies: CompanyRepository;
   itemCompanies: ItemCompanyRepository;
   companyResearchRuns: CompanyResearchRunRepository;
+  companyResearchDiagnostics: CompanyResearchDiagnosticRepository;
   conversations: ConversationRepository;
   messages: MessageRepository;
   toolExecutions: ToolExecutionRepository;
