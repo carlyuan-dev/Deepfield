@@ -214,6 +214,64 @@
   font-weight: 650;
 }
 
+.markdown-link-shell {
+  position: relative;
+  display: inline;
+}
+
+.markdown-link-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 5px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(520px, calc(100vw - 48px));
+  padding: 9px 10px;
+  color: var(--text);
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-raised);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.markdown-link-url {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: all;
+  cursor: text;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.markdown-link-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.markdown-link-actions button {
+  min-height: 26px;
+  padding: 3px 8px;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.markdown-link-copy-status {
+  color: var(--muted);
+}
+
+.markdown-link-copy-status.failed {
+  color: var(--danger);
+}
+
 .chat-thinking {
   display: inline-flex;
   align-items: center;

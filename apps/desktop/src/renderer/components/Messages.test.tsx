@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessageView } from "../state/chat.js";
 import { Messages } from "./Messages.js";
 
@@ -21,6 +21,14 @@ function message(
 }
 
 describe("Chat message rendering", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
   it("renders assistant Markdown as semantic content without literal syntax", () => {
     const content = [
       "## 小标题",
@@ -190,6 +198,128 @@ describe("Chat message rendering", () => {
     expect(back?.getAttribute("aria-label")).toBeTruthy();
     expect(back?.getAttribute("href")).toBe(`#${reference?.id}`);
     expect(container.querySelector(back?.getAttribute("href") ?? "missing")).toBe(reference);
+  });
+
+  it("shows a selectable URL window on hover and hides it after a short delay", () => {
+    vi.useFakeTimers();
+    render(
+      <Messages
+        messages={[
+          message("assistant", "[详情](https://actual.example/reports/full-path?q=1)"),
+        ]}
+      />,
+    );
+    const link = screen.getByRole("link", { name: "详情" });
+
+    expect(screen.queryByRole("dialog", { name: "链接详情" })).toBeNull();
+    fireEvent.mouseEnter(link);
+    const popover = screen.getByRole("dialog", { name: "链接详情" });
+    expect(within(popover).getByText("https://actual.example/reports/full-path?q=1")).toBeTruthy();
+
+    fireEvent.mouseLeave(link);
+    expect(screen.getByRole("dialog", { name: "链接详情" })).toBeTruthy();
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByRole("dialog", { name: "链接详情" })).toBeNull();
+  });
+
+  it("keeps the URL window open while the pointer moves from the link into it", () => {
+    vi.useFakeTimers();
+    render(<Messages messages={[message("assistant", "[来源](https://source.example/a)")]} />);
+    const link = screen.getByRole("link", { name: "来源" });
+    fireEvent.mouseEnter(link);
+    const popover = screen.getByRole("dialog", { name: "链接详情" });
+
+    fireEvent.mouseLeave(link, { relatedTarget: popover });
+    fireEvent.mouseEnter(popover, { relatedTarget: link });
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.getByRole("dialog", { name: "链接详情" })).toBe(popover);
+
+    fireEvent.mouseLeave(popover);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByRole("dialog", { name: "链接详情" })).toBeNull();
+  });
+
+  it("copies the normalized destination rather than a URL-shaped label", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <Messages
+        messages={[
+          message(
+            "assistant",
+            "[https://label.example](https://actual.example/report%E3%80%82)",
+          ),
+        ]}
+      />,
+    );
+    fireEvent.mouseEnter(screen.getByRole("link", { name: "https://label.example" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://actual.example/report%E3%80%82"));
+    expect(screen.getByRole("status").textContent).toBe("已复制");
+  });
+
+  it("keeps the URL selectable and reports a clipboard failure without blocking", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) },
+    });
+    render(<Messages messages={[message("assistant", "[来源](https://source.example/a)")]} />);
+    fireEvent.focus(screen.getByRole("link", { name: "来源" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+
+    expect((await screen.findByRole("status")).textContent).toBe("复制失败，请手动选择链接");
+    expect(screen.getByText("https://source.example/a").classList.contains("markdown-link-url")).toBe(true);
+  });
+
+  it("supports keyboard focus and keeps the window while focus moves inside", () => {
+    vi.useFakeTimers();
+    render(<Messages messages={[message("assistant", "[来源](https://source.example/a)")]} />);
+    const link = screen.getByRole("link", { name: "来源" });
+    fireEvent.focus(link);
+    const copyButton = screen.getByRole("button", { name: "复制链接" });
+
+    fireEvent.blur(link, { relatedTarget: copyButton });
+    fireEvent.focus(copyButton);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.getByRole("dialog", { name: "链接详情" })).toBeTruthy();
+
+    fireEvent.blur(copyButton, { relatedTarget: null });
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByRole("dialog", { name: "链接详情" })).toBeNull();
+  });
+
+  it("keeps preview state isolated between multiple links and excludes unsafe links", () => {
+    vi.useFakeTimers();
+    render(
+      <Messages
+        messages={[
+          message(
+            "assistant",
+            "[第一](https://one.example/a) [第二](https://two.example/b) [危险](javascript:alert(1))",
+          ),
+        ]}
+      />,
+    );
+    const first = screen.getByRole("link", { name: "第一" });
+    const second = screen.getByRole("link", { name: "第二" });
+    expect(screen.queryByRole("link", { name: "危险" })).toBeNull();
+
+    fireEvent.mouseEnter(first);
+    expect(screen.getByText("https://one.example/a")).toBeTruthy();
+    expect(screen.queryByText("https://two.example/b")).toBeNull();
+    fireEvent.mouseLeave(first);
+    act(() => vi.advanceTimersByTime(200));
+
+    fireEvent.mouseEnter(second);
+    expect(screen.getByText("https://two.example/b")).toBeTruthy();
+    expect(screen.queryByText("https://one.example/a")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "复制链接" })).toHaveLength(1);
   });
 
   it("renders incomplete streaming Markdown safely and upgrades it when completed", () => {
