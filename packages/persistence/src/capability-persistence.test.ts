@@ -285,6 +285,8 @@ describe("Capability A persistence", () => {
       expect.arrayContaining([completed.id, structured.id, "raw-failed"]),
     );
     expect(() => db.prepare("UPDATE company_research_runs SET raw_report_text = 'provider output' WHERE id = 'raw-failed'").run()).toThrow();
-    expect(() => db.prepare("UPDATE company_research_runs SET last_failure_code = 'provider-secret' WHERE id = ?").run(structured.id)).toThrow();
+    // `tool_failed` is valid globally, so this can only be rejected by the
+    // structure_failed state-specific check rather than the failure allowlist.
+    expect(() => db.prepare("UPDATE company_research_runs SET last_failure_code = 'tool_failed' WHERE id = ?").run(structured.id)).toThrow();
   });
 });

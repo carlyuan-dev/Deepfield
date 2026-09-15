@@ -223,16 +223,19 @@ describe("company research run repository", () => {
     f.repo.completeRaw(completed.id, rawText);
     f.repo.completeStructured(completed.id, content);
     f.db.prepare("UPDATE company_research_runs SET completed_at = '2026-09-01' WHERE id = ?").run(completed.id);
+    const rawFailed = f.create();
+    f.repo.failResearching(rawFailed.id, "tool_failed");
+    f.db.prepare("UPDATE company_research_runs SET created_at = '2026-09-03' WHERE id = ?").run(rawFailed.id);
     const failed = f.create();
     f.repo.completeRaw(failed.id, rawText);
     f.repo.failStructuring(failed.id);
     const active = f.create();
-    expect(f.repo.listRuns(f.item.id, f.company.id).map((run) => run.id)).toEqual([failed.id, completed.id]);
+    expect(f.repo.listRuns(f.item.id, f.company.id).map((run) => run.id)).toEqual([failed.id, rawFailed.id, completed.id]);
     f.repo.completeRaw(active.id, rawText);
     f.repo.failStructuring(active.id);
     f.db.prepare("UPDATE company_research_runs SET raw_completed_at = '2026-09-02' WHERE status = 'structure_failed'").run();
     const runs = f.repo.listRuns(f.item.id, f.company.id);
-    expect(runs.map((run) => run.id)).toEqual([...[failed.id, active.id].sort().reverse(), completed.id]);
+    expect(runs.map((run) => run.id)).toEqual([rawFailed.id, ...[failed.id, active.id].sort().reverse(), completed.id]);
     for (const run of runs) {
       for (const field of ["reportText", "rawReportText", "structuredContent", "researchContext", "template", "harnessVersion"]) {
         expect(run).not.toHaveProperty(field);

@@ -209,7 +209,7 @@ export class CompanyResearchService {
     ));
   }
 
-  cleanupAbandoned(): { deletedResearching: number; failedStructuring: number } {
+  cleanupAbandoned(): { failedResearching: number; failedStructuring: number } {
     if (this.active) throw new CompanyResearchServiceError("company research is already running");
     return this.read(() => this.repositories.companyResearchRuns.recoverAbandoned());
   }

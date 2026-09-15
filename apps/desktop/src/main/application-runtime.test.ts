@@ -175,7 +175,11 @@ describe("application runtime composition", () => {
     });
     await runtime.companyProfiles.whenIdle();
     expect(runtime.companyResearch.isRunning()).toBe(false);
-    expect(runtime.companyResearch.getRun(item.id, company.id, run.id)?.status).toBe(status === "researching" ? undefined : "structure_failed");
+    expect(runtime.companyResearch.getRun(item.id, company.id, run.id)).toMatchObject(
+      status === "researching"
+        ? { status: "research_failed", lastFailureCode: "incomplete_response" }
+        : { status: "structure_failed", lastFailureCode: "structuring_failed" },
+    );
     expect(observed).toEqual([undefined]);
     expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("ready");
     runtime.companyProfiles.dispose();
