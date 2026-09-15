@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Type } from "typebox";
-import type { ToolAuditFinish, ToolAuditStart } from "@deepfield/tool-platform";
+import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
 import {
   FakeRetryClock,
   ToolBudgetLedger,
@@ -14,6 +14,7 @@ import type { ToolExecutionRepository } from "@deepfield/persistence";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 import { SqliteToolAudit, SqliteToolAuditError } from "./tool-audit.js";
 import { createSearchWebDefinition } from "@deepfield/retrieval";
+import { ChatService } from "./chat-service.js";
 
 const dbs: TestDb[] = [];
 
@@ -130,6 +131,96 @@ describe("SqliteToolAudit", () => {
       status: expectedStatus,
       budgetConsumed: expectedBudgetConsumed,
     });
+  });
+
+  it("reloads an ordinary zero-attempt Runner timeout from SQLite and chat history", async () => {
+    const { db, audit: sqliteAudit } = openAuditDb();
+    let tick = 0;
+    const clock = {
+      now: () => tick++,
+      wait: async () => undefined,
+    };
+    const audit: ToolAuditSink = {
+      start: (record) => sqliteAudit.start(record),
+      finish: (record) => sqliteAudit.finish(record),
+      recordSynthetic: (record) => sqliteAudit.recordSynthetic(record),
+    };
+    let executions = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      identity: { name: "deadline_probe", version: 1 },
+      label: "Deadline probe",
+      description: "test",
+      inputSchema: Type.Object({}, { additionalProperties: false }),
+      outputSchema: Type.Object({ ok: Type.Boolean() }, { additionalProperties: false }),
+      effect: "local.compute",
+      timeoutMs: 1,
+      retry: { maxRetries: 0, backoffMs: 0 },
+      concurrency: 1,
+      meter: { category: "none", countsBytes: false, countsTime: true },
+      async execute() {
+        executions += 1;
+        return { ok: true };
+      },
+    });
+    registry.freeze();
+    const runner = new ToolRunner({
+      registry,
+      policy: new ToolPolicy(),
+      budget: new ToolBudgetLedger({}, () => clock.now()),
+      audit,
+      clock,
+    });
+    const toolSet = new ToolSet([{
+      identity: { name: "deadline_probe", version: 1 },
+      actor: "main_agent",
+      effect: "local.compute",
+    }]);
+    const conversation = db.repos.conversations.create();
+    db.repos.conversations.activate(conversation.id, "Deadline test");
+    db.repos.messages.append(conversation.id, "user", "run", "req-deadline");
+    db.repos.messages.append(conversation.id, "assistant", "timed out", "req-deadline");
+
+    const result = await runner.execute(
+      {
+        executionId: "deadline-timeout",
+        traceId: "req-deadline",
+        tool: { name: "deadline_probe", version: 1 },
+        input: {},
+      },
+      { traceId: "req-deadline", actor: "main_agent", toolSet },
+      new AbortController().signal,
+      () => undefined,
+    );
+
+    expect(result).toMatchObject({
+      status: "failed",
+      attempts: 0,
+      budgetConsumed: false,
+      failure: { code: "timeout" },
+    });
+    expect(executions).toBe(0);
+    expect(db.repos.toolExecutions.getById("deadline-timeout")).toMatchObject({
+      status: "failed",
+      attempts: 0,
+      budgetConsumed: false,
+      errorCode: "timeout",
+    });
+    const messages = new ChatService(
+      db.repos,
+      {} as never,
+      {} as never,
+      {} as never,
+    ).listMessages(conversation.id);
+    expect(messages[1]?.toolExecutions).toEqual([
+      expect.objectContaining({
+        callKey: "deadline-timeout",
+        name: "deadline_probe",
+        status: "failed",
+        budgetConsumed: false,
+        errorCode: "timeout",
+      }),
+    ]);
   });
 
   it("finishes with completed and mapped counters", async () => {

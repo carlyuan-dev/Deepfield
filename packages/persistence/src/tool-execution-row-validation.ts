@@ -115,11 +115,7 @@ export function validateRow(row: ToolExecutionRow): void {
   if (row.status === "reused" && row.error_code === "budget_trimmed") {
     persistence();
   }
-  const syntheticFailed = row.status === "failed" && row.attempts === 0;
-  if (syntheticFailed && row.error_code !== "invalid_input") {
-    persistence();
-  }
-  if (row.status === "skipped" || row.status === "reused" || syntheticFailed) {
+  if (row.status === "skipped" || row.status === "reused") {
     if (
       row.agent_turn_index === null ||
       row.batch_id === null ||

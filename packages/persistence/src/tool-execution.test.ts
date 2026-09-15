@@ -388,6 +388,13 @@ describe("tool execution repository", () => {
     expect(() =>
       repos.toolExecutions.recordSynthetic({ ...base, errorCode: "timeout" } as never),
     ).toThrow(ToolExecutionError);
+    expect(() =>
+      repos.toolExecutions.recordSynthetic({
+        ...base,
+        status: "failed",
+        errorCode: "timeout",
+      } as never),
+    ).toThrow(ToolExecutionError);
     expect(repos.toolExecutions.getById(base.id)).toBeUndefined();
     cleanup();
   });
