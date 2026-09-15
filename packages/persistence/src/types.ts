@@ -21,6 +21,7 @@ import type {
   ResearchRunSummary,
   StructuredResearchContent,
   ResearchRunId,
+  ResearchFailureCode,
   StartCompanyResearchInput,
   ItemCompany,
   UpdateIndustryResearchItemInput,
@@ -62,12 +63,24 @@ export interface CompanyResearchRunRepository {
     template: CompanyResearchTemplateSnapshot,
   ): KeyResearchRun;
   completeRaw(runId: ResearchRunId, rawReportText: string): KeyResearchRun;
+  failResearching(runId: ResearchRunId, code: ResearchFailureCode): KeyResearchRun;
   failStructuring(runId: ResearchRunId): KeyResearchRun;
-  retryStructuring(runId: ResearchRunId): KeyResearchRun;
+  retryResearching(
+    runId: ResearchRunId,
+    input: StartCompanyResearchInput,
+    context: CompanyResearchContext,
+    template: CompanyResearchTemplateSnapshot,
+    startedAt: string,
+  ): KeyResearchRun;
+  retryStructuring(runId: ResearchRunId, startedAt?: string): KeyResearchRun;
   completeStructured(runId: ResearchRunId, content: StructuredResearchContent): KeyResearchRun;
-  /** Throws unless the run is still researching. */
+  /** Throws unless the run is researching or structuring. */
+  deleteActive(runId: ResearchRunId): boolean;
+  /** Throws unless the specified target owns a terminal run. */
+  deleteTerminal(itemId: CapabilityItemId, companyId: CompanyId, runId: ResearchRunId): boolean;
+  /** @deprecated Use deleteActive; preserved while callers migrate. */
   deleteResearching(runId: ResearchRunId): boolean;
-  recoverAbandoned(): { deletedResearching: number; failedStructuring: number };
+  recoverAbandoned(): { failedResearching: number; failedStructuring: number };
   getByIdForTarget(itemId: CapabilityItemId, companyId: CompanyId, runId: ResearchRunId): ResearchRun | undefined;
   /** Global occupancy, excluding report bodies and snapshots. */
   getActive(): ActiveResearchRunSummary | undefined;

@@ -90,6 +90,69 @@ describe("company research run repository", () => {
     expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(completed);
   });
 
+  it("retries failed runs in place while clearing only artifacts invalid for the new stage", () => {
+    const f = fixture();
+    const changedInput: StartCompanyResearchInput = {
+      direction: "market_and_commercialization", focusScope: "最新量产", asOfDate: "2026-09-16",
+    };
+    const changedContext: CompanyResearchContext = {
+      ...context, ...changedInput, currentDate: "2026-09-16", companyNote: "changed",
+    };
+    const changedTemplate = getCompanyResearchTemplate(changedInput.direction);
+    const run = f.create();
+    const failed = f.repo.failResearching(run.id, "tool_failed");
+    expect(failed).toMatchObject({ id: run.id, status: "research_failed", lastFailureCode: "tool_failed" });
+    const retried = f.repo.retryResearching(
+      failed.id, changedInput, changedContext, changedTemplate, "2026-09-16T10:00:00.000Z",
+    );
+    expect(retried).toMatchObject({
+      id: failed.id, status: "researching", focusScope: "最新量产",
+      createdAt: "2026-09-16T10:00:00.000Z", structuringAttempts: 0,
+    });
+    expect(retried).not.toHaveProperty("rawReportText");
+    expect(retried).not.toHaveProperty("lastFailureCode");
+
+    const failedAgain = f.repo.failResearching(retried.id, "model_failed");
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, failedAgain.id)?.id).toBe(run.id);
+    f.repo.retryResearching(failedAgain.id, input, context, template, "2026-09-16T10:01:00.000Z");
+    f.repo.completeRaw(run.id, rawText);
+    const structureFailed = f.repo.failStructuring(run.id);
+    const restarted = f.repo.retryResearching(
+      structureFailed.id, changedInput, changedContext, changedTemplate, "2026-09-16T10:02:00.000Z",
+    );
+    expect(restarted).toMatchObject({ id: run.id, status: "researching", structuringAttempts: 0 });
+    for (const field of ["rawReportText", "rawCompletedAt", "structuredContent", "completedAt", "lastFailureCode"]) {
+      expect(restarted).not.toHaveProperty(field);
+    }
+
+    f.repo.completeRaw(run.id, rawText);
+    f.repo.failStructuring(run.id);
+    const structuring = f.repo.retryStructuring(run.id, "2026-09-16T10:03:00.000Z");
+    expect(structuring).toMatchObject({
+      id: run.id, status: "structuring", rawReportText: rawText,
+      structuringAttempts: 2, createdAt: "2026-09-16T10:03:00.000Z",
+    });
+    expect(structuring).not.toHaveProperty("lastFailureCode");
+  });
+
+  it("deletes only active or owned terminal runs and includes raw failures in history", () => {
+    const f = fixture();
+    const researching = f.create();
+    expect(() => f.repo.deleteTerminal(f.item.id, f.company.id, researching.id)).toThrow();
+    expect(f.repo.deleteActive(researching.id)).toBe(true);
+    const structuring = f.create();
+    f.repo.completeRaw(structuring.id, rawText);
+    expect(f.repo.deleteActive(structuring.id)).toBe(true);
+
+    const failed = f.create();
+    f.repo.failResearching(failed.id, "tool_failed");
+    expect(f.repo.listRuns(f.item.id, f.company.id).map((run) => run.id)).toContain(failed.id);
+    expect(() => f.repo.deleteActive(failed.id)).toThrow();
+    expect(() => f.repo.deleteTerminal("other" as never, f.company.id, failed.id)).toThrow();
+    expect(f.repo.deleteTerminal(f.item.id, f.company.id, failed.id)).toBe(true);
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, failed.id)).toBeUndefined();
+  });
+
   it("guards every state transition, including deletion and missing IDs", () => {
     const f = fixture();
     const run = f.create();
@@ -141,13 +204,15 @@ describe("company research run repository", () => {
     const completed = f.repo.completeStructured(done.id, content);
     const run = f.create();
     const structuring = f.repo.completeRaw(run.id, rawText);
-    expect(f.repo.recoverAbandoned()).toEqual({ deletedResearching: 0, failedStructuring: 1 });
+    expect(f.repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 1 });
     const failed = f.repo.getByIdForTarget(f.item.id, f.company.id, run.id);
     expect(failed).toMatchObject({ status: "structure_failed", rawReportText: rawText, rawCompletedAt: structuring.rawCompletedAt, structuringAttempts: 1 });
     const abandoned = f.create();
-    expect(f.repo.recoverAbandoned()).toEqual({ deletedResearching: 1, failedStructuring: 0 });
-    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, abandoned.id)).toBeUndefined();
-    expect(f.repo.recoverAbandoned()).toEqual({ deletedResearching: 0, failedStructuring: 0 });
+    expect(f.repo.recoverAbandoned()).toEqual({ failedResearching: 1, failedStructuring: 0 });
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, abandoned.id)).toMatchObject({
+      status: "research_failed", lastFailureCode: "incomplete_response",
+    });
+    expect(f.repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 0 });
     expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(failed);
     expect(f.repo.getByIdForTarget(f.item.id, f.company.id, done.id)).toEqual(completed);
   });

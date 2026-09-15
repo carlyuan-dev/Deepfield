@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+import { getCompanyResearchTemplate } from "@deepfield/contracts";
 import { createRepositories, migrate, openDatabase } from "./index.js";
 
 const cleanups: Array<() => void> = [];
@@ -235,11 +236,55 @@ describe("Capability A persistence", () => {
     const summaries = repo.listRuns("item" as never, "company" as never);
     expect(summaries.map((run) => run.id)).toEqual(["large", "old"]);
     for (const summary of summaries) expect(summary).not.toHaveProperty("reportText");
-    expect(repo.recoverAbandoned()).toEqual({ deletedResearching: 0, failedStructuring: 0 });
+    expect(repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 0 });
     expect(repo.listRuns("item" as never, "company" as never)).toEqual(summaries);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 12 });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 13 });
     db.prepare("DELETE FROM capability_item_companies WHERE item_id = 'item' AND company_id = 'company'").run();
     expect(repo.listRuns("item" as never, "company" as never)).toEqual([]);
+  });
+
+  it("upgrades v12 history to retain bounded raw failures without storing artifacts", () => {
+    const db = openDatabase(":memory:");
+    cleanups.push(() => db.close());
+    // Seed v13 as applied so migrate constructs the exact v12 database first.
+    db.exec(`
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (13, '');
+    `);
+    migrate(db);
+    // This setup is the v12 durable shape before the v13 table rebuild.
+    db.prepare("DELETE FROM schema_migrations WHERE version = 13").run();
+    const repos = createRepositories(db);
+    const item = repos.capabilityItems.create({ industry: "Robotics" });
+    const company = repos.companies.upsert({ name: "ACME" });
+    repos.itemCompanies.add(item.id, company.id);
+    const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-16" };
+    const context = { ...input, currentDate: "2026-09-16", companyName: "ACME", topicName: "Robotics" };
+    const template = getCompanyResearchTemplate(input.direction);
+    const completed = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, template);
+    repos.companyResearchRuns.completeRaw(completed.id, "raw report");
+    repos.companyResearchRuns.completeStructured(completed.id, {
+      coreSummary: ["summary"], sections: template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found" as const, summary: null, facts: [] })),
+    });
+    const structured = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, template);
+    repos.companyResearchRuns.completeRaw(structured.id, "raw report");
+    repos.companyResearchRuns.failStructuring(structured.id);
+
+    migrate(db);
+    const insertFailed = db.prepare(`
+      INSERT INTO company_research_runs(
+        id, item_id, company_id, schema_version, status, research_direction, focus_scope, as_of_date,
+        research_context_json, template_id, template_version, template_snapshot_json, harness_version,
+        structuring_attempts, last_failure_code, created_at
+      ) VALUES (?, ?, ?, 'company-research-report-v1', 'research_failed', ?, NULL, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+    `);
+    insertFailed.run("raw-failed", item.id, company.id, input.direction, input.asOfDate,
+      JSON.stringify(context), template.templateId, template.templateVersion, JSON.stringify(template), "tool_failed", "2026-09-16T00:00:00.000Z");
+    expect(repos.companyResearchRuns.listRuns(item.id, company.id).map((run) => run.id)).toEqual(
+      expect.arrayContaining([completed.id, structured.id, "raw-failed"]),
+    );
+    expect(() => db.prepare("UPDATE company_research_runs SET raw_report_text = 'provider output' WHERE id = 'raw-failed'").run()).toThrow();
+    expect(() => db.prepare("UPDATE company_research_runs SET last_failure_code = 'provider-secret' WHERE id = ?").run(structured.id)).toThrow();
   });
 });

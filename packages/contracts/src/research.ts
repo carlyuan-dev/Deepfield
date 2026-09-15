@@ -84,10 +84,23 @@ const RunIdentity = {
   createdAt: TimestampSchema,
 };
 export const KeyResearchStatusSchema = Type.Union([
-  Type.Literal("researching"), Type.Literal("structuring"),
+  Type.Literal("researching"), Type.Literal("research_failed"), Type.Literal("structuring"),
   Type.Literal("structure_failed"), Type.Literal("completed"),
 ]);
 export type KeyResearchStatus = Static<typeof KeyResearchStatusSchema>;
+
+export const ResearchFailureCodeSchema = Type.Union([
+  Type.Literal("structuring_failed"),
+  Type.Literal("tool_failed"),
+  Type.Literal("model_failed"),
+  Type.Literal("empty_report"),
+  Type.Literal("protocol_leak"),
+  Type.Literal("language_validation_failed"),
+  Type.Literal("incomplete_response"),
+  Type.Literal("protocol_error"),
+  Type.Literal("storage_failed"),
+]);
+export type ResearchFailureCode = Static<typeof ResearchFailureCodeSchema>;
 
 export const LegacyResearchRunSchema = Type.Object({
   ...RunIdentity,
@@ -113,7 +126,7 @@ export const KeyResearchRunSchema = Type.Object({
   rawReportText: Type.Optional(ReportTextSchema),
   structuredContent: Type.Optional(StructuredResearchContentSchema),
   structuringAttempts: Type.Integer({ minimum: 0 }),
-  lastFailureCode: Type.Optional(Type.Literal("structuring_failed")),
+  lastFailureCode: Type.Optional(ResearchFailureCodeSchema),
   rawCompletedAt: Type.Optional(TimestampSchema),
   completedAt: Type.Optional(TimestampSchema),
 }, { additionalProperties: false });
@@ -131,12 +144,12 @@ export const ActiveResearchRunSummarySchema = Type.Object({
   status: Type.Union([Type.Literal("researching"), Type.Literal("structuring")]),
 }, { additionalProperties: false });
 export type ActiveResearchRunSummary = Static<typeof ActiveResearchRunSummarySchema>;
-/** History includes failed structuring and completed reports, never active runs. */
+/** History includes failed and completed reports, never active runs. */
 export const ResearchRunSummarySchema = Type.Union([
   LegacyResearchRunSummarySchema,
   Type.Object({
     ...KeyResearchRunSummarySchema.properties,
-    status: Type.Union([Type.Literal("structure_failed"), Type.Literal("completed")]),
+    status: Type.Union([Type.Literal("research_failed"), Type.Literal("structure_failed"), Type.Literal("completed")]),
   }, { additionalProperties: false }),
 ]);
 export type ResearchRunSummary = Static<typeof ResearchRunSummarySchema>;
@@ -233,14 +246,7 @@ const ResearchToolActivitySchema = Type.Object({
   toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   budgetConsumed: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
-const RawFailureCodeSchema = Type.Union([
-  Type.Literal("tool_failed"),
-  Type.Literal("model_failed"),
-  Type.Literal("empty_report"),
-  Type.Literal("protocol_leak"),
-  Type.Literal("language_validation_failed"),
-  Type.Literal("incomplete_response"),
-]);
+const RawFailureCodeSchema = Type.Exclude(ResearchFailureCodeSchema, Type.Literal("structuring_failed"));
 export const CompanyResearchModelErrorCategorySchema = Type.Union([
   Type.Literal("provider_failed"), Type.Literal("stream_failed"), Type.Literal("incomplete_lifecycle"),
   Type.Literal("invalid_final_empty"), Type.Literal("invalid_final_protocol"), Type.Literal("invalid_final_language"),

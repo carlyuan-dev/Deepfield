@@ -397,6 +397,68 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 13,
+    up(db) {
+      db.exec(`
+        CREATE TABLE company_research_runs_v13(
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          company_id TEXT NOT NULL,
+          schema_version TEXT NOT NULL CHECK(schema_version IN ('legacy-freeform-v1', 'company-research-report-v1')),
+          status TEXT NOT NULL CHECK(status IN ('researching', 'research_failed', 'structuring', 'structure_failed', 'completed')),
+          research_direction TEXT,
+          focus_scope TEXT,
+          as_of_date TEXT,
+          research_context_json TEXT,
+          template_id TEXT,
+          template_version INTEGER,
+          template_snapshot_json TEXT,
+          harness_version INTEGER,
+          raw_report_text TEXT,
+          raw_completed_at TEXT,
+          structured_content_json TEXT,
+          structuring_attempts INTEGER NOT NULL DEFAULT 0 CHECK(structuring_attempts >= 0),
+          last_failure_code TEXT CHECK(last_failure_code IS NULL OR last_failure_code IN ('structuring_failed','tool_failed','model_failed','empty_report','protocol_leak','language_validation_failed','incomplete_response','protocol_error','storage_failed')),
+          legacy_time_scope TEXT,
+          legacy_custom_requirements TEXT,
+          legacy_report_text TEXT,
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          CHECK(schema_version != 'legacy-freeform-v1' OR status = 'completed'),
+          CHECK(
+            status != 'research_failed' OR (
+              raw_report_text IS NULL AND raw_completed_at IS NULL AND structured_content_json IS NULL
+              AND structuring_attempts = 0 AND completed_at IS NULL
+              AND last_failure_code IS NOT NULL AND last_failure_code != 'structuring_failed'
+            )
+          ),
+          CHECK(status != 'structure_failed' OR last_failure_code = 'structuring_failed'),
+          FOREIGN KEY(item_id, company_id)
+            REFERENCES capability_item_companies(item_id, company_id) ON DELETE CASCADE
+        );
+        INSERT INTO company_research_runs_v13(
+          id, item_id, company_id, schema_version, status, research_direction, focus_scope, as_of_date,
+          research_context_json, template_id, template_version, template_snapshot_json, harness_version,
+          raw_report_text, raw_completed_at, structured_content_json, structuring_attempts, last_failure_code,
+          legacy_time_scope, legacy_custom_requirements, legacy_report_text, created_at, completed_at
+        )
+        SELECT
+          id, item_id, company_id, schema_version, status, research_direction, focus_scope, as_of_date,
+          research_context_json, template_id, template_version, template_snapshot_json, harness_version,
+          raw_report_text, raw_completed_at, structured_content_json, structuring_attempts, last_failure_code,
+          legacy_time_scope, legacy_custom_requirements, legacy_report_text, created_at, completed_at
+        FROM company_research_runs;
+        DROP TABLE company_research_runs;
+        ALTER TABLE company_research_runs_v13 RENAME TO company_research_runs;
+        CREATE UNIQUE INDEX idx_company_research_one_active
+          ON company_research_runs((1)) WHERE status IN ('researching', 'structuring');
+        CREATE INDEX idx_company_research_completed_history
+          ON company_research_runs(item_id, company_id, completed_at DESC, id DESC)
+          WHERE status IN ('completed', 'research_failed', 'structure_failed');
+      `);
+    },
+  },
 ];
 
 export function migrate(db: DatabaseSync): void {

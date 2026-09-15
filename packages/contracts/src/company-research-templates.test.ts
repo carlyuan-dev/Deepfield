@@ -144,7 +144,15 @@ describe("read-only research JSON contracts", () => {
     expect(contracts.ResearchRunSchema).toBeDefined();
     const run = { ...identity, schemaVersion: "company-research-report-v1", status: "completed", ...input, researchContext: context, template: contracts.getCompanyResearchTemplate("product_and_technology"), harnessVersion: 1, structuringAttempts: 1, rawReportText: "# 原始报告", structuredContent: content(), rawCompletedAt: identity.createdAt, completedAt: identity.createdAt };
     expect(Value.Check(contracts.ResearchRunSchema, JSON.parse(JSON.stringify(run)))).toBe(true);
-    for (const status of ["researching", "structuring", "structure_failed", "completed"]) expect(Value.Check(contracts.ResearchRunSchema, { ...run, status })).toBe(true);
+    for (const status of ["researching", "research_failed", "structuring", "structure_failed", "completed"]) expect(Value.Check(contracts.ResearchRunSchema, { ...run, status })).toBe(true);
+    const failed = {
+      ...identity, schemaVersion: "company-research-report-v1", status: "research_failed",
+      ...input, researchContext: context, template: contracts.getCompanyResearchTemplate("product_and_technology"),
+      harnessVersion: 1, structuringAttempts: 0, lastFailureCode: "tool_failed",
+    };
+    expect(Value.Check(contracts.ResearchRunSchema, failed)).toBe(true);
+    const { researchContext: _context, template: _template, harnessVersion: _harnessVersion, ...failedSummary } = failed;
+    expect(Value.Check(contracts.ResearchRunSummarySchema, failedSummary)).toBe(true);
     for (const invalid of [
       { ...run, schemaVersion: "unknown" }, { ...run, status: "running" },
       { ...run, reportText: "legacy" }, { ...run, structuringAttempts: -1 },

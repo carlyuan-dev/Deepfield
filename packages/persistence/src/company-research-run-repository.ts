@@ -8,6 +8,7 @@ import {
   StartCompanyResearchInputSchema,
   type ActiveResearchRunSummary,
   type KeyResearchRun,
+  type ResearchFailureCode,
   type ResearchRun,
   type ResearchRunId,
   type ResearchRunSummary,
@@ -39,11 +40,21 @@ function validateRun(value: unknown): ResearchRun {
       value.rawReportText !== undefined || value.rawCompletedAt !== undefined ||
       hasStructure || hasCompletion || hasFailure || value.structuringAttempts !== 0
     ) invalidRun();
+  } else if (value.status === "research_failed") {
+    if (
+      value.rawReportText !== undefined || value.rawCompletedAt !== undefined ||
+      hasStructure || hasCompletion || !hasFailure || value.lastFailureCode === "structuring_failed" ||
+      value.structuringAttempts !== 0
+    ) invalidRun();
   } else {
     if (!hasRaw || value.structuringAttempts < 1) invalidRun();
-    if (value.status === "completed") {
+    if (value.status === "structuring") {
+      if (hasStructure || hasCompletion || hasFailure) invalidRun();
+    } else if (value.status === "structure_failed") {
+      if (hasStructure || hasCompletion || value.lastFailureCode !== "structuring_failed") invalidRun();
+    } else if (value.status === "completed") {
       if (!hasStructure || !hasCompletion || hasFailure) invalidRun();
-    } else if (hasStructure || hasCompletion || hasFailure !== (value.status === "structure_failed")) {
+    } else {
       invalidRun();
     }
   }
@@ -131,13 +142,17 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
     validateRun(next);
     const result = db.prepare(`
       UPDATE company_research_runs
-      SET status = ?, raw_report_text = ?, raw_completed_at = ?, structured_content_json = ?,
-        structuring_attempts = ?, last_failure_code = ?, completed_at = ?
+      SET status = ?, research_direction = ?, focus_scope = ?, as_of_date = ?, research_context_json = ?,
+        template_id = ?, template_version = ?, template_snapshot_json = ?, harness_version = ?,
+        raw_report_text = ?, raw_completed_at = ?, structured_content_json = ?, structuring_attempts = ?,
+        last_failure_code = ?, created_at = ?, completed_at = ?
       WHERE id = ? AND status = ?
     `).run(
-      next.status, next.rawReportText ?? null, next.rawCompletedAt ?? null,
+      next.status, next.direction, next.focusScope ?? null, next.asOfDate, JSON.stringify(next.researchContext),
+      next.template.templateId, next.template.templateVersion, JSON.stringify(next.template), next.harnessVersion,
+      next.rawReportText ?? null, next.rawCompletedAt ?? null,
       next.structuredContent === undefined ? null : JSON.stringify(next.structuredContent),
-      next.structuringAttempts, next.lastFailureCode ?? null, next.completedAt ?? null, runId, from,
+      next.structuringAttempts, next.lastFailureCode ?? null, next.createdAt, next.completedAt ?? null, runId, from,
     );
     if (result.changes === 0) throw new Error("research run state transition rejected");
     return structuredClone(next);
@@ -179,15 +194,40 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
       }));
     },
 
+    failResearching(runId, code: ResearchFailureCode) {
+      return transition(runId, "researching", (run) => ({
+        ...run, status: "research_failed", lastFailureCode: code,
+      }));
+    },
+
     failStructuring(runId) {
       return transition(runId, "structuring", (run) => ({
         ...run, status: "structure_failed", lastFailureCode: "structuring_failed",
       }));
     },
 
-    retryStructuring(runId) {
+    retryResearching(runId, input, context, template, startedAt) {
+      if (!Value.Check(StartCompanyResearchInputSchema, input)) {
+        throw new Error("invalid research input");
+      }
+      const row = db.prepare("SELECT * FROM company_research_runs WHERE id = ?").get(runId) as
+        unknown as CompanyResearchRunRow | undefined;
+      const run = row === undefined ? undefined : toResearchRun(row);
+      if (
+        run?.schemaVersion !== "company-research-report-v1" ||
+        (run.status !== "research_failed" && run.status !== "structure_failed")
+      ) throw new Error("research run state transition rejected");
+      return transition(runId, run.status, () => ({
+        id: run.id, itemId: run.itemId, companyId: run.companyId,
+        schemaVersion: "company-research-report-v1", status: "researching",
+        ...input, researchContext: context, template, harnessVersion: run.harnessVersion,
+        structuringAttempts: 0, createdAt: startedAt,
+      }));
+    },
+
+    retryStructuring(runId, startedAt = new Date().toISOString()) {
       return transition(runId, "structure_failed", ({ lastFailureCode: _failure, ...run }) => ({
-        ...run, status: "structuring", structuringAttempts: run.structuringAttempts + 1,
+        ...run, status: "structuring", structuringAttempts: run.structuringAttempts + 1, createdAt: startedAt,
       }));
     },
 
@@ -195,6 +235,31 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
       return transition(runId, "structuring", (run) => ({
         ...run, status: "completed", structuredContent: content, completedAt: new Date().toISOString(),
       }));
+    },
+
+    deleteActive(runId) {
+      const row = db.prepare("SELECT * FROM company_research_runs WHERE id = ?").get(runId) as
+        unknown as CompanyResearchRunRow | undefined;
+      const run = row === undefined ? undefined : toResearchRun(row);
+      if (run?.schemaVersion !== "company-research-report-v1" || (run.status !== "researching" && run.status !== "structuring")) {
+        throw new Error("research run state transition rejected");
+      }
+      const result = db.prepare("DELETE FROM company_research_runs WHERE id = ? AND status = ?").run(runId, run.status);
+      if (result.changes === 0) throw new Error("research run state transition rejected");
+      return true;
+    },
+
+    deleteTerminal(itemId, companyId, runId) {
+      const row = db.prepare("SELECT * FROM company_research_runs WHERE item_id = ? AND company_id = ? AND id = ?")
+        .get(itemId, companyId, runId) as unknown as CompanyResearchRunRow | undefined;
+      const run = row === undefined ? undefined : toResearchRun(row);
+      if (run === undefined || run.status === "researching" || run.status === "structuring") {
+        throw new Error("research run state transition rejected");
+      }
+      const result = db.prepare("DELETE FROM company_research_runs WHERE id = ? AND item_id = ? AND company_id = ? AND status = ?")
+        .run(runId, itemId, companyId, run.status);
+      if (result.changes === 0) throw new Error("research run state transition rejected");
+      return true;
     },
 
     deleteResearching(runId) {
@@ -209,11 +274,11 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
       try {
         const rows = db.prepare("SELECT * FROM company_research_runs WHERE status IN ('researching', 'structuring')").all() as
           unknown as CompanyResearchRunRow[];
-        const recovered = { deletedResearching: 0, failedStructuring: 0 };
+        const recovered = { failedResearching: 0, failedStructuring: 0 };
         for (const run of rows.map(toResearchRun)) {
           if (run.status === "researching") {
-            repository.deleteResearching(run.id);
-            recovered.deletedResearching++;
+            repository.failResearching(run.id, "incomplete_response");
+            recovered.failedResearching++;
           } else {
             repository.failStructuring(run.id);
             recovered.failedStructuring++;
@@ -245,7 +310,7 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
     listRuns(itemId, companyId) {
       const rows = db.prepare(`
         SELECT * FROM company_research_runs
-        WHERE item_id = ? AND company_id = ? AND status IN ('completed', 'structure_failed')
+        WHERE item_id = ? AND company_id = ? AND status IN ('completed', 'research_failed', 'structure_failed')
         ORDER BY COALESCE(completed_at, raw_completed_at, created_at) DESC, id DESC
       `).all(itemId, companyId) as unknown as CompanyResearchRunRow[];
       return rows.map((row) => {
