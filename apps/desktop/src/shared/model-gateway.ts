@@ -99,13 +99,24 @@ export class PiModelGateway implements ModelGateway {
     const api = snapshot.protocol === "anthropic_messages"
       ? "anthropic-messages"
       : "openai-completions";
+    const isDeepSeek = snapshot.provider === "deepseek" && api === "openai-completions";
     const model: Model<typeof api> = {
       id: snapshot.modelId,
       name: snapshot.name,
       provider: providerId,
       baseUrl: snapshot.baseUrl,
       api,
-      reasoning: false,
+      // Pi needs controllable reasoning metadata to serialize the current off policy.
+      reasoning: isDeepSeek,
+      ...(isDeepSeek ? {
+        compat: {
+          thinkingFormat: "deepseek" as const,
+          supportsStore: false,
+          supportsDeveloperRole: false,
+          maxTokensField: "max_tokens" as const,
+          requiresReasoningContentOnAssistantMessages: true,
+        },
+      } : {}),
       input: ["text"],
       contextWindow: snapshot.contextWindow,
       maxTokens: Math.min(8192, Math.max(1024, Math.floor(snapshot.contextWindow / 8))),
