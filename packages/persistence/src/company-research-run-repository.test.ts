@@ -325,4 +325,18 @@ describe("company research run repository", () => {
     expect(() => f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toThrow("invalid persisted research run");
     if (status !== "structure_failed") expect(() => f.repo.getActive()).toThrow("invalid persisted research run");
   });
+
+  it.each([
+    ["failure code", "last_failure_code = NULL"],
+    ["raw report", "raw_report_text = NULL"],
+    ["raw completion time", "raw_completed_at = NULL"],
+    ["positive structuring attempts", "structuring_attempts = 0"],
+  ])("rejects direct SQL structure failures without a %s", (_field, assignment) => {
+    const f = fixture();
+    const run = f.create();
+    f.repo.completeRaw(run.id, rawText);
+    f.repo.failStructuring(run.id);
+
+    expect(() => f.db.prepare(`UPDATE company_research_runs SET ${assignment} WHERE id = ?`).run(run.id)).toThrow();
+  });
 });

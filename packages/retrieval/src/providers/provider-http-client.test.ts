@@ -215,4 +215,3 @@ describe("provider http client (focused revision)", () => {
     expect(String(error)).not.toContain("Bearer");
   });
 });
-

@@ -433,7 +433,13 @@ const MIGRATIONS: readonly Migration[] = [
               AND last_failure_code IS NOT NULL AND last_failure_code != 'structuring_failed'
             )
           ),
-          CHECK(status != 'structure_failed' OR last_failure_code = 'structuring_failed'),
+          CHECK(
+            status != 'structure_failed' OR (
+              raw_report_text IS NOT NULL AND raw_completed_at IS NOT NULL
+              AND structuring_attempts >= 1
+              AND last_failure_code IS NOT NULL AND last_failure_code = 'structuring_failed'
+            )
+          ),
           FOREIGN KEY(item_id, company_id)
             REFERENCES capability_item_companies(item_id, company_id) ON DELETE CASCADE
         );

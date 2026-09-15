@@ -218,6 +218,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
               selectedRunId: undefined,
               selectedRun: undefined,
               streamedRaw: undefined,
+              detailLoading: false,
             });
             return;
           }

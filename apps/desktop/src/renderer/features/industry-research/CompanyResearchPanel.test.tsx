@@ -389,6 +389,29 @@ describe("two-stage company research", () => {
     expect(screen.queryByLabelText("报告版本")).toBeNull();
   });
 
+  it("ends a pending detail load when deletion succeeds but the authoritative refresh fails", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const pendingDetail = deferred<ResearchRun | undefined>();
+    const deleted = researchRun({ rawReportText: "迟到的已删除报告正文" });
+    fake.companyResearch.getState
+      .mockResolvedValueOnce({ runs: [researchSummary(deleted)], globalActiveRun: null })
+      .mockRejectedValueOnce(new Error("private refresh failure"));
+    fake.companyResearch.getRun.mockReturnValue(pendingDetail.promise);
+    fake.companyResearch.deleteRun.mockResolvedValue(undefined);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText("加载调研报告…")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    await user.click(within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }));
+
+    expect(await screen.findByText("加载调研状态失败，请重试")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
+    expect(screen.queryByText("加载调研报告…")).toBeNull();
+    expect(screen.queryByLabelText("报告版本")).toBeNull();
+    await act(async () => pendingDetail.resolve(deleted));
+    expect(screen.queryByText("迟到的已删除报告正文")).toBeNull();
+  });
+
   it("disables report deletion while any company research is active", async () => {
     const fake = makeFakeApi();
     const run = researchRun();
