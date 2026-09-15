@@ -5,8 +5,9 @@ import {
   CopyTextArgsSchema,
   ConversationDeleteArgsSchema,
   CompanyResearchCancelArgsSchema,
+  CompanyResearchDeleteRunArgsSchema,
   CompanyResearchGetRunArgsSchema,
-  CompanyResearchRetryStructuringArgsSchema,
+  CompanyResearchRetryFailedArgsSchema,
   CompanyResearchStartArgsSchema,
   CompanyResearchSubscribeArgsSchema,
   CompanyResearchTargetArgsSchema,
@@ -122,7 +123,8 @@ export interface CompanyResearchServiceLike {
   getState(itemId: string, companyId: string): CompanyResearchState;
   listRuns(itemId: string, companyId: string): ResearchRunSummary[];
   getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined;
-  retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
+  retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<ResearchRun>;
+  deleteRun(itemId: string, companyId: string, runId: string): void;
   subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
 }
 
@@ -168,7 +170,8 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.companyResearchGetState,
   IPC_CHANNELS.companyResearchListRuns,
   IPC_CHANNELS.companyResearchGetRun,
-  IPC_CHANNELS.companyResearchRetryStructuring,
+  IPC_CHANNELS.companyResearchRetryFailed,
+  IPC_CHANNELS.companyResearchDeleteRun,
   IPC_CHANNELS.companyResearchSubscribe,
   IPC_CHANNELS.conversationsCreate,
   IPC_CHANNELS.conversationsDelete,
@@ -499,15 +502,27 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.companyResearchRetryStructuring, async (event, ...args) => {
-    if (args.length !== 3 || !Value.Check(CompanyResearchRetryStructuringArgsSchema, args)) {
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchRetryFailed, async (event, ...args) => {
+    if (args.length !== 4 || !Value.Check(CompanyResearchRetryFailedArgsSchema, args)) {
       throw new Error("invalid company research input");
     }
     trackSender(event.sender);
     try {
-      return await deps.companyResearch.retryStructuring(args[0], args[1], args[2]);
+      return await deps.companyResearch.retryFailed(args[0], args[1], args[2], args[3]);
     } catch {
-      throw new Error("company research structuring retry failed");
+      throw new Error("company research retry failed");
+    }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchDeleteRun, async (event, ...args) => {
+    if (args.length !== 3 || !Value.Check(CompanyResearchDeleteRunArgsSchema, args)) {
+      throw new Error("invalid company research input");
+    }
+    trackSender(event.sender);
+    try {
+      return await deps.companyResearch.deleteRun(args[0], args[1], args[2]);
+    } catch {
+      throw new Error("company research deletion failed");
     }
   });
 

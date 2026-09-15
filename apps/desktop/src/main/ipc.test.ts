@@ -43,7 +43,8 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.companyResearchGetState,
         IPC_CHANNELS.companyResearchListRuns,
         IPC_CHANNELS.companyResearchGetRun,
-        IPC_CHANNELS.companyResearchRetryStructuring,
+        IPC_CHANNELS.companyResearchRetryFailed,
+        IPC_CHANNELS.companyResearchDeleteRun,
         IPC_CHANNELS.companyResearchSubscribe,
         IPC_CHANNELS.conversationsCreate,
         IPC_CHANNELS.conversationsDelete,
@@ -215,7 +216,7 @@ describe("ipc handlers", () => {
     });
   });
 
-  it("reads versioned details, missing runs and summary history, and retries the exact target", async () => {
+  it("reads versioned details, missing runs and summary history, and routes retry and deletion to the exact target", async () => {
     const { ipcMain, companyResearch } = makeDeps();
     const sender = new FakeWebContents(1);
     const target = ["item-1", "company-1", "run-1"];
@@ -229,10 +230,12 @@ describe("ipc handlers", () => {
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetRun, event(sender), "item-1", "company-1", "missing")).resolves.toBeUndefined();
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchListRuns, event(sender), "item-1", "company-1")).resolves.toEqual([summary]);
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1")).resolves.toEqual({ runs: [summary], globalActiveRun: null });
-    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryStructuring, event(sender), ...target)).resolves.toMatchObject({ status: "structuring", rawReportText: "# Saved raw report", structuringAttempts: 2 });
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryFailed, event(sender), ...target, RESEARCH_INPUT)).resolves.toMatchObject({ id: "run-1", status: "researching" });
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchDeleteRun, event(sender), ...target)).resolves.toBeUndefined();
     expect(companyResearch.getRunCalls[0]).toEqual({ itemId: "item-1", companyId: "company-1", runId: "run-1" });
     expect(companyResearch.listRunsCalls).toEqual([{ itemId: "item-1", companyId: "company-1" }]);
-    expect(companyResearch.retryStructuringCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1" }]);
+    expect(companyResearch.retryFailedCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1", input: RESEARCH_INPUT }]);
+    expect(companyResearch.deleteRunCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1" }]);
   });
 
   it.each(["other-item", "other-company"])("safely rejects a run owned by %s without report JSON", async (wrongTarget) => {
@@ -251,12 +254,30 @@ describe("ipc handlers", () => {
     ["getState", "companyResearchGetState", ["item-1", "company-1"], "read"],
     ["listRuns", "companyResearchListRuns", ["item-1", "company-1"], "read"],
     ["getRun", "companyResearchGetRun", ["item-1", "company-1", "run-1"], "read"],
-    ["retryStructuring", "companyResearchRetryStructuring", ["item-1", "company-1", "run-1"], "structuring retry"],
+    ["retryFailed", "companyResearchRetryFailed", ["item-1", "company-1", "run-1", RESEARCH_INPUT], "retry"],
+    ["deleteRun", "companyResearchDeleteRun", ["item-1", "company-1", "run-1"], "deletion"],
   ] as const)("sanitizes %s service errors", async (method, channel, args, action) => {
     const { ipcMain, companyResearch } = makeDeps();
     vi.spyOn(companyResearch, method).mockImplementation(() => { throw new Error('sk-secret provider error {"candidate":true}'); });
     const error = await ipcMain.invoke(IPC_CHANNELS[channel], event(new FakeWebContents(1)), ...args).catch((error: Error) => error);
     expect((error as Error).message).toBe(`company research ${action} failed`);
+  });
+
+  it("sanitizes asynchronous deletion service errors", async () => {
+    const { ipcMain, companyResearch } = makeDeps();
+    vi.spyOn(companyResearch, "deleteRun").mockImplementation(
+      (() => Promise.reject(new Error("sk-secret provider error"))) as () => void,
+    );
+
+    const error = await ipcMain.invoke(
+      IPC_CHANNELS.companyResearchDeleteRun,
+      event(new FakeWebContents(1)),
+      "item-1",
+      "company-1",
+      "run-1",
+    ).catch((error: Error) => error);
+
+    expect((error as Error).message).toBe("company research deletion failed");
   });
 
   it("broadcasts only public research events and cleans up subscriptions", async () => {

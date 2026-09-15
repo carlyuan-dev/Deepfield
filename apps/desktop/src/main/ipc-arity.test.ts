@@ -15,7 +15,8 @@ describe("ipc handler arity", () => {
     ["companyResearchGetState", "getStateCalls", ["item-1", "company-1"]],
     ["companyResearchListRuns", "listRunsCalls", ["item-1", "company-1"]],
     ["companyResearchGetRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
-    ["companyResearchRetryStructuring", "retryStructuringCalls", ["item-1", "company-1", "run-1"]],
+    ["companyResearchRetryFailed", "retryFailedCalls", ["item-1", "company-1", "run-1", RESEARCH_INPUT]],
+    ["companyResearchDeleteRun", "deleteRunCalls", ["item-1", "company-1", "run-1"]],
   ] as const)("validates exact arity and every field of %s before calling service", async (channel, calls, valid) => {
     const { ipcMain, companyResearch } = makeDeps();
     const sender = new FakeWebContents(1);

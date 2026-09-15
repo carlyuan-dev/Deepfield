@@ -49,7 +49,8 @@ export const IPC_CHANNELS = {
   companyResearchGetState: "deepfield:companyResearch:getState",
   companyResearchListRuns: "deepfield:companyResearch:listRuns",
   companyResearchGetRun: "deepfield:companyResearch:getRun",
-  companyResearchRetryStructuring: "deepfield:companyResearch:retryStructuring",
+  companyResearchRetryFailed: "deepfield:companyResearch:retryFailed",
+  companyResearchDeleteRun: "deepfield:companyResearch:deleteRun",
   companyResearchSubscribe: "deepfield:companyResearch:subscribe",
   companyResearchEvents: "deepfield:companyResearch:events",
   conversationsCreate: "deepfield:conversations:create",
@@ -148,8 +149,10 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.companyResearchListRuns, itemId, companyId) as Promise<ResearchRunSummary[]>,
       getRun: (itemId, companyId, runId) =>
         ipc.invoke(IPC_CHANNELS.companyResearchGetRun, itemId, companyId, runId) as Promise<ResearchRun | undefined>,
-      retryStructuring: (itemId, companyId, runId) =>
-        ipc.invoke(IPC_CHANNELS.companyResearchRetryStructuring, itemId, companyId, runId) as Promise<ResearchRun>,
+      retryFailed: (itemId, companyId, runId, input) =>
+        ipc.invoke(IPC_CHANNELS.companyResearchRetryFailed, itemId, companyId, runId, input) as Promise<ResearchRun>,
+      deleteRun: (itemId, companyId, runId) =>
+        ipc.invoke(IPC_CHANNELS.companyResearchDeleteRun, itemId, companyId, runId) as Promise<void>,
       subscribe: (listener: (event: CompanyResearchEvent) => void) => {
         void ipc.invoke(IPC_CHANNELS.companyResearchSubscribe).catch(() => {});
         return ipc.on(IPC_CHANNELS.companyResearchEvents, (_event, value) => {

@@ -94,10 +94,11 @@ describe("preload api", () => {
     expect(Object.keys(api.chat).sort()).toEqual(["listMessages", "send", "subscribe"]);
     expect(Object.keys(api.companyResearch).sort()).toEqual([
       "cancel",
+      "deleteRun",
       "getRun",
       "getState",
       "listRuns",
-      "retryStructuring",
+      "retryFailed",
       "start",
       "subscribe",
     ]);
@@ -168,7 +169,9 @@ describe("preload api", () => {
     await api.companyResearch.getState("item-1", "company-1");
     await api.companyResearch.listRuns("item-1", "company-1");
     await api.companyResearch.getRun("item-1", "company-1", "run-1");
-    await api.companyResearch.retryStructuring("item-1", "company-1", "run-1");
+    const retryInput = { direction: "product_and_technology", focusScope: "整机", asOfDate: "2026-09-11" } as const;
+    await api.companyResearch.retryFailed("item-1", "company-1", "run-1", retryInput);
+    await api.companyResearch.deleteRun("item-1", "company-1", "run-1");
     const llmDraft = { name: "Test", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 32000 } as const;
     const searchDraft = { name: "Search", provider: "zhipu", baseUrl: "https://search.test/v4", options: {} } as const;
     await api.settings.get();
@@ -201,7 +204,8 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.companyResearchGetState, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.companyResearchListRuns, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.companyResearchGetRun, args: ["item-1", "company-1", "run-1"] },
-      { channel: IPC_CHANNELS.companyResearchRetryStructuring, args: ["item-1", "company-1", "run-1"] },
+      { channel: IPC_CHANNELS.companyResearchRetryFailed, args: ["item-1", "company-1", "run-1", retryInput] },
+      { channel: IPC_CHANNELS.companyResearchDeleteRun, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.settingsGet, args: [] },
       { channel: IPC_CHANNELS.settingsSaveLlmProfile, args: [llmDraft] },
       { channel: IPC_CHANNELS.settingsActivateLlmProfile, args: ["l1"] },

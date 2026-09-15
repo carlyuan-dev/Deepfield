@@ -201,14 +201,19 @@ describe("read-only research JSON contracts", () => {
     expect(Value.Check(contracts.CompanyResearchStateSchema, { runs: [], globalActiveRun: state.globalActiveRun, active: { run: { ...summary, status: "structuring" }, draftText: "" } })).toBe(true);
   });
 
-  it("requires target triples for retry/getRun and exposes only summary history through DesktopApi", () => {
+  it("requires exact retry and deletion arguments and exposes only summary history through DesktopApi", () => {
     expect(contracts.CompanyResearchGetRunArgsSchema).toBeDefined();
-    for (const schema of [contracts.CompanyResearchGetRunArgsSchema, contracts.CompanyResearchRetryStructuringArgsSchema]) {
+    expect(contracts.CompanyResearchRetryFailedArgsSchema).toBeDefined();
+    expect(contracts.CompanyResearchDeleteRunArgsSchema).toBeDefined();
+    for (const schema of [contracts.CompanyResearchGetRunArgsSchema, contracts.CompanyResearchDeleteRunArgsSchema]) {
       expect(Value.Check(schema, ["item", "company", "run"])).toBe(true);
       for (const invalid of [["run"], ["item", "company"], ["item", "company", ""], ["item", "company", "run", "extra"]]) expect(Value.Check(schema, invalid)).toBe(false);
     }
+    expect(Value.Check(contracts.CompanyResearchRetryFailedArgsSchema, ["item", "company", "run", input])).toBe(true);
+    for (const invalid of [["item", "company", "run"], ["item", "company", "run", input, "extra"], ["item", "company", "run", {}]]) expect(Value.Check(contracts.CompanyResearchRetryFailedArgsSchema, invalid)).toBe(false);
     expectTypeOf<DesktopApi["companyResearch"]["getRun"]>().parameters.toEqualTypeOf<[string, string, string]>();
-    expectTypeOf<DesktopApi["companyResearch"]["retryStructuring"]>().parameters.toEqualTypeOf<[string, string, string]>();
+    expectTypeOf<DesktopApi["companyResearch"]["retryFailed"]>().parameters.toEqualTypeOf<[string, string, string, contracts.StartCompanyResearchInput]>();
+    expectTypeOf<DesktopApi["companyResearch"]["deleteRun"]>().parameters.toEqualTypeOf<[string, string, string]>();
     expectTypeOf<DesktopApi["companyResearch"]["listRuns"]>().returns.toEqualTypeOf<Promise<contracts.ResearchRunSummary[]>>();
     expectTypeOf<Parameters<DesktopApi["companyResearch"]["subscribe"]>[0]>().toEqualTypeOf<(event: contracts.CompanyResearchEvent) => void>();
   });

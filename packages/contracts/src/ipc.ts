@@ -30,24 +30,30 @@ export const SettingsDeleteProfileArgsSchema = Type.Tuple([Type.String({ minLeng
 export const ConversationDeleteArgsSchema = Type.Tuple([Type.String({ minLength: 1, maxLength: 200 })]);
 export const CopyTextArgsSchema = Type.Tuple([Type.String()]);
 
-const CompanyResearchIdSchema = Type.String({ minLength: 1, maxLength: 200 });
+const IdSchema = Type.String({ minLength: 1, maxLength: 200 });
 export const CompanyResearchStartArgsSchema = Type.Tuple([
-  CompanyResearchIdSchema,
-  CompanyResearchIdSchema,
+  IdSchema,
+  IdSchema,
   StartCompanyResearchInputSchema,
 ]);
-export const CompanyResearchCancelArgsSchema = Type.Tuple([CompanyResearchIdSchema]);
+export const CompanyResearchCancelArgsSchema = Type.Tuple([IdSchema]);
 export const CompanyResearchTargetArgsSchema = Type.Tuple([
-  CompanyResearchIdSchema,
-  CompanyResearchIdSchema,
+  IdSchema,
+  IdSchema,
 ]);
 export const CompanyResearchSubscribeArgsSchema = Type.Tuple([]);
 export const CompanyResearchGetRunArgsSchema = Type.Tuple([
-  CompanyResearchIdSchema,
-  CompanyResearchIdSchema,
-  CompanyResearchIdSchema,
+  IdSchema,
+  IdSchema,
+  IdSchema,
 ]);
-export const CompanyResearchRetryStructuringArgsSchema = CompanyResearchGetRunArgsSchema;
+export const CompanyResearchRetryFailedArgsSchema = Type.Tuple([
+  IdSchema,
+  IdSchema,
+  IdSchema,
+  StartCompanyResearchInputSchema,
+]);
+export const CompanyResearchDeleteRunArgsSchema = Type.Tuple([IdSchema, IdSchema, IdSchema]);
 
 export type LlmConnectionStatus = "connected" | "disconnected";
 
@@ -86,7 +92,13 @@ export interface DesktopApi {
     getState(itemId: string, companyId: string): Promise<CompanyResearchState>;
     listRuns(itemId: string, companyId: string): Promise<ResearchRunSummary[]>;
     getRun(itemId: string, companyId: string, runId: string): Promise<ResearchRun | undefined>;
-    retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
+    retryFailed(
+      itemId: string,
+      companyId: string,
+      runId: string,
+      input: StartCompanyResearchInput,
+    ): Promise<ResearchRun>;
+    deleteRun(itemId: string, companyId: string, runId: string): Promise<void>;
     subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
   };
   settings: {

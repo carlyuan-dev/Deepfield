@@ -335,7 +335,8 @@ export class FakeCompanyResearchService {
   getStateCalls: Array<{ itemId: string; companyId: string }> = [];
   listRunsCalls: Array<{ itemId: string; companyId: string }> = [];
   getRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
-  retryStructuringCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
+  retryFailedCalls: Array<{ itemId: string; companyId: string; runId: string; input: StartCompanyResearchInput }> = [];
+  deleteRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
   run: ResearchRun = researchRun();
   runs: ResearchRunSummary[] = [];
   private listeners = new Set<(event: CompanyResearchEvent) => void>();
@@ -368,9 +369,13 @@ export class FakeCompanyResearchService {
     return this.run;
   }
 
-  async retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun> {
-    this.retryStructuringCalls.push({ itemId, companyId, runId });
-    return researchRun({ status: "structuring", rawReportText: "# Saved raw report", structuringAttempts: 2 });
+  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<ResearchRun> {
+    this.retryFailedCalls.push({ itemId, companyId, runId, input });
+    return researchRun({ id: runId as ResearchRunId, itemId: itemId as CapabilityItemId, companyId: companyId as CompanyId, ...input });
+  }
+
+  deleteRun(itemId: string, companyId: string, runId: string): void {
+    this.deleteRunCalls.push({ itemId, companyId, runId });
   }
 
   subscribe(listener: (event: CompanyResearchEvent) => void): () => void {
