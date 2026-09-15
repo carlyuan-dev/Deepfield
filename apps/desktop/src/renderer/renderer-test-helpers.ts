@@ -137,6 +137,7 @@ export function makeFakeApi(): FakeDesktopApi {
   const researchListeners = new Set<(event: CompanyResearchEvent) => void>();
   const profileListeners = new Set<(event: CompanyProfileEvent) => void>();
   const api = {
+    copyText: vi.fn(async (): Promise<void> => {}),
     conversations: {
       create: vi.fn(async (): Promise<Conversation> => conversationFixture()),
       delete: vi.fn(async (): Promise<void> => {}),

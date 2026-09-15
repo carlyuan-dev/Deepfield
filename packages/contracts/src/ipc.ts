@@ -28,6 +28,7 @@ export const SettingsSearchDraftArgsSchema = Type.Tuple([SearchProfileDraftSchem
 export const SettingsProfileIdArgsSchema = Type.Tuple([Type.Union([Type.String({ minLength: 1, maxLength: 200 }), Type.Null()])]);
 export const SettingsDeleteProfileArgsSchema = Type.Tuple([Type.String({ minLength: 1, maxLength: 200 })]);
 export const ConversationDeleteArgsSchema = Type.Tuple([Type.String({ minLength: 1, maxLength: 200 })]);
+export const CopyTextArgsSchema = Type.Tuple([Type.String()]);
 
 const CompanyResearchIdSchema = Type.String({ minLength: 1, maxLength: 200 });
 export const CompanyResearchStartArgsSchema = Type.Tuple([
@@ -51,6 +52,7 @@ export const CompanyResearchRetryStructuringArgsSchema = CompanyResearchGetRunAr
 export type LlmConnectionStatus = "connected" | "disconnected";
 
 export interface DesktopApi {
+  copyText(text: string): Promise<void>;
   conversations: {
     create(): Promise<Conversation>;
     delete(conversationId: string): Promise<void>;

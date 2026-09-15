@@ -69,10 +69,7 @@ function MarkdownLink({
   ) as ComponentPropsWithoutRef<"a">;
   const copyLink = async () => {
     try {
-      if (navigator.clipboard === undefined) {
-        throw new Error("clipboard unavailable");
-      }
-      await navigator.clipboard.writeText(linkHref);
+      await window.deepfield.copyText(linkHref);
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

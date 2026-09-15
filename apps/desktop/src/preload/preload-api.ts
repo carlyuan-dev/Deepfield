@@ -27,6 +27,7 @@ import {
 } from "@deepfield/contracts";
 
 export const IPC_CHANNELS = {
+  copyText: "deepfield:clipboard:copyText",
   industryResearchCreateItem: "deepfield:industryResearch:createItem",
   industryResearchUpdateItem: "deepfield:industryResearch:updateItem",
   industryResearchDeleteItem: "deepfield:industryResearch:deleteItem",
@@ -77,6 +78,7 @@ export interface IpcBridge {
 
 export function createPreloadApi(ipc: IpcBridge): DesktopApi {
   return {
+    copyText: (text) => ipc.invoke(IPC_CHANNELS.copyText, text) as Promise<void>,
     conversations: {
       create: () => ipc.invoke(IPC_CHANNELS.conversationsCreate) as Promise<Conversation>,
       delete: (conversationId) =>

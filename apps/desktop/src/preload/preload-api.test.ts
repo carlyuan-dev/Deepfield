@@ -66,6 +66,7 @@ describe("preload api", () => {
       "chat",
       "companyResearch",
       "conversations",
+      "copyText",
       "industryResearch",
       "settings",
       "skills",
@@ -103,6 +104,33 @@ describe("preload api", () => {
     expect(JSON.stringify(api)).not.toContain("ipcRenderer");
     expect(JSON.stringify(api)).not.toContain("apiKey");
     expect(JSON.stringify(api)).not.toContain("deepseek");
+  });
+
+  it("exposes one narrow text-copy method on a fixed IPC channel", async () => {
+    const { ipc, invokes } = makeFakeIpc();
+    const api = createPreloadApi(ipc);
+
+    await api.copyText("https://actual.example/report%E3%80%82");
+
+    expect(invokes).toEqual([
+      {
+        channel: IPC_CHANNELS.copyText,
+        args: ["https://actual.example/report%E3%80%82"],
+      },
+    ]);
+    expect(Reflect.has(api, "clipboard")).toBe(false);
+    expect(Reflect.has(api, "ipcRenderer")).toBe(false);
+  });
+
+  it("propagates copy failures to the renderer", async () => {
+    const denied = new Error("clipboard write denied");
+    const { ipc: baseIpc } = makeFakeIpc();
+    const api = createPreloadApi({
+      ...baseIpc,
+      invoke: async () => Promise.reject(denied),
+    });
+
+    await expect(api.copyText("https://actual.example/report")).rejects.toBe(denied);
   });
 
   it("forwards conversation deletion through its fixed channel", async () => {

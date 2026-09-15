@@ -416,6 +416,16 @@ export class FakeCompanyProfileEventSource {
   }
 }
 
+export class FakeClipboardWriter {
+  writeTextCalls: string[] = [];
+  writeError: Error | undefined;
+
+  writeText(text: string): void {
+    this.writeTextCalls.push(text);
+    if (this.writeError) throw this.writeError;
+  }
+}
+
 export function makeDeps() {
   const ipcMain = new FakeIpcMain();
   const conversations = new FakeConversationService();
@@ -425,6 +435,7 @@ export function makeDeps() {
   const chat = new FakeChatService();
   const companyResearch = new FakeCompanyResearchService();
   const companyProfiles = new FakeCompanyProfileEventSource();
+  const clipboard = new FakeClipboardWriter();
   const deps: IpcServiceDeps = {
     ipcMain,
     conversations,
@@ -434,9 +445,10 @@ export function makeDeps() {
     chat,
     companyResearch,
     companyProfiles,
+    clipboard,
   };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyProfiles, dispose };
+  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyProfiles, clipboard, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

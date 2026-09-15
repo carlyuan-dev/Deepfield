@@ -23,6 +23,7 @@ function message(
 describe("Chat message rendering", () => {
   afterEach(() => {
     vi.useRealTimers();
+    Reflect.deleteProperty(window, "deepfield");
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: undefined,
@@ -240,10 +241,15 @@ describe("Chat message rendering", () => {
   });
 
   it("copies the normalized destination rather than a URL-shaped label", async () => {
-    const writeText = vi.fn(async () => undefined);
+    const webClipboardWrite = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText },
+      value: { writeText: webClipboardWrite },
+    });
+    const copyText = vi.fn(async () => undefined);
+    Object.defineProperty(window, "deepfield", {
+      configurable: true,
+      value: { copyText },
     });
     render(
       <Messages
@@ -259,14 +265,20 @@ describe("Chat message rendering", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://actual.example/report%E3%80%82"));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith("https://actual.example/report%E3%80%82"));
+    expect(webClipboardWrite).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toBe("已复制");
   });
 
   it("keeps the URL selectable and reports a clipboard failure without blocking", async () => {
+    const webClipboardWrite = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) },
+      value: { writeText: webClipboardWrite },
+    });
+    Object.defineProperty(window, "deepfield", {
+      configurable: true,
+      value: { copyText: vi.fn(async () => Promise.reject(new Error("denied"))) },
     });
     render(<Messages messages={[message("assistant", "[来源](https://source.example/a)")]} />);
     fireEvent.focus(screen.getByRole("link", { name: "来源" }));
@@ -274,6 +286,7 @@ describe("Chat message rendering", () => {
     fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
 
     expect((await screen.findByRole("status")).textContent).toBe("复制失败，请手动选择链接");
+    expect(webClipboardWrite).not.toHaveBeenCalled();
     expect(screen.getByText("https://source.example/a").classList.contains("markdown-link-url")).toBe(true);
   });
 

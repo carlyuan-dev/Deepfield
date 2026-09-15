@@ -122,6 +122,21 @@ describe("ipc handler arity", () => {
     expect(skills.listCalls).toBe(1);
   });
 
+  it("requires exactly one string for copyText", async () => {
+    const { ipcMain, clipboard } = makeDeps();
+    const sender = new FakeWebContents(1);
+
+    for (const args of [[], [null], [42], [{}], [["text"]], ["text", "extra"]]) {
+      await expect(
+        ipcMain.invoke(IPC_CHANNELS.copyText, event(sender), ...args),
+      ).rejects.toThrow(/invalid clipboard input/);
+    }
+    expect(clipboard.writeTextCalls).toEqual([]);
+
+    await ipcMain.invoke(IPC_CHANNELS.copyText, event(sender), "plain text");
+    expect(clipboard.writeTextCalls).toEqual(["plain text"]);
+  });
+
   it("requires exactly four arguments and a strict options object for chat.send", async () => {
     const { ipcMain, chat } = makeDeps();
     const sender = new FakeWebContents(1);

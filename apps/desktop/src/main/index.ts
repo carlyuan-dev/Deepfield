@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain, safeStorage, utilityProcess } from "electron";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
@@ -151,6 +151,7 @@ void app.whenReady().then(async () => {
   appRuntime.companyProfiles.resume();
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
+    clipboard: { writeText: (text) => clipboard.writeText(text) },
     conversations: appRuntime.conversationService,
     industryResearch: appRuntime.industryResearch,
     settings: configuration,

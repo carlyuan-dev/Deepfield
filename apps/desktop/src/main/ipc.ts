@@ -2,6 +2,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import {
   ChatRequestOptionsSchema,
+  CopyTextArgsSchema,
   ConversationDeleteArgsSchema,
   CompanyResearchCancelArgsSchema,
   CompanyResearchGetRunArgsSchema,
@@ -129,6 +130,10 @@ export interface CompanyProfileEventSource {
   subscribe(listener: (event: CompanyProfileEvent) => void): () => void;
 }
 
+export interface ClipboardWriterLike {
+  writeText(text: string): void | Promise<void>;
+}
+
 export interface IpcServiceDeps {
   ipcMain: IpcMainLike;
   conversations: ConversationServiceLike;
@@ -138,9 +143,11 @@ export interface IpcServiceDeps {
   chat: ChatServiceLike;
   companyResearch: CompanyResearchServiceLike;
   companyProfiles: CompanyProfileEventSource;
+  clipboard: ClipboardWriterLike;
 }
 
 const INVOKE_CHANNELS = [
+  IPC_CHANNELS.copyText,
   IPC_CHANNELS.industryResearchCreateItem,
   IPC_CHANNELS.industryResearchUpdateItem,
   IPC_CHANNELS.industryResearchDeleteItem,
@@ -218,6 +225,13 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     for (const sender of senders.values()) {
       sender.send(IPC_CHANNELS.industryResearchCompanyProfileEvents, event);
     }
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.copyText, async (_event, ...args) => {
+    if (!Value.Check(CopyTextArgsSchema, args)) {
+      throw new Error("invalid clipboard input");
+    }
+    await deps.clipboard.writeText(args[0]);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.industryResearchCreateItem, async (_event, ...args) => {

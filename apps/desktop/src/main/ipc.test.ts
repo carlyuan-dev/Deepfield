@@ -52,12 +52,34 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.settingsGet, IPC_CHANNELS.settingsSaveLlmProfile, IPC_CHANNELS.settingsActivateLlmProfile, IPC_CHANNELS.settingsDeleteLlmProfile, IPC_CHANNELS.settingsDiagnoseLlm,
         IPC_CHANNELS.settingsSaveSearchProfile, IPC_CHANNELS.settingsActivateSearchProfile, IPC_CHANNELS.settingsDeleteSearchProfile, IPC_CHANNELS.settingsDiagnoseSearch,
         IPC_CHANNELS.skillsList,
+        IPC_CHANNELS.copyText,
         IPC_CHANNELS.chatSend,
         IPC_CHANNELS.chatListMessages,
       ].sort(),
     );
     expect(ipcMain.handlers.has(IPC_CHANNELS.chatEvents)).toBe(false);
     expect(ipcMain.handlers.has(IPC_CHANNELS.companyResearchEvents)).toBe(false);
+  });
+
+  it("writes only the supplied text through the main-process clipboard and propagates errors", async () => {
+    const { ipcMain, clipboard } = makeDeps();
+    const sender = new FakeWebContents(1);
+
+    await expect(
+      ipcMain.invoke(
+        IPC_CHANNELS.copyText,
+        event(sender),
+        "https://actual.example/report%E3%80%82",
+      ),
+    ).resolves.toBeUndefined();
+    expect(clipboard.writeTextCalls).toEqual([
+      "https://actual.example/report%E3%80%82",
+    ]);
+
+    clipboard.writeError = new Error("clipboard unavailable");
+    await expect(
+      ipcMain.invoke(IPC_CHANNELS.copyText, event(sender), "https://actual.example/other"),
+    ).rejects.toThrow("clipboard unavailable");
   });
 
   it("validates and delegates conversation deletion", async () => {
