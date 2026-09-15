@@ -25,11 +25,12 @@ export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearc
     delete run.structuredContent;
     delete run.completedAt;
   }
-  if (run.status === "researching") {
+  if (run.status === "researching" || run.status === "research_failed") {
     delete run.rawReportText;
     delete run.rawCompletedAt;
     run.structuringAttempts = 0;
   }
+  if (run.status === "researching") delete run.lastFailureCode;
   return run;
 }
 
@@ -39,7 +40,7 @@ export function researchSummary(run: ResearchRun): ResearchRunSummary {
     return summary;
   }
   const { rawReportText: _raw, structuredContent: _content, researchContext: _context, template: _template, harnessVersion: _version, ...summary } = run;
-  if (summary.status !== "completed" && summary.status !== "structure_failed") throw new Error("history only");
+  if (summary.status !== "completed" && summary.status !== "research_failed" && summary.status !== "structure_failed") throw new Error("history only");
   return { ...summary, status: summary.status };
 }
 

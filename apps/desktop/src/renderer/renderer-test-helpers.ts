@@ -58,7 +58,8 @@ export interface FakeDesktopApi extends DesktopApi {
     getState: Mock<(itemId: string, companyId: string) => Promise<CompanyResearchState>>;
     listRuns: Mock<(itemId: string, companyId: string) => Promise<ResearchRunSummary[]>>;
     getRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun | undefined>>;
-    retryStructuring: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun>>;
+    retryFailed: Mock<(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
+    deleteRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<void>>;
     subscribe: Mock<(listener: (event: CompanyResearchEvent) => void) => () => void>;
   };
   settings: {
@@ -197,7 +198,8 @@ export function makeFakeApi(): FakeDesktopApi {
       getState: vi.fn(async (): Promise<CompanyResearchState> => ({ runs: [], globalActiveRun: null })),
       listRuns: vi.fn(async (): Promise<ResearchRunSummary[]> => []),
       getRun: vi.fn(async (): Promise<ResearchRun | undefined> => undefined),
-      retryStructuring: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
+      retryFailed: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
+      deleteRun: vi.fn(async (): Promise<void> => {}),
       subscribe: vi.fn(
         (listener: (event: CompanyResearchEvent) => void): (() => void) => {
           researchListeners.add(listener);

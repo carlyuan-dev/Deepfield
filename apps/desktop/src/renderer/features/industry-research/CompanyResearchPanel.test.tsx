@@ -258,6 +258,192 @@ describe("two-stage company research", () => {
     expect(screen.getByText("甲乙丙")).toBeTruthy();
   });
 
+  it.each([
+    ["empty", undefined, ["开始调研"]],
+    ["completed", "completed", ["新的调研"]],
+    ["research failure", "research_failed", ["重新尝试", "新的调研"]],
+    ["structure failure", "structure_failed", ["重新尝试", "新的调研"]],
+  ] as const)("shows the intended report actions for %s history", async (_label, status, expected) => {
+    const fake = makeFakeApi();
+    const run = status === undefined ? undefined : researchRun({
+      status,
+      ...(status === "research_failed" ? { lastFailureCode: "tool_failed" as const } : {}),
+      ...(status === "structure_failed" ? { lastFailureCode: "structuring_failed" as const } : {}),
+    });
+    fake.companyResearch.getState.mockResolvedValue({ runs: run ? [researchSummary(run)] : [], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    const view = render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText(run ? /报告版本/ : "还没有调研报告。");
+    const heading = view.container.querySelector<HTMLElement>(".company-research-heading")!;
+    expect(within(heading).getAllByRole("button").map((button) => button.textContent)).toEqual(expected);
+    if (status === "research_failed" || status === "structure_failed") {
+      expect(screen.getByRole("option").textContent).toContain("（失败待重试）");
+    }
+    if (status === "research_failed") {
+      expect(await screen.findByText("联网工具未能取得足够资料，请检查 Search 配置或稍后重试")).toBeTruthy();
+      expect(screen.queryByRole("tabpanel")).toBeNull();
+      expect(view.container.querySelector(".company-report-text")).toBeNull();
+    }
+  });
+
+  it("retries the selected failure with edited inputs and keeps the same selected run after completion", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    let run = researchRun({
+      status: "research_failed", direction: "operations_and_performance", focusScope: "旧范围",
+      asOfDate: "2026-01-01", lastFailureCode: "model_failed",
+    });
+    let state: CompanyResearchState = { runs: [researchSummary(run)], globalActiveRun: null };
+    fake.companyResearch.getState.mockImplementation(async () => state);
+    fake.companyResearch.getRun.mockImplementation(async () => run);
+    fake.companyResearch.retryFailed.mockImplementation(async (_itemId, _companyId, _runId, input) => {
+      run = researchRun({ id: run.id, status: "researching", ...input });
+      state = activeResearch(run);
+      return run;
+    });
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.click(await screen.findByRole("button", { name: "重新尝试" }));
+    const dialog = screen.getByRole("dialog", { name: "重新尝试调研" });
+    expect((within(dialog).getByLabelText("研究方向") as HTMLSelectElement).value).toBe("operations_and_performance");
+    expect((within(dialog).getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("旧范围");
+    expect((within(dialog).getByLabelText("截至日期") as HTMLInputElement).value).toBe("2026-01-01");
+    await user.selectOptions(within(dialog).getByLabelText("研究方向"), "market_and_commercialization");
+    await user.clear(within(dialog).getByLabelText("关注范围（可选）"));
+    await user.type(within(dialog).getByLabelText("关注范围（可选）"), "更新后的范围");
+    fireEvent.change(within(dialog).getByLabelText("截至日期"), { target: { value: "2026-02-02" } });
+    await user.click(within(dialog).getByRole("button", { name: "重新尝试" }));
+    expect(fake.companyResearch.retryFailed).toHaveBeenCalledWith(context.itemId, context.companyId, run.id, {
+      direction: "market_and_commercialization", focusScope: "更新后的范围", asOfDate: "2026-02-02",
+    });
+    expect(await screen.findByText("正在联网调研…")).toBeTruthy();
+
+    run = researchRun({ id: run.id, direction: "market_and_commercialization", focusScope: "更新后的范围", asOfDate: "2026-02-02", rawReportText: "重试成功" });
+    state = { runs: [researchSummary(run)], globalActiveRun: null };
+    act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: run.id }));
+    expect(await screen.findByText("重试成功")).toBeTruthy();
+    expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(run.id);
+    expect((screen.getByLabelText("报告版本") as HTMLSelectElement).options).toHaveLength(1);
+  });
+
+  it("deletes the selected report after confirmation and selects its next ordered neighbor", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const newest = researchRun({ id: "run-newest" as ResearchRun["id"], createdAt: "2026-09-09T09:00:00.000Z", rawReportText: "最新报告" });
+    const selected = researchRun({ id: "run-selected" as ResearchRun["id"], status: "structure_failed", createdAt: "2026-09-08T09:00:00.000Z", rawReportText: "待删除报告", lastFailureCode: "structuring_failed" });
+    const oldest = researchRun({ id: "run-oldest" as ResearchRun["id"], createdAt: "2026-09-07T09:00:00.000Z", rawReportText: "最旧报告" });
+    const details = new Map<string, ResearchRun>([newest, selected, oldest].map((run) => [run.id, run]));
+    let state: CompanyResearchState = { runs: [newest, selected, oldest].map(researchSummary), globalActiveRun: null };
+    fake.companyResearch.getState.mockImplementation(async () => state);
+    fake.companyResearch.getRun.mockImplementation(async (_item, _company, id) => details.get(id));
+    fake.companyResearch.deleteRun.mockImplementation(async (_item, _company, id) => {
+      state = { ...state, runs: state.runs.filter((run) => run.id !== id) };
+      details.delete(id);
+    });
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.selectOptions(await screen.findByLabelText("报告版本"), selected.id);
+    expect(await screen.findByText("待删除报告")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    let dialog = screen.getByRole("dialog", { name: "删除调研报告" });
+    expect(within(dialog).getByText(/2026\/09\/08/)).toBeTruthy();
+    expect(within(dialog).getByText(/整理失败/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(fake.companyResearch.deleteRun).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    dialog = screen.getByRole("dialog", { name: "删除调研报告" });
+    await user.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    expect(fake.companyResearch.deleteRun).toHaveBeenCalledWith(context.itemId, context.companyId, selected.id);
+    expect(await screen.findByText("最旧报告")).toBeTruthy();
+    expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(oldest.id);
+  });
+
+  it("returns to the empty state after deleting the only report", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const run = researchRun();
+    let state: CompanyResearchState = { runs: [researchSummary(run)], globalActiveRun: null };
+    fake.companyResearch.getState.mockImplementation(async () => state);
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    fake.companyResearch.deleteRun.mockImplementation(async () => { state = { runs: [], globalActiveRun: null }; });
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.click(await screen.findByRole("button", { name: "删除此报告" }));
+    await user.click(within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }));
+    expect(await screen.findByText("还没有调研报告。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "开始调研" })).toBeTruthy();
+    expect(screen.queryByLabelText("报告版本")).toBeNull();
+  });
+
+  it("disables report deletion while any company research is active", async () => {
+    const fake = makeFakeApi();
+    const run = researchRun();
+    fake.companyResearch.getState.mockResolvedValue({
+      runs: [researchSummary(run)],
+      globalActiveRun: { runId: "other-run" as ResearchRun["id"], itemId: run.itemId, companyId: "other-company" as ResearchRun["companyId"], stage: "raw" },
+    });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect((await screen.findByRole("button", { name: "删除此报告" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables an open deletion confirmation when another research run becomes active", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const run = researchRun();
+    let state: CompanyResearchState = { runs: [researchSummary(run)], globalActiveRun: null };
+    fake.companyResearch.getState.mockImplementation(async () => state);
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.click(await screen.findByRole("button", { name: "删除此报告" }));
+    const confirmation = within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }) as HTMLButtonElement;
+    state = {
+      ...state,
+      globalActiveRun: { runId: "other-run" as ResearchRun["id"], itemId: run.itemId, companyId: "other-company" as ResearchRun["companyId"], stage: "raw" },
+    };
+    act(() => fake.emitResearch({ type: "state_changed", runId: "other-run", itemId: run.itemId, companyId: "other-company" }));
+    await waitFor(() => expect(confirmation.disabled).toBe(true));
+    expect(fake.companyResearch.deleteRun).not.toHaveBeenCalled();
+  });
+
+  const markdown = "# 一级标题\n\n## 二级标题\n\n| 列 | 值 |\n| --- | --- |\n| 项 | 内容 |\n\n- 列表项\n\n**重点** https://example.com/report";
+  it.each(["saved", "streaming", "structure failed", "legacy"] as const)("renders %s raw reports through the shared Markdown boundary", async (kind) => {
+    const fake = makeFakeApi();
+    const keyed = researchRun({
+      status: kind === "streaming" ? "researching" : kind === "structure failed" ? "structure_failed" : "completed",
+      rawReportText: markdown,
+      ...(kind === "structure failed" ? { lastFailureCode: "structuring_failed" as const } : {}),
+    });
+    const legacy: ResearchRun = {
+      id: "legacy-markdown" as ResearchRun["id"], itemId: keyed.itemId, companyId: keyed.companyId,
+      schemaVersion: "legacy-freeform-v1", status: "completed", timeScope: "近一年", reportText: markdown,
+      createdAt: "2026-09-01T00:00:00Z", completedAt: "2026-09-01T01:00:00Z",
+    };
+    const run = kind === "legacy" ? legacy : keyed;
+    fake.companyResearch.getState.mockResolvedValue(kind === "streaming"
+      ? activeResearch(keyed, markdown)
+      : { runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByRole("heading", { level: 1, name: "一级标题" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "二级标题" })).toBeTruthy();
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(screen.getByRole("list")).toBeTruthy();
+    expect(screen.getByText("重点").closest("strong")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "https://example.com/report" })).toBeTruthy();
+    expect(screen.queryByText("# 一级标题")).toBeNull();
+    expect(screen.queryByText("**重点**")).toBeNull();
+  });
+
+  it("keeps the shared Markdown URL popover and copy action in raw reports", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const copyText = fake.copyText;
+    Object.defineProperty(window, "deepfield", { configurable: true, value: { copyText } });
+    const run = researchRun({ rawReportText: markdown });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.hover(await screen.findByRole("link", { name: "https://example.com/report" }));
+    const popover = await screen.findByRole("dialog", { name: "链接详情" });
+    expect(within(popover).getByText("https://example.com/report")).toBeTruthy();
+    await user.click(within(popover).getByRole("button", { name: "复制链接" }));
+    expect(copyText).toHaveBeenCalledWith("https://example.com/report");
+  });
+
   it("reads raw during structuring, retains it after failure, and retries the selected run", async () => {
     const fake = makeFakeApi();
     const user = userEvent.setup();
@@ -265,7 +451,7 @@ describe("two-stage company research", () => {
     let state = activeResearch(run);
     fake.companyResearch.getState.mockImplementation(async () => state);
     fake.companyResearch.getRun.mockImplementation(async () => run);
-    fake.companyResearch.retryStructuring.mockImplementation(async () => {
+    fake.companyResearch.retryFailed.mockImplementation(async (_item, _company, _run, input) => {
       run = { ...run, status: "structuring" };
       state = activeResearch(run);
       return run;
@@ -278,8 +464,11 @@ describe("two-stage company research", () => {
     act(() => fake.emitResearch({ type: "state_changed", runId: run.id, ...context }));
     expect(await screen.findByText("整理失败，请重试")).toBeTruthy();
     expect(screen.getByText(/原始事实/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "重新整理" }));
-    expect(fake.companyResearch.retryStructuring).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
+    await user.click(screen.getByRole("button", { name: "重新尝试" }));
+    await user.click(within(screen.getByRole("dialog", { name: "重新尝试调研" })).getByRole("button", { name: "重新尝试" }));
+    expect(fake.companyResearch.retryFailed).toHaveBeenCalledWith(context.itemId, context.companyId, run.id, {
+      direction: run.direction, focusScope: run.focusScope, asOfDate: run.asOfDate,
+    });
     expect(await screen.findByText("正在整理结构化报告…")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "取消调研" }));
     expect(fake.companyResearch.cancel).toHaveBeenCalledWith(run.id);
@@ -327,14 +516,15 @@ describe("two-stage company research", () => {
     const run = researchRun({ status: "structure_failed" });
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
     fake.companyResearch.getRun.mockRejectedValueOnce(new Error("secret storage path")).mockResolvedValue(run);
-    fake.companyResearch.retryStructuring.mockRejectedValue(new Error("secret provider response"));
+    fake.companyResearch.retryFailed.mockRejectedValue(new Error("secret provider response"));
     render(<CompanyResearchPanel api={fake} {...context} />);
     expect(await screen.findByText("加载调研报告失败，请重试")).toBeTruthy();
     expect(screen.queryByText(/secret/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "重新加载" }));
     await screen.findByText(/原始事实/);
-    await user.click(screen.getByRole("button", { name: "重新整理" }));
-    expect(await screen.findByText("无法重新整理，请稍后重试")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "重新尝试" }));
+    await user.click(within(screen.getByRole("dialog", { name: "重新尝试调研" })).getByRole("button", { name: "重新尝试" }));
+    expect(await screen.findByText("无法重新尝试，请稍后重试")).toBeTruthy();
     expect(screen.getByText(/原始事实/)).toBeTruthy();
     expect(screen.queryByText(/secret/)).toBeNull();
   });
@@ -411,7 +601,7 @@ describe("two-stage company research", () => {
       return researchRun({ id: newest.id, status: "researching" });
     });
     render(<CompanyResearchPanel api={fake} {...context} />);
-    await user.click(await screen.findByRole("button", { name: "重新调研" }));
+    await user.click(await screen.findByRole("button", { name: "新的调研" }));
     await user.click(screen.getByRole("button", { name: "开始调研" }));
     await user.click(await screen.findByRole("tab", { name: "原始调研报告" }));
     expect(await screen.findByText("本次新报告")).toBeTruthy();
@@ -467,7 +657,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(legacy), researchSummary(run)], globalActiveRun: null });
     fake.companyResearch.getRun.mockResolvedValue(legacy);
     render(<CompanyResearchPanel api={fake} {...context} />);
-    await user.click(await screen.findByRole("button", { name: "重新调研" }));
+    await user.click(await screen.findByRole("button", { name: "新的调研" }));
     expect((screen.getByLabelText("研究方向") as HTMLSelectElement).value).toBe("operations_and_performance");
     expect((screen.getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("利润与现金流");
     expect((screen.getByLabelText("截至日期") as HTMLInputElement).value).toBe("2026-01-01");

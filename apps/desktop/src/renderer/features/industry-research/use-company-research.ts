@@ -28,7 +28,8 @@ const RESEARCH_FAILURE_MESSAGES: Record<string, string> = {
 interface Actions {
   start(input: StartCompanyResearchInput): Promise<void>;
   cancel(): Promise<void>;
-  retry(): Promise<void>;
+  retry(input: StartCompanyResearchInput): Promise<void>;
+  deleteSelected(): Promise<void>;
   reload(): void;
   selectRun(id: string): void;
 }
@@ -181,17 +182,44 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           publish({ error: "取消调研失败，请重试" });
         } finally { publish({ pending: false }); }
       },
-      async retry() {
+      async retry(input) {
         const run = current.state.runs.find((entry) => entry.id === current.selectedRunId);
-        if (!alive || current.pending || current.state.globalActiveRun || run?.status !== "structure_failed") return;
+        if (!alive || current.pending || current.state.globalActiveRun || (run?.status !== "research_failed" && run?.status !== "structure_failed")) return;
         publish({ pending: true, error: undefined });
         try {
-          await api.companyResearch.retryStructuring(itemId, companyId, run.id);
+          await api.companyResearch.retryFailed(itemId, companyId, run.id, input);
+          if (!alive) return;
+          ++detailTicket;
+          publish({ selectedRunId: run.id });
+          ++revision;
+          await refresh();
+        } catch {
+          publish({ error: "无法重新尝试，请稍后重试" });
+          throw new Error("无法重新尝试，请稍后重试");
+        }
+        finally { publish({ pending: false }); }
+      },
+      async deleteSelected() {
+        const deletedId = current.selectedRunId;
+        const deletedIndex = current.state.runs.findIndex((run) => run.id === deletedId);
+        if (!alive || current.pending || current.state.globalActiveRun || deletedId === undefined || deletedIndex < 0) return;
+        publish({ pending: true, error: undefined });
+        try {
+          await api.companyResearch.deleteRun(itemId, companyId, deletedId);
           if (!alive) return;
           ++revision;
           await refresh();
-        } catch { publish({ error: "无法重新整理，请稍后重试" }); }
-        finally { publish({ pending: false }); }
+          if (!alive) return;
+          const remaining = current.state.runs;
+          const next = remaining[deletedIndex] ?? remaining[deletedIndex - 1] ?? remaining[0];
+          const retained = current.selectedRun?.id === next?.id ? current.selectedRun : undefined;
+          ++detailTicket;
+          publish({ selectedRunId: next?.id, selectedRun: retained, streamedRaw: undefined, error: undefined });
+          if (!retained) await loadDetail(next?.id);
+        } catch {
+          publish({ error: "删除调研报告失败，请重试" });
+          throw new Error("删除调研报告失败，请重试");
+        } finally { publish({ pending: false }); }
       },
       reload() { publish({ error: undefined }); ++revision; void refresh(); },
       selectRun(id) {
@@ -216,9 +244,16 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     ...view,
     rawDraftText: view.streamedRaw?.runId === view.selectedRunId ? view.streamedRaw?.text ?? "" : "",
     elapsedLabel: seconds < 60 ? `已运行 ${seconds} 秒` : `已运行 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`,
+    selectedFailureMessage: (() => {
+      const selected = view.state.runs.find((run) => run.id === view.selectedRunId);
+      return selected?.status === "research_failed"
+        ? RESEARCH_FAILURE_MESSAGES[selected.lastFailureCode ?? "research_failed"] ?? RESEARCH_FAILURE_MESSAGES.research_failed
+        : undefined;
+    })(),
     start: (input: StartCompanyResearchInput) => actions.current!.start(input),
     cancel: () => actions.current!.cancel(),
-    retry: () => actions.current!.retry(),
+    retry: (input: StartCompanyResearchInput) => actions.current!.retry(input),
+    deleteSelected: () => actions.current!.deleteSelected(),
     reload: () => actions.current!.reload(),
     selectRun: (id: string) => actions.current!.selectRun(id),
   };

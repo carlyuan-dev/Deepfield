@@ -10,6 +10,7 @@ export interface ResearchContextProps {
 }
 export interface CompanyResearchModalProps extends ResearchContextProps {
   initial?: StartCompanyResearchInput;
+  mode?: "start" | "retry";
   disabled?: boolean;
   onClose(): void;
   onStart(input: StartCompanyResearchInput): Promise<void>;
@@ -23,7 +24,7 @@ function validDate(value: string, today: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
-export function CompanyResearchModal({ initial, disabled, topicName, topicScope, companyName, companyNote, onClose, onStart }: CompanyResearchModalProps) {
+export function CompanyResearchModal({ initial, mode = "start", disabled, topicName, topicScope, companyName, companyNote, onClose, onStart }: CompanyResearchModalProps) {
   const today = localToday();
   const [direction, setDirection] = useState<ResearchDirection>(initial && RESEARCH_DIRECTIONS.includes(initial.direction) ? initial.direction : "product_and_technology");
   const [focusScope, setFocusScope] = useState(initial?.focusScope && initial.focusScope.length <= 1000 ? initial.focusScope : "");
@@ -43,11 +44,12 @@ export function CompanyResearchModal({ initial, disabled, topicName, topicScope,
       await onStart({ direction, asOfDate, ...(focusScope.trim() ? { focusScope: focusScope.trim() } : {}) });
       onClose();
     } catch {
-      setError("无法开始调研，请稍后重试");
+      setError(mode === "retry" ? "无法重新尝试，请稍后重试" : "无法开始调研，请稍后重试");
       setSubmitting(false);
     }
   };
-  return <Modal title="公司调研" onClose={submitting ? () => undefined : onClose}>
+  const submitLabel = mode === "retry" ? "重新尝试" : "开始调研";
+  return <Modal title={mode === "retry" ? "重新尝试调研" : "公司调研"} onClose={submitting ? () => undefined : onClose}>
     <form className="modal-form" onSubmit={handleSubmit}>
       <dl className="research-context">
         <div><dt>研究主题</dt><dd>{topicName}</dd></div>
@@ -64,7 +66,7 @@ export function CompanyResearchModal({ initial, disabled, topicName, topicScope,
       <label>截至日期<input type="date" value={asOfDate} max={today} required onChange={(event) => setAsOfDate(event.target.value)} /></label>
       <div className="modal-actions">
         <button type="button" disabled={submitting} onClick={onClose}>取消</button>
-        <button className="primary-button" type="submit" disabled={submitting || disabled}>{submitting ? "正在启动…" : "开始调研"}</button>
+        <button className="primary-button" type="submit" disabled={submitting || disabled}>{submitting ? (mode === "retry" ? "正在重新尝试…" : "正在启动…") : submitLabel}</button>
       </div>
     </form>
   </Modal>;

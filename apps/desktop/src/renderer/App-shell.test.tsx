@@ -663,7 +663,7 @@ describe("app three-pane shell", () => {
     const firstLink = await screen.findByRole("link", { name: "https://example.com/one" });
     expect(firstLink.getAttribute("rel")).toContain("noopener");
 
-    await user.click(screen.getByRole("button", { name: "重新调研" }));
+    await user.click(screen.getByRole("button", { name: "新的调研" }));
     expect((screen.getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("关注新品");
     await user.click(within(screen.getByRole("dialog", { name: "公司调研" })).getByRole(
       "button",
