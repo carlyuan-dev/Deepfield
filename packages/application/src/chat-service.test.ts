@@ -4,7 +4,7 @@ import {
   type ChatMessage,
   type ChatRequestOptions,
 } from "@deepfield/contracts";
-import { ChatService, ChatServiceError, WEB_CHAT_POLICY, titleFromFirstMessage } from "./chat-service.js";
+import { ChatService, ChatServiceError, titleFromFirstMessage } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 import {
@@ -23,13 +23,41 @@ afterEach(() => {
   }
 });
 
+async function captureWorkerRequest(options: ChatRequestOptions) {
+  const db = openTestDb();
+  dbs.push(db);
+  const worker = new FakeWorker();
+  const service = new ChatService(
+    db.repos,
+    new ContextBuilder(db.repos),
+    makeSecrets("sk-configured"),
+    worker,
+  );
+  const conversation = makeConversation(db);
+
+  await service.send(conversation.id, "联网问题", "req-web-policy", () => {}, options);
+
+  return worker.requests[0]!;
+}
+
 describe("chat service", () => {
+  it("keeps approved Chat budgets and reserves synthesis", async () => {
+    const request = await captureWorkerRequest({ webSearch: true });
+
+    expect(request.toolAccess).toEqual({
+      network: "enabled",
+      maxAgentTurns: 6,
+      maxSearchCalls: 4,
+      maxFetchCalls: 3,
+    });
+  });
+
   it("snapshots LLM once and Search only for web-enabled messages", async () => {
     const db = openTestDb(); dbs.push(db); const worker = new FakeWorker(); const resolver = makeSecrets("sk-configured");
     const service = new ChatService(db.repos, new ContextBuilder(db.repos), resolver, worker); const conversation = makeConversation(db);
     await service.send(conversation.id, "联网问题", "req-web", () => {}, { webSearch: true });
     expect(resolver.getCalls).toBe(1); expect(resolver.searchCalls).toBe(1);
-    expect(worker.requests[0]).toMatchObject({ toolAccess: WEB_CHAT_POLICY, search: { id: "search-1" }, llm: { id: "llm-1" } });
+    expect(worker.requests[0]).toMatchObject({ search: { id: "search-1" }, llm: { id: "llm-1" } });
   });
   it("rejects blank content before any secret, db or worker access", async () => {
     const db = openTestDb();
