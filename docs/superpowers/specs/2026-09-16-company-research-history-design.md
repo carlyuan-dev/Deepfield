@@ -64,7 +64,7 @@
 新增数据库迁移重建 `company_research_runs` 的状态与失败代码约束：
 
 - `status` 增加 `research_failed`。
-- `last_failure_code` 允许 `structure_failed` 以及原始调研白名单失败代码：`tool_failed`、`model_failed`、`empty_report`、`protocol_leak`、`language_validation_failed`、`incomplete_response`、`protocol_error`、`storage_failed`。
+- `last_failure_code` 允许 `structuring_failed` 以及原始调研白名单失败代码：`tool_failed`、`model_failed`、`empty_report`、`protocol_leak`、`language_validation_failed`、`incomplete_response`、`protocol_error`、`storage_failed`。
 
 `research_failed` 必须满足：无原始报告、无结构化内容、无完成时间、`structuringAttempts=0`、有原始调研失败代码。`structure_failed` 保持：有原始报告、至少一次结构化尝试、失败代码为 `structure_failed`。`completed` 的既有约束不变。
 
