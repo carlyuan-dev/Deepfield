@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { LLM_PROVIDER_PRESETS, type DesktopApi, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView as SettingsData } from "@deepfield/contracts";
+import { DEFAULT_DEEPSEEK_MODEL_ID, LLM_PROVIDER_PRESETS, type DesktopApi, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView as SettingsData } from "@deepfield/contracts";
 
 export interface SettingsViewProps { api: DesktopApi; onKeySaved(): void }
 type Module = "llm" | "search";
 type DiagnosticState = DiagnosticResult | "testing";
-const newLlm = (): LlmProfileDraft => ({ name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: LLM_PROVIDER_PRESETS.deepseek.baseUrl, modelId: "deepseek-v4-flash", contextWindow: 128000 });
+const newLlm = (): LlmProfileDraft => ({ name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: LLM_PROVIDER_PRESETS.deepseek.baseUrl, modelId: DEFAULT_DEEPSEEK_MODEL_ID, contextWindow: 128000 });
 const llmDraft = (p: SettingsData["llm"]["profiles"][number]): LlmProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, protocol: p.protocol, baseUrl: p.baseUrl, modelId: p.modelId, contextWindow: p.contextWindow });
 const searchDraft = (p: SettingsData["search"]["profiles"][number]): SearchProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, baseUrl: p.baseUrl, options: p.options });
 

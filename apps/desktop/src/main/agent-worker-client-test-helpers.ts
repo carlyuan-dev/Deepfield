@@ -58,7 +58,7 @@ export function request(requestId: string): AgentWorkerRequest {
       provider: "deepseek",
       protocol: "openai_compatible",
       baseUrl: "https://api.deepseek.com",
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-flash",
       contextWindow: 128_000,
       apiKey: "sk-test-key",
     },

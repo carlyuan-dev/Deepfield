@@ -12,7 +12,7 @@ function request(): AgentWorkerRequest {
     prompt: "当前问题",
     context: { conversationId: "c1", systemPrompt: "sys", messages: [] },
     options: { webSearch: false },
-    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: "sk-fake-secret" },
+    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128000, apiKey: "sk-fake-secret" },
     toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
   };
 }

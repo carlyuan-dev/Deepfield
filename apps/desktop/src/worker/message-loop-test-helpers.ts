@@ -39,7 +39,7 @@ export function request(requestId = "req-1"): AgentWorkerRequest {
     prompt: "你好",
     context: { conversationId: "c1", systemPrompt: "sys", messages: [] },
     options: { webSearch: false },
-    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: "sk-test-key" },
+    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128000, apiKey: "sk-test-key" },
     toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
   };
 }

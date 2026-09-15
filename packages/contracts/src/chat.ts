@@ -3,7 +3,7 @@ import type { ConversationId, MessageId } from "./ids.js";
 import type { Conversation } from "./conversations.js";
 import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "./settings.js";
 
-export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-v4-flash" as const;
+export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-flash" as const;
 
 export const AgentContextMessageSchema = Type.Object(
   {

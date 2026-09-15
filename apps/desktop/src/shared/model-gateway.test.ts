@@ -53,8 +53,8 @@ describe.each(["agent stream", "completeText"] as const)("PiModelGateway %s requ
   }
 
   it.each([
-    ["deepseek-v4-flash", "https://api.deepseek.com"],
-    ["deepseek-v4-flash", "https://llm-proxy.example.test/v1"],
+    ["deepseek-flash", "https://api.deepseek.com"],
+    ["deepseek-flash", "https://llm-proxy.example.test/v1"],
     ["deepseek-future-model", "https://llm-proxy.example.test/v1"],
   ])("explicitly disables DeepSeek thinking for %s at %s without increasing the token cap", async (modelId, baseUrl) => {
     const input: LlmRuntimeSnapshot = {
@@ -77,7 +77,7 @@ describe.each(["agent stream", "completeText"] as const)("PiModelGateway %s requ
 
   it.each(["openai", "qwen", "custom"] as const)("does not send DeepSeek thinking parameters for the %s provider", async (provider) => {
     const input: LlmRuntimeSnapshot = {
-      ...snapshot("openai_compatible"), provider, modelId: "deepseek-v4-flash", baseUrl: "https://api.deepseek.com",
+      ...snapshot("openai_compatible"), provider, modelId: "deepseek-flash", baseUrl: "https://api.deepseek.com",
     };
     const requests = captureCompletionRequests(input.modelId);
 

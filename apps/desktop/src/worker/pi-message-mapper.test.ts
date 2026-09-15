@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mapHistoryMessages } from "./pi-message-mapper.js";
 import type { AssistantMessage, Message, UserMessage } from "@earendil-works/pi-ai";
 
-const model = { id: "deepseek-v4-flash", api: "openai-completions", provider: "deepseek" };
+const model = { id: "deepseek-flash", api: "openai-completions", provider: "deepseek" };
 
 describe("pi message mapper", () => {
   it("maps user history to a UserMessage", () => {
@@ -23,7 +23,7 @@ describe("pi message mapper", () => {
       role: "assistant",
       api: "openai-completions",
       provider: "deepseek",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       stopReason: "stop",
       timestamp: 1700000001000,
     });

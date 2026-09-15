@@ -61,7 +61,7 @@ describe("pi chat agent lifecycle", () => {
     expect(messages[1]).toMatchObject({
       role: "assistant",
       stopReason: "stop",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       timestamp: 2,
     });
     const assistantMessage = messages[1] as unknown as AssistantMessage;

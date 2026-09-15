@@ -54,7 +54,7 @@ export function makeSecrets(key: string | undefined): RuntimeProfileResolver & {
     resolveActiveLlm: async (): Promise<LlmRuntimeSnapshot> => {
       reader.getCalls += 1;
       if (!key?.trim()) throw new Error("missing");
-      return { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: key };
+      return { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128000, apiKey: key };
     },
     resolveActiveSearch: async (): Promise<SearchRuntimeSnapshot> => { reader.searchCalls += 1; return { id: "search-1", name: "Search", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: { searchEngine: "search_std" }, apiKey: "search-key" }; },
   };

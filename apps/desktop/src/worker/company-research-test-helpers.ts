@@ -6,7 +6,7 @@ import {
 export function rawResearchRequest(): CompanyResearchRawWorkerRequest {
   return {
     requestId: "research-1", runId: "run-1", kind: "company-research.raw.run", stage: "raw",
-    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: "sk-secret-research-key" },
+    llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128000, apiKey: "sk-secret-research-key" },
     search: { id: "search-1", name: "Search", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: { searchEngine: "search_std" }, apiKey: "search-key" },
     toolAccess: { network: "enabled", maxAgentTurns: 12, maxSearchCalls: 8, maxFetchCalls: 8 },
     context: {

@@ -288,7 +288,7 @@ describe("application runtime composition", () => {
     expect(messages).toHaveLength(2);
     expect(messages[1]).toMatchObject({ role: "assistant", content: "运行结果" });
     expect(requests[0] && runtime.chatService).toBeDefined();
-    expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-v4-flash");
+    expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-flash");
   });
 
   it("exposes conversation create, openInitial and listRecent", () => {

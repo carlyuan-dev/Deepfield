@@ -36,7 +36,7 @@ export function assistant(
     content: [{ type: "text", text }],
     api: "openai-completions",
     provider: "deepseek",
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     usage: zeroUsage(),
     stopReason: "stop",
     timestamp: 1000,
@@ -80,7 +80,7 @@ export function thinkingDelta(): AgentEvent {
 }
 
 export const stubModel = {
-  id: "deepseek-v4-flash",
+  id: "deepseek-flash",
   api: "openai-completions",
   provider: "deepfield-llm-1",
 } as unknown as Model<Api>;
@@ -232,7 +232,7 @@ export function request(options?: ChatRequestOptions): AgentWorkerRequest {
       ],
     },
     options: chatOptions,
-    llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, apiKey: "sk-secret-test-key" },
+    llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128000, apiKey: "sk-secret-test-key" },
     ...(chatOptions.webSearch ? { search: { id: "search-1", name: "Search", provider: "zhipu" as const, baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: { searchEngine: "search_std" }, apiKey: "search-secret" } } : {}),
     toolAccess: chatOptions.webSearch ? { network: "enabled", maxAgentTurns: 6, maxSearchCalls: 4, maxFetchCalls: 3 } : { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
   };

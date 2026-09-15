@@ -34,6 +34,18 @@ const multiProfileSettings = {
 };
 
 describe("SettingsView", () => {
+  it("uses deepseek-flash when creating and testing a new LLM profile", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
+    api.settings.diagnoseLlm.mockResolvedValue({ ok: true, latencyMs: 1, summary: "OK" });
+    render(<SettingsView api={api} onKeySaved={() => {}} />);
+    await screen.findByDisplayValue("主模型");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "＋ 新建 Profile" }));
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(api.settings.diagnoseLlm).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "deepseek", modelId: "deepseek-flash",
+    }));
+  });
   it("renders editable LLM fields, saved-key state, and manifest-driven Search fields", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
     render(<SettingsView api={api} onKeySaved={() => {}} />);

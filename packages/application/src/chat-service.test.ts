@@ -157,7 +157,7 @@ describe("chat service", () => {
       requestId: "req-1",
       kind: "chat.prompt",
       prompt: content,
-      llm: expect.objectContaining({ modelId: "deepseek-v4-flash", apiKey: "sk-configured" }),
+      llm: expect.objectContaining({ modelId: "deepseek-flash", apiKey: "sk-configured" }),
       toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
       options: skillOptions,
     });

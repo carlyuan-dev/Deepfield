@@ -25,7 +25,7 @@ const chatRequest = {
   prompt: "你好",
   context: { conversationId: "c1", systemPrompt: "sys", messages: [] },
   options: { webSearch: false },
-  llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
+  llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
   toolAccess: { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 },
 };
 
@@ -49,7 +49,7 @@ const auditStartPayload = {
 
 const researchRequest = {
   requestId: "research-1", kind: "company-research.raw.run", runId: "run-1", stage: "raw",
-  llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
+  llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
   search: { id: "search-1", name: "Zhipu", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: {}, apiKey: "search-test-key" },
   toolAccess: { network: "enabled", maxAgentTurns: 12, maxSearchCalls: 8, maxFetchCalls: 8 },
   context: { currentDate: "2026-09-11", companyName: "小米", topicName: "电池", direction: "product_and_technology", asOfDate: "2026-09-11" },

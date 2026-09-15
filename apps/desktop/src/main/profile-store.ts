@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { LlmProfileDraftSchema, LlmProtocolSchema, LlmProviderPresetIdSchema, SearchProfileDraftSchema, SearchProviderIdSchema, type LlmProfileDraft, type LlmProfileView, type LlmRuntimeSnapshot, type SearchProfileDraft, type SearchProfileView, type SearchProviderManifest, type SearchRuntimeSnapshot, type SettingsView } from "@deepfield/contracts";
+import { DEFAULT_DEEPSEEK_MODEL_ID, LlmProfileDraftSchema, LlmProtocolSchema, LlmProviderPresetIdSchema, SearchProfileDraftSchema, SearchProviderIdSchema, type LlmProfileDraft, type LlmProfileView, type LlmRuntimeSnapshot, type SearchProfileDraft, type SearchProfileView, type SearchProviderManifest, type SearchRuntimeSnapshot, type SettingsView } from "@deepfield/contracts";
 
 interface Secrets { has(name: string): boolean; get(name: string): string | undefined; set(name: string, value: string): void; delete(name: string): void }
 interface StoredLlm extends Omit<LlmProfileView, "hasCredential"> { credentialRef: string }
@@ -54,9 +54,17 @@ export class ProfileStore {
       catch { throw new ProfileStoreError("settings are corrupted"); }
       if (!Value.Check(StoredSettingsSchema, parsed)) throw new ProfileStoreError("settings are corrupted");
       this.settings = parsed;
+      let migrated = false;
+      for (const profile of this.settings.llm.profiles) {
+        if (profile.provider === "deepseek" && profile.protocol === "openai_compatible" && profile.modelId === "deepseek-v4-flash") {
+          profile.modelId = DEFAULT_DEEPSEEK_MODEL_ID;
+          migrated = true;
+        }
+      }
+      if (migrated) this.write();
     }
     if (this.settings.llm.profiles.length === 0 && this.secrets.has("deepseek.apiKey")) {
-      const id = randomUUID(); this.settings.llm.profiles.push({ id, name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash", contextWindow: 128000, credentialRef: "deepseek.apiKey" }); this.settings.llm.activeProfileId = id; this.write();
+      const id = randomUUID(); this.settings.llm.profiles.push({ id, name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: DEFAULT_DEEPSEEK_MODEL_ID, contextWindow: 128000, credentialRef: "deepseek.apiKey" }); this.settings.llm.activeProfileId = id; this.write();
     }
     this.initialized = true;
   }

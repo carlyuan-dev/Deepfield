@@ -113,7 +113,7 @@ describe("worker message loop", () => {
         messages: [{ role: "user", content: "x" }],
       },
       apiKey: "sk-secret-api-key",
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-flash",
     });
     expect(endpoint.posted).toHaveLength(1);
     const posted = endpoint.posted[0] as AgentWorkerEvent;

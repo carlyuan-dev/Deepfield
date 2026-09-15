@@ -190,7 +190,7 @@ describe("agent worker request schema", () => {
   });
 
   it("exports the fixed deepseek model id", () => {
-    expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-v4-flash");
+    expect(DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-flash");
   });
 
   it("accepts configured model ids and rejects malformed model snapshots", () => {
