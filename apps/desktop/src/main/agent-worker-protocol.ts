@@ -1,5 +1,6 @@
 import type {
   AgentWorkerEvent,
+  CompanyProfileWorkerEvent,
   CompanyResearchWorkerEvent,
   CompanyResearchStage,
   ToolEventEnvelope,
@@ -58,10 +59,11 @@ export class ToolTransportTombstones {
   }
 }
 
-export type StreamEvent = AgentWorkerEvent | CompanyResearchWorkerEvent | ToolExecutionEvent;
+export type StreamEvent = AgentWorkerEvent | CompanyResearchWorkerEvent | ToolExecutionEvent | CompanyProfileWorkerEvent;
 
 export interface PendingStream {
-  kind: "chat" | "research" | "tool";
+  kind: "chat" | "research" | "tool" | "profile";
+  companyId?: string;
   id: string;
   runId?: string;
   stage?: CompanyResearchStage;

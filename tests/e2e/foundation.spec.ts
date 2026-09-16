@@ -173,3 +173,82 @@ test("agent-first chat and industry research main path survive a restart", async
     rmSync(userDataRoot, { recursive: true, force: true });
   }
 });
+
+test("research navigation stays visible while only its content scrolls", async () => {
+  const userDataRoot = mkdtempSync(join(tmpdir(), "deepfield-navigation-"));
+  let running: RunningApp | undefined;
+  try {
+    running = await launchApp(userDataRoot);
+    const { page } = running;
+    await page.setViewportSize({ width: 760, height: 420 });
+    await expect(page.getByLabel("消息输入")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "研究主题" }).click();
+
+    await page.getByRole("button", { name: "新建主题" }).click();
+    const closeBox = await page.getByRole("button", { name: "关闭 Capability" }).boundingBox();
+    expect(closeBox).not.toBeNull();
+    const coveringElement = await page.evaluate(({ x, y }) => {
+      const element = document.elementFromPoint(x, y);
+      return element?.closest(".modal-backdrop")?.className ?? null;
+    }, { x: closeBox!.x + closeBox!.width / 2, y: closeBox!.y + closeBox!.height / 2 });
+    expect(coveringElement).toContain("modal-backdrop");
+
+    const longTopic = "超长研究主题名称".repeat(10);
+    const dialog = page.getByRole("dialog", { name: "新建主题" });
+    await dialog.getByLabel("主题名称").fill(longTopic);
+    await dialog.getByRole("button", { name: "创建", exact: true }).click();
+    await expect(page.getByRole("heading", { name: longTopic })).toBeVisible();
+    await expect(page.getByRole("button", { name: /返回调研列表/ })).toBeVisible();
+
+    const before = await page.evaluate(() => {
+      const pane = document.querySelector<HTMLElement>(".capability-pane")!;
+      const header = document.querySelector<HTMLElement>(".capability-header")!;
+      const contextual = document.querySelector<HTMLElement>(".capability-contextual-navigation")!;
+      const body = document.querySelector<HTMLElement>(".capability-body")!;
+      const inner = document.querySelector<HTMLElement>(".capability-body-inner")!;
+      const spacer = document.createElement("div");
+      spacer.style.height = "1400px";
+      spacer.setAttribute("data-layout-spacer", "true");
+      inner.append(spacer);
+      const breadcrumb = document.querySelector<HTMLElement>(".breadcrumb")!;
+      const close = document.querySelector<HTMLElement>(".capability-close")!;
+      const paneRect = pane.getBoundingClientRect();
+      const breadcrumbRect = breadcrumb.getBoundingClientRect();
+      const closeRect = close.getBoundingClientRect();
+      return {
+        headerTop: header.getBoundingClientRect().top,
+        contextualTop: contextual.getBoundingClientRect().top,
+        paneScrollHeight: pane.scrollHeight,
+        paneClientHeight: pane.clientHeight,
+        bodyScrollHeight: body.scrollHeight,
+        bodyClientHeight: body.clientHeight,
+        breadcrumbRight: breadcrumbRect.right,
+        closeLeft: closeRect.left,
+        closeRight: closeRect.right,
+        paneRight: paneRect.right,
+      };
+    });
+    expect(before.paneScrollHeight).toBe(before.paneClientHeight);
+    expect(before.bodyScrollHeight).toBeGreaterThan(before.bodyClientHeight);
+    expect(before.breadcrumbRight).toBeLessThanOrEqual(before.closeLeft);
+    expect(before.closeRight).toBeLessThanOrEqual(before.paneRight);
+
+    await page.locator(".capability-body").evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const after = await page.evaluate(() => ({
+      headerTop: document.querySelector<HTMLElement>(".capability-header")!.getBoundingClientRect().top,
+      contextualTop: document.querySelector<HTMLElement>(".capability-contextual-navigation")!.getBoundingClientRect().top,
+      bodyScrollTop: document.querySelector<HTMLElement>(".capability-body")!.scrollTop,
+    }));
+    expect(after.bodyScrollTop).toBeGreaterThan(0);
+    expect(after.headerTop).toBe(before.headerTop);
+    expect(after.contextualTop).toBe(before.contextualTop);
+    await expect(page.getByRole("button", { name: "关闭 Capability" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /返回调研列表/ })).toBeVisible();
+
+  } finally {
+    if (running !== undefined) await running.app.close();
+    rmSync(userDataRoot, { recursive: true, force: true });
+  }
+});

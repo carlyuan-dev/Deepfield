@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { CompanyResearchEvent, CompanyResearchState, DesktopApi, ResearchRun, StartCompanyResearchInput } from "@deepfield/contracts";
+import { researchRetryMode, type CompanyResearchEvent, type CompanyResearchState, type DesktopApi, type ResearchRun, type StartCompanyResearchInput } from "@deepfield/contracts";
+import { assertResearchReady } from "../settings/research-readiness.js";
+
+import { researchActionError } from "./research-error-presentation.js";
 
 const EMPTY_STATE: CompanyResearchState = { runs: [], globalActiveRun: null };
+export type ResearchViewError =
+  | { kind: "state-load" | "detail-load" | "action" | "execution"; message: string }
+  | { kind: "configuration"; message: string; settingsModule: "llm" | "search" };
 interface View {
   state: CompanyResearchState;
   selectedRunId: string | undefined;
@@ -10,7 +16,7 @@ interface View {
   loading: boolean;
   detailLoading: boolean;
   pending: boolean;
-  error: string | undefined;
+  error: ResearchViewError | undefined;
 }
 const EMPTY_VIEW: View = { state: EMPTY_STATE, selectedRunId: undefined, selectedRun: undefined, streamedRaw: undefined, loading: true, detailLoading: false, pending: false, error: undefined };
 const RESEARCH_FAILURE_MESSAGES: Record<string, string> = {
@@ -65,12 +71,12 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         const run = await api.companyResearch.getRun(itemId, companyId, id);
         if (!alive || ticket !== detailTicket) return;
         if (!run || run.id !== id || run.itemId !== itemId || run.companyId !== companyId) {
-          publish({ selectedRun: undefined, error: "加载调研报告失败，请重试" });
+          publish({ selectedRun: undefined, error: { kind: "detail-load", message: "加载调研报告失败，请重试" } });
         } else {
-          publish({ selectedRun: run });
+          publish({ selectedRun: run, error: current.error?.kind === "detail-load" ? undefined : current.error });
         }
       } catch {
-        if (alive && ticket === detailTicket) publish({ error: "加载调研报告失败，请重试" });
+        if (alive && ticket === detailTicket) publish({ error: { kind: "detail-load", message: "加载调研报告失败，请重试" } });
       } finally {
         if (alive && ticket === detailTicket) publish({ detailLoading: false });
       }
@@ -99,7 +105,10 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
             const streamedRaw = previousActive?.id === selectedRunId && previousActive?.status === "researching"
               ? { runId: previousActive.id, text: current.state.active!.draftText }
               : current.streamedRaw?.runId === selectedRunId ? current.streamedRaw : undefined;
-            publish({ state: snapshot, selectedRunId, selectedRun: retained, streamedRaw, loading: false });
+            publish({
+              state: snapshot, selectedRunId, selectedRun: retained, streamedRaw, loading: false,
+              error: current.error?.kind === "state-load" ? undefined : current.error,
+            });
             if (snapshot.active?.run.status === "researching") {
               ++detailTicket;
               publish({ selectedRun: undefined, detailLoading: false });
@@ -110,7 +119,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           } catch {
             if (!alive) return false;
             if (requestedRevision !== revision) continue;
-            publish({ loading: false, error: "加载调研状态失败，请重试" });
+            publish({ loading: false, error: { kind: "state-load", message: "加载调研状态失败，请重试" } });
             return false;
           }
         }
@@ -126,7 +135,8 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         // Occupancy is global, including events for other targets.
         if (event.itemId === itemId && event.companyId === companyId) {
           ++detailTicket;
-          if (event.outcome && event.outcome !== "cancelled") publish({ error: RESEARCH_FAILURE_MESSAGES[event.outcome] ?? RESEARCH_FAILURE_MESSAGES.research_failed });
+          if (event.outcome && event.outcome !== "cancelled") publish({ error: { kind: "execution", message: RESEARCH_FAILURE_MESSAGES[event.outcome] ?? "调研未完成，请稍后重试" } });
+          else if (current.error?.kind === "execution") publish({ error: undefined });
         }
         void refresh();
       } else if (event.type === "tool_activity" && event.stage === "raw") {
@@ -155,6 +165,8 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         if (!alive || current.pending) return;
         publish({ pending: true, error: undefined });
         try {
+          await assertResearchReady(api, { search: true });
+          if (!alive) return;
           const started = await api.companyResearch.start(itemId, companyId, input);
           if (!alive) return;
           // A fast run can finish before any active snapshot is observed.
@@ -165,9 +177,14 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           }
           ++revision;
           await refresh();
-        } catch {
-          if (alive) publish({ error: "无法开始调研，请稍后重试" });
-          throw new Error("无法开始调研，请稍后重试");
+        } catch (error) {
+          if (alive) {
+            const presentation = researchActionError(error, "start");
+            publish({ error: presentation.settingsModule
+              ? { kind: "configuration", message: presentation.message, settingsModule: presentation.settingsModule }
+              : { kind: "action", message: presentation.message } });
+          }
+          throw error;
         } finally { publish({ pending: false }); }
       },
       async cancel() {
@@ -180,23 +197,28 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           ++revision;
           await refresh();
         } catch {
-          publish({ error: "取消调研失败，请重试" });
+          publish({ error: { kind: "action", message: "取消调研失败，请重试" } });
         } finally { publish({ pending: false }); }
       },
       async retry(input) {
         const run = current.state.runs.find((entry) => entry.id === current.selectedRunId);
-        if (!alive || current.pending || current.state.globalActiveRun || (run?.status !== "research_failed" && run?.status !== "structure_failed")) return;
+        if (!alive || current.pending || current.state.globalActiveRun || !run || researchRetryMode(run, input) === "unavailable") return;
         publish({ pending: true, error: undefined });
         try {
+          await assertResearchReady(api, { search: researchRetryMode(run, input) === "raw" });
+          if (!alive) return;
           await api.companyResearch.retryFailed(itemId, companyId, run.id, input);
           if (!alive) return;
           ++detailTicket;
           publish({ selectedRunId: run.id });
           ++revision;
           await refresh();
-        } catch {
-          publish({ error: "无法重新尝试，请稍后重试" });
-          throw new Error("无法重新尝试，请稍后重试");
+        } catch (error) {
+          const presentation = researchActionError(error, "retry");
+          publish({ error: presentation.settingsModule
+            ? { kind: "configuration", message: presentation.message, settingsModule: presentation.settingsModule }
+            : { kind: "action", message: presentation.message } });
+          throw error;
         }
         finally { publish({ pending: false }); }
       },
@@ -229,14 +251,26 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           publish({ selectedRunId: next?.id, selectedRun: retained, streamedRaw: undefined, error: undefined });
           if (!retained) await loadDetail(next?.id);
         } catch {
-          publish({ error: "删除调研报告失败，请重试" });
+          publish({ error: { kind: "action", message: "删除调研报告失败，请重试" } });
           throw new Error("删除调研报告失败，请重试");
         } finally { publish({ pending: false }); }
       },
-      reload() { publish({ error: undefined }); ++revision; void refresh(); },
+      reload() {
+        if (current.error?.kind === "detail-load") {
+          publish({ error: undefined });
+          void loadDetail(current.selectedRunId);
+        } else if (current.error?.kind === "state-load") {
+          publish({ error: undefined });
+          ++revision;
+          void refresh();
+        }
+      },
       selectRun(id) {
         if (current.state.active || !current.state.runs.some((run) => run.id === id)) return;
-        publish({ selectedRunId: id, selectedRun: undefined, streamedRaw: undefined, error: undefined });
+        publish({
+          selectedRunId: id, selectedRun: undefined, streamedRaw: undefined,
+          error: current.error?.kind === "detail-load" || current.error?.kind === "execution" ? undefined : current.error,
+        });
         void loadDetail(id);
       },
     };

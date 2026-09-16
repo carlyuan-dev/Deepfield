@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCompanyResearchTemplate } from "@deepfield/contracts";
+import { profileResult } from "../../application/src/company-profile-test-fixtures.js";
 import { createRepositories, migrate, openDatabase } from "./index.js";
 
 const cleanups: Array<() => void> = [];
@@ -148,6 +149,55 @@ describe("Capability A persistence", () => {
     expect(repos.companies.setProfileStatus(first.id, "failed")?.profileStatus).toBe("failed");
   });
 
+  it("atomically saves an identity hint on a failed profile without changing company facts", () => {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    cleanups.push(() => db.close());
+    const repos = createRepositories(db);
+    const company = repos.companies.upsert({ name: "三星" });
+    repos.companies.update(company.id, { name: company.name, headquarters: "手工地点" });
+    db.prepare("UPDATE companies SET profile_status = 'enriching' WHERE id = ?").run(company.id);
+    repos.companies.completeProfile(company.id, {}, { ...profileResult({}),
+      identity: { disposition: "ambiguous", reason: "检索到多个同名主体", sources: [{ url: "https://example.com", kind: "search_snippet" }] },
+      fields: {}, fieldEvidence: {},
+    });
+
+    const confirmed = repos.companies.confirmProfileIdentity(company.id, {
+      name: "三星电子株式会社",
+      officialWebsite: "https://www.samsung.com/",
+    });
+
+    expect(confirmed).toMatchObject({
+      id: company.id,
+      name: "三星",
+      headquarters: "手工地点",
+      profileStatus: "pending",
+      profileIdentityHint: { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" },
+    });
+    expect(confirmed?.legalName).toBeUndefined();
+    expect(confirmed?.officialWebsite).toBeUndefined();
+    expect(confirmed?.profileIssue).toBeUndefined();
+    expect(confirmed?.profileProvenance).toBeUndefined();
+  });
+
+  it("rejects confirmation for missing, ready, or running companies and preserves a saved hint after failure", () => {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    cleanups.push(() => db.close());
+    const repos = createRepositories(db);
+    const company = repos.companies.upsert({ name: "摩托罗拉" });
+    repos.companies.setProfileStatus(company.id, "failed", { code: "EXTERNAL.TIMEOUT", category: "external" });
+    expect(repos.companies.confirmProfileIdentity(company.id, { name: "Motorola Mobility LLC" })?.profileStatus).toBe("pending");
+    repos.companies.setProfileStatus(company.id, "enriching");
+    expect(repos.companies.confirmProfileIdentity(company.id, { name: "运行中不可覆盖" })).toBeUndefined();
+    repos.companies.setProfileStatus(company.id, "failed", { code: "EXTERNAL.TIMEOUT", category: "external" });
+    expect(repos.companies.getById(company.id)?.profileIdentityHint).toEqual({ name: "Motorola Mobility LLC" });
+    expect(repos.companies.confirmProfileIdentity(company.id, { name: "另一主体" })?.profileStatus).toBe("pending");
+    repos.companies.update(company.id, { name: company.name });
+    expect(repos.companies.confirmProfileIdentity(company.id, { name: "不可覆盖" })).toBeUndefined();
+    expect(repos.companies.confirmProfileIdentity("missing" as never, { name: "不存在" })).toBeUndefined();
+  });
+
   it("rejects a profile rename that conflicts with another normalized name", () => {
     const db = openDatabase(":memory:");
     migrate(db);
@@ -207,6 +257,7 @@ describe("Capability A persistence", () => {
     db.exec(`
       CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
       INSERT INTO schema_migrations VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,'');
+      CREATE TABLE companies(id TEXT PRIMARY KEY);
       CREATE TABLE capability_item_companies(item_id TEXT, company_id TEXT, PRIMARY KEY(item_id, company_id));
       INSERT INTO capability_item_companies VALUES ('item', 'company');
       CREATE TABLE company_research_runs(
@@ -228,7 +279,7 @@ describe("Capability A persistence", () => {
     migrate(db);
     const repo = createRepositories(db).companyResearchRuns;
     expect(repo.getByIdForTarget("item" as never, "company" as never, "old" as never)).toMatchObject({
-      schemaVersion: "legacy-freeform-v1", status: "completed", reportText: "旧报告",
+      schemaVersion: "legacy-freeform-v1", status: "completed", searchStatus: "unknown", reportText: "旧报告",
       timeScope: "近一年", customRequirements: "原要求", createdAt: "2026-01-01", completedAt: "2026-01-02",
     });
     expect(repo.getByIdForTarget("item" as never, "company" as never, "large" as never)).toHaveProperty("reportText", hugeReport);
@@ -239,7 +290,7 @@ describe("Capability A persistence", () => {
     expect(repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 0 });
     expect(repo.listRuns("item" as never, "company" as never)).toEqual(summaries);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 13 });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 17 });
     db.prepare("DELETE FROM capability_item_companies WHERE item_id = 'item' AND company_id = 'company'").run();
     expect(repo.listRuns("item" as never, "company" as never)).toEqual([]);
   });

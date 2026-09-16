@@ -173,25 +173,26 @@ describe("migration 2", () => {
 describe("migration 10", () => {
   it("preserves legacy executions with unknown consumption while adding batch scope", () => {
     const { db, cleanup } = openRaw();
-    migrate(db);
-    db.prepare(
-      "INSERT INTO tool_executions(id, trace_id, actor, tool_name, tool_version, status, attempts, retries, bytes_received, result_count, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(
-      "legacy-exec",
-      "legacy-trace",
-      "main_agent",
-      "web_search",
-      1,
-      "completed",
-      1,
-      0,
-      0,
-      0,
-      ISO,
-      ISO,
-    );
+    // Build the relevant v9 schema directly so later migrations start from
+    // historical tables rather than a partially downgraded current database.
     db.exec(`
-      CREATE TABLE tool_executions_v9(
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_migrations VALUES
+        (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,'');
+      CREATE TABLE companies(id TEXT PRIMARY KEY);
+      CREATE TABLE capability_item_companies(item_id TEXT, company_id TEXT, PRIMARY KEY(item_id, company_id));
+      CREATE TABLE company_research_runs(
+        id TEXT PRIMARY KEY, item_id TEXT NOT NULL, company_id TEXT NOT NULL,
+        schema_version TEXT NOT NULL, status TEXT NOT NULL,
+        research_direction TEXT, focus_scope TEXT, as_of_date TEXT,
+        research_context_json TEXT, template_id TEXT, template_version INTEGER,
+        template_snapshot_json TEXT, harness_version INTEGER,
+        raw_report_text TEXT, raw_completed_at TEXT, structured_content_json TEXT,
+        structuring_attempts INTEGER NOT NULL DEFAULT 0, last_failure_code TEXT,
+        legacy_time_scope TEXT, legacy_custom_requirements TEXT, legacy_report_text TEXT,
+        created_at TEXT NOT NULL, completed_at TEXT
+      );
+      CREATE TABLE tool_executions(
         id TEXT PRIMARY KEY,
         trace_id TEXT NOT NULL,
         project_id TEXT,
@@ -210,22 +211,26 @@ describe("migration 10", () => {
         finished_at TEXT,
         duration_ms INTEGER
       );
-      INSERT INTO tool_executions_v9(
-        id, trace_id, project_id, actor, tool_name, tool_version, status,
-        input_summary_json, output_summary_json, error_code, attempts, retries,
-        bytes_received, result_count, started_at, finished_at, duration_ms
-      )
-      SELECT
-        id, trace_id, project_id, actor, tool_name, tool_version, status,
-        input_summary_json, output_summary_json, error_code, attempts, retries,
-        bytes_received, result_count, started_at, finished_at, duration_ms
-      FROM tool_executions;
-      DROP TABLE tool_executions;
-      ALTER TABLE tool_executions_v9 RENAME TO tool_executions;
-      DROP TABLE company_research_model_diagnostics;
-      DELETE FROM schema_migrations WHERE version >= 10;
+      CREATE INDEX idx_tool_executions_trace_id ON tool_executions(trace_id);
+      CREATE INDEX idx_tool_executions_project_id ON tool_executions(project_id);
+      CREATE INDEX idx_tool_executions_started_at_id ON tool_executions(started_at, id);
     `);
-
+    db.prepare(
+      "INSERT INTO tool_executions(id, trace_id, actor, tool_name, tool_version, status, attempts, retries, bytes_received, result_count, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "legacy-exec",
+      "legacy-trace",
+      "main_agent",
+      "web_search",
+      1,
+      "completed",
+      1,
+      0,
+      0,
+      0,
+      ISO,
+      ISO,
+    );
     migrate(db);
 
     const row = db.prepare(

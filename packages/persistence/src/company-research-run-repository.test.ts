@@ -45,6 +45,53 @@ function fixture() {
 }
 
 describe("company research run repository", () => {
+  it("migration 14 leaves prior reports unknown without guessing from report links", () => {
+    const f = fixture(); const run = f.create();
+    f.repo.completeRaw(run.id, rawText); f.repo.completeStructured(run.id, content);
+    f.db.exec("ALTER TABLE company_research_runs DROP COLUMN search_status; DELETE FROM schema_migrations WHERE version = 14;");
+    migrate(f.db);
+    const historical = f.repo.getByIdForTarget(f.item.id, f.company.id, run.id);
+    expect(historical).toMatchObject({ status: "completed", searchStatus: "unknown", rawReportText: rawText });
+    expect(f.repo.listRuns(f.item.id, f.company.id)[0]).toMatchObject({ searchStatus: "unknown" });
+    expect(() => f.repo.retryResearching(run.id, input, context, template, "2026-09-16T00:00:00.000Z")).toThrow("state transition rejected");
+    migrate(f.db);
+    expect(f.repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toEqual(historical);
+  });
+
+  it("durably preserves search success through reopen and abandoned recovery", () => {
+    const f = fixture();
+    const run = f.create();
+    expect(run).toMatchObject({ searchStatus: "none" });
+    f.repo.markSearchSucceeded(run.id);
+    f.repo.markSearchSucceeded(run.id);
+    f.db.close();
+    const reopened = openDatabase(f.path);
+    cleanups.push(() => reopened.close());
+    const repo = createRepositories(reopened).companyResearchRuns;
+    expect(repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toMatchObject({ searchStatus: "succeeded" });
+    repo.recoverAbandoned();
+    expect(repo.getByIdForTarget(f.item.id, f.company.id, run.id)).toMatchObject({ status: "research_failed", searchStatus: "succeeded" });
+    expect(() => repo.markSearchSucceeded(run.id)).toThrow("state transition rejected");
+    expect(repo.retryResearching(run.id, input, context, template, "2026-09-16T00:00:00.000Z")).toMatchObject({ searchStatus: "none" });
+  });
+
+  it("preserves successful search through structure retry and rejects rewriting successful completed reports", () => {
+    const f = fixture(); const run = f.create();
+    f.repo.markSearchSucceeded(run.id);
+    f.repo.completeRaw(run.id, rawText);
+    expect(() => f.repo.markSearchSucceeded(run.id)).toThrow("state transition rejected");
+    f.repo.failStructuring(run.id);
+    expect(f.repo.retryStructuring(run.id)).toMatchObject({ searchStatus: "succeeded" });
+    f.repo.completeStructured(run.id, content);
+    expect(() => f.repo.retryResearching(run.id, input, context, template, "2026-09-16T00:00:00.000Z")).toThrow("state transition rejected");
+  });
+
+  it("allows full retry only for completed reports with known no search success", () => {
+    const f = fixture(); const run = f.create();
+    f.repo.completeRaw(run.id, rawText); f.repo.completeStructured(run.id, content);
+    expect(f.repo.retryResearching(run.id, input, context, template, "2026-09-16T00:00:00.000Z")).toMatchObject({ id: run.id, status: "researching", searchStatus: "none" });
+  });
+
   it("stores detached context and template snapshots before raw output, across reopen", () => {
     const f = fixture();
     const supplied = structuredClone(context);

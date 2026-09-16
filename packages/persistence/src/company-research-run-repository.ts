@@ -66,6 +66,7 @@ function toResearchRun(row: CompanyResearchRunRow): ResearchRun {
     const identity = {
       id: row.id, itemId: row.item_id, companyId: row.company_id,
       schemaVersion: row.schema_version, status: row.status, createdAt: row.created_at,
+      searchStatus: row.search_status,
       ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
     };
     if (row.schema_version === "legacy-freeform-v1") {
@@ -145,14 +146,15 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
       SET status = ?, research_direction = ?, focus_scope = ?, as_of_date = ?, research_context_json = ?,
         template_id = ?, template_version = ?, template_snapshot_json = ?, harness_version = ?,
         raw_report_text = ?, raw_completed_at = ?, structured_content_json = ?, structuring_attempts = ?,
-        last_failure_code = ?, created_at = ?, completed_at = ?
+        last_failure_code = ?, created_at = ?, completed_at = ?, search_status = ?
       WHERE id = ? AND status = ?
     `).run(
       next.status, next.direction, next.focusScope ?? null, next.asOfDate, JSON.stringify(next.researchContext),
       next.template.templateId, next.template.templateVersion, JSON.stringify(next.template), next.harnessVersion,
       next.rawReportText ?? null, next.rawCompletedAt ?? null,
       next.structuredContent === undefined ? null : JSON.stringify(next.structuredContent),
-      next.structuringAttempts, next.lastFailureCode ?? null, next.createdAt, next.completedAt ?? null, runId, from,
+      next.structuringAttempts, next.lastFailureCode ?? null, next.createdAt, next.completedAt ?? null,
+      next.searchStatus ?? "unknown", runId, from,
     );
     if (result.changes === 0) throw new Error("research run state transition rejected");
     return structuredClone(next);
@@ -165,7 +167,7 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
       }
       const run: KeyResearchRun = {
         id: randomUUID() as ResearchRunId, itemId, companyId,
-        schemaVersion: "company-research-report-v1", status: "researching",
+        schemaVersion: "company-research-report-v1", status: "researching", searchStatus: "none",
         ...input, researchContext: context, template, harnessVersion: 1,
         structuringAttempts: 0, createdAt: new Date().toISOString(),
       };
@@ -176,15 +178,19 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
           id, item_id, company_id, schema_version, status,
           research_direction, focus_scope, as_of_date, research_context_json,
           template_id, template_version, template_snapshot_json, harness_version,
-          structuring_attempts, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          structuring_attempts, created_at, search_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         run.id, itemId, companyId, run.schemaVersion, run.status,
         run.direction, run.focusScope ?? null, run.asOfDate, JSON.stringify(context),
         template.templateId, template.templateVersion, JSON.stringify(template), run.harnessVersion,
-        run.structuringAttempts, run.createdAt,
+        run.structuringAttempts, run.createdAt, run.searchStatus!,
       );
       return structuredClone(run);
+    },
+
+    markSearchSucceeded(runId) {
+      return transition(runId, "researching", (run) => ({ ...run, searchStatus: "succeeded" }));
     },
 
     completeRaw(runId, rawReportText) {
@@ -215,11 +221,12 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
       const run = row === undefined ? undefined : toResearchRun(row);
       if (
         run?.schemaVersion !== "company-research-report-v1" ||
-        (run.status !== "research_failed" && run.status !== "structure_failed")
+        (run.status !== "research_failed" && run.status !== "structure_failed" &&
+          !(run.status === "completed" && run.searchStatus === "none"))
       ) throw new Error("research run state transition rejected");
       return transition(runId, run.status, () => ({
         id: run.id, itemId: run.itemId, companyId: run.companyId,
-        schemaVersion: "company-research-report-v1", status: "researching",
+        schemaVersion: "company-research-report-v1", status: "researching", searchStatus: "none",
         ...input, researchContext: context, template, harnessVersion: run.harnessVersion,
         structuringAttempts: 0, createdAt: startedAt,
       }));

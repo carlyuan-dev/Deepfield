@@ -7,11 +7,13 @@ export { createCompanyRepository, normalizeCompanyName } from "./company-reposit
 export { createItemCompanyRepository } from "./item-company-repository.js";
 export { createCompanyResearchRunRepository } from "./company-research-run-repository.js";
 export { createCompanyResearchDiagnosticRepository } from "./company-research-diagnostic-repository.js";
+export { createCompanyProfileDiagnosticRepository } from "./company-profile-diagnostic-repository.js";
 export type {
   CapabilityItemRepository,
   CompanyRepository,
   CompanyResearchRunRepository,
   CompanyResearchDiagnosticRepository,
+  CompanyProfileDiagnosticRepository,
   ConversationRepository,
   MessageRepository,
   ItemCompanyRepository,

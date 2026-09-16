@@ -13,6 +13,7 @@ import type {
 } from "@deepfield/contracts";
 import { researchRun, researchSummary, activeResearch } from "./features/industry-research/company-research-test-fixtures.js";
 import { App } from "./App.js";
+import { configuredSettings } from "./features/settings/settings-test-fixtures.js";
 import {
   capabilityItem,
   chatMessage,
@@ -174,6 +175,96 @@ describe("app three-pane shell", () => {
     expect(document.querySelector(".capability-pane")).toBeNull();
     expect(document.querySelector(".chat-pane")?.className).toContain("expanded");
 
+  });
+
+  it("keeps research breadcrumbs, close, and contextual return outside the scrolling body", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c-navigation", "导航验证", true);
+    const item = capabilityItem({
+      id: "item-navigation",
+      industry: "一个很长的研究主题名称，用于验证窄面板导航不会挤掉关闭按钮",
+    });
+    const company = companyViewFixture("company-navigation", "导航公司", item.id);
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockResolvedValue([company]);
+    const { user } = await renderApp(fake);
+    await chatReady();
+
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    const navigation = document.querySelector(".capability-navigation");
+    const body = document.querySelector(".capability-body");
+    const close = screen.getByRole("button", { name: "关闭 Capability" });
+    expect(navigation).toBeTruthy();
+    expect(body).toBeTruthy();
+    expect(navigation?.contains(close)).toBe(true);
+    expect(body?.contains(close)).toBe(false);
+    expect(screen.getAllByRole("button", { name: "关闭 Capability" })).toHaveLength(1);
+
+    await user.click(await screen.findByRole("button", { name: /^一个很长的研究主题名称/ }));
+    const itemBack = screen.getByRole("button", { name: /返回调研列表/ });
+    expect(navigation?.contains(itemBack)).toBe(true);
+    expect(body?.contains(itemBack)).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "查看 导航公司" }));
+    const companyBack = screen.getByRole("button", { name: /返回公司列表/ });
+    expect(navigation?.contains(companyBack)).toBe(true);
+    expect(body?.contains(companyBack)).toBe(false);
+    await user.click(companyBack);
+    expect(await screen.findByRole("heading", { name: item.industry })).toBeTruthy();
+
+    await user.click(close);
+    expect(document.querySelector(".capability-pane")).toBeNull();
+  });
+
+  it("routes a missing Search key to Settings and preserves the launch draft until manual retry", async () => {
+    const fake = makeFakeApi();
+    const active = conversation("c-recovery", "恢复验证", true);
+    const item = capabilityItem({ id: "item-recovery", industry: "研究恢复" });
+    const company = companyViewFixture("company-recovery", "恢复公司", item.id);
+    const settings = configuredSettings();
+    settings.search.profiles[0]!.hasCredential = false;
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockResolvedValue([company]);
+    fake.settings.get.mockImplementation(async () => settings);
+    fake.settings.saveSearchProfile.mockImplementation(async (draft) => {
+      settings.search.profiles[0]!.hasCredential = Boolean(draft.apiKey?.trim());
+      return settings;
+    });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [], globalActiveRun: null });
+    fake.companyResearch.start.mockResolvedValue(researchRun({
+      itemId: item.id,
+      companyId: company.id,
+      status: "researching",
+    }));
+    const { user } = await renderApp(fake);
+    await chatReady();
+
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    await user.click(await screen.findByRole("button", { name: /^研究恢复/ }));
+    await user.click(screen.getByRole("button", { name: "查看 恢复公司" }));
+    await user.click(await screen.findByRole("button", { name: "开始调研" }));
+    const dialog = screen.getByRole("dialog", { name: "公司调研" });
+    const focus = within(dialog).getByLabelText("关注范围（可选）") as HTMLTextAreaElement;
+    await user.type(focus, "必须保留的恢复草稿");
+    await user.click(within(dialog).getByRole("button", { name: "开始调研" }));
+    expect(fake.companyResearch.start).not.toHaveBeenCalled();
+    await user.click(await within(dialog).findByRole("button", { name: "前往设置" }));
+
+    expect(screen.getByRole("button", { name: "Search" }).getAttribute("aria-current")).toBe("page");
+    await user.type(screen.getByLabelText(/^API Key/), "mock-search-key");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(fake.settings.saveSearchProfile).toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("navigation", { name: "设置导航" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "‹ 返回" }));
+
+    const restored = screen.getByRole("dialog", { name: "公司调研" });
+    expect((within(restored).getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("必须保留的恢复草稿");
+    expect(fake.companyResearch.start).not.toHaveBeenCalled();
+    await user.click(within(restored).getByRole("button", { name: "开始调研" }));
+    await waitFor(() => expect(fake.companyResearch.start).toHaveBeenCalledTimes(1));
   });
 
   it("creates, edits, navigates, and deletes research items and companies", async () => {
@@ -523,7 +614,11 @@ describe("app three-pane shell", () => {
     await act(async () => fake.emitProfile({ companyId: company.id, status: "failed" }));
     await user.click(screen.getByRole("button", { name: "查看 Google" }));
 
-    await user.click(screen.getByRole("button", { name: "编辑基本信息" }));
+    const editInformation = screen.getByRole("button", { name: "编辑信息" });
+    const deleteCompany = screen.getByRole("button", { name: "删除公司" });
+    expect(editInformation.className).toContain("company-detail-action");
+    expect(deleteCompany.className).toContain("company-detail-action");
+    await user.click(editInformation);
     expect(screen.queryByRole("dialog", { name: "编辑公司基本信息" })).toBeNull();
     const headquarters = screen.getByLabelText("总部（可选）");
     await user.clear(headquarters);
@@ -562,10 +657,12 @@ describe("app three-pane shell", () => {
     expect(document.querySelector(".chat-pane-header")?.className).toContain("collapsed");
 
     await user.click(screen.getByRole("button", { name: "设置" }));
-    expect(screen.getByRole("navigation", { name: "设置导航" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
+    const settingsNavigation = screen.getByRole("navigation", { name: "设置导航" });
+    expect(settingsNavigation).toBeTruthy();
     expect(screen.getByRole("button", { name: "‹ 返回" })).toBeTruthy();
-    expect(screen.getByText("设置")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "模型与密钥" }).getAttribute("aria-current")).toBe(
+    expect(within(settingsNavigation).getByText("设置")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "LLM" }).getAttribute("aria-current")).toBe(
       "page",
     );
     expect(await screen.findByRole("heading", { name: "模型与搜索" })).toBeTruthy();
@@ -582,6 +679,7 @@ describe("app three-pane shell", () => {
 
   it("streams a company report and retains two selectable rerun versions", async () => {
     const fake = makeFakeApi();
+    fake.settings.get.mockResolvedValue(configuredSettings());
     const activeConversation = conversation("c-research", "调研对话", true);
     const item = capabilityItem({ id: "item-research", industry: "智能眼镜" });
     const company: ItemCompanyView = {
@@ -690,6 +788,12 @@ describe("app three-pane shell", () => {
     await user.selectOptions(history, firstCompleted.id);
     await waitFor(() => expect(fake.companyResearch.getRun).toHaveBeenLastCalledWith(item.id, company.id, firstCompleted.id));
     await user.click(await screen.findByRole("tab", { name: "原始调研报告" }));
+    expect(await screen.findByText(/第一版报告/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "设置" }));
+    expect(screen.queryByRole("combobox", { name: "报告版本" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "研究主题" }));
+    expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(firstCompleted.id);
+    expect(screen.getByRole("tab", { name: "原始调研报告" }).getAttribute("aria-selected")).toBe("true");
     expect(await screen.findByText(/第一版报告/)).toBeTruthy();
   });
 });

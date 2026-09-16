@@ -1,417 +1,144 @@
-import { afterEach, describe, expect, it } from "vitest";
-import type { CompanyProfileFields } from "@deepfield/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppError, type CompanyProfileFields, type CompanyProfileResult } from "@deepfield/contracts";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
+import { profileResult } from "./company-profile-test-fixtures.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
-
 const dbs: TestDb[] = [];
-afterEach(() => {
-  for (const db of dbs.splice(0)) db.cleanup();
-});
+afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
+const database = () => { const db = openTestDb(); dbs.push(db); return db; };
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-describe("CompanyProfileEnrichmentService", () => {
-  it("runs the persisted queue serially and isolates per-company failures", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const first = db.repos.companies.upsert({ name: "First" });
-    const second = db.repos.companies.upsert({ name: "Second" });
-    let active = 0;
-    let maxActive = 0;
-    const calls: string[] = [];
-    const completer = {
-      complete: async (name: string): Promise<CompanyProfileFields> => {
-        calls.push(name);
-        active += 1;
-        maxActive = Math.max(maxActive, active);
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        active -= 1;
-        if (name === "Second") {
-          throw Object.assign(new Error("provider secret"), { code: "network_error" });
-        }
-        return {
-          aliases: [],
-          headquarters: "波士顿，美国",
-          officialWebsite: null,
-          stockListings: [],
-          businessTags: ["Robotics"],
-        };
-      },
-    };
-    const events: Array<{ companyId: string; status: string }> = [];
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, completer, {
-      onFailure: () => {},
-    });
-    service.subscribe((event) => events.push(event));
-
-    service.start();
-    await service.whenIdle();
-
-    expect(calls).toEqual(["First", "Second", "Second"]);
-    expect(maxActive).toBe(1);
-    expect(db.repos.companies.getById(first.id)).toMatchObject({
-      profileStatus: "ready",
-      aliases: [],
-      officialWebsite: null,
-      stockListings: [],
-    });
-    expect(db.repos.companies.getById(second.id)?.profileStatus).toBe("failed");
-    expect(events).toEqual([
-      { companyId: first.id, status: "enriching" },
-      { companyId: first.id, status: "ready" },
-      { companyId: second.id, status: "enriching" },
-      { companyId: second.id, status: "failed" },
-    ]);
+describe("company profile Agent queue", () => {
+  it("clears old ambiguous evidence when a user retry fails for a new reason", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Ambiguous" }); let attempts = 0;
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => {
+      if (++attempts > 1) throw new AppError("EXTERNAL.TIMEOUT");
+      return { ...profileResult({}), identity: { disposition: "ambiguous", reason: "同名主体待确认", sources: profileResult().identity.sources } };
+    } });
+    service.start(); await service.whenIdle();
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.identity.disposition).toBe("ambiguous");
+    service.retry(company.id); await service.whenIdle();
+    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "failed", profileIssue: { code: "EXTERNAL.TIMEOUT" } });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance).toBeUndefined();
   });
-
-  it("recovers interrupted work and pauses subsequent jobs for foreground research", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const first = db.repos.companies.upsert({ name: "First" });
-    db.repos.companies.setProfileStatus(first.id, "enriching");
-    let foregroundBusy = true;
-    const calls: string[] = [];
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      { complete: async (name) => { calls.push(name); return {}; } },
-      { isForegroundBusy: () => foregroundBusy },
-    );
-
-    service.start();
-    await service.whenIdle();
-    expect(db.repos.companies.getById(first.id)?.profileStatus).toBe("pending");
-    expect(calls).toEqual([]);
-
-    foregroundBusy = false;
-    service.resume();
-    await service.whenIdle();
-    expect(calls).toEqual(["First"]);
+  it.each(["delete", "dispose"])("never writes an in-flight result after %s", async (action) => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Cancelled target" });
+    let finish!: (result: CompanyProfileResult) => void;
+    const complete = vi.spyOn(db.repos.companies, "completeProfile");
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => () => new Promise((resolve) => { finish = resolve; }) });
+    service.start(); await flush();
+    if (action === "delete") db.repos.companies.deleteIfUnreferenced(company.id); else service.dispose();
+    finish(profileResult()); await service.whenIdle();
+    expect(complete).not.toHaveBeenCalled();
+    expect(db.repos.companies.getById(company.id)?.profileProvenance).toBeUndefined();
+  });
+  it("contains repository failure in the final queue probe and exposes a safe issue", async () => {
+    const db = database();
+    vi.spyOn(db.repos.companies, "getNextPendingProfile").mockReturnValueOnce(undefined).mockImplementation(() => { throw Error("database closed secret"); });
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => profileResult() });
+    service.start(); await expect(service.whenIdle()).resolves.toBeUndefined();
+    expect(service.getIssue()).toMatchObject({ code: "STORAGE.FAILED" });
+  });
+  it("runs serially, fails once, and retries only the same company on user request", async () => {
+    const db = database(); const first = db.repos.companies.upsert({ name: "First" }); const second = db.repos.companies.upsert({ name: "Second" });
+    const calls: string[] = []; let active = 0; let maximum = 0; let succeed = false;
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async (company) => async () => {
+      calls.push(company.name); maximum = Math.max(maximum, ++active); await flush(); active--;
+      if (company.id === second.id && !succeed) throw new AppError("EXTERNAL.TIMEOUT");
+      return profileResult();
+    } });
+    service.start(); await service.whenIdle();
+    expect(calls).toEqual(["First", "Second"]); expect(maximum).toBe(1);
     expect(db.repos.companies.getById(first.id)?.profileStatus).toBe("ready");
+    expect(db.repos.companies.getById(second.id)?.profileStatus).toBe("failed");
+    succeed = true; expect(service.retry(second.id)).toBe(true); await service.whenIdle();
+    expect(calls).toEqual(["First", "Second", "Second"]); expect(service.retry(first.id)).toBe(false);
   });
+  it("confirms the same ambiguous company with a saved hint and retains it when the resumed run fails", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "三星" });
+    let rejectResume!: (error: Error) => void;
+    const prepared: Array<{ id: string; name: string; hint: unknown }> = [];
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async (target) => {
+      prepared.push({ id: target.id, name: target.name, hint: target.profileIdentityHint });
+      if (prepared.length === 1) return async () => ({ ...profileResult({}), identity: { disposition: "ambiguous", reason: "存在多个同名主体", sources: profileResult().identity.sources } });
+      return () => new Promise((_resolve, reject) => { rejectResume = reject; });
+    } });
+    const events: unknown[] = []; service.subscribe((event) => events.push(event));
+    service.start(); await service.whenIdle();
 
-  it("rejects every semantically invalid automatic field and never writes partial bad data", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const invalidProfiles: Record<string, CompanyProfileFields> = {
-      "Blank Alias": { aliases: [" "] },
-      "Blank Tag": { businessTags: [" "] },
-      "Blank Listing": { stockListings: [{ exchange: " ", ticker: "ACME" }] },
-      "Invalid Date": { foundedAt: "2024-02-31" },
-      "Invalid Website": { officialWebsite: "ftp://example.com" },
-    };
-    const invalid = Object.keys(invalidProfiles).map((name) =>
-      db.repos.companies.upsert({ name }),
-    );
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, {
-      complete: async (name) => invalidProfiles[name]!,
-    });
-    service.start();
-    await service.whenIdle();
-
-    for (const company of invalid) {
-      expect(db.repos.companies.getById(company.id)).toEqual({
-        ...company,
-        profileStatus: "failed",
-        updatedAt: expect.any(String),
-      });
-    }
-  });
-
-  it("trims valid automatic fields and never overwrites a manual edit after failure", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const valid = db.repos.companies.upsert({ name: "Valid" });
-    const edited = db.repos.companies.upsert({ name: "Edited" });
-    let rejectEdited: ((reason: Error) => void) | undefined;
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, {
-      complete: async (name) => {
-        if (name === "Valid") return {
-          aliases: [" Alias "],
-          headquarters: " 上海，中国 ",
-          foundedAt: "2024-02-29",
-          officialWebsite: " https://example.com ",
-          stockListings: [{ exchange: " NYSE ", ticker: " ACME " }],
-          businessTags: [" Robotics "],
-        };
-        return new Promise((_resolve, reject) => { rejectEdited = reject; });
-      },
-    });
-    service.start();
-    while (db.repos.companies.getById(edited.id)?.profileStatus !== "enriching") {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    db.repos.companies.update(edited.id, { name: "Edited", headquarters: "Shanghai" });
-    rejectEdited?.(new Error("provider failed"));
-    await service.whenIdle();
-
-    expect(db.repos.companies.getById(valid.id)).toMatchObject({
-      profileStatus: "ready",
-      aliases: ["Alias"],
-      headquarters: "上海，中国",
-      foundedAt: "2024-02-29",
-      officialWebsite: "https://example.com",
-      stockListings: [{ exchange: "NYSE", ticker: "ACME" }],
-      businessTags: ["Robotics"],
-    });
-    expect(db.repos.companies.getById(edited.id)).toMatchObject({
-      profileStatus: "ready",
-      headquarters: "Shanghai",
-    });
-  });
-
-  it("retries a transient completion failure once before saving a successful profile", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "Retry Me" });
-    let attempts = 0;
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, {
-      complete: async () => {
-        attempts += 1;
-        if (attempts === 1) throw Object.assign(new Error("temporary"), { code: "network_error" });
-        return { headquarters: "上海，中国", businessTags: ["机器人"] };
-      },
-    });
-
-    service.start();
-    await service.whenIdle();
-
-    expect(attempts).toBe(2);
+    expect(service.confirmIdentity(company.id, { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" })).toBe(true);
+    await flush();
+    expect(prepared[1]).toEqual({ id: company.id, name: "三星", hint: { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" } });
+    expect(events).toContainEqual({ companyId: company.id, status: "pending" });
+    rejectResume(new AppError("EXTERNAL.TIMEOUT")); await service.whenIdle();
     expect(db.repos.companies.getById(company.id)).toMatchObject({
-      profileStatus: "ready",
-      headquarters: "上海，中国",
+      profileStatus: "failed", profileIdentityHint: { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" },
     });
+    expect(service.confirmIdentity(company.id, { name: "修改后的主体" })).toBe(true);
   });
-
-  it("rejects an English-only automatic headquarters and retries for a Chinese value", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "Google" });
-    let attempts = 0;
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, {
-      complete: async () => {
-        attempts += 1;
-        return attempts === 1
-          ? { headquarters: "Mountain View, California, USA", businessTags: ["人工智能"] }
-          : { headquarters: "山景城，美国", businessTags: ["人工智能"] };
-      },
-    });
-
-    service.start();
-    await service.whenIdle();
-
-    expect(attempts).toBe(2);
-    expect(db.repos.companies.getById(company.id)).toMatchObject({
-      profileStatus: "ready",
-      headquarters: "山景城，美国",
-    });
+  it("does not confirm a missing, ready, or enriching company", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Ready" });
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => profileResult() });
+    expect(service.confirmIdentity("missing" as never, { name: "Missing" })).toBe(false);
+    db.repos.companies.setProfileStatus(company.id, "enriching");
+    expect(service.confirmIdentity(company.id, { name: "Running" })).toBe(false);
+    db.repos.companies.update(company.id, { name: company.name });
+    expect(service.confirmIdentity(company.id, { name: "Ready" })).toBe(false);
   });
-
-  it("requeues a failed company only when the user explicitly retries it", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "乐奇" });
-    db.repos.companies.setProfileStatus(company.id, "failed");
-    const events: string[] = [];
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, {
-      complete: async () => ({ headquarters: "深圳，中国", businessTags: ["智能眼镜"] }),
-    });
-    service.subscribe((event) => events.push(event.status));
-
-    expect(service.retry(company.id)).toBe(true);
-    await service.whenIdle();
-
-    expect(events).toEqual(["pending", "enriching", "ready"]);
-    expect(db.repos.companies.getById(company.id)).toMatchObject({
-      profileStatus: "ready",
-      headquarters: "深圳，中国",
-    });
-    expect(service.retry(company.id)).toBe(false);
+  it("pauses public missing configuration once before claiming, persists guidance, and resumes after configuration applies", async () => {
+    const db = database(); const first = db.repos.companies.upsert({ name: "First" }); const second = db.repos.companies.upsert({ name: "Second" });
+    let configured = false; const run = vi.fn(async () => profileResult());
+    const prepare = vi.fn(async () => { if (!configured) throw new AppError("CONFIG.CREDENTIAL_MISSING", { service: "search" }); return run; });
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare });
+    const events: unknown[] = []; service.subscribe((event) => events.push(event));
+    service.start(); await service.whenIdle(); service.resume(); await flush();
+    expect(prepare).toHaveBeenCalledTimes(1); expect(run).not.toHaveBeenCalled(); expect(events).toHaveLength(1);
+    expect(db.repos.companies.getById(first.id)).toMatchObject({ profileStatus: "pending", profileIssue: { code: "CONFIG.CREDENTIAL_MISSING" } });
+    expect(db.repos.companies.getById(second.id)?.profileStatus).toBe("pending");
+    db.repos.companies.deleteIfUnreferenced(first.id);
+    expect(service.getIssue()).toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING" });
+    configured = true; service.configurationChanged(); await service.whenIdle();
+    expect(run).toHaveBeenCalledTimes(1); expect(service.getIssue()).toBeUndefined();
+    expect(db.repos.companies.getById(first.id)?.profileIssue).toBeUndefined();
   });
-
-  it("passes research topics for disambiguation and reports only sanitized failure details", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "乐奇" });
-    const contexts: unknown[] = [];
-    const failures: unknown[] = [];
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      {
-        complete: async (_name, context) => {
-          contexts.push(context);
-          throw Object.assign(new Error("raw provider response and secret"), {
-            code: "schema_invalid",
-            httpStatus: 200,
-            fields: ["stockListings"],
-          });
-        },
-      },
-      {
-        getResearchTopics: () => ["人形机器人"],
-        onFailure: (failure) => failures.push(failure),
-      },
-    );
-
-    service.start();
-    await service.whenIdle();
-
-    expect(contexts).toEqual([
-      { researchTopics: ["人形机器人"] },
-      { researchTopics: ["人形机器人"] },
-    ]);
-    expect(failures).toEqual([{
-      companyId: company.id,
-      code: "schema_invalid",
-      httpStatus: 200,
-      fields: ["stockListings"],
-      attempts: 2,
-    }]);
-    expect(JSON.stringify(failures)).not.toContain("raw provider response");
-    expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("failed");
+  it("recovers enriching work and stops before fetching the next company when research takes foreground", async () => {
+    const db = database(); const first = db.repos.companies.upsert({ name: "First" }); const second = db.repos.companies.upsert({ name: "Second" });
+    db.repos.companies.setProfileStatus(first.id, "enriching"); let busy = true;
+    const run = vi.fn(async () => { busy = true; return profileResult(); });
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => run }, { isForegroundBusy: () => busy });
+    service.start(); await service.whenIdle(); expect(run).not.toHaveBeenCalled();
+    busy = false; service.resume(); await service.whenIdle(); expect(run).toHaveBeenCalledTimes(1);
+    expect(db.repos.companies.getById(second.id)?.profileStatus).toBe("pending");
   });
-
-  it("does not retry a missing API key and reports the actual attempt count", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "No Key" });
-    let attempts = 0;
-    const failures: Array<{ attempts: number }> = [];
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      {
-        complete: async () => {
-          attempts += 1;
-          throw Object.assign(new Error("missing"), { code: "missing_api_key" });
-        },
-      },
-      { onFailure: (failure) => failures.push(failure) },
-    );
-
-    service.start();
-    await service.whenIdle();
-
-    expect(attempts).toBe(1);
-    expect(failures).toEqual([expect.objectContaining({
-      companyId: company.id,
-      attempts: 1,
-    })]);
+  it.each(["success", "failure"])("manual edit wins over late %s and discards old provenance", async (outcome) => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Edited" });
+    let resolve!: (value: CompanyProfileResult) => void; let reject!: (error: Error) => void;
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => () => new Promise((yes, no) => { resolve = yes; reject = no; }) });
+    service.start(); await flush(); db.repos.companies.update(company.id, { name: "Edited", headquarters: "手工地点" });
+    if (outcome === "success") resolve(profileResult()); else reject(new Error("secret"));
+    await service.whenIdle(); expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", headquarters: "手工地点" });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance).toBeUndefined();
   });
-
-  it("keeps the provider's sanitized incomplete reason in failure diagnostics", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "乐奇" });
-    const failures: unknown[] = [];
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      {
-        complete: async () => {
-          throw Object.assign(new Error("provider body must stay private"), {
-            code: "response_incomplete",
-            httpStatus: 200,
-            incompleteReason: "max_output_tokens",
-          });
-        },
-      },
-      { onFailure: (failure) => failures.push(failure) },
-    );
-
-    service.start();
-    await service.whenIdle();
-
-    expect(failures).toEqual([{
-      companyId: company.id,
-      code: "response_incomplete",
-      httpStatus: 200,
-      incompleteReason: "max_output_tokens",
-      attempts: 2,
-    }]);
-    expect(JSON.stringify(failures)).not.toContain("provider body must stay private");
+  it("merges only missing fields atomically and stores ambiguous identity as needs confirmation, never ready", async () => {
+    const db = database(); const first = db.repos.companies.upsert({ name: "First" }); const second = db.repos.companies.upsert({ name: "Ambiguous" });
+    db.repos.companies.update(first.id, { name: "First", headquarters: "已知地点" }); db.repos.companies.setProfileStatus(first.id, "pending");
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async (company) => async () => company.id === first.id
+      ? profileResult({ headquarters: "新地点", legalName: "确认全称" })
+      : { ...profileResult({}), identity: { disposition: "ambiguous", reason: "同名主体待确认", sources: profileResult().identity.sources } } });
+    service.start(); await service.whenIdle();
+    expect(db.repos.companies.getById(first.id)).toMatchObject({ headquarters: "已知地点", legalName: "确认全称", profileProvenance: { fields: { legalName: "确认全称" } } });
+    expect(db.repos.companies.getById(first.id)?.profileProvenance?.fieldEvidence).not.toHaveProperty("headquarters");
+    expect(db.repos.companies.getById(second.id)).toMatchObject({ profileStatus: "failed", profileProvenance: { identity: { disposition: "ambiguous" } } });
   });
-
-  it("maps an untrusted incomplete reason to a bounded diagnostic value", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    db.repos.companies.upsert({ name: "Untrusted" });
-    const failures: unknown[] = [];
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      {
-        complete: async () => {
-          throw Object.assign(new Error("private"), {
-            code: "response_incomplete",
-            incompleteReason: "raw provider text with sk-secret",
-          });
-        },
-      },
-      { onFailure: (failure) => failures.push(failure) },
-    );
-
-    service.start();
-    await service.whenIdle();
-
-    expect(failures).toEqual([expect.objectContaining({ incompleteReason: "unknown" })]);
-    expect(JSON.stringify(failures)).not.toContain("sk-secret");
+  it.each<CompanyProfileFields>([{ aliases: [" "] }, { businessTags: [" "] }, { stockListings: [{ exchange: " ", ticker: "X" }] }, { foundedAt: "2024-02-31" }, { officialWebsite: "ftp://example.test" }, { headquarters: "English only" }, {}])("rejects invalid automatic fields without whole-run retry: %j", async (fields) => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Invalid" }); const run = vi.fn(async () => profileResult(fields));
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => run }); service.start(); await service.whenIdle();
+    expect(run).toHaveBeenCalledTimes(1); expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("failed");
   });
-
-  it("keeps processing and notifying healthy listeners when another listener throws", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "Listener Race" });
-    const events: string[] = [];
-    const service = new CompanyProfileEnrichmentService(db.repos.companies, {
-      complete: async () => ({ headquarters: "北京，中国", businessTags: ["机器人"] }),
-    });
-    service.subscribe(() => { throw new Error("renderer destroyed"); });
-    service.subscribe((event) => events.push(event.status));
-
-    service.start();
-    await service.whenIdle();
-
-    expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("ready");
-    expect(events).toEqual(["enriching", "ready"]);
-  });
-
-  it("retries an HTTP 408 completion response once", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    db.repos.companies.upsert({ name: "Request Timeout" });
-    let attempts = 0;
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      {
-        complete: async () => {
-          attempts += 1;
-          throw Object.assign(new Error("request timeout"), {
-            code: "http_error",
-            httpStatus: 408,
-          });
-        },
-      },
-      { onFailure: () => {} },
-    );
-
-    service.start();
-    await service.whenIdle();
-
-    expect(attempts).toBe(2);
-  });
-
-  it("marks a company failed even when diagnostic logging throws", async () => {
-    const db = openTestDb();
-    dbs.push(db);
-    const company = db.repos.companies.upsert({ name: "Logger Race" });
-    const service = new CompanyProfileEnrichmentService(
-      db.repos.companies,
-      {
-        complete: async () => {
-          throw Object.assign(new Error("network"), { code: "network_error" });
-        },
-      },
-      { onFailure: () => { throw new Error("logger unavailable"); } },
-    );
-
-    service.start();
-    await service.whenIdle();
-
-    expect(db.repos.companies.getById(company.id)?.profileStatus).toBe("failed");
+  it("isolates listeners/diagnostics and reports only safe typed errors", async () => {
+    const db = database(); db.repos.companies.upsert({ name: "Safe" }); const diagnostics: unknown[] = []; const contexts: unknown[] = [];
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async (_company, topics) => { contexts.push(topics); return async () => { throw Object.assign(new Error("sk-secret"), { code: "sk-secret" }); }; } }, { getResearchTopics: () => ["  机器人 ", "机器人"], onFailure: (failure) => { diagnostics.push(failure); throw Error("logger"); } });
+    service.subscribe(() => { throw Error("closed"); }); service.start(); await service.whenIdle();
+    expect(contexts).toEqual([["机器人"]]); expect(diagnostics).toEqual([expect.objectContaining({ code: "INTERNAL.UNKNOWN", attempts: 1 })]); expect(JSON.stringify(diagnostics)).not.toContain("secret");
   });
 });

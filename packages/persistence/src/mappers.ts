@@ -40,6 +40,9 @@ export function toCompany(row: CompanyRow): Company {
     name: row.name,
     normalizedName: row.normalized_name,
     profileStatus: row.profile_status,
+    ...(row.profile_provenance_json ? { profileProvenance: JSON.parse(row.profile_provenance_json) } : {}),
+    ...(row.profile_issue_json ? { profileIssue: JSON.parse(row.profile_issue_json) } : {}),
+    ...(row.profile_identity_hint_json ? { profileIdentityHint: JSON.parse(row.profile_identity_hint_json) } : {}),
     ...(row.legal_name !== null ? { legalName: row.legal_name } : {}),
     ...(aliases !== undefined ? { aliases } : {}),
     ...(row.headquarters !== null

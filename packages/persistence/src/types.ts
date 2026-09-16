@@ -7,6 +7,8 @@ import type {
   CompanyDraft,
   CompanyProfileInput,
   CompanyProfileFields,
+  CompanyProfileIdentityHint,
+  CompanyProfileResult, PublicAppError, CompanyProfileDiagnostic,
   CompanyProfileStatus,
   Conversation,
   ConversationId,
@@ -38,8 +40,9 @@ export interface CapabilityItemRepository {
 export interface CompanyRepository {
   upsert(draft: CompanyDraft): Company;
   update(companyId: Company["id"], input: CompanyProfileInput): Company | undefined;
-  completeProfile(companyId: Company["id"], fields: CompanyProfileFields): Company | undefined;
-  setProfileStatus(companyId: Company["id"], status: CompanyProfileStatus): Company | undefined;
+  completeProfile(companyId: Company["id"], fields: CompanyProfileFields, provenance?: CompanyProfileResult): Company | undefined;
+  confirmProfileIdentity(companyId: Company["id"], hint: CompanyProfileIdentityHint): Company | undefined;
+  setProfileStatus(companyId: Company["id"], status: CompanyProfileStatus, issue?: PublicAppError): Company | undefined;
   getNextPendingProfile(): Company | undefined;
   resetEnrichingProfiles(): number;
   getByNormalizedName(normalizedName: string): Company | undefined;
@@ -63,6 +66,8 @@ export interface CompanyResearchRunRepository {
     template: CompanyResearchTemplateSnapshot,
   ): KeyResearchRun;
   completeRaw(runId: ResearchRunId, rawReportText: string): KeyResearchRun;
+  /** Records a trusted raw search completion; only researching runs are eligible. */
+  markSearchSucceeded(runId: ResearchRunId): KeyResearchRun;
   failResearching(runId: ResearchRunId, code: ResearchFailureCode): KeyResearchRun;
   failStructuring(runId: ResearchRunId): KeyResearchRun;
   retryResearching(
@@ -94,6 +99,11 @@ export interface CompanyResearchDiagnosticRepository {
   getByTraceId(traceId: string): CompanyResearchModelDiagnostic | undefined;
   listByRunId(runId: string): CompanyResearchModelDiagnostic[];
   deleteByRunId(runId: string): string[];
+}
+export interface CompanyProfileDiagnosticRepository {
+  record(diagnostic: CompanyProfileDiagnostic): void;
+  getByRequestId(requestId: string): CompanyProfileDiagnostic | undefined;
+  listByCompanyId(companyId: string): CompanyProfileDiagnostic[];
 }
 
 export interface ConversationRepository {
@@ -203,6 +213,7 @@ export interface Repositories {
   itemCompanies: ItemCompanyRepository;
   companyResearchRuns: CompanyResearchRunRepository;
   companyResearchDiagnostics: CompanyResearchDiagnosticRepository;
+  companyProfileDiagnostics: CompanyProfileDiagnosticRepository;
   conversations: ConversationRepository;
   messages: MessageRepository;
   toolExecutions: ToolExecutionRepository & ToolExecutionCleanupRepository;
@@ -240,6 +251,9 @@ export interface CompanyRow {
   stock_listings_json: string | null;
   business_tags_json: string | null;
   profile_status: CompanyProfileStatus;
+  profile_provenance_json: string | null;
+  profile_issue_json: string | null;
+  profile_identity_hint_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -299,6 +313,7 @@ export interface CompanyResearchRunRow {
   company_id: string;
   schema_version: string;
   status: string;
+  search_status: string;
   research_direction: string | null;
   focus_scope: string | null;
   as_of_date: string | null;

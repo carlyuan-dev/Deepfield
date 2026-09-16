@@ -15,9 +15,15 @@
 
 .chat-content-status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   flex: none;
+}
+
+.chat-content-status > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .chat-empty {
@@ -250,11 +256,13 @@
 
 .markdown-link-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
 .markdown-link-actions button {
+  flex: 0 0 auto;
   min-height: 26px;
   padding: 3px 8px;
   color: var(--accent);
@@ -262,6 +270,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .markdown-link-copy-status {
@@ -355,20 +364,31 @@
 
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
 
 .composer-actions-leading {
+  flex: 1 1 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-right: auto;
   min-width: 0;
 }
 
+.composer-actions > button,
+.composer-actions-leading > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .skill-picker {
+  flex: 1 1 140px;
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   min-height: 32px;
@@ -398,6 +418,7 @@
 }
 
 .skill-pill {
+  flex: 0 0 auto;
   font-size: 12px;
   color: var(--accent);
   border: 1px solid var(--border);
@@ -440,6 +461,13 @@
   padding: 0 4px;
 }
 
+.tool-activity-toggle,
+.tool-activity-batch-toggle {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .tool-activity-toggle {
   display: inline-flex;
   align-items: center;
@@ -454,6 +482,7 @@
 }
 
 .tool-activity-arrow {
+  flex: 0 0 auto;
   width: 12px;
   color: var(--muted);
 }
@@ -491,7 +520,18 @@
 }
 
 .tool-activity-batch-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
+}
+
+.tool-activity-toggle > span:nth-child(2),
+.tool-activity-batch-toggle > span:nth-child(2) {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .tool-activity-row {

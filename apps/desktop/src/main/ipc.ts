@@ -1,11 +1,13 @@
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import {
+  AppError, appResult,
   ChatRequestOptionsSchema,
   CopyTextArgsSchema,
   ConversationDeleteArgsSchema,
   CompanyResearchCancelArgsSchema,
   CompanyResearchDeleteRunArgsSchema,
+  CompanyResearchExportArgsSchema,
   CompanyResearchGetRunArgsSchema,
   CompanyResearchRetryFailedArgsSchema,
   CompanyResearchStartArgsSchema,
@@ -18,6 +20,7 @@ import {
   SettingsProfileIdArgsSchema,
   SettingsDeleteProfileArgsSchema,
   CompanyDraftSchema,
+  CompanyProfileIdentityHintSchema,
   CompanyProfileInputSchema,
   CompanyProfileEventSchema,
   CreateIndustryResearchItemInputSchema,
@@ -26,6 +29,7 @@ import {
   type Company,
   type CompanyDraft,
   type CompanyProfileInput,
+  type CompanyProfileIdentityHint,
   type CompanyProfileEvent,
   type CompanyResearchState,
   type CompanyResearchEvent,
@@ -43,6 +47,8 @@ import {
   type DiagnosticResult,
   type ResearchRun,
   type ResearchRunSummary,
+  type CompanyResearchWordExportResult,
+  type CompanyResearchWordExportSelection,
   type StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
@@ -81,6 +87,7 @@ export interface IndustryResearchServiceLike {
   removeCompanies(itemId: string, companyIds: string[]): void;
   recognizeCompanies(itemId: string, text: string): Promise<CompanyDraft[]>;
   retryCompanyProfile(companyId: string): boolean;
+  confirmCompanyProfileIdentity(companyId: string, hint: CompanyProfileIdentityHint): boolean;
 }
 
 export interface ConversationServiceLike {
@@ -128,8 +135,13 @@ export interface CompanyResearchServiceLike {
   subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
 }
 
+export interface CompanyResearchWordExportServiceLike {
+  export(itemId: string, companyId: string, runId: string, selection: CompanyResearchWordExportSelection): Promise<CompanyResearchWordExportResult>;
+}
+
 export interface CompanyProfileEventSource {
   subscribe(listener: (event: CompanyProfileEvent) => void): () => void;
+  configurationChanged?(): void;
 }
 
 export interface ClipboardWriterLike {
@@ -144,6 +156,7 @@ export interface IpcServiceDeps {
   skills: SkillListLike;
   chat: ChatServiceLike;
   companyResearch: CompanyResearchServiceLike;
+  companyResearchWordExport: CompanyResearchWordExportServiceLike;
   companyProfiles: CompanyProfileEventSource;
   clipboard: ClipboardWriterLike;
 }
@@ -164,12 +177,14 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.industryResearchRemoveCompanies,
   IPC_CHANNELS.industryResearchRecognizeCompanies,
   IPC_CHANNELS.industryResearchRetryCompanyProfile,
+  IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity,
   IPC_CHANNELS.industryResearchSubscribeCompanyProfiles,
   IPC_CHANNELS.companyResearchStart,
   IPC_CHANNELS.companyResearchCancel,
   IPC_CHANNELS.companyResearchGetState,
   IPC_CHANNELS.companyResearchListRuns,
   IPC_CHANNELS.companyResearchGetRun,
+  IPC_CHANNELS.companyResearchExportWord,
   IPC_CHANNELS.companyResearchRetryFailed,
   IPC_CHANNELS.companyResearchDeleteRun,
   IPC_CHANNELS.companyResearchSubscribe,
@@ -437,22 +452,33 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity, (_event, ...args) => {
+    const companyId = args[0];
+    const hint = args[1];
+    if (
+      args.length !== 2 ||
+      typeof companyId !== "string" || companyId.length === 0 ||
+      !Value.Check(CompanyProfileIdentityHintSchema, hint)
+    ) {
+      throw new Error("invalid company identity hint");
+    }
+    try {
+      return deps.industryResearch.confirmCompanyProfileIdentity(companyId, hint);
+    } catch {
+      throw new Error("company identity confirmation failed");
+    }
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.industryResearchSubscribeCompanyProfiles, async (event, ...args) => {
     if (args.length !== 0) throw new Error("invalid company profile subscription");
     trackSender(event.sender);
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.companyResearchStart, async (event, ...args) => {
-    if (args.length !== 3 || !Value.Check(CompanyResearchStartArgsSchema, args)) {
-      throw new Error("invalid company research input");
-    }
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchStart, async (event, ...args) => appResult(async () => {
+    if (args.length !== 3 || !Value.Check(CompanyResearchStartArgsSchema, args)) throw new AppError("INPUT.INVALID");
     trackSender(event.sender);
-    try {
-      return await deps.companyResearch.start(args[0], args[1], args[2]);
-    } catch {
-      throw new Error("company research start failed");
-    }
-  });
+    return deps.companyResearch.start(args[0], args[1], args[2]);
+  }));
 
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchCancel, async (event, ...args) => {
     if (args.length !== 1 || !Value.Check(CompanyResearchCancelArgsSchema, args)) {
@@ -502,17 +528,16 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.companyResearchRetryFailed, async (event, ...args) => {
-    if (args.length !== 4 || !Value.Check(CompanyResearchRetryFailedArgsSchema, args)) {
-      throw new Error("invalid company research input");
-    }
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchExportWord, async (_event, ...args) => appResult(async () => {
+    if (args.length !== 4 || !Value.Check(CompanyResearchExportArgsSchema, args)) throw new AppError("INPUT.INVALID");
+    return deps.companyResearchWordExport.export(args[0], args[1], args[2], args[3]);
+  }));
+
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchRetryFailed, async (event, ...args) => appResult(async () => {
+    if (args.length !== 4 || !Value.Check(CompanyResearchRetryFailedArgsSchema, args)) throw new AppError("INPUT.INVALID");
     trackSender(event.sender);
-    try {
-      return await deps.companyResearch.retryFailed(args[0], args[1], args[2], args[3]);
-    } catch {
-      throw new Error("company research retry failed");
-    }
-  });
+    return deps.companyResearch.retryFailed(args[0], args[1], args[2], args[3]);
+  }));
 
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchDeleteRun, async (event, ...args) => {
     if (args.length !== 3 || !Value.Check(CompanyResearchDeleteRunArgsSchema, args)) {
@@ -561,10 +586,20 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.conversations.listRecent();
   });
 
+  const diagnosticHandler = <T>(channel: string, schema: TSchema, call: (...args: any[]) => Promise<T>): void => {
+    deps.ipcMain.handle(channel, async (_event, ...args) => appResult(async () => {
+      if (!Value.Check(schema, args)) throw new AppError("INPUT.INVALID");
+      return call(...args);
+    }));
+  };
   const settingsHandler = <T>(channel: string, schema: TSchema, call: (...args: any[]) => Promise<T>): void => {
     deps.ipcMain.handle(channel, async (_event, ...args) => {
       if (!Value.Check(schema, args)) throw new Error("invalid settings input");
-      try { return await call(...args); }
+      try {
+        const result = await call(...args);
+        if (channel !== IPC_CHANNELS.settingsGet) deps.companyProfiles.configurationChanged?.();
+        return result;
+      }
       catch { throw new Error("settings operation failed"); }
     });
   };
@@ -572,11 +607,11 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   settingsHandler(IPC_CHANNELS.settingsSaveLlmProfile, SettingsLlmDraftArgsSchema, (input: LlmProfileDraft) => deps.settings.saveLlmProfile(input));
   settingsHandler(IPC_CHANNELS.settingsActivateLlmProfile, SettingsProfileIdArgsSchema, (id: string | null) => deps.settings.activateLlmProfile(id));
   settingsHandler(IPC_CHANNELS.settingsDeleteLlmProfile, SettingsDeleteProfileArgsSchema, (id: string) => deps.settings.deleteLlmProfile(id));
-  settingsHandler(IPC_CHANNELS.settingsDiagnoseLlm, SettingsLlmDraftArgsSchema, (input: LlmProfileDraft) => deps.settings.diagnoseLlm(input));
+  diagnosticHandler(IPC_CHANNELS.settingsDiagnoseLlm, SettingsLlmDraftArgsSchema, (input: LlmProfileDraft) => deps.settings.diagnoseLlm(input));
   settingsHandler(IPC_CHANNELS.settingsSaveSearchProfile, SettingsSearchDraftArgsSchema, (input: SearchProfileDraft) => deps.settings.saveSearchProfile(input));
   settingsHandler(IPC_CHANNELS.settingsActivateSearchProfile, SettingsProfileIdArgsSchema, (id: string | null) => deps.settings.activateSearchProfile(id));
   settingsHandler(IPC_CHANNELS.settingsDeleteSearchProfile, SettingsDeleteProfileArgsSchema, (id: string) => deps.settings.deleteSearchProfile(id));
-  settingsHandler(IPC_CHANNELS.settingsDiagnoseSearch, SettingsSearchDraftArgsSchema, (input: SearchProfileDraft) => deps.settings.diagnoseSearch(input));
+  diagnosticHandler(IPC_CHANNELS.settingsDiagnoseSearch, SettingsSearchDraftArgsSchema, (input: SearchProfileDraft) => deps.settings.diagnoseSearch(input));
 
   deps.ipcMain.handle(IPC_CHANNELS.skillsList, async (_event, ...args) => {
     if (args.length !== 0) {

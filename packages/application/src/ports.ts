@@ -5,7 +5,7 @@ import type {
   CompanyResearchWorkerRequest,
   CompanyResearchStage,
   CompanyDraft,
-  CompanyProfileFields,
+  Company, CompanyProfileResult, CompanyProfileWorkerRequest, CompanyProfileWorkerEvent,
   LlmRuntimeSnapshot,
   SearchRuntimeSnapshot,
 } from "@deepfield/contracts";
@@ -36,12 +36,12 @@ export interface CompanyRecognizer {
   recognize(text: string): Promise<CompanyDraft[]>;
 }
 
-export interface CompanyCompletionContext {
-  researchTopics?: string[];
+export interface CompanyProfileWorkerPort {
+  sendProfile(request: CompanyProfileWorkerRequest): AsyncIterable<CompanyProfileWorkerEvent>;
 }
-
-export interface CompanyCompleter {
-  complete(name: string, context?: CompanyCompletionContext): Promise<CompanyProfileFields>;
+export interface CompanyProfileCompleter {
+  /** Resolve immutable active configuration before claiming a pending company. */
+  prepare(company: Company, researchTopics: string[]): Promise<() => Promise<CompanyProfileResult>>;
 }
 
 export type RequestIdFactory = () => string;

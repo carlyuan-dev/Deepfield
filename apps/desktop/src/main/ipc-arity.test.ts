@@ -15,14 +15,20 @@ describe("ipc handler arity", () => {
     ["companyResearchGetState", "getStateCalls", ["item-1", "company-1"]],
     ["companyResearchListRuns", "listRunsCalls", ["item-1", "company-1"]],
     ["companyResearchGetRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
+    ["companyResearchExportWord", "exportCalls", ["item-1", "company-1", "run-1", { raw: false, structured: true }]],
     ["companyResearchRetryFailed", "retryFailedCalls", ["item-1", "company-1", "run-1", RESEARCH_INPUT]],
     ["companyResearchDeleteRun", "deleteRunCalls", ["item-1", "company-1", "run-1"]],
   ] as const)("validates exact arity and every field of %s before calling service", async (channel, calls, valid) => {
-    const { ipcMain, companyResearch } = makeDeps();
+    const { ipcMain, companyResearch, companyResearchWordExport } = makeDeps();
+    const serviceCalls = () => channel === "companyResearchExportWord"
+      ? companyResearchWordExport.exportCalls
+      : Reflect.get(companyResearch, calls) as unknown[];
     const sender = new FakeWebContents(1);
     const invalid: unknown[][] = [[], valid.slice(0, -1), [...valid, "extra"]];
     valid.forEach((value, index) => {
-      const replacements = typeof value === "string" ? ["", "x".repeat(201), null, 1, {}] : [null, {}, { ...RESEARCH_INPUT, extra: true }, { ...RESEARCH_INPUT, direction: "unknown" }, { ...RESEARCH_INPUT, asOfDate: "today" }, { ...RESEARCH_INPUT, focusScope: "x".repeat(1001) }];
+      const replacements = typeof value === "string" ? ["", "x".repeat(201), null, 1, {}] : channel === "companyResearchExportWord"
+        ? [null, {}, { raw: true }, { raw: "yes", structured: false }, { raw: true, structured: false, extra: true }]
+        : [null, {}, { ...RESEARCH_INPUT, extra: true }, { ...RESEARCH_INPUT, direction: "unknown" }, { ...RESEARCH_INPUT, asOfDate: "today" }, { ...RESEARCH_INPUT, focusScope: "x".repeat(1001) }];
       for (const replacement of replacements) {
         const args: unknown[] = [...valid];
         args[index] = replacement;
@@ -30,12 +36,15 @@ describe("ipc handler arity", () => {
       }
     });
     for (const args of invalid) {
-      await expect(ipcMain.invoke(IPC_CHANNELS[channel], event(sender), ...args)).rejects.toThrow("invalid company research input");
+      const result = ipcMain.invoke(IPC_CHANNELS[channel], event(sender), ...args);
+      if (channel === "companyResearchStart" || channel === "companyResearchRetryFailed" || channel === "companyResearchExportWord") {
+        await expect(result).resolves.toEqual({ ok: false, error: { code: "INPUT.INVALID", category: "input" } });
+      } else await expect(result).rejects.toThrow("invalid company research input");
     }
-    expect(companyResearch[calls]).toHaveLength(0);
+    expect(serviceCalls()).toHaveLength(0);
     expect(sender.destroyedListenerCount).toBe(0);
     await ipcMain.invoke(IPC_CHANNELS[channel], event(sender), ...valid);
-    expect(companyResearch[calls]).toHaveLength(1);
+    expect(serviceCalls()).toHaveLength(1);
   });
 
   it("requires zero research subscription arguments before tracking the sender", async () => {

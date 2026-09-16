@@ -13,6 +13,7 @@ import { createToolRuntime, type UtilityToolRuntime } from "./tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
 import type { ResearchAgent } from "./message-loop.js";
+import { createCompanyProfileAgent } from "./company-profile-agent.js";
 
 const fakeCompanyResearchAgent: ResearchAgent = {
   async run(request, emit, signal) {
@@ -99,6 +100,9 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
   });
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     toolRuntime,
+    profileAgent: deps.agentMode === "fake" ? {
+      async run(request, emit) { emit({ kind: "company-profile.event", requestId: request.requestId, companyId: request.companyId, type: "failed", code: "search_unavailable" }); },
+    } : createCompanyProfileAgent({ ...(deps.piRuntime === undefined ? {} : { piRuntime: deps.piRuntime }), toolSessions: toolRuntime }),
     researchAgent: deps.agentMode === "fake"
       ? fakeCompanyResearchAgent
       : createCompanyResearchAgent({

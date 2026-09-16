@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { COMPANY_RESEARCH_TEMPLATES, RESEARCH_DIRECTIONS, type ResearchDirection, type StartCompanyResearchInput } from "@deepfield/contracts";
 import { Modal } from "./Modal.js";
+import { researchActionError, type ResearchActionErrorPresentation } from "./research-error-presentation.js";
 
 export interface ResearchContextProps {
   readonly topicName: string;
@@ -12,8 +13,10 @@ export interface CompanyResearchModalProps extends ResearchContextProps {
   initial?: StartCompanyResearchInput;
   mode?: "start" | "retry";
   disabled?: boolean;
+  active?: boolean;
   onClose(): void;
   onStart(input: StartCompanyResearchInput): Promise<void>;
+  onOpenSettings?(module: "llm" | "search"): void;
 }
 function localToday(): string {
   const date = new Date();
@@ -24,18 +27,18 @@ function validDate(value: string, today: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
-export function CompanyResearchModal({ initial, mode = "start", disabled, topicName, topicScope, companyName, companyNote, onClose, onStart }: CompanyResearchModalProps) {
+export function CompanyResearchModal({ initial, mode = "start", disabled, active = true, topicName, topicScope, companyName, companyNote, onClose, onStart, onOpenSettings }: CompanyResearchModalProps) {
   const today = localToday();
   const [direction, setDirection] = useState<ResearchDirection>(initial && RESEARCH_DIRECTIONS.includes(initial.direction) ? initial.direction : "product_and_technology");
   const [focusScope, setFocusScope] = useState(initial?.focusScope && initial.focusScope.length <= 1000 ? initial.focusScope : "");
   const [asOfDate, setAsOfDate] = useState(initial && validDate(initial.asOfDate, today) ? initial.asOfDate : today);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<ResearchActionErrorPresentation>();
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (submitting || disabled) return;
     if (!RESEARCH_DIRECTIONS.includes(direction) || !validDate(asOfDate, localToday()) || focusScope.length > 1000) {
-      setError("请选择研究方向、有效的截至日期（不晚于今天），关注范围最多 1000 字。");
+      setError({ message: "请选择研究方向、有效的截至日期（不晚于今天），关注范围最多 1000 字。" });
       return;
     }
     setSubmitting(true);
@@ -43,13 +46,13 @@ export function CompanyResearchModal({ initial, mode = "start", disabled, topicN
     try {
       await onStart({ direction, asOfDate, ...(focusScope.trim() ? { focusScope: focusScope.trim() } : {}) });
       onClose();
-    } catch {
-      setError(mode === "retry" ? "无法重新尝试，请稍后重试" : "无法开始调研，请稍后重试");
+    } catch (error) {
+      setError(researchActionError(error, mode));
       setSubmitting(false);
     }
   };
   const submitLabel = mode === "retry" ? "重新尝试" : "开始调研";
-  return <Modal title={mode === "retry" ? "重新尝试调研" : "公司调研"} onClose={submitting ? () => undefined : onClose}>
+  return <Modal title={mode === "retry" ? "重新尝试调研" : "公司调研"} active={active} onClose={submitting ? () => undefined : onClose}>
     <form className="modal-form" onSubmit={handleSubmit}>
       <dl className="research-context">
         <div><dt>研究主题</dt><dd>{topicName}</dd></div>
@@ -57,7 +60,7 @@ export function CompanyResearchModal({ initial, mode = "start", disabled, topicN
         <div><dt>公司</dt><dd>{companyName}</dd></div>
         {companyNote && <div><dt>候选备注</dt><dd>{companyNote}</dd></div>}
       </dl>
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && <p className="error" role="alert">{error.message} {error.settingsModule && onOpenSettings && <button type="button" onClick={() => onOpenSettings(error.settingsModule!)}>前往设置</button>}</p>}
       {disabled && <p className="muted">已有调研正在运行，请稍后再试。</p>}
       <label>研究方向<select required value={direction} onChange={(event) => setDirection(event.target.value as ResearchDirection)}>
         {RESEARCH_DIRECTIONS.map((value) => <option key={value} value={value}>{COMPANY_RESEARCH_TEMPLATES[value].title}</option>)}

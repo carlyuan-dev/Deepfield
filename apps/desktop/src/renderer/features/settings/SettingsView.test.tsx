@@ -34,10 +34,70 @@ const multiProfileSettings = {
 };
 
 describe("SettingsView", () => {
+  it("opens the requested settings module from a recovery action", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} initialModule="search" />);
+    expect(screen.getByRole("button", { name: "Search" }).getAttribute("aria-current")).toBe("page");
+    expect(await screen.findByLabelText("搜索引擎")).toBeTruthy();
+  });
+
+  it("leaves testing state after a transport rejection and hides arbitrary messages", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
+    api.settings.diagnoseLlm.mockRejectedValue(new Error("secret token"));
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
+    await screen.findByDisplayValue("主模型");
+    await userEvent.setup().click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText(/连接失败/)).toBeTruthy();
+    expect(screen.queryByText(/secret token|检测中/)).toBeNull();
+    expect(screen.getByRole("button", { name: "测试连接" }).hasAttribute("disabled")).toBe(false);
+  });
+  it("presents a missing LLM key distinctly from rejected credentials", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
+    api.settings.diagnoseLlm.mockResolvedValueOnce({ ok: false, latencyMs: 0, code: "invalid_config", message: "secret token", error: { code: "CONFIG.CREDENTIAL_MISSING", category: "configuration", context: { service: "llm" } } });
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
+    await screen.findByDisplayValue("主模型");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText(/LLM.*API Key.*填写/)).toBeTruthy();
+    expect(screen.queryByText(/secret token/)).toBeNull();
+    api.settings.diagnoseLlm.mockResolvedValueOnce({ ok: false, latencyMs: 0, code: "unauthorized", message: "secret token", error: { code: "EXTERNAL.AUTHENTICATION_FAILED", category: "external", context: { service: "llm" } } });
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText(/LLM.*认证失败/)).toBeTruthy();
+  });
+  it.each(["LLM", "Search"] as const)("allows saving %s without a key while explaining it is unavailable", async (module) => {
+    const api = makeFakeApi();
+    const view = { ...multiProfileSettings, llm: { ...multiProfileSettings.llm, profiles: multiProfileSettings.llm.profiles.map((profile) => ({ ...profile, hasCredential: false })) }, search: { ...multiProfileSettings.search, profiles: multiProfileSettings.search.profiles.map((profile) => ({ ...profile, hasCredential: false })) } };
+    api.settings.get.mockResolvedValue(view);
+    api.settings.saveLlmProfile.mockResolvedValue(view);
+    api.settings.saveSearchProfile.mockResolvedValue(view);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
+    await screen.findByDisplayValue("模型一");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: module }));
+    expect(screen.getByText(`未填写 API Key，可保存配置，但 ${module} 尚不可用。`)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    const save = module === "LLM" ? api.settings.saveLlmProfile : api.settings.saveSearchProfile;
+    expect(save).toHaveBeenCalledWith(expect.not.objectContaining({ apiKey: expect.anything() }));
+  });
+
+  it.each(["LLM", "Search"] as const)("keeps an existing %s key when a replacement is cleared", async (module) => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(multiProfileSettings);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
+    await screen.findByDisplayValue("模型一");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: module }));
+    const key = screen.getByLabelText(/^API Key/);
+    await user.type(key, "replacement");
+    await user.clear(key);
+    expect(screen.getByText("已保存（留空则保留）")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    const save = module === "LLM" ? api.settings.saveLlmProfile : api.settings.saveSearchProfile;
+    expect(save).toHaveBeenCalledWith(expect.not.objectContaining({ apiKey: expect.anything() }));
+  });
   it("uses deepseek-flash when creating and testing a new LLM profile", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
     api.settings.diagnoseLlm.mockResolvedValue({ ok: true, latencyMs: 1, summary: "OK" });
-    render(<SettingsView api={api} onKeySaved={() => {}} />);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
     await screen.findByDisplayValue("主模型");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "＋ 新建 Profile" }));
@@ -48,7 +108,7 @@ describe("SettingsView", () => {
   });
   it("renders editable LLM fields, saved-key state, and manifest-driven Search fields", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
-    render(<SettingsView api={api} onKeySaved={() => {}} />);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
     expect(await screen.findByDisplayValue("主模型")).toBeTruthy();
     expect(screen.getByLabelText("Base URL")).toBeTruthy(); expect((screen.getByLabelText(/^API Key/) as HTMLInputElement).value).toBe("");
     expect(screen.getByText("已保存（留空则保留）")).toBeTruthy();
@@ -60,7 +120,7 @@ describe("SettingsView", () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
     let first!: (value: any) => void;
     api.settings.diagnoseLlm.mockImplementationOnce(() => new Promise((resolve) => { first = resolve; })).mockResolvedValueOnce({ ok: true, latencyMs: 2, summary: "new" });
-    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("主模型");
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />); await screen.findByDisplayValue("主模型");
     const user = userEvent.setup(); const button = screen.getByRole("button", { name: "测试连接" });
     await user.click(button); expect(screen.getByText("检测中…")).toBeTruthy();
     await user.type(screen.getByLabelText("Model ID"), "2"); await user.click(button);
@@ -74,7 +134,7 @@ describe("SettingsView", () => {
     api.settings.diagnoseLlm
       .mockResolvedValueOnce({ ok: true, latencyMs: 11, summary: "one" })
       .mockResolvedValueOnce({ ok: true, latencyMs: 22, summary: "two" });
-    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("模型一");
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />); await screen.findByDisplayValue("模型一");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "测试连接" }));
     expect(await screen.findByText("连接正常 · 11ms")).toBeTruthy();
@@ -91,7 +151,7 @@ describe("SettingsView", () => {
     api.settings.diagnoseSearch
       .mockResolvedValueOnce({ ok: true, latencyMs: 31, summary: "one" })
       .mockResolvedValueOnce({ ok: true, latencyMs: 42, summary: "two" });
-    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("模型一");
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />); await screen.findByDisplayValue("模型一");
     const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByDisplayValue("搜索一")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "测试连接" }));
@@ -107,7 +167,7 @@ describe("SettingsView", () => {
   it("gives every new Profile an independent black diagnostic state", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(multiProfileSettings);
     api.settings.diagnoseLlm.mockResolvedValue({ ok: true, latencyMs: 55, summary: "new" });
-    render(<SettingsView api={api} onKeySaved={() => {}} />); await screen.findByDisplayValue("模型一");
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />); await screen.findByDisplayValue("模型一");
     const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "＋ 新建 Profile" }));
     await user.click(screen.getByRole("button", { name: "测试连接" }));
     expect(await screen.findByText("连接正常 · 55ms")).toBeTruthy();

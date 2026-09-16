@@ -38,7 +38,6 @@ describe("Sidebar conversation row layout", () => {
         deletionError={undefined}
         onOpenResearch={() => {}}
         onOpenSettings={() => {}}
-        onBackFromSettings={() => {}}
       />,
     );
 

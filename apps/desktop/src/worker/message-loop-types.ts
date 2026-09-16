@@ -51,7 +51,8 @@ export interface WorkerLoop {
 }
 
 export interface ActiveExecution {
-  kind: "chat" | "research" | "tool";
+  kind: "chat" | "research" | "tool" | "profile";
+  companyId?: string;
   requestId: string;
   runId?: string;
   stage?: CompanyResearchStage;

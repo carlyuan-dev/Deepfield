@@ -465,6 +465,25 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 14,
+    up(db) {
+      db.exec(`ALTER TABLE company_research_runs ADD COLUMN search_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK(search_status IN ('unknown', 'none', 'succeeded'));`);
+    },
+  },
+  { version: 15, up(db) {
+    db.exec("ALTER TABLE companies ADD COLUMN profile_provenance_json TEXT; ALTER TABLE companies ADD COLUMN profile_issue_json TEXT;");
+  } },
+  { version: 16, up(db) {
+    db.exec(`CREATE TABLE company_profile_diagnostics(
+      request_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, diagnostic_json TEXT NOT NULL,
+      created_at TEXT NOT NULL, FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+    ); CREATE INDEX idx_company_profile_diagnostics_company ON company_profile_diagnostics(company_id, created_at);`);
+  } },
+  { version: 17, up(db) {
+    db.exec("ALTER TABLE companies ADD COLUMN profile_identity_hint_json TEXT;");
+  } },
 ];
 
 export function migrate(db: DatabaseSync): void {

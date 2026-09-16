@@ -1,6 +1,8 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
+  CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema,
+  type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent,
   AgentWorkerRequestSchema,
   CompanyResearchCancelRequestSchema,
   CompanyResearchWorkerEventSchema,
@@ -28,12 +30,14 @@ import {
   type WorkerEndpoint,
   type WorkerLoop,
 } from "./message-loop-types.js";
+import type { CompanyProfileAgent } from "./company-profile-agent.js";
 
 export type { ActiveExecution, ChatAgent, ResearchAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
 
 export interface WorkerMessageLoopOptions {
   toolRuntime?: ToolRuntime;
   researchAgent?: ResearchAgent;
+  profileAgent?: CompanyProfileAgent;
   hostReplyHandler?: (reply: unknown) => void;
   /** Called once when the loop is disposed (e.g. to dispose the HostClient). */
   onDispose?: () => void;
@@ -61,6 +65,10 @@ export function createWorkerMessageLoop(
       startChat(value);
       return;
     }
+    if (Value.Check(CompanyProfileWorkerRequestSchema, value)) {
+      startProfile(value);
+      return;
+    }
     if (Value.Check(CompanyResearchWorkerRequestSchema, value)) {
       startResearch(value);
       return;
@@ -82,6 +90,24 @@ export function createWorkerMessageLoop(
         message: "invalid agent worker request",
       } satisfies AgentWorkerEvent);
     }
+  }
+
+  function startProfile(request: CompanyProfileWorkerRequest): void {
+    const execution = begin(request.requestId, "profile");
+    if (!execution) return;
+    execution.companyId = request.companyId;
+    const emit = (event: CompanyProfileWorkerEvent): void => {
+      if (disposed || execution.settled) return;
+      if (!Value.Check(CompanyProfileWorkerEventSchema, event) || event.requestId !== request.requestId || event.companyId !== request.companyId) {
+        execution.settle("agent_failed", "", true);
+        return;
+      }
+      if (event.type !== "diagnostic") execution.finalize();
+      endpoint.postMessage(event);
+    };
+    void Promise.resolve().then(() => options.profileAgent?.run(request, emit, execution.controller.signal))
+      .then(() => { if (!execution.settled) execution.settle("agent_failed", "", false); })
+      .catch(() => execution.settle("agent_failed", "", false));
   }
 
   function startResearch(request: CompanyResearchWorkerRequest): void {
@@ -266,7 +292,7 @@ export function createWorkerMessageLoop(
   /** Registers an active execution; returns undefined on duplicate transport ids. */
   function begin(
     requestId: string,
-    kind: "chat" | "research" | "tool",
+    kind: "chat" | "research" | "tool" | "profile",
     executionId?: string,
     runId?: string,
     stage?: CompanyResearchStage,
@@ -307,6 +333,10 @@ export function createWorkerMessageLoop(
         execution.controller.abort();
       }
       if (disposed) {
+        return;
+      }
+      if (execution.kind === "profile" && execution.companyId !== undefined) {
+        endpoint.postMessage({ kind: "company-profile.event", requestId, companyId: execution.companyId, type: "failed", code: "agent_failed" } satisfies CompanyProfileWorkerEvent);
         return;
       }
       if (

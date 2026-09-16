@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCompanyResearchTemplate, type CompanyResearchEvent, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type LlmRuntimeSnapshot, type ResearchRunId, type SearchRuntimeSnapshot, type StartCompanyResearchInput } from "@deepfield/contracts";
 import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY } from "./company-research-service.js";
+import { AppError } from "@deepfield/contracts";
 import type { CompanyResearchWorkerPort } from "./ports.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 
@@ -64,6 +65,100 @@ function recordTool(f: ReturnType<typeof setup>, id: string, traceId: string) {
 }
 
 describe("CompanyResearchService profile snapshots", () => {
+  it.each(["llm", "search"] as const)("preserves authoritative missing %s credential detail", async (service) => {
+    const f = setup();
+    f.profiles[service === "llm" ? "resolveActiveLlm" : "resolveActiveSearch"] = async () => { throw new AppError("CONFIG.CREDENTIAL_MISSING", { service }); };
+    await expect(f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" })).rejects.toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING", context: { service } });
+    expect(f.service.listRuns(f.item.id, f.company.id)).toEqual([]);
+  });
+  it("reserves legacy structure retry while resolving its LLM", async () => {
+    const f = setup();
+    const failed = seedFailed(f, "structure_failed");
+    f.db.db.prepare("UPDATE company_research_runs SET search_status = 'unknown' WHERE id = ?").run(failed.id);
+    let resolve!: (snapshot: LlmRuntimeSnapshot) => void;
+    f.profiles.resolveActiveLlm = () => new Promise((done) => { resolve = done; });
+    const pending = f.service.retryStructuring(f.item.id, f.company.id, failed.id);
+    await expect(f.service.retryStructuring(f.item.id, f.company.id, failed.id)).rejects.toMatchObject({ code: "BUSINESS.CONFLICT" });
+    resolve(llm);
+    await pending;
+    await waitUntil(() => !f.service.isRunning());
+  });
+  it.each([
+    ["completed", undefined, "succeeded"],
+    ["completed", "authentication_failed", "none"],
+    ["failed", "authentication_failed", "none"],
+    ["reused", undefined, "none"],
+    ["skipped", undefined, "none"],
+  ] as const)("records only real successful search activity: %s %s", async (status, errorCode, expected) => {
+    const f = setup();
+    f.worker.sendResearch = (request) => (async function* () {
+      if (request.stage === "raw") yield {
+        requestId: request.requestId, runId: request.runId, stage: "raw", type: "tool_activity",
+        callKey: "search-1", name: "web_search", status, ...(errorCode ? { errorCode } : {}),
+      } as const;
+      yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : JSON.stringify(valid) } as const;
+    })();
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => !f.service.isRunning());
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "completed", searchStatus: expected });
+  });
+
+  it("persists success before raw completion and never downgrades it on later failure", async () => {
+    const f = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    f.worker.sendResearch = (request) => (async function* () {
+      const identity = { requestId: request.requestId, runId: request.runId, stage: "raw" } as const;
+      yield { ...identity, type: "tool_activity", callKey: "s1", name: "web_search", status: "completed" } as const;
+      await gate;
+      yield { ...identity, type: "tool_activity", callKey: "s2", name: "web_search", status: "failed", errorCode: "authentication_failed" } as const;
+      yield { ...identity, type: "failed", code: "model_failed", message: "company research failed" } as const;
+    })();
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await flush();
+    expect(f.db.repos.companyResearchRuns.getByIdForTarget(f.item.id, f.company.id, run.id)).toMatchObject({ status: "researching", searchStatus: "succeeded" });
+    release();
+    await waitUntil(() => !f.service.isRunning());
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "research_failed", searchStatus: "succeeded" });
+  });
+
+  it("ignores foreign success identities and non-search completions", async () => {
+    const f = setup();
+    f.worker.sendResearch = (request) => (async function* () {
+      const activity = { requestId: request.requestId, runId: request.runId, stage: "raw", type: "tool_activity", callKey: "s1", name: "web_search", status: "completed" } as const;
+      if (request.stage === "raw") {
+        yield { ...activity, requestId: "late-request" };
+        yield { ...activity, runId: "other-run" };
+        yield { ...activity, stage: "structure" } as unknown as CompanyResearchWorkerEvent;
+        yield { ...activity, name: "read_webpage" };
+      }
+      yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : JSON.stringify(valid) } as const;
+    })();
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => !f.service.isRunning());
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "completed", searchStatus: "none" });
+  });
+
+  it("retries an unsearched completed report in place using changed input", async () => {
+    const f = setup();
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => !f.service.isRunning());
+    f.requests.length = 0;
+    const retried = await f.service.retryFailed(f.item.id, f.company.id, run.id, { direction: "market_and_commercialization", asOfDate: "2026-09-10", focusScope: "新范围" });
+    expect(retried).toMatchObject({ id: run.id, status: "researching", searchStatus: "none", direction: "market_and_commercialization", focusScope: "新范围", asOfDate: "2026-09-10" });
+    await waitUntil(() => !f.service.isRunning());
+    expect(f.requests[0]).toMatchObject({ stage: "raw", context: { focusScope: "新范围" } });
+  });
+
+  it("reruns raw research for unchanged structure failure without search success", async () => {
+    const f = setup();
+    const failed = seedFailed(f, "structure_failed");
+    await f.service.retryFailed(f.item.id, f.company.id, failed.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => !f.service.isRunning());
+    expect(f.requests[0]).toMatchObject({ stage: "raw" });
+    expect(f.profiles.searchCalls).toBe(1);
+  });
+
   it("uses one LLM/Search snapshot across raw and structure after persisting raw Markdown", async () => {
     const f = setup(); const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
     for (let i = 0; i < 10 && f.requests.length < 2; i++) await flush();
@@ -73,13 +168,23 @@ describe("CompanyResearchService profile snapshots", () => {
     expect(f.persistedBeforeStructure).toEqual([true]); expect(f.service.getRun(f.item.id, f.company.id, run.id)?.status).toBe("completed");
   });
 
-  it("retryStructuring resolves only the current LLM", async () => {
+  it("retryStructuring resolves only the current LLM for historical unknown search state", async () => {
     const f = setup("invalid"); const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
     for (let i = 0; i < 10 && f.service.getRun(f.item.id, f.company.id, run.id)?.status !== "structure_failed"; i++) await flush();
+    f.db.db.prepare("UPDATE company_research_runs SET search_status = 'unknown' WHERE id = ?").run(run.id);
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await f.service.retryStructuring(f.item.id, f.company.id, run.id); await flush();
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 0 });
     expect(f.requests.at(-1)).toMatchObject({ stage: "structure", toolAccess: STRUCTURE_RESEARCH_POLICY });
+  });
+
+  it("retryStructuring reroutes an unsearched report through a fresh raw run", async () => {
+    const f = setup(); const failed = seedFailed(f, "structure_failed");
+    const retried = await f.service.retryStructuring(f.item.id, f.company.id, failed.id);
+    expect(retried).toMatchObject({ status: "researching", searchStatus: "none" });
+    await waitUntil(() => !f.service.isRunning());
+    expect(f.requests[0]).toMatchObject({ stage: "raw" });
+    expect(f.profiles.searchCalls).toBe(1);
   });
 
   it("retains the latest safe tool activity in the in-memory state and emits it", async () => {
@@ -270,14 +375,15 @@ describe("CompanyResearchService failed-run retry", () => {
     await waitUntil(() => !f.service.isRunning());
   });
 
-  it("retries unchanged structure failure in place using only LLM and structure dispatch", async () => {
+  it.each(["unknown", "succeeded"] as const)("retries unchanged %s structure failure in place using only LLM and structure dispatch", async (searchStatus) => {
     const f = setup();
     const input = { direction: "product_and_technology" as const, focusScope: "机器人", asOfDate: "2026-09-11" };
     const failed = seedFailed(f, "structure_failed", input);
+    f.db.db.prepare("UPDATE company_research_runs SET search_status = ? WHERE id = ?").run(searchStatus, failed.id);
     const release = pauseWorker(f);
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     const retried = await f.service.retryFailed(f.item.id, f.company.id, failed.id, { ...input, focusScope: "  机器人  " });
-    expect(retried).toMatchObject({ id: failed.id, status: "structuring", rawReportText: "原始报告", structuringAttempts: 2 });
+    expect(retried).toMatchObject({ id: failed.id, status: "structuring", rawReportText: "原始报告", structuringAttempts: 2, searchStatus });
     expect(f.db.repos.companyResearchRuns.listRuns(f.item.id, f.company.id)).toHaveLength(0);
     await waitUntil(() => f.requests.length === 1);
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 0 });
@@ -348,26 +454,26 @@ describe("CompanyResearchService failed-run retry", () => {
     expect(f.profiles).toMatchObject({ llmCalls: 0, searchCalls: 0 });
   });
 
-  it.each(["research_failed", "structure_failed"] as const)("rejects missing required profiles before mutating %s history", async (status) => {
+  it.each(["research_failed", "structure_failed"] as const)("sanitizes unknown profile failures before mutating %s history", async (status) => {
     const f = setup();
     const failed = seedFailed(f, status);
     f.profiles.resolveActiveLlm = async () => { f.profiles.llmCalls++; throw new Error("sk-provider-secret"); };
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(f.item.id, f.company.id, failed.id, {
       direction: "product_and_technology", asOfDate: "2026-09-11",
-    })).rejects.toThrow("请先配置并启用 LLM");
+    })).rejects.toMatchObject({ code: "INTERNAL.UNKNOWN" });
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles.llmCalls).toBe(1);
   });
 
-  it("rejects a missing Search profile before mutating raw-retry history", async () => {
+  it("sanitizes an unknown Search failure before mutating raw-retry history", async () => {
     const f = setup();
     const failed = seedFailed(f, "research_failed");
     f.profiles.resolveActiveSearch = async () => { f.profiles.searchCalls++; throw new Error("sk-search-secret"); };
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(f.item.id, f.company.id, failed.id, {
       direction: "product_and_technology", asOfDate: "2026-09-11",
-    })).rejects.toThrow("请先配置并启用 LLM 与 Search Profile");
+    })).rejects.toMatchObject({ code: "INTERNAL.UNKNOWN" });
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 1 });
   });

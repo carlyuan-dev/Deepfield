@@ -102,10 +102,16 @@ export const ResearchFailureCodeSchema = Type.Union([
 ]);
 export type ResearchFailureCode = Static<typeof ResearchFailureCodeSchema>;
 
+/** Actual search execution success, independent of report quality or result count. */
+export const ResearchSearchStatusSchema = Type.Union([
+  Type.Literal("unknown"), Type.Literal("none"), Type.Literal("succeeded"),
+]);
+
 export const LegacyResearchRunSchema = Type.Object({
   ...RunIdentity,
   schemaVersion: Type.Literal("legacy-freeform-v1"),
   status: Type.Literal("completed"),
+  searchStatus: Type.Optional(Type.Literal("unknown")),
   timeScope: Type.String({ minLength: 1, maxLength: 300 }),
   customRequirements: Type.Optional(Type.String({ maxLength: 4000 })),
   reportText: LegacyReportTextSchema,
@@ -119,6 +125,7 @@ export const KeyResearchRunSchema = Type.Object({
   ...RunIdentity,
   schemaVersion: Type.Literal("company-research-report-v1"),
   status: KeyResearchStatusSchema,
+  searchStatus: Type.Optional(ResearchSearchStatusSchema),
   ...StartCompanyResearchInputSchema.properties,
   researchContext: CompanyResearchContextSchema,
   template: CompanyResearchTemplateSnapshotSchema,

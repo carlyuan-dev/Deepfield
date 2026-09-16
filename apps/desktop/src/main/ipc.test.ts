@@ -18,6 +18,16 @@ const SKILL_OPTIONS = { webSearch: false, skillName: "structured-brief" };
 const CONVERSATION_ID = "conv-1";
 
 describe("ipc handlers", () => {
+  it("resumes profile queue after real Settings activation, not reads or diagnostics", async () => {
+    const { ipcMain, companyProfiles } = makeDeps(); const sender = new FakeWebContents(1);
+    await ipcMain.invoke(IPC_CHANNELS.settingsGet, event(sender));
+    expect(companyProfiles.configurationChangeCalls).toBe(0);
+    await ipcMain.invoke(IPC_CHANNELS.settingsActivateSearchProfile, event(sender), null);
+    await ipcMain.invoke(IPC_CHANNELS.settingsActivateLlmProfile, event(sender), null);
+    expect(companyProfiles.configurationChangeCalls).toBe(2);
+    await expect(ipcMain.invoke(IPC_CHANNELS.settingsActivateSearchProfile, event(sender), 123)).rejects.toThrow();
+    expect(companyProfiles.configurationChangeCalls).toBe(2);
+  });
   it("registers the fixed invoke channels and no chat.events handler", () => {
     const { ipcMain } = makeDeps();
     const registered = [...ipcMain.handlers.keys()].sort();
@@ -37,12 +47,14 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.industryResearchRemoveCompanies,
         IPC_CHANNELS.industryResearchRecognizeCompanies,
         IPC_CHANNELS.industryResearchRetryCompanyProfile,
+        IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity,
         IPC_CHANNELS.industryResearchSubscribeCompanyProfiles,
         IPC_CHANNELS.companyResearchStart,
         IPC_CHANNELS.companyResearchCancel,
         IPC_CHANNELS.companyResearchGetState,
         IPC_CHANNELS.companyResearchListRuns,
         IPC_CHANNELS.companyResearchGetRun,
+        IPC_CHANNELS.companyResearchExportWord,
         IPC_CHANNELS.companyResearchRetryFailed,
         IPC_CHANNELS.companyResearchDeleteRun,
         IPC_CHANNELS.companyResearchSubscribe,
@@ -60,6 +72,21 @@ describe("ipc handlers", () => {
     );
     expect(ipcMain.handlers.has(IPC_CHANNELS.chatEvents)).toBe(false);
     expect(ipcMain.handlers.has(IPC_CHANNELS.companyResearchEvents)).toBe(false);
+  });
+
+  it("returns a bounded Word export result and never exposes a selected path or internal error", async () => {
+    const { ipcMain, companyResearchWordExport } = makeDeps();
+    const sender = new FakeWebContents(1);
+    companyResearchWordExport.result = { status: "saved" };
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchExportWord, event(sender), "item-1", "company-1", "run-1", { raw: false, structured: true }))
+      .resolves.toEqual({ ok: true, value: { status: "saved" } });
+    expect(companyResearchWordExport.exportCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1", selection: { raw: false, structured: true } }]);
+
+    companyResearchWordExport.error = new Error("/private/report.docx sk-secret");
+    const failure = await ipcMain.invoke(IPC_CHANNELS.companyResearchExportWord, event(sender), "item-1", "company-1", "run-1", { raw: false, structured: true });
+    expect(failure).toEqual({ ok: false, error: { code: "INTERNAL.UNKNOWN", category: "internal" } });
+    expect(JSON.stringify(failure)).not.toContain("private");
+    expect(JSON.stringify(failure)).not.toContain("secret");
   });
 
   it("writes only the supplied text through the main-process clipboard and propagates errors", async () => {
@@ -137,7 +164,13 @@ describe("ipc handlers", () => {
       event(sender),
       "company-1",
     );
-
+    const hint = { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" };
+    await ipcMain.invoke(
+      IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity,
+      event(sender),
+      "company-1",
+      hint,
+    );
     expect(industryResearch.updateItemCalls).toEqual([{ itemId: "item-1", input: update }]);
     expect(industryResearch.removeCompaniesCalls).toEqual([
       { itemId: "item-1", companyIds: ["company-1", "company-1", "company-2"] },
@@ -146,6 +179,7 @@ describe("ipc handlers", () => {
     expect(industryResearch.deleteItemsCalls).toEqual([["item-1", "item-2"]]);
     expect(industryResearch.updateCompanyCalls).toEqual([{ companyId: "company-1", input: profile }]);
     expect(industryResearch.retryCompanyProfileCalls).toEqual(["company-1"]);
+    expect(industryResearch.confirmCompanyProfileIdentityCalls).toEqual([{ companyId: "company-1", hint }]);
     await expect(
       ipcMain.invoke(IPC_CHANNELS.industryResearchUpdateItem, event(sender), "item-1", {
         industry: "  ",
@@ -166,6 +200,13 @@ describe("ipc handlers", () => {
       }),
     ).rejects.toThrow(/invalid company input/);
     expect(industryResearch.addCompanyCalls).toHaveLength(0);
+    await expect(ipcMain.invoke(
+      IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity,
+      event(sender),
+      "company-1",
+      { name: "主体", officialWebsite: "ftp://example.com" },
+    )).rejects.toThrow(/invalid company identity hint/);
+    expect(industryResearch.confirmCompanyProfileIdentityCalls).toHaveLength(1);
   });
 
   it("delegates list, research lifecycle, and settings reads with strict arguments", async () => {
@@ -186,8 +227,8 @@ describe("ipc handlers", () => {
     await ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1");
     await ipcMain.invoke(IPC_CHANNELS.companyResearchListRuns, event(sender), "item-1", "company-1");
     await ipcMain.invoke(IPC_CHANNELS.companyResearchCancel, event(sender), "run-1");
-    expect(started).toMatchObject({ id: "run-1", status: "researching", schemaVersion: "company-research-report-v1" });
-    expect(Value.Check(ResearchRunSchema, started)).toBe(true);
+    expect(started).toMatchObject({ ok: true, value: { id: "run-1", status: "researching", schemaVersion: "company-research-report-v1" } });
+    expect(Value.Check(ResearchRunSchema, (started as { value: unknown }).value)).toBe(true);
     expect(companyResearch.startCalls).toEqual([
       { itemId: "item-1", companyId: "company-1", input: RESEARCH_INPUT },
     ]);
@@ -199,7 +240,7 @@ describe("ipc handlers", () => {
         "company-1",
         { timeScope: " ", extra: true },
       ),
-    ).rejects.toThrow(/invalid company research input/);
+    ).resolves.toMatchObject({ ok: false, error: { code: "INPUT.INVALID" } });
 
     const researchEvent = { itemId: "item-1", companyId: "company-1", runId: "run-1", type: "state_changed" } as const;
     companyResearch.emit(researchEvent);
@@ -230,7 +271,7 @@ describe("ipc handlers", () => {
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetRun, event(sender), "item-1", "company-1", "missing")).resolves.toBeUndefined();
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchListRuns, event(sender), "item-1", "company-1")).resolves.toEqual([summary]);
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1")).resolves.toEqual({ runs: [summary], globalActiveRun: null });
-    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryFailed, event(sender), ...target, RESEARCH_INPUT)).resolves.toMatchObject({ id: "run-1", status: "researching" });
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryFailed, event(sender), ...target, RESEARCH_INPUT)).resolves.toMatchObject({ ok: true, value: { id: "run-1", status: "researching" } });
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchDeleteRun, event(sender), ...target)).resolves.toBeUndefined();
     expect(companyResearch.getRunCalls[0]).toEqual({ itemId: "item-1", companyId: "company-1", runId: "run-1" });
     expect(companyResearch.listRunsCalls).toEqual([{ itemId: "item-1", companyId: "company-1" }]);
@@ -260,7 +301,8 @@ describe("ipc handlers", () => {
     const { ipcMain, companyResearch } = makeDeps();
     vi.spyOn(companyResearch, method).mockImplementation(() => { throw new Error('sk-secret provider error {"candidate":true}'); });
     const error = await ipcMain.invoke(IPC_CHANNELS[channel], event(new FakeWebContents(1)), ...args).catch((error: Error) => error);
-    expect((error as Error).message).toBe(`company research ${action} failed`);
+    if (method === "start" || method === "retryFailed") expect(error).toEqual({ ok: false, error: { code: "INTERNAL.UNKNOWN", category: "internal" } });
+    else expect((error as Error).message).toBe(`company research ${action} failed`);
   });
 
   it("sanitizes asynchronous deletion service errors", async () => {

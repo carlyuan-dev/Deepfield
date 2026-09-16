@@ -12,6 +12,8 @@ import type {
   DesktopApi,
 } from "@deepfield/contracts";
 
+import { researchRun } from "../renderer/features/industry-research/company-research-test-fixtures.js";
+
 const CHAT_OPTIONS: ChatRequestOptions = { webSearch: false, skillName: "structured-brief" };
 
 interface FakeIpc {
@@ -26,6 +28,9 @@ function makeFakeIpc(): FakeIpc {
   const ipc: IpcBridge = {
     invoke: async (channel, ...args) => {
       invokes.push({ channel, args });
+      if (channel === IPC_CHANNELS.companyResearchStart || channel === IPC_CHANNELS.companyResearchRetryFailed) return { ok: true, value: researchRun({ status: "researching" }) };
+      if (channel === IPC_CHANNELS.companyResearchExportWord) return { ok: true, value: { status: "saved" } };
+      if (channel === IPC_CHANNELS.settingsDiagnoseLlm || channel === IPC_CHANNELS.settingsDiagnoseSearch) return { ok: true, value: { ok: true, latencyMs: 0, summary: "连接正常" } };
       return undefined;
     },
     on: (channel, listener) => {
@@ -75,6 +80,7 @@ describe("preload api", () => {
     expect(Object.keys(api.industryResearch).sort()).toEqual([
       "addCompanies",
       "addCompany",
+      "confirmCompanyProfileIdentity",
       "createItem",
       "deleteItem",
       "deleteItems",
@@ -95,6 +101,7 @@ describe("preload api", () => {
     expect(Object.keys(api.companyResearch).sort()).toEqual([
       "cancel",
       "deleteRun",
+      "exportWord",
       "getRun",
       "getState",
       "listRuns",
@@ -163,12 +170,14 @@ describe("preload api", () => {
     await api.industryResearch.removeCompanies("item-1", ["company-1", "company-2"]);
     await api.industryResearch.recognizeCompanies("item-1", "公司甲");
     await api.industryResearch.retryCompanyProfile("company-1");
+    await api.industryResearch.confirmCompanyProfileIdentity("company-1", { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" });
     api.industryResearch.subscribeCompanyProfiles(() => {});
     await api.companyResearch.start("item-1", "company-1", { direction: "product_and_technology", asOfDate: "2026-09-11" });
     await api.companyResearch.cancel("run-1");
     await api.companyResearch.getState("item-1", "company-1");
     await api.companyResearch.listRuns("item-1", "company-1");
     await api.companyResearch.getRun("item-1", "company-1", "run-1");
+    await api.companyResearch.exportWord("item-1", "company-1", "run-1", { raw: false, structured: true });
     const retryInput = { direction: "product_and_technology", focusScope: "整机", asOfDate: "2026-09-11" } as const;
     await api.companyResearch.retryFailed("item-1", "company-1", "run-1", retryInput);
     await api.companyResearch.deleteRun("item-1", "company-1", "run-1");
@@ -198,12 +207,14 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.industryResearchRemoveCompanies, args: ["item-1", ["company-1", "company-2"]] },
       { channel: IPC_CHANNELS.industryResearchRecognizeCompanies, args: ["item-1", "公司甲"] },
       { channel: IPC_CHANNELS.industryResearchRetryCompanyProfile, args: ["company-1"] },
+      { channel: IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity, args: ["company-1", { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" }] },
       { channel: IPC_CHANNELS.industryResearchSubscribeCompanyProfiles, args: [] },
       { channel: IPC_CHANNELS.companyResearchStart, args: ["item-1", "company-1", { direction: "product_and_technology", asOfDate: "2026-09-11" }] },
       { channel: IPC_CHANNELS.companyResearchCancel, args: ["run-1"] },
       { channel: IPC_CHANNELS.companyResearchGetState, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.companyResearchListRuns, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.companyResearchGetRun, args: ["item-1", "company-1", "run-1"] },
+      { channel: IPC_CHANNELS.companyResearchExportWord, args: ["item-1", "company-1", "run-1", { raw: false, structured: true }] },
       { channel: IPC_CHANNELS.companyResearchRetryFailed, args: ["item-1", "company-1", "run-1", retryInput] },
       { channel: IPC_CHANNELS.companyResearchDeleteRun, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.settingsGet, args: [] },
@@ -222,6 +233,18 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.chatSend, args: ["conv-1", "你好", "req-1", CHAT_OPTIONS] },
       { channel: IPC_CHANNELS.chatListMessages, args: ["conv-1"] },
     ]);
+  });
+
+  it("rejects malformed Word export results without leaking transport payloads", async () => {
+    const { ipc: baseIpc } = makeFakeIpc();
+    const api = createPreloadApi({
+      ...baseIpc,
+      invoke: async () => ({ ok: true, value: { status: "saved", path: "/private/secret.docx" } }),
+    });
+    const error = await api.companyResearch.exportWord("item-1", "company-1", "run-1", { raw: false, structured: true }).catch((value) => value);
+    expect(error).toMatchObject({ code: "INTERNAL.UNKNOWN", category: "internal" });
+    expect(JSON.stringify(error)).not.toContain("private");
+    expect(JSON.stringify(error)).not.toContain("secret");
   });
 
   it("validates worker events before forwarding and supports unsubscribe", () => {

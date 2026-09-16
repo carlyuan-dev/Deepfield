@@ -1,5 +1,6 @@
 import { Value } from "typebox/value";
 import {
+  AppError, toPublicError, normalizeResearchInput, researchRetryMode, type AppErrorCode,
   CompanyResearchWorkerEventSchema,
   StartCompanyResearchInputSchema,
   STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
@@ -24,9 +25,10 @@ import type { Repositories } from "@deepfield/persistence";
 import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "./ports.js";
 import { validateStructuredResearch } from "./company-research-harness.js";
 
-export class CompanyResearchServiceError extends Error {
-  constructor(message: string) {
-    super(message);
+export class CompanyResearchServiceError extends AppError {
+  constructor(message: string, code: AppErrorCode = "INTERNAL.UNKNOWN") {
+    super(code);
+    this.message = message;
     this.name = "CompanyResearchServiceError";
   }
 }
@@ -91,7 +93,7 @@ export class CompanyResearchService {
     try {
       let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
-      catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
+      catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
       const { context, template } = this.buildResearchSnapshots(target, normalized, today);
       try {
         const requestId = this.options.requestIdFactory();
@@ -101,30 +103,30 @@ export class CompanyResearchService {
         this.launch(run, requestId, llm, search);
         return structuredClone(run);
       } catch {
-        throw new CompanyResearchServiceError("company research could not start");
+        throw new CompanyResearchServiceError("company research could not start", "STORAGE.FAILED");
       }
     } finally {
       this.starting = false;
     }
   }
 
-  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<ResearchRun> {
+  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<KeyResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
     const target = this.requireTarget(itemId, companyId);
     const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
       target.item.id, target.company.id, runId as ResearchRunId,
     ));
-    if (
-      saved?.schemaVersion !== "company-research-report-v1" ||
-      (saved.status !== "research_failed" && saved.status !== "structure_failed")
-    ) throw new CompanyResearchServiceError("company research cannot be retried");
+    const mode = researchRetryMode(saved, normalized);
+    if (saved?.schemaVersion !== "company-research-report-v1" || mode === "unavailable") {
+      throw new CompanyResearchServiceError("company research cannot be retried", "BUSINESS.CONFLICT");
+    }
     this.requireAvailable();
     this.starting = true;
     try {
-      if (saved.status === "structure_failed" && inputsEqual(saved, normalized)) {
+      if (mode === "structure") {
         let llm: LlmRuntimeSnapshot;
         try { llm = await this.profiles.resolveActiveLlm(); }
-        catch { throw new CompanyResearchServiceError("请先配置并启用 LLM Profile"); }
+        catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
         try {
           const requestId = this.options.requestIdFactory();
           const active = this.repositories.runInTransaction(() =>
@@ -132,13 +134,13 @@ export class CompanyResearchService {
           this.launch(active, requestId, llm);
           return structuredClone(active);
         } catch {
-          throw new CompanyResearchServiceError("company research could not retry");
+          throw new CompanyResearchServiceError("company research could not retry", "STORAGE.FAILED");
         }
       }
 
       let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
-      catch { throw new CompanyResearchServiceError("请先配置并启用 LLM 与 Search Profile"); }
+      catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
       const { context, template } = this.buildResearchSnapshots(target, normalized, today);
       try {
         const requestId = this.options.requestIdFactory();
@@ -148,7 +150,7 @@ export class CompanyResearchService {
         this.launch(active, requestId, llm, search);
         return structuredClone(active);
       } catch {
-        throw new CompanyResearchServiceError("company research could not retry");
+        throw new CompanyResearchServiceError("company research could not retry", "STORAGE.FAILED");
       }
     } finally {
       this.starting = false;
@@ -159,19 +161,9 @@ export class CompanyResearchService {
     this.requireAvailable();
     const saved = this.getRun(itemId, companyId, runId);
     if (saved?.schemaVersion !== "company-research-report-v1" || saved.status !== "structure_failed") {
-      throw new CompanyResearchServiceError("company research cannot be restructured");
+      throw new CompanyResearchServiceError("company research cannot be restructured", "BUSINESS.CONFLICT");
     }
-    let llm: LlmRuntimeSnapshot;
-    try { llm = await this.profiles.resolveActiveLlm(); }
-    catch { throw new CompanyResearchServiceError("请先配置并启用 LLM Profile"); }
-    try {
-      const requestId = this.options.requestIdFactory();
-      const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryStructuring(saved.id));
-      this.launch(run, requestId, llm);
-      return structuredClone(run);
-    } catch {
-      throw new CompanyResearchServiceError("company research could not retry structuring");
-    }
+    return this.retryFailed(itemId, companyId, runId, normalizeResearchInput(saved));
   }
 
   async cancel(runId: string): Promise<void> {
@@ -261,7 +253,7 @@ export class CompanyResearchService {
   }
 
   cleanupAbandoned(): { failedResearching: number; failedStructuring: number } {
-    if (this.active) throw new CompanyResearchServiceError("company research is already running");
+    if (this.active) throw new CompanyResearchServiceError("company research is already running", "BUSINESS.CONFLICT");
     return this.read(() => this.repositories.companyResearchRuns.recoverAbandoned());
   }
 
@@ -275,7 +267,7 @@ export class CompanyResearchService {
   }
 
   private requireAvailable(): void {
-    if (this.isRunning()) throw new CompanyResearchServiceError("company research is already running");
+    if (this.isRunning()) throw new CompanyResearchServiceError("company research is already running", "BUSINESS.CONFLICT");
   }
 
   private requireTarget(itemId: string, companyId: string) {
@@ -284,7 +276,7 @@ export class CompanyResearchService {
       const company = this.repositories.companies.getById(companyId as CompanyId);
       const membership = this.repositories.itemCompanies.listByItem(itemId as CapabilityItemId)
         .find((entry) => entry.companyId === companyId);
-      if (!item || !company || !membership) throw new CompanyResearchServiceError("company research target not found");
+      if (!item || !company || !membership) throw new CompanyResearchServiceError("company research target not found", "RESOURCE.NOT_FOUND");
       return { item, company, membership };
     });
   }
@@ -292,16 +284,9 @@ export class CompanyResearchService {
   private normalizeInput(input: StartCompanyResearchInput): { normalized: StartCompanyResearchInput; today: string } {
     const today = formatLocalDate(this.now());
     if (!Value.Check(StartCompanyResearchInputSchema, input) || !isRealDate(input.asOfDate) || input.asOfDate > today) {
-      throw new CompanyResearchServiceError("invalid company research input");
+      throw new CompanyResearchServiceError("invalid company research input", "INPUT.INVALID");
     }
-    const focusScope = input.focusScope?.trim();
-    return {
-      today,
-      normalized: {
-        direction: input.direction, asOfDate: input.asOfDate,
-        ...(focusScope ? { focusScope } : {}),
-      },
-    };
+    return { today, normalized: normalizeResearchInput(input) };
   }
 
   private buildResearchSnapshots(
@@ -332,7 +317,7 @@ export class CompanyResearchService {
   private read<T>(work: () => T): T {
     try { return work(); } catch (error) {
       if (error instanceof CompanyResearchServiceError) throw error;
-      throw new CompanyResearchServiceError("company research report could not be read");
+      throw new CompanyResearchServiceError("company research report could not be read", "STORAGE.FAILED");
     }
   }
 
@@ -381,6 +366,13 @@ export class CompanyResearchService {
             active.rawDraftText += event.delta;
             this.emit(event);
           } else if (event.type === "tool_activity") {
+            if (active.stage === "raw" && event.name === "web_search" && event.status === "completed" &&
+              event.errorCode === undefined && active.run.searchStatus !== "succeeded") {
+              try {
+                active.run = this.repositories.runInTransaction(() =>
+                  this.repositories.companyResearchRuns.markSearchSucceeded(active.run.id));
+              } catch { throw new ResearchConsumeFailure("storage_failed"); }
+            }
             active.latestActivity = structuredClone(event);
             this.emit(event);
           } else if (event.type === "model_diagnostic") {
@@ -482,8 +474,4 @@ function isRealDate(value: string): boolean {
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   return day <= days[month - 1]!;
-}
-
-function inputsEqual(run: KeyResearchRun, input: StartCompanyResearchInput): boolean {
-  return run.direction === input.direction && run.asOfDate === input.asOfDate && run.focusScope === input.focusScope;
 }

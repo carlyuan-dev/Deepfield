@@ -164,6 +164,13 @@ h3,
   font-weight: 600;
 }
 
+.nav-primary button,
+.nav-footer button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar .sidebar-back {
   font-size: 17px;
   padding: 8px 12px 18px;
@@ -253,6 +260,10 @@ h3,
   grid-template-columns: 38px minmax(420px, 1fr);
 }
 
+.workspace-panes[hidden] {
+  display: none;
+}
+
 .chat-pane {
   flex: 1 1 auto;
   min-width: 0;
@@ -327,29 +338,29 @@ h3,
 .pane-message {
   flex: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+.pane-message > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .capability-pane {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
-  padding: 16px 24px 24px;
+  overflow: hidden;
+  padding: 0 24px;
   border-left: 1px solid var(--border);
   background: var(--bg);
 }
 
-.capability-pane-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  min-height: 32px;
-  margin-bottom: 4px;
-}
-
 .capability-close {
+  flex: 0 0 28px;
   width: 28px;
   height: 28px;
   padding: 0;

@@ -10,3 +10,6 @@ export * from "./skills.js";
 export * from "./research.js";
 export * from "./company-research-templates.js";
 export * from "./settings.js";
+export * from "./errors.js";
+export * from "./research-retry-policy.js";
+export * from "./company-profile.js";

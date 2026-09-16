@@ -1,5 +1,6 @@
 import { Type, type Static, type TProperties } from "typebox";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
+import { CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "./company-profile.js";
 import {
   CompanyResearchCancelRequestSchema,
   CompanyResearchWorkerEventSchema,
@@ -69,6 +70,7 @@ export const ToolRunRequestSchema = Type.Object(
 export type ToolRunRequest = Static<typeof ToolRunRequestSchema>;
 
 export const UtilityWorkerRequestSchema = Type.Union([
+  CompanyProfileWorkerRequestSchema,
   AgentWorkerRequestSchema,
   CompanyResearchRawWorkerRequestSchema,
   CompanyResearchStructureWorkerRequestSchema,
@@ -469,6 +471,7 @@ export const HostReplySchema = Type.Union([
 export type HostReply = Static<typeof HostReplySchema>;
 
 export const UtilityWorkerEventSchema = Type.Union([
+  ...CompanyProfileWorkerEventSchema.anyOf,
   ...AgentWorkerEventSchema.anyOf,
   ...CompanyResearchWorkerEventSchema.anyOf,
   ToolEventEnvelopeSchema,

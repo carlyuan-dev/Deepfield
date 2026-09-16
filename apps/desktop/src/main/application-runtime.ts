@@ -10,19 +10,20 @@ import {
   type AgentWorkerPort,
   type CompanyResearchWorkerPort,
   type CompanyRecognizer,
-  type CompanyCompleter,
+  type CompanyProfileCompleter, type CompanyProfileWorkerPort,
   type ConversationTitleGenerator,
   type SecretReader,
 } from "@deepfield/application";
+import { createCompanyProfileCompleter } from "./company-profile-completer.js";
 
 export interface ApplicationRuntimeDeps {
   repositories: Repositories;
   secrets: SecretReader;
   profiles: import("@deepfield/application").RuntimeProfileResolver;
-  worker: AgentWorkerPort & CompanyResearchWorkerPort;
-  llmHelpers?: CompanyRecognizer & CompanyCompleter & ConversationTitleGenerator;
+  worker: AgentWorkerPort & CompanyResearchWorkerPort & Partial<CompanyProfileWorkerPort>;
+  llmHelpers?: CompanyRecognizer & ConversationTitleGenerator;
   companyRecognizer?: CompanyRecognizer;
-  companyCompleter?: CompanyCompleter;
+  companyCompleter?: CompanyProfileCompleter;
   titleGenerator?: ConversationTitleGenerator;
 }
 
@@ -37,7 +38,12 @@ export interface ApplicationRuntime {
 
 export function createApplicationRuntime(deps: ApplicationRuntimeDeps): ApplicationRuntime {
   const companyRecognizer = deps.companyRecognizer ?? deps.llmHelpers;
-  const companyCompleter = deps.companyCompleter ?? deps.llmHelpers;
+  const companyCompleter = deps.companyCompleter ?? createCompanyProfileCompleter(deps.profiles, {
+    sendProfile: (request) => {
+      if (!deps.worker.sendProfile) throw new Error("profile worker unavailable");
+      return deps.worker.sendProfile(request);
+    },
+  }, (diagnostic) => deps.repositories.companyProfileDiagnostics.record(diagnostic));
   const titleGenerator = deps.titleGenerator ?? deps.llmHelpers;
   if (companyRecognizer === undefined || companyCompleter === undefined) {
     throw new Error("llm helpers are not configured");

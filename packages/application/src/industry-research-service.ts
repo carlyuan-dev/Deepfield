@@ -1,6 +1,7 @@
 import { Value } from "typebox/value";
 import {
   CompanyDraftSchema,
+  CompanyProfileIdentityHintSchema,
   CreateIndustryResearchItemInputSchema,
   RECOGNITION_CHUNK_MAX_CODE_POINTS,
   UpdateIndustryResearchItemInputSchema,
@@ -10,6 +11,7 @@ import {
   type Company,
   type CompanyDraft,
   type CompanyProfileInput,
+  type CompanyProfileIdentityHint,
   type ItemCompany,
   type ItemCompanyView as ContractItemCompanyView,
   type UpdateIndustryResearchItemInput,
@@ -98,6 +100,8 @@ export class IndustryResearchService {
     private readonly companyEnrichment?: {
       enqueue(companyId: Company["id"]): void;
       retry?(companyId: Company["id"]): boolean;
+      confirmIdentity?(companyId: Company["id"], hint: CompanyProfileIdentityHint): boolean;
+      getIssue?(): Company["profileIssue"];
     },
   ) {}
 
@@ -189,9 +193,10 @@ export class IndustryResearchService {
 
   listCompanies(itemId: CapabilityItemId): ItemCompanyView[] {
     requireItem(this.repositories, itemId);
+    const issue = this.companyEnrichment?.getIssue?.();
     return this.repositories.itemCompanies.listByItem(itemId).flatMap((membership) => {
       const company = this.repositories.companies.getById(membership.companyId);
-      return company === undefined ? [] : [toView(company, membership)];
+      return company === undefined ? [] : [toView(company.profileStatus === "pending" && issue ? { ...company, profileIssue: issue } : company, membership)];
     });
   }
 
@@ -273,6 +278,36 @@ export class IndustryResearchService {
       throw new IndustryResearchServiceError("company not found");
     }
     return this.companyEnrichment?.retry?.(companyId) ?? false;
+  }
+
+  confirmCompanyProfileIdentity(companyId: Company["id"], input: unknown): boolean {
+    if (this.repositories.companies.getById(companyId) === undefined) {
+      throw new IndustryResearchServiceError("company not found");
+    }
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
+      throw new IndustryResearchServiceError("invalid company identity hint");
+    }
+    const raw = input as Record<string, unknown>;
+    const hint = {
+      ...raw,
+      name: typeof raw.name === "string" ? raw.name.trim() : raw.name,
+      ...(typeof raw.officialWebsite === "string" ? { officialWebsite: raw.officialWebsite.trim() } : {}),
+    };
+    if (!Value.Check(CompanyProfileIdentityHintSchema, hint)) {
+      throw new IndustryResearchServiceError("invalid company identity hint");
+    }
+    const normalizedHint = hint as CompanyProfileIdentityHint;
+    if (normalizedHint.officialWebsite !== undefined) {
+      try {
+        const website = new URL(normalizedHint.officialWebsite);
+        if ((website.protocol !== "http:" && website.protocol !== "https:") || !website.hostname) {
+          throw new Error("invalid website");
+        }
+      } catch {
+        throw new IndustryResearchServiceError("invalid company identity hint");
+      }
+    }
+    return this.companyEnrichment?.confirmIdentity?.(companyId, normalizedHint) ?? false;
   }
 
   async recognizeCompanies(itemId: CapabilityItemId, text: string): Promise<CompanyDraft[]> {

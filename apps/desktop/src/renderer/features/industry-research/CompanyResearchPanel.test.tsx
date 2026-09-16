@@ -3,12 +3,18 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { CompanyResearchState, ResearchRun } from "@deepfield/contracts";
-import { makeFakeApi } from "../../renderer-test-helpers.js";
+import { makeFakeApi as makeBaseApi } from "../../renderer-test-helpers.js";
+import { configuredSettings } from "../settings/settings-test-fixtures.js";
 import { CompanyResearchPanel } from "./CompanyResearchPanel.js";
 import { CompanyResearchModal } from "./CompanyResearchModal.js";
 import { activeResearch, researchRun, researchSummary } from "./company-research-test-fixtures.js";
 
 const context = { itemId: "item-research", companyId: "company-research", topicName: "智能眼镜", topicScope: "中国市场", companyName: "小米", companyNote: "重点候选" };
+function makeFakeApi() {
+  const api = makeBaseApi();
+  api.settings.get.mockResolvedValue(configuredSettings());
+  return api;
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -17,6 +23,39 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it("warns on a completed report without successful search and offers retry", async () => {
+    const fake = makeFakeApi();
+    const run = researchRun({ searchStatus: "none" });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText(/本次报告未成功完成联网搜索/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新尝试" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "新的调研" })).toBeTruthy();
+    expect(screen.getByRole("option").textContent).toContain("未成功联网");
+    fireEvent.click(await screen.findByRole("tab", { name: "结构化报告" }));
+    expect(screen.getByText(/本次报告未成功完成联网搜索/)).toBeTruthy();
+  });
+
+  it("does not warn or offer retry when search succeeded", async () => {
+    const fake = makeFakeApi(); const run = researchRun({ searchStatus: "succeeded" });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByRole("tab", { name: "原始调研报告" });
+    expect(screen.queryByText(/本次报告未成功完成联网搜索|此历史报告未记录联网搜索状态/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "重新尝试" })).toBeNull();
+  });
+
+  it.each(["unknown", undefined] as const)("shows historical uncertainty for %s search state", async (searchStatus) => {
+    const fake = makeFakeApi(); const run = researchRun(searchStatus === undefined ? {} : { searchStatus });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText("此历史报告未记录联网搜索状态，无法确认是否成功联网。")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重新尝试" })).toBeNull();
+  });
+
   it("restores and updates the latest research tool activity beside the running status", async () => {
     const fake = makeFakeApi();
     const run = researchRun({ status: "researching" });
@@ -198,7 +237,6 @@ describe("two-stage company research", () => {
 
   it("shows only matching safe research failure outcomes and treats cancellation as nonfailure", async () => {
     const fake = makeFakeApi();
-    const user = userEvent.setup();
     render(<CompanyResearchPanel api={fake} {...context} />);
     await screen.findByText("还没有调研报告。");
     act(() => fake.emitResearch({ type: "state_changed", itemId: "other-item", companyId: context.companyId, runId: "other-run", outcome: "research_failed" }));
@@ -206,7 +244,7 @@ describe("two-stage company research", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: "early-run", outcome: "research_failed" }));
     expect(await screen.findByText("调研未完成，请稍后重试")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "重新加载" }));
+    expect(screen.queryByRole("button", { name: "重新加载" })).toBeNull();
     const run = researchRun({ status: "researching" });
     fake.companyResearch.getState.mockResolvedValue(activeResearch(run, "未完成草稿"));
     act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: run.id }));
@@ -214,6 +252,21 @@ describe("two-stage company research", () => {
     fake.companyResearch.getState.mockResolvedValue({ runs: [], globalActiveRun: null });
     act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: run.id, outcome: "cancelled" }));
     await screen.findByText("还没有调研报告。");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("clears a run execution error when selecting a different successful history entry", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const failed = researchRun({ id: "failed-history" as ResearchRun["id"], status: "research_failed" });
+    const successful = researchRun({ id: "successful-history" as ResearchRun["id"], rawReportText: "成功历史报告" });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(failed), researchSummary(successful)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockImplementation(async (_item, _company, id) => id === successful.id ? successful : failed);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText("调研未完成，请稍后重试");
+    act(() => fake.emitResearch({ type: "state_changed", itemId: failed.itemId, companyId: failed.companyId, runId: failed.id, outcome: "research_failed" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("调研未完成，请稍后重试");
+    await user.selectOptions(screen.getByLabelText("报告版本"), successful.id);
+    expect(await screen.findByText("成功历史报告")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -340,14 +393,14 @@ describe("two-stage company research", () => {
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.selectOptions(await screen.findByLabelText("报告版本"), selected.id);
     expect(await screen.findByText("待删除报告")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
     let dialog = screen.getByRole("dialog", { name: "删除调研报告" });
     expect(within(dialog).getByText(/2026\/09\/08/)).toBeTruthy();
     expect(within(dialog).getByText(/整理失败/)).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
     expect(fake.companyResearch.deleteRun).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
     dialog = screen.getByRole("dialog", { name: "删除调研报告" });
     await user.click(within(dialog).getByRole("button", { name: "确认删除" }));
     expect(fake.companyResearch.deleteRun).toHaveBeenCalledWith(context.itemId, context.companyId, selected.id);
@@ -363,7 +416,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getRun.mockResolvedValue(run);
     fake.companyResearch.deleteRun.mockImplementation(async () => { state = { runs: [], globalActiveRun: null }; });
     render(<CompanyResearchPanel api={fake} {...context} />);
-    await user.click(await screen.findByRole("button", { name: "删除此报告" }));
+    await user.click(await screen.findByRole("button", { name: "删除" }));
     await user.click(within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("还没有调研报告。")).toBeTruthy();
     expect(screen.getByRole("button", { name: "开始调研" })).toBeTruthy();
@@ -381,7 +434,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.deleteRun.mockResolvedValue(undefined);
     render(<CompanyResearchPanel api={fake} {...context} />);
     expect(await screen.findByText("已经删除的报告正文")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
     await user.click(within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("加载调研状态失败，请重试")).toBeTruthy();
     expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
@@ -401,7 +454,7 @@ describe("two-stage company research", () => {
     render(<CompanyResearchPanel api={fake} {...context} />);
     expect(await screen.findByText("加载调研报告…")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "删除此报告" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
     await user.click(within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }));
 
     expect(await screen.findByText("加载调研状态失败，请重试")).toBeTruthy();
@@ -421,7 +474,7 @@ describe("two-stage company research", () => {
     });
     fake.companyResearch.getRun.mockResolvedValue(run);
     render(<CompanyResearchPanel api={fake} {...context} />);
-    expect((await screen.findByRole("button", { name: "删除此报告" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole("button", { name: "删除" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("disables an open deletion confirmation when another research run becomes active", async () => {
@@ -431,7 +484,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getState.mockImplementation(async () => state);
     fake.companyResearch.getRun.mockResolvedValue(run);
     render(<CompanyResearchPanel api={fake} {...context} />);
-    await user.click(await screen.findByRole("button", { name: "删除此报告" }));
+    await user.click(await screen.findByRole("button", { name: "删除" }));
     const confirmation = within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }) as HTMLButtonElement;
     state = {
       ...state,
@@ -516,7 +569,7 @@ describe("two-stage company research", () => {
     expect(fake.companyResearch.cancel).toHaveBeenCalledWith(run.id);
   });
 
-  it("renders persisted section order, statuses, and source text safely", async () => {
+  it("renders persisted section order, warning statuses, and source text safely", async () => {
     const fake = makeFakeApi();
     const user = userEvent.setup();
     const run = researchRun();
@@ -529,11 +582,12 @@ describe("two-stage company research", () => {
     await user.click(await screen.findByRole("tab", { name: "结构化报告" }));
     expect(await screen.findByText("核心结论")).toBeTruthy();
     expect(within(screen.getByRole("tabpanel")).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["核心结论", "主要产品与定位", "核心技术与指标", "研发与产品阶段", "竞争力与替代方案", "技术瓶颈与路线图"]);
-    for (const text of ["已找到", "部分找到", "未找到", "未披露", "存在冲突", "已报道事实", "预测", "2026年", "<img src=x onerror=alert(1)>", "<script>unsafe</script>"]) expect(screen.getByText(text)).toBeTruthy();
+    for (const text of ["未找到", "未披露", "存在冲突", "设备已经发布", "<img src=x onerror=alert(1)>", "<script>unsafe</script>"]) expect(screen.getByText(text)).toBeTruthy();
+    for (const text of ["已找到", "部分找到", "已报道事实", "预测", "2026年"]) expect(screen.queryByText(text)).toBeNull();
     expect(screen.getAllByRole("link")).toHaveLength(1);
     expect(screen.getByRole("link").getAttribute("href")).toBe("https://example.com/one");
     expect(document.querySelector(".structured-research-report img, .structured-research-report script")).toBeNull();
-    expect(screen.getByText("AI 调研结果仅供参考，重要事实仍需人工核验。")).toBeTruthy();
+    expect(screen.getByText(/AI 调研结果仅供参考，重要事实仍需人工核验/)).toBeTruthy();
   });
 
   it("keeps saved raw content readable while a failed-stage detail refresh is pending", async () => {

@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    maxWorkers: 2,
     include: ["**/*.test.ts", "**/*.test.tsx"],
     exclude: [
       "**/node_modules/**",

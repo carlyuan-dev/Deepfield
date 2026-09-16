@@ -23,6 +23,10 @@ export interface PiToolAdapterOptions {
 }
 
 const MAX_DETERMINISTIC_TEXT_BYTES = 8192;
+// Capability validation can inspect the trusted output without putting it in
+// Pi history, renderer events or serialized diagnostics. Entries follow GC.
+const successfulOutputs = new WeakMap<object, unknown>();
+export function successfulToolOutput(result: object): unknown { return successfulOutputs.get(result); }
 
 /** UTF-8-safe truncation that never splits a surrogate pair. */
 function truncateUtf8(text: string, maxBytes: number): string {
@@ -132,10 +136,12 @@ function toAgentTool(
           definition.model !== undefined
             ? definition.model.formatOutput(result.output)
             : deterministicOutputText(result.output);
-        return {
-          content: [{ type: "text", text }],
+        const agentResult = {
+          content: [{ type: "text" as const, text }],
           details: { executionId, budgetConsumed: result.budgetConsumed },
         };
+        successfulOutputs.set(agentResult, result.output);
+        return agentResult;
       }
       const failure = result.failure ?? {
         code: "cancelled",

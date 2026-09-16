@@ -3,19 +3,24 @@ import { useEffect, useId, useRef, type ReactNode } from "react";
 export interface ModalProps {
   title: string;
   onClose(): void;
+  active?: boolean;
   children: ReactNode;
 }
 
-export function Modal({ title, onClose, children }: ModalProps) {
+export function Modal({ title, onClose, active = true, children }: ModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  const activeRef = useRef(active);
+  closeRef.current = onClose;
+  activeRef.current = active;
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        onClose();
+      if (event.key === "Escape" && activeRef.current) {
+        closeRef.current();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -23,7 +28,7 @@ export function Modal({ title, onClose, children }: ModalProps) {
       window.removeEventListener("keydown", handleKeyDown);
       previouslyFocused?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-backdrop">

@@ -1,4 +1,6 @@
-import { app, BrowserWindow, clipboard, ipcMain, safeStorage, utilityProcess } from "electron";
+import { randomUUID } from "node:crypto";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityProcess } from "electron";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
@@ -23,6 +25,7 @@ import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-cata
 import { PiModelGateway } from "../shared/model-gateway.js";
 import { listSearchProviderManifests } from "@deepfield/retrieval";
 import { ConfigurationService } from "./configuration-service.js";
+import { createCompanyResearchWordExportService } from "./company-research-word-export.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
@@ -133,6 +136,11 @@ void app.whenReady().then(async () => {
         }
         return client.send(request);
       },
+      sendProfile: (request) => {
+        const client = agentRuntime?.client;
+        if (!client) throw new Error("agent worker unavailable");
+        return client.sendProfile(request);
+      },
       sendResearch: (request) => {
         const client = agentRuntime?.client;
         if (!client) throw new Error("agent worker is not available");
@@ -149,6 +157,19 @@ void app.whenReady().then(async () => {
   });
   appRuntime.companyResearch.cleanupAbandoned();
   appRuntime.companyProfiles.resume();
+  const companyResearchWordExport = createCompanyResearchWordExportService({
+    getRun: (itemId, companyId, runId) => appRuntime!.companyResearch.getRun(itemId, companyId, runId),
+    showSaveDialog: (options) => {
+      const window = mainWindow;
+      return window && !window.isDestroyed()
+        ? dialog.showSaveDialog(window, options)
+        : dialog.showSaveDialog(options);
+    },
+    writeFile,
+    rename,
+    unlink,
+    randomToken: randomUUID,
+  });
   ipcDispose = registerIpcHandlers({
     ipcMain: ipcMainAdapter,
     clipboard: { writeText: (text) => clipboard.writeText(text) },
@@ -158,6 +179,7 @@ void app.whenReady().then(async () => {
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
     companyResearch: appRuntime.companyResearch,
+    companyResearchWordExport,
     companyProfiles: appRuntime.companyProfiles,
   });
 

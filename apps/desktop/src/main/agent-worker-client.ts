@@ -1,6 +1,7 @@
 import { Value } from "typebox/value";
 import {
   AgentWorkerEventSchema,
+  CompanyProfileWorkerEventSchema, type CompanyProfileWorkerEvent, type CompanyProfileWorkerRequest,
   CompanyResearchWorkerEventSchema,
   ToolEventEnvelopeSchema,
   type AgentWorkerEvent,
@@ -104,6 +105,10 @@ export class AgentWorkerClient {
     });
   }
 
+  sendProfile(request: CompanyProfileWorkerRequest): AsyncIterable<CompanyProfileWorkerEvent> {
+    return this.sendStream<CompanyProfileWorkerEvent>({ kind: "profile", id: request.requestId, companyId: request.companyId, request });
+  }
+
   cancelResearch(requestId: string, runId: string, stage: CompanyResearchStage): void {
     if (this.disposed) throw new Error("agent worker client is disposed");
     if (this.exited) throw new AgentWorkerExitedError(this.exitCode);
@@ -111,7 +116,8 @@ export class AgentWorkerClient {
   }
 
   private sendStream<T extends StreamEvent>(spec: {
-    kind: "chat" | "research" | "tool";
+    kind: "chat" | "research" | "tool" | "profile";
+    companyId?: string;
     id: string;
     runId?: string;
     stage?: CompanyResearchStage;
@@ -131,6 +137,7 @@ export class AgentWorkerClient {
     const stream: PendingStream = {
       kind: spec.kind,
       id: spec.id,
+      ...(spec.companyId === undefined ? {} : { companyId: spec.companyId }),
       ...(spec.executionId !== undefined ? { executionId: spec.executionId } : {}),
       ...(spec.runId !== undefined ? { runId: spec.runId } : {}),
       ...(spec.stage !== undefined ? { stage: spec.stage } : {}),
@@ -192,6 +199,13 @@ export class AgentWorkerClient {
     }
     if (isHostRequest(value)) {
       this.hostHandler?.(value);
+      return;
+    }
+    if (Value.Check(CompanyProfileWorkerEventSchema, value)) {
+      const stream = this.pending.get(value.requestId);
+      if (!stream) return;
+      if (stream.kind !== "profile" || stream.companyId !== value.companyId) this.close(stream.id, stream, new AgentProtocolError());
+      else this.push(stream.id, stream, value);
       return;
     }
     if (Value.Check(AgentWorkerEventSchema, value)) {

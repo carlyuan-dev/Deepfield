@@ -22,6 +22,7 @@ import type {
   DiagnosticResult,
   ResearchRun,
   ResearchRunId,
+  CompanyResearchWordExportResult,
   StartCompanyResearchInput,
 } from "@deepfield/contracts";
 import { getCompanyResearchTemplate } from "@deepfield/contracts";
@@ -112,6 +113,7 @@ export class FakeIndustryResearchService {
   recognizeCompaniesCalls: Array<{ itemId: string; text: string }> = [];
   recognizeCompaniesCallsResult: CompanyDraft[] = [];
   retryCompanyProfileCalls: string[] = [];
+  confirmCompanyProfileIdentityCalls: Array<{ companyId: string; hint: unknown }> = [];
 
   createItem(input: unknown): CapabilityItem {
     this.createItemCalls.push(input);
@@ -203,6 +205,11 @@ export class FakeIndustryResearchService {
 
   retryCompanyProfile(companyId: string): boolean {
     this.retryCompanyProfileCalls.push(companyId);
+    return true;
+  }
+
+  confirmCompanyProfileIdentity(companyId: string, hint: unknown): boolean {
+    this.confirmCompanyProfileIdentityCalls.push({ companyId, hint });
     return true;
   }
 
@@ -389,6 +396,18 @@ export class FakeCompanyResearchService {
   }
 }
 
+export class FakeCompanyResearchWordExportService {
+  exportCalls: Array<{ itemId: string; companyId: string; runId: string; selection: { raw: boolean; structured: boolean } }> = [];
+  result: CompanyResearchWordExportResult = { status: "cancelled" };
+  error: Error | undefined;
+
+  async export(itemId: string, companyId: string, runId: string, selection: { raw: boolean; structured: boolean }): Promise<CompanyResearchWordExportResult> {
+    this.exportCalls.push({ itemId, companyId, runId, selection });
+    if (this.error) throw this.error;
+    return this.result;
+  }
+}
+
 export const RESEARCH_INPUT: StartCompanyResearchInput = {
   direction: "product_and_technology", focusScope: "整机", asOfDate: "2026-09-11",
 };
@@ -411,6 +430,8 @@ export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearc
 }
 
 export class FakeCompanyProfileEventSource {
+  configurationChangeCalls = 0;
+  configurationChanged(): void { this.configurationChangeCalls += 1; }
   listeners = new Set<(event: CompanyProfileEvent) => void>();
   subscribe(listener: (event: CompanyProfileEvent) => void): () => void {
     this.listeners.add(listener);
@@ -439,6 +460,7 @@ export function makeDeps() {
   const skills = new FakeSkillList();
   const chat = new FakeChatService();
   const companyResearch = new FakeCompanyResearchService();
+  const companyResearchWordExport = new FakeCompanyResearchWordExportService();
   const companyProfiles = new FakeCompanyProfileEventSource();
   const clipboard = new FakeClipboardWriter();
   const deps: IpcServiceDeps = {
@@ -449,11 +471,12 @@ export function makeDeps() {
     skills,
     chat,
     companyResearch,
+    companyResearchWordExport,
     companyProfiles,
     clipboard,
   };
   const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyProfiles, clipboard, dispose };
+  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyResearchWordExport, companyProfiles, clipboard, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

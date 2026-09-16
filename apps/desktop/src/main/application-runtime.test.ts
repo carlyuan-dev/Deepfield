@@ -1,3 +1,6 @@
+import type { CompanyProfileCompleter } from "@deepfield/application";
+import type { CompanyProfileFields } from "@deepfield/contracts";
+import { profileResult } from "../../../../packages/application/src/company-profile-test-fixtures.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_DEEPSEEK_MODEL_ID, getCompanyResearchTemplate,
@@ -57,7 +60,7 @@ describe("application runtime composition", () => {
       repositories: db.repos, secrets: { get: () => "sk-test" }, worker: client,
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: { complete: async (name) => { profiles.push(name); return { headquarters: "中国北京" }; } },
+      companyCompleter: profileCompleter({ complete: async (name) => { profiles.push(name); return { headquarters: "中国北京" }; } }),
     });
     const events: unknown[] = [];
     runtime.companyResearch.subscribe((event) => events.push(event));
@@ -105,7 +108,7 @@ describe("application runtime composition", () => {
     const runtime = createApplicationRuntime({
       repositories: db.repos, secrets: { get: () => "sk-runtime" }, worker: client,
       profiles: runtimeProfiles(),
-      companyRecognizer: { recognize: async () => [] }, companyCompleter: { complete: async () => ({}) },
+      companyRecognizer: { recognize: async () => [] }, companyCompleter: profileCompleter({ complete: async () => ({}) }),
     });
     const events: unknown[] = [];
     runtime.companyResearch.subscribe((event) => events.push(event));
@@ -163,10 +166,10 @@ describe("application runtime composition", () => {
       repositories: db.repos, secrets: { get: () => "sk-runtime" },
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: { complete: async () => {
+      companyCompleter: profileCompleter({ complete: async () => {
         observed.push(db.repos.companyResearchRuns.getActive());
         return { headquarters: "中国北京" };
-      } },
+      } }),
       worker: {
         send: () => ({ async *[Symbol.asyncIterator]() {} }),
         sendResearch: () => { throw Error("startup must not restart research"); },
@@ -197,7 +200,7 @@ describe("application runtime composition", () => {
       repositories: db.repos, secrets: { get: () => "sk-runtime" },
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: { complete: async (name) => { completedProfiles.push(name); return { headquarters: "中国北京" }; } },
+      companyCompleter: profileCompleter({ complete: async (name) => { completedProfiles.push(name); return { headquarters: "中国北京" }; } }),
       worker: {
         send: (request) => ({ async *[Symbol.asyncIterator]() {
           yield { requestId: request.requestId, type: "completed", text: "独立 Chat" } as const;
@@ -248,7 +251,6 @@ describe("application runtime composition", () => {
       profiles: runtimeProfiles(),
       llmHelpers: {
         recognize: async () => [],
-        complete: async () => ({}),
         generateConversationTitle: async () => "运行时标题",
       },
       worker: {
@@ -303,7 +305,7 @@ describe("application runtime composition", () => {
       secrets: { get: () => undefined },
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: { complete: async () => ({}) },
+      companyCompleter: profileCompleter({ complete: async () => ({}) }),
       worker: {
         send: () => ({
           async *[Symbol.asyncIterator]() {
@@ -332,12 +334,12 @@ describe("application runtime composition", () => {
       secrets: { get: () => undefined },
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: {
+      companyCompleter: profileCompleter({
         complete: async (_name, context) => {
           contexts.push(context);
           return { headquarters: "深圳，中国", businessTags: ["人形机器人"] };
         },
-      },
+      }),
       worker: {
         send: () => ({ async *[Symbol.asyncIterator]() {} }),
         sendResearch: () => ({ async *[Symbol.asyncIterator]() {} }),
@@ -352,3 +354,7 @@ describe("application runtime composition", () => {
     expect(contexts).toEqual([{ researchTopics: ["人形机器人"] }]);
   });
 });
+
+function profileCompleter(completer: { complete(name: string, context?: { researchTopics?: string[] }): Promise<CompanyProfileFields> }): CompanyProfileCompleter {
+  return { prepare: async (company, researchTopics) => async () => profileResult(await completer.complete(company.name, { researchTopics })) };
+}

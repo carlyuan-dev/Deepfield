@@ -6,6 +6,7 @@ import type {
   CapabilityItemId,
   Company,
   CompanyProfileInput,
+  CompanyProfileIdentityHint,
   CompanyProfileEvent,
   ChatMessage,
   ChatRequestOptions,
@@ -50,6 +51,7 @@ export interface FakeDesktopApi extends DesktopApi {
     removeCompanies: Mock<(itemId: string, companyIds: string[]) => Promise<void>>;
     recognizeCompanies: Mock<(itemId: string, text: string) => Promise<CompanyDraft[]>>;
     retryCompanyProfile: Mock<(companyId: string) => Promise<boolean>>;
+    confirmCompanyProfileIdentity: Mock<(companyId: string, hint: CompanyProfileIdentityHint) => Promise<boolean>>;
     subscribeCompanyProfiles: Mock<(listener: (event: CompanyProfileEvent) => void) => () => void>;
   };
   companyResearch: {
@@ -60,6 +62,7 @@ export interface FakeDesktopApi extends DesktopApi {
     getRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun | undefined>>;
     retryFailed: Mock<(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
     deleteRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<void>>;
+    exportWord: Mock<(itemId: string, companyId: string, runId: string, selection: { raw: boolean; structured: boolean }) => Promise<{ status: "saved" | "cancelled" }>>;
     subscribe: Mock<(listener: (event: CompanyResearchEvent) => void) => () => void>;
   };
   settings: {
@@ -185,6 +188,7 @@ export function makeFakeApi(): FakeDesktopApi {
       removeCompanies: vi.fn(async (): Promise<void> => {}),
       recognizeCompanies: vi.fn(async (): Promise<CompanyDraft[]> => []),
       retryCompanyProfile: vi.fn(async (): Promise<boolean> => true),
+      confirmCompanyProfileIdentity: vi.fn(async (): Promise<boolean> => true),
       subscribeCompanyProfiles: vi.fn((listener: (event: CompanyProfileEvent) => void) => {
         profileListeners.add(listener);
         return () => profileListeners.delete(listener);
@@ -200,6 +204,7 @@ export function makeFakeApi(): FakeDesktopApi {
       getRun: vi.fn(async (): Promise<ResearchRun | undefined> => undefined),
       retryFailed: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
       deleteRun: vi.fn(async (): Promise<void> => {}),
+      exportWord: vi.fn(async () => ({ status: "saved" as const })),
       subscribe: vi.fn(
         (listener: (event: CompanyResearchEvent) => void): (() => void) => {
           researchListeners.add(listener);

@@ -1,5 +1,7 @@
 import { Type, type Static } from "typebox";
 import type { CapabilityItemId, CompanyId } from "./ids.js";
+import { PublicAppErrorSchema, type PublicAppError } from "./errors.js";
+import type { CompanyProfileResult } from "./company-profile.js";
 
 export const CreateIndustryResearchItemInputSchema = Type.Object(
   {
@@ -76,11 +78,17 @@ export const CompanyProfileInputSchema = Type.Object(
 export type CompanyProfileInput = Static<typeof CompanyProfileInputSchema>;
 export const CompanyProfileFieldsSchema = Type.Omit(CompanyProfileInputSchema, ["name"]);
 export type CompanyProfileFields = Static<typeof CompanyProfileFieldsSchema>;
+export const CompanyProfileIdentityHintSchema = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 300, pattern: "\\S" }),
+  officialWebsite: Type.Optional(Type.String({ minLength: 1, maxLength: 2000, pattern: "^https?://\\S+$" })),
+}, { additionalProperties: false });
+export type CompanyProfileIdentityHint = Static<typeof CompanyProfileIdentityHintSchema>;
 export type CompanyProfileStatus = "pending" | "enriching" | "ready" | "failed";
 
 export const CompanyProfileEventSchema = Type.Object(
   {
     companyId: Type.String({ minLength: 1 }),
+    issue: Type.Optional(PublicAppErrorSchema),
     status: Type.Union([
       Type.Literal("pending"),
       Type.Literal("enriching"),
@@ -97,6 +105,9 @@ export interface Company {
   name: string;
   normalizedName: string;
   profileStatus: CompanyProfileStatus;
+  profileProvenance?: CompanyProfileResult;
+  profileIssue?: PublicAppError;
+  profileIdentityHint?: CompanyProfileIdentityHint;
   legalName?: string;
   aliases?: string[];
   headquarters?: string;

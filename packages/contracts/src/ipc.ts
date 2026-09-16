@@ -1,10 +1,12 @@
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
+import { CompanyProfileIdentityHintSchema } from "./capability-items.js";
 import type {
   CapabilityItem,
   Company,
   CompanyDraft,
   CompanyProfileInput,
   CompanyProfileEvent,
+  CompanyProfileIdentityHint,
   CreateIndustryResearchItemInput,
   ItemCompanyView,
   UpdateIndustryResearchItemInput,
@@ -47,6 +49,21 @@ export const CompanyResearchGetRunArgsSchema = Type.Tuple([
   IdSchema,
   IdSchema,
 ]);
+export const CompanyResearchWordExportSelectionSchema = Type.Object({
+  raw: Type.Boolean(),
+  structured: Type.Boolean(),
+}, { additionalProperties: false });
+export type CompanyResearchWordExportSelection = Static<typeof CompanyResearchWordExportSelectionSchema>;
+export const CompanyResearchExportArgsSchema = Type.Tuple([
+  IdSchema,
+  IdSchema,
+  IdSchema,
+  CompanyResearchWordExportSelectionSchema,
+]);
+export const CompanyResearchWordExportResultSchema = Type.Object({
+  status: Type.Union([Type.Literal("saved"), Type.Literal("cancelled")]),
+}, { additionalProperties: false });
+export type CompanyResearchWordExportResult = Static<typeof CompanyResearchWordExportResultSchema>;
 export const CompanyResearchRetryFailedArgsSchema = Type.Tuple([
   IdSchema,
   IdSchema,
@@ -54,6 +71,10 @@ export const CompanyResearchRetryFailedArgsSchema = Type.Tuple([
   StartCompanyResearchInputSchema,
 ]);
 export const CompanyResearchDeleteRunArgsSchema = Type.Tuple([IdSchema, IdSchema, IdSchema]);
+export const ConfirmCompanyProfileIdentityArgsSchema = Type.Tuple([
+  IdSchema,
+  CompanyProfileIdentityHintSchema,
+]);
 
 export type LlmConnectionStatus = "connected" | "disconnected";
 
@@ -80,6 +101,7 @@ export interface DesktopApi {
     removeCompanies(itemId: string, companyIds: string[]): Promise<void>;
     recognizeCompanies(itemId: string, text: string): Promise<CompanyDraft[]>;
     retryCompanyProfile(companyId: string): Promise<boolean>;
+    confirmCompanyProfileIdentity(companyId: string, hint: CompanyProfileIdentityHint): Promise<boolean>;
     subscribeCompanyProfiles(listener: (event: CompanyProfileEvent) => void): () => void;
   };
   companyResearch: {
@@ -92,6 +114,7 @@ export interface DesktopApi {
     getState(itemId: string, companyId: string): Promise<CompanyResearchState>;
     listRuns(itemId: string, companyId: string): Promise<ResearchRunSummary[]>;
     getRun(itemId: string, companyId: string, runId: string): Promise<ResearchRun | undefined>;
+    exportWord(itemId: string, companyId: string, runId: string, selection: CompanyResearchWordExportSelection): Promise<CompanyResearchWordExportResult>;
     retryFailed(
       itemId: string,
       companyId: string,

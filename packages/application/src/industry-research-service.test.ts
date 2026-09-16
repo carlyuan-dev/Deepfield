@@ -270,4 +270,35 @@ describe("IndustryResearchService", () => {
     expect(service.retryCompanyProfile(company.id)).toBe(true);
     expect(retried).toEqual([company.id]);
   });
+
+  it("validates and delegates an explicit company identity hint without editing the profile", () => {
+    const db = openTestDb();
+    dbs.push(db);
+    const confirmations: unknown[] = [];
+    const service = new IndustryResearchService(
+      db.repos,
+      { recognize: async () => [] },
+      {
+        enqueue: () => {},
+        confirmIdentity: (companyId, hint) => {
+          confirmations.push({ companyId, hint });
+          return true;
+        },
+      },
+    );
+    const item = service.createItem({ industry: "智能手机" });
+    const company = service.addCompany(item.id, { name: "三星" });
+
+    expect(service.confirmCompanyProfileIdentity(company.id, {
+      name: "  三星电子株式会社  ", officialWebsite: " https://www.samsung.com/ ",
+    })).toBe(true);
+    expect(confirmations).toEqual([{ companyId: company.id, hint: {
+      name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/",
+    } }]);
+    expect(db.repos.companies.getById(company.id)?.name).toBe("三星");
+    expect(() => service.confirmCompanyProfileIdentity(company.id, { name: " ", officialWebsite: "https://example.com" })).toThrow(/invalid/i);
+    expect(() => service.confirmCompanyProfileIdentity(company.id, { name: "主体", officialWebsite: "ftp://example.com" })).toThrow(/invalid/i);
+    expect(() => service.confirmCompanyProfileIdentity(company.id, { name: "主体", officialWebsite: "https://?query" })).toThrow(/invalid/i);
+    expect(confirmations).toHaveLength(1);
+  });
 });

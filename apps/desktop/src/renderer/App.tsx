@@ -18,11 +18,13 @@ export interface AppProps {
   api: DesktopApi;
   requestIdFactory?: () => string;
 }
+type SettingsModule = "llm" | "search";
 
 export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   const conversations = useConversations(api);
   const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspaceState);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsModule, setSettingsModule] = useState<SettingsModule>("llm");
   const [generationDeleteError, setGenerationDeleteError] = useState<string | undefined>(undefined);
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "connected" | "disconnected">(
     "checking",
@@ -86,12 +88,13 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
         activeConversationId={conversations.activeConversation?.id}
         connectionStatus={connectionStatus}
         active={active}
-        mode={settingsOpen ? "settings" : "main"}
         onNewConversation={() => {
+          setSettingsOpen(false);
           void conversations.newConversation();
           openConversation();
         }}
         onOpenConversation={(conversationId) => {
+          setSettingsOpen(false);
           conversations.open(conversationId);
           openConversation();
         }}
@@ -106,63 +109,60 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
             void conversations.deleteConversation(conversationId);
           }
         }}
-        onOpenResearch={() =>
-          dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId: "industry-research" })
-        }
-        onOpenSettings={() => setSettingsOpen(true)}
-        onBackFromSettings={() => setSettingsOpen(false)}
+        onOpenResearch={() => {
+          setSettingsOpen(false);
+          dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId: "industry-research" });
+        }}
+        onOpenSettings={() => { setSettingsModule("llm"); setSettingsOpen(true); }}
       />
       <main className="workspace">
-        {settingsOpen ? (
+        {settingsOpen && (
           <SettingsView
             api={api}
             onKeySaved={checkConnection}
+            onBack={() => setSettingsOpen(false)}
+            initialModule={settingsModule}
           />
-        ) : (
-          <div className={`workspace-panes ${capabilityOpen ? "with-capability" : "chat-only"} ${chatPane}`}>
-            <section
-              className={`chat-pane ${chatPane}`}
-              aria-label="Chat"
-            >
-              <ChatPaneHeader
-                title={conversations.activeConversation?.title ?? "Chat"}
-                paneState={chatPane}
-                capabilityOpen={capabilityOpen}
-                onToggle={toggleChatPane}
-              />
-              {conversations.loading ? (
-                <p className="muted pane-message">加载对话…</p>
-              ) : conversations.error !== undefined ? (
-                <div className="error pane-message" role="alert">
-                  {conversations.error}
-                  <button onClick={conversations.retry}>重新加载</button>
-                </div>
-              ) : conversations.activeConversation !== undefined ? (
-                <ChatView
-                  api={api}
-                  eventHub={eventHub}
-                  requestIdFactory={requestIdFactory}
-                  conversation={conversations.activeConversation}
-                  acceptUpdated={conversations.acceptUpdated}
-                />
-              ) : null}
-            </section>
-            {capabilityOpen && (
-              <aside className="capability-pane" aria-label="Capability">
-                <div className="capability-pane-toolbar">
-                  <button
-                    className="capability-close"
-                    aria-label="关闭 Capability"
-                    onClick={() => dispatchWorkspace({ type: "CLOSE_CAPABILITY" })}
-                  >
-                    ×
-                  </button>
-                </div>
-                <IndustryResearchCapability api={api} />
-              </aside>
-            )}
-          </div>
         )}
+        <div hidden={settingsOpen} className={`workspace-panes ${capabilityOpen ? "with-capability" : "chat-only"} ${chatPane}`}>
+          <section
+            className={`chat-pane ${chatPane}`}
+            aria-label="Chat"
+          >
+            <ChatPaneHeader
+              title={conversations.activeConversation?.title ?? "Chat"}
+              paneState={chatPane}
+              capabilityOpen={capabilityOpen}
+              onToggle={toggleChatPane}
+            />
+            {conversations.loading ? (
+              <p className="muted pane-message">加载对话…</p>
+            ) : conversations.error !== undefined ? (
+              <div className="error pane-message" role="alert">
+                {conversations.error}
+                <button onClick={conversations.retry}>重新加载</button>
+              </div>
+            ) : conversations.activeConversation !== undefined ? (
+              <ChatView
+                api={api}
+                eventHub={eventHub}
+                requestIdFactory={requestIdFactory}
+                conversation={conversations.activeConversation}
+                acceptUpdated={conversations.acceptUpdated}
+              />
+            ) : null}
+          </section>
+          {capabilityOpen && (
+            <aside className="capability-pane" aria-label="Capability">
+              <IndustryResearchCapability
+                api={api}
+                active={!settingsOpen}
+                onClose={() => dispatchWorkspace({ type: "CLOSE_CAPABILITY" })}
+                onOpenSettings={(module) => { setSettingsModule(module); setSettingsOpen(true); }}
+              />
+            </aside>
+          )}
+        </div>
       </main>
     </div>
   );

@@ -44,16 +44,18 @@ describe("trusted renderer IPC adapter", () => {
     [DEV_URL, `${DEV_URL}reports?run=1`],
     ["https://localhost:5173/", "https://localhost:5173/reports"],
   ])("dispatches the known main frame at %s (%s)", async (expected, actual) => {
-    const { sender, invoke, companyResearch, dispose, handlers } = setup(expected);
+    const { sender, invoke, companyResearch, companyResearchWordExport, dispose, handlers } = setup(expected);
     sender.mainFrame.url = actual;
     expect(handlers.has(IPC_CHANNELS.companyResearchRetryFailed)).toBe(true);
     expect(handlers.has(IPC_CHANNELS.companyResearchDeleteRun)).toBe(true);
-    await expect(invoke(IPC_CHANNELS.companyResearchStart, "item-1", "company-1", RESEARCH_INPUT)).resolves.toMatchObject({ status: "researching" });
-    await expect(invoke(IPC_CHANNELS.companyResearchRetryFailed, "item-1", "company-1", "run-1", RESEARCH_INPUT)).resolves.toMatchObject({ id: "run-1" });
+    await expect(invoke(IPC_CHANNELS.companyResearchStart, "item-1", "company-1", RESEARCH_INPUT)).resolves.toMatchObject({ ok: true, value: { status: "researching" } });
+    await expect(invoke(IPC_CHANNELS.companyResearchRetryFailed, "item-1", "company-1", "run-1", RESEARCH_INPUT)).resolves.toMatchObject({ ok: true, value: { id: "run-1" } });
     await expect(invoke(IPC_CHANNELS.companyResearchDeleteRun, "item-1", "company-1", "run-1")).resolves.toBeUndefined();
+    await expect(invoke(IPC_CHANNELS.companyResearchExportWord, "item-1", "company-1", "run-1", { raw: false, structured: true })).resolves.toEqual({ ok: true, value: { status: "cancelled" } });
     expect(companyResearch.startCalls).toHaveLength(1);
     expect(companyResearch.retryFailedCalls).toHaveLength(1);
     expect(companyResearch.deleteRunCalls).toHaveLength(1);
+    expect(companyResearchWordExport.exportCalls).toHaveLength(1);
     expect(sender.destroyedListenerCount).toBe(1);
     dispose();
     expect(handlers.size).toBe(0);
@@ -92,6 +94,7 @@ describe("trusted renderer IPC adapter", () => {
     for (const [channel, args] of [
       [IPC_CHANNELS.companyResearchSubscribe, []],
       [IPC_CHANNELS.companyResearchStart, ["item-1", "company-1", RESEARCH_INPUT]],
+      [IPC_CHANNELS.companyResearchExportWord, ["item-1", "company-1", "run-1", { raw: false, structured: true }]],
     ] as const) {
       const error = await invoke(channel, ...args).catch((error: Error) => error);
       expect(error).toBeInstanceOf(Error);
