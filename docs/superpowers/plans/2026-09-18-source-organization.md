@@ -50,3 +50,15 @@
 - 更新 docs/README.md 说明新文件职责，明确尚有 Chat 契约依赖；不把这一步称为完成 Base.Agent。
 - 验证：typecheck、build，既有 agent/、chat/、company-research-agent、company-profile-agent、company-profile-run、assembly、shared/usage-collection 与 Base architecture 测试。先记录当前基线再作同组对比。必要新增 collector 的小型功能测试：快照不随后续记录改变、不同collector不串线、非持久化消息被忽略。不得新增机械行数或目录结构断言。
 - 主Agent复核提取前后函数体/提示词一致、公共exports和错误instanceof保持同一实现；通过后独立提交合并。
+
+## Task 4: Chat 会话行为与 Pi 执行循环的适配边界
+
+- 将 `agent/pi-chat-agent.ts` 核心移至 `agent/pi-agent-executor.ts`，函数名 `createPiAgentExecutor`。原 `pi-chat-agent.ts` 保留小型兼容工厂，现有参数、默认值、exports 不变；它装配 Chat 行为适配器与执行器，不复制Loop。
+- 新增 `chat/pi-chat-context.ts`，负责原位置的 restoreSessionContext、每run checkpoint collector、当前网络状态提示词、仅 main_agent 使用的 CHAT_FORMATTING_SYSTEM_PROMPT 和历史 provenance。通过 `prepareContext(request, model, emit)` 回调向执行器提供 messages、basePromptParts、finalizationPromptParts、sessionId、onMessageEnd。基础parts严格按原顺序：网络提示词，main_agent格式提示词，main_agent provenance（保留空字符串）；finalizationParts仅main_agent格式提示词。Capability仍恢复传入messages但不新增格式、provenance、checkpoint。
+- `agent/pi-execution-context.ts` 定义上述回调及prepared结果类型，使用Pi消息/模型类型；作为Worker内接口仍允许AgentWorkerRequest/Event，必须在文档注明尚未成为Base独立契约。该接口和执行器禁止导入 `chat/` 实现。
+- 执行器在原restore位置调用注入prepareContext，仅使用返回内容替代 restoredSession、硬编码Chat prompts、conversationId和checkpointCollector；onMessageEnd在原message_end位置同步调用。保留工具actor/Capability finalization/预算/stream/reset/诊断/取消/错误映射全部原逻辑，不为了统一而改写。
+- `toolResultProjection` 从 `chat/pi-session-transcript.ts` 原样移至 `tools/tool-source-projection.ts`，执行器直接依赖工具模块，旧模块重新导出保持兼容。其过滤、原URL、字段限制与返回类型均不变。
+- `pi-agent-executor.ts` 不导入ChatAgent返回类型，使用本地PiAgentExecutor run接口保持同签名；保留PiChatAgentError单一实现，暂不为改名改变错误name。
+- 不改变Capability调用点，仍经兼容工厂获得旧行为；本步是行为注入边界，不宣称彻底移除Worker传输契约或完成Base.Agent。
+- 最少新增验证：自定义prepareContext在不使用Chat实现时可执行，注入messages/prompts/sessionId和message_end回调有效；现有session continuity、generic Loop、Capability测试继续覆盖默认工厂。禁止添加重复框架或无意义目录断言。
+- 测试与Task3同组先后对比，typecheck/build必做，不调付费服务，不修复10项既有company-profile-run失败。docs/README.md更新真实边界。

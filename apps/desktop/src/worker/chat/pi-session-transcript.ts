@@ -1,8 +1,10 @@
 import { buildSessionContext, type AgentMessage, type Entry } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
-import { ChatTranscriptMessageSchema, type AgentContextSnapshot, type ChatTranscriptMessage, type ChatToolSource } from "@deepfield/contracts";
+import { ChatTranscriptMessageSchema, type AgentContextSnapshot, type ChatTranscriptMessage } from "@deepfield/contracts";
 import { mapHistoryMessages, type ModelIdentity } from "./pi-message-mapper.js";
+
+export { toolResultProjection } from "../tools/tool-source-projection.js";
 
 function safeArguments(args: Record<string, unknown>): Record<string, unknown> {
   // Tool parameters are model-facing JSON, never a place to retain transport credentials.
@@ -44,25 +46,4 @@ export function restoreSessionContext(context: AgentContextSnapshot, model: Mode
       return `历史请求 ${turn.requestId}: network=${turn.network}; networkResults=${results.length}; successfulNetworkResults=${results.filter(message => message.role === "toolResult" && !message.isError).length}。仅记录当时权限与实际工具结果，不表示本轮新核实。`;
     }).join("\n"),
   };
-}
-
-export function toolResultProjection(result: unknown): { sources?: ChatToolSource[]; resultCount?: number } {
-  const content = (result as { content?: { type?: string; text?: string }[] } | null)?.content;
-  if (!Array.isArray(content)) return {};
-  try {
-    const payload = JSON.parse(content.filter(part => part.type === "text").map(part => part.text ?? "").join("")) as Record<string, unknown>;
-    const results = Array.isArray(payload.results) ? payload.results : [payload];
-    const sources: ChatToolSource[] = [];
-    for (const result of results) {
-      if (!result || typeof result !== "object") continue;
-      const { url, title } = result as { url?: unknown; title?: unknown };
-      if (typeof url !== "string" || url.length > 8192) continue;
-      try {
-        const parsed = new URL(url);
-        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) continue;
-        sources.push({ url, title: typeof title === "string" ? title.slice(0, 300) : parsed.hostname });
-      } catch { /* Invalid links cannot become sources. */ }
-    }
-    return { sources: sources.slice(0, 20), ...(Array.isArray(payload.results) ? { resultCount: payload.results.length } : {}) };
-  } catch { return {}; }
 }
