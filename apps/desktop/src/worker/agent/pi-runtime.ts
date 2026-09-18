@@ -1,4 +1,3 @@
-import { Agent } from "@earendil-works/pi-agent-core";
 import type {
   AgentEvent,
   AgentMessage,
@@ -6,7 +5,6 @@ import type {
   AgentTool,
   StreamFn,
 } from "@earendil-works/pi-agent-core";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
   LlmRuntimeSnapshot,
@@ -15,8 +13,6 @@ import type {
 } from "@deepfield/contracts";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import type { SearchProvider } from "@deepfield/retrieval";
-import type { PiSkillCatalog } from "../../shared/pi-skill-catalog.js";
-import { PiModelGateway, type ModelGateway } from "../../shared/model-gateway.js";
 
 export class PiChatAgentError extends Error {
   constructor(
@@ -29,7 +25,9 @@ export class PiChatAgentError extends Error {
 }
 
 export interface SkillCatalogProvider {
-  get(): Promise<PiSkillCatalog>;
+  get(): Promise<{
+    formatInvocation(name: string, instructions: string): string;
+  }>;
 }
 
 export interface PiSession {
@@ -77,15 +75,4 @@ export interface PiRunDiagnostic {
   startedAt: string;
   finishedAt: string;
   durationMs: number;
-}
-
-export function defaultPiRuntime(gateway: ModelGateway = new PiModelGateway()): PiRuntime {
-  return {
-    createSession(snapshot) {
-      return { model: gateway.createModel(snapshot), streamFn: gateway.createStream?.(snapshot) ?? streamSimple };
-    },
-    createAgent(options) {
-      return new Agent(options);
-    },
-  };
 }

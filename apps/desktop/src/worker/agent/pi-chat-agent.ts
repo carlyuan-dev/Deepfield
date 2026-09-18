@@ -9,17 +9,18 @@ import { createPiChatContextPreparer } from "../chat/pi-chat-context.js";
 import { PiModelGateway, type ModelGateway } from "../../shared/model-gateway.js";
 import { createMeteredSearchProvider } from "../../shared/usage-search.js";
 import { createPiAgentExecutor } from "./pi-agent-executor.js";
+import { defaultPiRuntime } from "./pi-default-runtime.js";
 import type { PiExecutionEvent, PiExecutionRequest } from "./pi-execution-contract.js";
 import type { RuntimeSystemContextOptions } from "./runtime-system-context.js";
 import {
-  defaultPiRuntime,
   type PiRunDiagnostic,
   type PiRuntime,
   type PiToolSessionProvider,
   type SkillCatalogProvider,
 } from "./pi-runtime.js";
 
-export { PiChatAgentError, defaultPiRuntime } from "./pi-runtime.js";
+export { PiChatAgentError } from "./pi-runtime.js";
+export { defaultPiRuntime } from "./pi-default-runtime.js";
 export type {
   PiAgentHandle,
   PiRunDiagnostic,
@@ -41,15 +42,19 @@ export function createPiChatAgent(
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void,
 ): ChatAgent {
   const executor = createPiAgentExecutor(
-    runtime,
-    tools,
-    skills,
-    runtimeContext,
-    toolSessions,
-    gateway,
-    searchProviderFactory,
-    toolActor,
-    diagnosticSink,
+    {
+      runtime,
+      getApiKey: (snapshot, providerId) => gateway.getApiKey(snapshot, providerId),
+      createSearchProvider: searchProviderFactory,
+    },
+    {
+      tools,
+      ...(skills === undefined ? {} : { skills }),
+      runtimeContext,
+      ...(toolSessions === undefined ? {} : { toolSessions }),
+      toolActor,
+      ...(diagnosticSink === undefined ? {} : { diagnosticSink }),
+    },
   );
   return {
     async run(request, emit, signal): Promise<void> {

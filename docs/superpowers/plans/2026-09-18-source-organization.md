@@ -76,3 +76,17 @@
 - 现有直接executor测试改用无Chat字段的输入；加最少1个兼容映射/双run隔离验证（或强化原有用例），证明旧工厂事件仍通过AgentWorkerEventSchema且history与checkpoint隔离。无需新增大套测试；现有continuity与Capability继续回归。
 - docs/README准确记录：输入输出已独立于Chat Worker形状，但模型/工具/配置依赖仍在Worker，Base.Agent未完成。
 - 必要验证：typecheck、build、Task4同组回归全部通过（允许原有1跳过），保留用户材料、不调用付费服务。
+
+## Task 6: 执行依赖显式注入，默认实现留在装配入口
+
+目标：不改变行为，移除 executor / runtime 契约对 desktop shared 具体模型、Search计量工厂与Skill目录实现的依赖；不迁移Base、不增加新架构层级。
+
+- 新建 `agent/pi-executor-dependencies.ts`，只定义类型，`PiAgentExecutorDependencies` 包含必填 `runtime: PiRuntime`、`getApiKey: (snapshot: LlmRuntimeSnapshot, providerId: string) => Promise<string>`、`createSearchProvider: (snapshot: SearchRuntimeSnapshot) => SearchProvider`。`PiAgentExecutorOptions` 包含原 tools、skills、runtimeContext、toolSessions、toolActor、diagnosticSink（均可选，类型与原来一致）。允许继续依赖中性 contracts/retrieval/tool-platform 类型，禁止 shared / Chat 实现依赖。
+- `createPiAgentExecutor(dependencies: PiAgentExecutorDependencies, options: PiAgentExecutorOptions = {})`：只更换函数入口，用局部解构保持原变量名与默认值；`getApiKey`接线从完整gateway改为依赖函数，Search工厂使用注入值。删除默认具体依赖及 `defaultPiRuntime` 的导出，保留错误类和运行时类型导出。Loop函数体、预算、提示词、取消、诊断与调用顺序不变。
+- 新建 `agent/pi-default-runtime.ts`：从 `pi-runtime.ts` 原样迁移 `defaultPiRuntime` 以及 Agent/streamSimple/ModelGateway 相关导入。`defaultPiRuntime(gateway = new PiModelGateway())` 保持原实现（createStream可选，fallback streamSimple）；保留原生Pi Agent。`pi-runtime.ts`只保留接口和同一个错误类，不反向转出口默认实现。
+- `pi-runtime.ts`的 `SkillCatalogProvider.get()`只要求 `Promise<{ formatInvocation(name: string, instructions: string): string }>`，不再导入PiSkillCatalog或要求list；现有完整目录结构兼容。不得重写Skill机制。
+- `pi-chat-agent.ts`保留公共签名、参数默认值与创建时机；从新文件导入并重新导出 `defaultPiRuntime`。传入executor `{ runtime, getApiKey: (snapshot, providerId) => gateway.getApiKey(snapshot, providerId), createSearchProvider: searchProviderFactory }` 与options。显式闭包调用gateway，避免丢失this。特别注意原runtime默认拥有自己的gateway，不能借机合并两个gateway实例或改变用量采集链路。
+- 现有直接executor两个用例改为显式最小依赖，不再要求完整ModelGateway；强化其中一个用例实际调用AgentOptions.getApiKey，断言snapshot/provider原样传入、返回值一致。最少增加/强化一个联网用例证明注入Search工厂被调用、其返回对象传给bindSearchProvider，而离线不创建Search；不新增大规模mock或目录行数断言。
+- 更新docs/README真实说明：默认实现留在兼容装配入口，执行器消费显式依赖；配置、工具协议仍未迁入Base。不得声称彻底独立Base.Agent。
+- 必要验证：先改直接测试观察入口不匹配RED，再实现。运行typecheck、build和以下受影响组一次（既有1 skip允许）：`npx --no-install vitest run apps/desktop/src/worker/agent apps/desktop/src/worker/chat apps/desktop/src/worker/capabilities/company-research/company-research-agent.test.ts apps/desktop/src/worker/capabilities/company-research/company-profile-agent.test.ts apps/desktop/src/worker/capabilities/company-research/company-profile-run.test.ts apps/desktop/src/worker/assembly.test.ts apps/desktop/src/shared/model-gateway.test.ts apps/desktop/src/shared/usage-collection.test.ts packages/base/src/architecture.test.ts`。不调用真实Provider、不打包应用、不修改用户数据。
+- 子Agent不提交，由主Agent复核后提交、合并main并推送；保留用户未跟踪材料。

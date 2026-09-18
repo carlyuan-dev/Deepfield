@@ -4,19 +4,10 @@ import type {
   AgentToolResult,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import {
-  type SearchRuntimeSnapshot,
-  type ToolExecutionBatchScope,
-} from "@deepfield/contracts";
-import {
-  buildRuntimeSystemContext,
-  type RuntimeSystemContextOptions,
-} from "./runtime-system-context.js";
+import type { ToolExecutionBatchScope } from "@deepfield/contracts";
+import { buildRuntimeSystemContext } from "./runtime-system-context.js";
 import { safeToolActivity, type SafeToolActivity } from "../tools/tool-activity.js";
 import { toolResultProjection } from "../tools/tool-source-projection.js";
-import { PiModelGateway, type ModelGateway } from "../../shared/model-gateway.js";
-import type { SearchProvider } from "@deepfield/retrieval";
-import { createMeteredSearchProvider } from "../../shared/usage-search.js";
 import { createAgentRunControl, WEB_CHAT_POLICY } from "./agent-run-control.js";
 import {
   buildRuntimeBudgetContext,
@@ -54,14 +45,14 @@ import {
 } from "./pi-tool-results.js";
 import {
   PiChatAgentError,
-  defaultPiRuntime,
   type PiAgentHandle,
   type PiRunDiagnostic,
-  type PiRuntime,
   type PiSession,
-  type PiToolSessionProvider,
-  type SkillCatalogProvider,
 } from "./pi-runtime.js";
+import type {
+  PiAgentExecutorDependencies,
+  PiAgentExecutorOptions,
+} from "./pi-executor-dependencies.js";
 import { SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_PROMPT } from "./finalization-prompts.js";
 import type { PreparePiExecutionContext } from "./pi-execution-context.js";
 import type {
@@ -70,7 +61,7 @@ import type {
   PiToolSource,
 } from "./pi-execution-contract.js";
 
-export { PiChatAgentError, defaultPiRuntime } from "./pi-runtime.js";
+export { PiChatAgentError } from "./pi-runtime.js";
 export type {
   PiAgentHandle,
   PiRunDiagnostic,
@@ -79,6 +70,10 @@ export type {
   PiToolSessionProvider,
   SkillCatalogProvider,
 } from "./pi-runtime.js";
+export type {
+  PiAgentExecutorDependencies,
+  PiAgentExecutorOptions,
+} from "./pi-executor-dependencies.js";
 
 export interface PiAgentExecutor {
   run(
@@ -90,16 +85,18 @@ export interface PiAgentExecutor {
 }
 
 export function createPiAgentExecutor(
-  runtime: PiRuntime = defaultPiRuntime(),
-  tools: AgentTool<any>[] = [],
-  skills?: SkillCatalogProvider,
-  runtimeContext: RuntimeSystemContextOptions = {},
-  toolSessions?: PiToolSessionProvider,
-  gateway: ModelGateway = new PiModelGateway(),
-  searchProviderFactory: (snapshot: SearchRuntimeSnapshot) => SearchProvider = createMeteredSearchProvider,
-  toolActor: "main_agent" | "capability" = "main_agent",
-  diagnosticSink?: (diagnostic: PiRunDiagnostic) => void,
+  dependencies: PiAgentExecutorDependencies,
+  options: PiAgentExecutorOptions = {},
 ): PiAgentExecutor {
+  const { runtime, getApiKey, createSearchProvider } = dependencies;
+  const {
+    tools = [],
+    skills,
+    runtimeContext = {},
+    toolSessions,
+    toolActor = "main_agent",
+    diagnosticSink,
+  } = options;
   return {
     async run(
       request: PiExecutionRequest,
@@ -206,7 +203,7 @@ export function createPiAgentExecutor(
         const evidence: string[] = [];
         if (request.toolAccess.network === "enabled") {
           if (request.search === undefined || toolSessions === undefined) throw new PiChatAgentError("stream_failed", "search is not configured");
-          toolSessions.bindSearchProvider(request.requestId, searchProviderFactory(request.search), {
+          toolSessions.bindSearchProvider(request.requestId, createSearchProvider(request.search), {
             maxCalls: request.toolAccess.maxSearchCalls + request.toolAccess.maxFetchCalls + 8,
             categoryCalls: { search: request.toolAccess.maxSearchCalls, fetch: request.toolAccess.maxFetchCalls },
           });
@@ -540,7 +537,7 @@ export function createPiAgentExecutor(
             );
             return session.streamFn(model, finalContext, { ...options, toolChoice: "none" });
           },
-          getApiKey: (provider) => gateway.getApiKey(request.llm, provider),
+          getApiKey: (provider) => getApiKey(request.llm, provider),
           sessionId: preparedContext.sessionId,
           toolExecution: "sequential",
           beforeToolCall: async ({ assistantMessage, toolCall }) => {

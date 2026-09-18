@@ -115,6 +115,10 @@ describe("Pi agent executor context boundary", () => {
   });
 
   it("uses an injected context without a Chat adapter", async () => {
+    const piRequest = executionRequest();
+    const getApiKey = vi.fn(async () => "injected-api-key");
+    const createSearchProvider = vi.fn();
+    let resolvedApiKey: string | undefined;
     const answer = assistant("好的");
     const fake = new FakePiAgent({
       events: [
@@ -122,6 +126,9 @@ describe("Pi agent executor context boundary", () => {
         { type: "message_end", message: answer },
         agentEnd([answer]),
       ],
+      beforeEvents: async (agent) => {
+        resolvedApiKey = await agent.receivedOptions?.getApiKey?.("deepfield-provider");
+      },
     });
     const injectedMessages = [{ role: "user" as const, content: "injected history", timestamp: 10 }];
     const ended: AgentMessage[] = [];
@@ -137,10 +144,17 @@ describe("Pi agent executor context boundary", () => {
     });
 
     await createPiAgentExecutor(
-      makeRuntime(fake, stubModel),
-    ).run(executionRequest(), prepareContext, () => undefined, new AbortController().signal);
+      {
+        runtime: makeRuntime(fake, stubModel),
+        getApiKey,
+        createSearchProvider,
+      },
+    ).run(piRequest, prepareContext, () => undefined, new AbortController().signal);
 
     expect(prepareContext).toHaveBeenCalledOnce();
+    expect(getApiKey).toHaveBeenCalledWith(piRequest.llm, "deepfield-provider");
+    expect(resolvedApiKey).toBe("injected-api-key");
+    expect(createSearchProvider).not.toHaveBeenCalled();
     expect(fake.receivedOptions?.initialState?.messages).toEqual(injectedMessages);
     expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("context base prompt\n");
     expect(fake.receivedOptions?.sessionId).toBe("injected-session");
@@ -168,11 +182,17 @@ describe("Pi agent executor context boundary", () => {
     };
     const toolSessions = {
       createAgentTools: () => [],
-      bindSearchProvider: () => undefined,
+      bindSearchProvider: vi.fn(),
       budgetSnapshot: () => emptyBudget,
       recordSynthetic: async () => undefined,
       releaseTrace: () => true,
     };
+    const searchProvider = {
+      id: "injected-search",
+      capabilities: { timeRange: false },
+      search: vi.fn(),
+    };
+    const createSearchProvider = vi.fn(() => searchProvider);
     const piRequest = executionRequest(true);
     piRequest.finalizationSystemPrompt = "structured output only";
     piRequest.toolAccess = {
@@ -183,14 +203,15 @@ describe("Pi agent executor context boundary", () => {
     };
 
     await createPiAgentExecutor(
-      makeRuntime(fake, stubModel),
-      [],
-      undefined,
-      {},
-      toolSessions,
-      undefined,
-      undefined,
-      "capability",
+      {
+        runtime: makeRuntime(fake, stubModel),
+        getApiKey: async () => "injected-api-key",
+        createSearchProvider,
+      },
+      {
+        toolSessions,
+        toolActor: "capability",
+      },
     ).run(
       piRequest,
       () => ({
@@ -203,6 +224,15 @@ describe("Pi agent executor context boundary", () => {
       new AbortController().signal,
     );
 
+    expect(createSearchProvider).toHaveBeenCalledWith(piRequest.search);
+    expect(toolSessions.bindSearchProvider).toHaveBeenCalledWith(
+      piRequest.requestId,
+      searchProvider,
+      {
+        maxCalls: 8,
+        categoryCalls: { search: 0, fetch: 0 },
+      },
+    );
     expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("structured output only");
     expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("context finalization prompt");
     expect(fake.receivedOptions?.initialState?.systemPrompt).not.toContain("context base prompt");
