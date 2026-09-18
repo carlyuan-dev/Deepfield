@@ -17,14 +17,14 @@
 - `packages/application/src/ports.ts`：Application 对外部运行时与能力适配器的端口定义。
 - `packages/application/src/index.ts`：Application 公共导出入口；目录调整不改变其公共 API。
 - `apps/desktop/src/worker/`：Worker 入口、装配、主进程传输、消息生命周期与用量运行时。
-- `apps/desktop/src/worker/agent/`：Pi Agent 执行与运行时契约；`pi-agent-executor` 保留执行循环，`pi-execution-context` 定义注入的会话上下文边界，`pi-chat-agent` 是保持旧 API 的兼容工厂。`pi-runtime`、`pi-message-utils`、`pi-tool-results` 和 `finalization-prompts` 分别承载运行时适配、消息判定、工具结果处理和终局提示词，运行控制、运行时上下文与工具批次准入保持为独立模块。
+- `apps/desktop/src/worker/agent/`：Pi Agent 执行与运行时契约；`pi-execution-contract` 定义不依赖 Chat Worker 形状的执行请求、事件与工具来源，`pi-agent-executor` 保留执行循环，`pi-execution-context` 定义注入的 Pi 会话上下文边界，`pi-chat-agent` 是保持旧 API 的兼容工厂。`pi-runtime`、`pi-message-utils`、`pi-tool-results` 和 `finalization-prompts` 分别承载运行时适配、消息判定、工具结果处理和终局提示词，运行控制、运行时上下文与工具批次准入保持为独立模块。
 - `apps/desktop/src/worker/chat/`：Chat agent 选择、消息映射、Chat 提示词、会话转录与每轮 checkpoint 收集；`pi-chat-context` 将这些 Chat 行为装配为执行器上下文。
 - `apps/desktop/src/worker/capabilities/company-research/`：公司档案与公司研究能力、提示词、诊断和测试 helper。
 - `apps/desktop/src/worker/tools/`：Pi 工具适配、工具运行时、安全活动投影与工具来源投影。
 
 已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
 
-Worker 的 `pi-agent-executor` 不再导入 `chat/` 实现，Chat 提示词、会话恢复、历史 provenance 和 checkpoint 已由 `pi-chat-context` 注入；`pi-chat-agent` 继续实现旧 `ChatAgent` 工厂 API，Capability 调用点也仍经该兼容工厂进入执行器。`pi-execution-context` 仍使用 `AgentWorkerRequest` / `AgentWorkerEvent`，因此只是 Worker 内部行为边界，不是独立的 Base.Agent 契约，也不表示 Worker 传输契约已经移除。
+Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，且不导入 `chat/` 实现；Chat 提示词、会话恢复、历史 provenance 和 checkpoint 由 `pi-chat-agent` 在每次 run 经 `pi-chat-context` 适配。`pi-chat-agent` 继续实现旧 `ChatAgent` 工厂 API，Capability 调用点也仍经该兼容工厂进入执行器。模型、工具与配置依赖仍在 Worker，本边界不是 Base.Agent，也不表示 Worker 传输契约已经移除。
 
 ## 历史决策与过程参考
 

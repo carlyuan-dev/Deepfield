@@ -5,11 +5,9 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
-  type AgentWorkerEvent,
-  type AgentWorkerRequest,
+  type SearchRuntimeSnapshot,
   type ToolExecutionBatchScope,
 } from "@deepfield/contracts";
-import type { ChatToolSource } from "@deepfield/contracts";
 import {
   buildRuntimeSystemContext,
   type RuntimeSystemContextOptions,
@@ -66,6 +64,11 @@ import {
 } from "./pi-runtime.js";
 import { SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_PROMPT } from "./finalization-prompts.js";
 import type { PreparePiExecutionContext } from "./pi-execution-context.js";
+import type {
+  PiExecutionEvent,
+  PiExecutionRequest,
+  PiToolSource,
+} from "./pi-execution-contract.js";
 
 export { PiChatAgentError, defaultPiRuntime } from "./pi-runtime.js";
 export type {
@@ -79,28 +82,29 @@ export type {
 
 export interface PiAgentExecutor {
   run(
-    request: AgentWorkerRequest,
-    emit: (event: AgentWorkerEvent) => void,
+    request: PiExecutionRequest,
+    prepareContext: PreparePiExecutionContext,
+    emit: (event: PiExecutionEvent) => void,
     signal: AbortSignal,
   ): Promise<void>;
 }
 
 export function createPiAgentExecutor(
-  prepareContext: PreparePiExecutionContext,
   runtime: PiRuntime = defaultPiRuntime(),
   tools: AgentTool<any>[] = [],
   skills?: SkillCatalogProvider,
   runtimeContext: RuntimeSystemContextOptions = {},
   toolSessions?: PiToolSessionProvider,
   gateway: ModelGateway = new PiModelGateway(),
-  searchProviderFactory: (snapshot: NonNullable<AgentWorkerRequest["search"]>) => SearchProvider = createMeteredSearchProvider,
+  searchProviderFactory: (snapshot: SearchRuntimeSnapshot) => SearchProvider = createMeteredSearchProvider,
   toolActor: "main_agent" | "capability" = "main_agent",
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void,
 ): PiAgentExecutor {
   return {
     async run(
-      request: AgentWorkerRequest,
-      emit: (event: AgentWorkerEvent) => void,
+      request: PiExecutionRequest,
+      prepareContext: PreparePiExecutionContext,
+      emit: (event: PiExecutionEvent) => void,
       signal: AbortSignal,
     ): Promise<void> {
       const diagnosticStartedMs = Date.now();
@@ -110,8 +114,8 @@ export function createPiAgentExecutor(
       let diagnosticStopReason: PiRunDiagnostic["stopReason"] = "unknown";
       let diagnosticReported = false;
       let maxModelInputCharsEstimate = modelInputCharsEstimate(
-        request.context.systemPrompt,
-        request.context.messages,
+        request.systemPrompt,
+        request.contextMessages,
         request.prompt,
       );
       const reportDiagnostic = (errorCategory?: PiChatAgentError["code"]): void => {
@@ -155,7 +159,7 @@ export function createPiAgentExecutor(
         throw new PiChatAgentError("provider_failed", "configured model is not available");
       }
 
-      const skillName = request.options.skillName;
+      const skillName = request.skillName;
       let prompt: string;
       if (skillName === undefined) {
         prompt = request.prompt;
@@ -176,7 +180,7 @@ export function createPiAgentExecutor(
 
       try {
         const online = request.toolAccess.network === "enabled";
-        const preparedContext = prepareContext(request, session.model, emit);
+        const preparedContext = prepareContext(session.model);
         const batchScopeByCallId = new Map<string, ToolExecutionBatchScope>();
         const priorResults = new Map<string, PriorToolResult>();
         const plans = new WeakMap<AssistantMessage, ToolBatchPlan>();
@@ -208,7 +212,7 @@ export function createPiAgentExecutor(
           });
           control.recordKnownUrls([
             ...usableUrlsInText(request.prompt),
-            ...request.context.messages.flatMap((message) =>
+            ...request.contextMessages.flatMap((message) =>
               usableUrlsInText(
                 typeof message.content === "string"
                   ? message.content
@@ -345,7 +349,7 @@ export function createPiAgentExecutor(
         });
         let latestBatchSummary: RuntimeBatchSummary | undefined;
         const baseSystemPrompt = [
-          request.context.systemPrompt,
+          request.systemPrompt,
           buildRuntimeSystemContext(runtimeContext),
           ...preparedContext.basePromptParts,
         ].join("\n");
@@ -375,11 +379,11 @@ export function createPiAgentExecutor(
         let activitySequence = 0;
         const activeActivities = new Map<
           string,
-          SafeToolActivity & { callKey: string; toolCallId: string; startedAt: number; sources?: ChatToolSource[]; resultCount?: number; durationMs?: number }
+          SafeToolActivity & { callKey: string; toolCallId: string; startedAt: number; sources?: PiToolSource[]; resultCount?: number; durationMs?: number }
         >();
 
         const emitActivity = (
-          activity: SafeToolActivity & { callKey: string; toolCallId?: string; sources?: ChatToolSource[]; resultCount?: number; durationMs?: number },
+          activity: SafeToolActivity & { callKey: string; toolCallId?: string; sources?: PiToolSource[]; resultCount?: number; durationMs?: number },
           status: "running" | "completed" | "failed" | "skipped" | "reused",
           metadata?: {
             errorCode?: string;
@@ -389,7 +393,7 @@ export function createPiAgentExecutor(
             budgetConsumed?: boolean;
           },
         ): void => {
-          emit({
+          const fields = {
             requestId: request.requestId,
             type: "tool_activity",
             callKey: activity.callKey,
@@ -409,10 +413,18 @@ export function createPiAgentExecutor(
             ...(metadata?.toolCallId === undefined
               ? {}
               : { toolCallId: metadata.toolCallId }),
+          } as const;
+          if (status === "skipped" || status === "reused") {
+            emit({ ...fields, status, budgetConsumed: false });
+            return;
+          }
+          emit({
+            ...fields,
+            status,
             ...(metadata?.budgetConsumed === undefined
               ? {}
               : { budgetConsumed: metadata.budgetConsumed }),
-          } as AgentWorkerEvent);
+          });
         };
 
         const failActiveActivities = (): void => {
@@ -422,7 +434,7 @@ export function createPiAgentExecutor(
           activeActivities.clear();
         };
 
-        const emitTerminal = (event: AgentWorkerEvent): void => {
+        const emitTerminal = (event: Extract<PiExecutionEvent, { type: "completed" }>): void => {
           if (adapterSettled) {
             return;
           }
@@ -433,7 +445,7 @@ export function createPiAgentExecutor(
         let agent!: PiAgentHandle;
         const initialMessages = preparedContext.messages;
         const synthesisSystemPrompt = [
-          request.context.finalizationSystemPrompt ?? request.context.systemPrompt,
+          request.finalizationSystemPrompt ?? request.systemPrompt,
           buildRuntimeSystemContext(runtimeContext),
           ...preparedContext.finalizationPromptParts,
           SYNTHESIS_SYSTEM_PROMPT,

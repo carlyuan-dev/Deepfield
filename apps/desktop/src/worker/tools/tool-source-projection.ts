@@ -1,12 +1,12 @@
-import type { ChatToolSource } from "@deepfield/contracts";
+import type { PiToolSource } from "../agent/pi-execution-contract.js";
 
-export function toolResultProjection(result: unknown): { sources?: ChatToolSource[]; resultCount?: number } {
+export function toolResultProjection(result: unknown): { sources?: PiToolSource[]; resultCount?: number } {
   const content = (result as { content?: { type?: string; text?: string }[] } | null)?.content;
   if (!Array.isArray(content)) return {};
   try {
     const payload = JSON.parse(content.filter(part => part.type === "text").map(part => part.text ?? "").join("")) as Record<string, unknown>;
     const results = Array.isArray(payload.results) ? payload.results : [payload];
-    const sources: ChatToolSource[] = [];
+    const sources: PiToolSource[] = [];
     for (const result of results) {
       if (!result || typeof result !== "object") continue;
       const { url, title } = result as { url?: unknown; title?: unknown };

@@ -62,3 +62,17 @@
 - 不改变Capability调用点，仍经兼容工厂获得旧行为；本步是行为注入边界，不宣称彻底移除Worker传输契约或完成Base.Agent。
 - 最少新增验证：自定义prepareContext在不使用Chat实现时可执行，注入messages/prompts/sessionId和message_end回调有效；现有session continuity、generic Loop、Capability测试继续覆盖默认工厂。禁止添加重复框架或无意义目录断言。
 - 测试与Task3同组先后对比，typecheck/build必做，不调付费服务，不修复10项既有company-profile-run失败。docs/README.md更新真实边界。
+
+## Task 5: 执行器输入输出不再使用 Chat Worker 契约
+
+前置：10项旧测试失败已在5165469修复；本步不得再容忍它们作为基线失败。
+
+- 新增 `agent/pi-execution-contract.ts`：定义执行器实际所需的 PiExecutionRequest / PiExecutionEvent / PiToolSource，不通过 Pick/Omit/索引引用 AgentWorkerRequest/Event 或 Chat 类型。允许复用 LlmRuntimeSnapshot、SearchRuntimeSnapshot、ToolAccessPolicy 等现有中性配置类型，不迁移Base。
+- request只包括requestId、prompt、systemPrompt、可选finalizationSystemPrompt/skillName/search、llm/toolAccess，以及用于原输入估算/已知URL提取的contextMessages（保留原对象内容，不改变估算字符数/URL来源）。不含kind=chat.prompt、conversationId、historyTurns、webSearch展示选项等Chat专用字段。
+- event只包含执行器实际发出的 started、text_delta、text_reset、tool_activity、completed（如接口确需failed可保留），保留原字段形状、可选字段与skipped/reused要求budgetConsumed=false的约束；不含transcript_checkpoint。PiToolSource为url/title，不引用ChatToolSource。
+- `pi-execution-context.ts` 的 PreparePiExecutionContext 改为接收原生Pi model，返回已存在Prepared结构；不接收Worker request/event。Chat adapter通过每run闭包捕获原request与emit，延迟在原core位置恢复上下文，避免改变错误处理时机。
+- `pi-chat-agent.ts` 仍是唯一兼容装配入口：每run把原请求显式映射为中性输入、创建Chat preparer闭包并调用executor，执行器事件以结构兼容方式交给原emit；checkpoint仅由Chat闭包发出。构造executor时无副作用，保留原runtime/gateway默认对象创建时机及共享，不额外创建Agent/model session。
+- `pi-agent-executor.ts` 更新字段引用与签名，不改Loop/预算/诊断/stream/收口/取消逻辑；不导入AgentWorkerRequest、AgentWorkerEvent、ChatToolSource或Chat实现。工具来源投影使用PiToolSource并保持旧导出兼容。
+- 现有直接executor测试改用无Chat字段的输入；加最少1个兼容映射/双run隔离验证（或强化原有用例），证明旧工厂事件仍通过AgentWorkerEventSchema且history与checkpoint隔离。无需新增大套测试；现有continuity与Capability继续回归。
+- docs/README准确记录：输入输出已独立于Chat Worker形状，但模型/工具/配置依赖仍在Worker，Base.Agent未完成。
+- 必要验证：typecheck、build、Task4同组回归全部通过（允许原有1跳过），保留用户材料、不调用付费服务。
