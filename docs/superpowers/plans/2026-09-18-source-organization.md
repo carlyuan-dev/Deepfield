@@ -35,3 +35,18 @@
 ## 后续边界
 
 大型 pi-chat-agent 文件的函数拆分、Chat 契约中立化与 Base.Agent 抽取另作独立步骤，不混入本次目录移动。
+
+## Task 3: Pi 执行器辅助模块拆分（2026-09-19）
+
+本步骤在 Task 2 合并后独立实施；仍不改变行为，不迁移 Base，不添加新框架或依赖。
+
+- `agent/pi-runtime.ts`：迁移现有 PiChatAgentError、SkillCatalogProvider、PiSession、PiAgentHandle、PiRuntime、PiToolSessionProvider、PiRunDiagnostic、defaultPiRuntime；现有 pi-chat-agent.ts 重新导出它们以保持消费者兼容。新模块不得反向依赖 pi-chat-agent.ts。
+- `agent/pi-message-utils.ts`：原样迁移 hasProviderFailure、normalizedStopReason、assistantText、assistantTurnCount、hasToolCalls、serializedChars、modelInputCharsEstimate、assistantToolCalls、finalToolFreeAnswer、validateFinalAnswer。只对外导出需要使用的函数，不改正则、校验优先级或返回格式。
+- `agent/pi-tool-results.ts`：原样迁移 CachedPiToolOutcome、parseToolFailure、resultBudgetConsumed、scopedActivityCallKey、reusedToolResult、reusedToolFailure、toolResultFailureCode、usableUrlsInText、parsedToolResult、NETWORK_TOOL_NAMES、filterRuntimeTools；保留去重、预算消耗和错误信息语义。
+- `agent/finalization-prompts.ts`：原样迁移 SYNTHESIS_SYSTEM_PROMPT、SYNTHESIS_USER_PROMPT。
+- `chat/chat-prompts.ts`：原样迁移 OFFLINE_SYSTEM_PROMPT、ONLINE_SYSTEM_PROMPT、CHAT_FORMATTING_SYSTEM_PROMPT。保持在原调用位置拼接，Capability 不新增 Chat 格式要求。
+- `chat/pi-session-checkpoints.ts`：将当前 run 内 transcript 数组及 message_end 的 transcriptMessage→push→structuredClone→emit 封装为每次run新建的 collector；参数 requestId、emit；提供 record(message: AgentMessage): void。在原 !capabilityFinalization 分支、原事件位置调用，不改变 emit 同步性、错误传播或快照复制。历史 restoreSessionContext 保持原处和调用时机。
+- `agent/pi-chat-agent.ts` 只替换上述定义为导入及 collector 接线，createPiChatAgent 其余闭包、回调顺序、取消/finalization 行为保持不变。
+- 更新 docs/README.md 说明新文件职责，明确尚有 Chat 契约依赖；不把这一步称为完成 Base.Agent。
+- 验证：typecheck、build，既有 agent/、chat/、company-research-agent、company-profile-agent、company-profile-run、assembly、shared/usage-collection 与 Base architecture 测试。先记录当前基线再作同组对比。必要新增 collector 的小型功能测试：快照不随后续记录改变、不同collector不串线、非持久化消息被忽略。不得新增机械行数或目录结构断言。
+- 主Agent复核提取前后函数体/提示词一致、公共exports和错误instanceof保持同一实现；通过后独立提交合并。

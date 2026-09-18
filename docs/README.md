@@ -17,14 +17,14 @@
 - `packages/application/src/ports.ts`：Application 对外部运行时与能力适配器的端口定义。
 - `packages/application/src/index.ts`：Application 公共导出入口；目录调整不改变其公共 API。
 - `apps/desktop/src/worker/`：Worker 入口、装配、主进程传输、消息生命周期与用量运行时。
-- `apps/desktop/src/worker/agent/`：Pi Agent 执行、运行控制、运行时上下文与工具批次准入。
-- `apps/desktop/src/worker/chat/`：Chat agent 选择、消息映射与会话转录。
+- `apps/desktop/src/worker/agent/`：Pi Agent 执行与运行时契约；`pi-runtime`、`pi-message-utils`、`pi-tool-results` 和 `finalization-prompts` 分别承载运行时适配、消息判定、工具结果处理和终局提示词，运行控制、运行时上下文与工具批次准入保持为独立模块。
+- `apps/desktop/src/worker/chat/`：Chat agent 选择、消息映射、Chat 提示词、会话转录与每轮 checkpoint 收集。
 - `apps/desktop/src/worker/capabilities/company-research/`：公司档案与公司研究能力、提示词、诊断和测试 helper。
 - `apps/desktop/src/worker/tools/`：Pi 工具适配、工具运行时与安全活动投影。
 
 已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
 
-Worker 的 `agent/` 是执行相关代码的目录归类，不表示已经与 Chat 契约解耦：当前 `pi-chat-agent` 仍实现 `ChatAgent` 并消费 Chat 会话转录；函数拆分、契约中立化与 Base.Agent 抽取属于后续独立工作。
+Worker 的 `agent/` 是执行相关代码的目录归类，不表示已经与 Chat 契约解耦：本轮辅助模块拆分后，`pi-chat-agent` 仍实现 `ChatAgent`，并在原调用位置消费 Chat 提示词、恢复会话转录和发送 checkpoint。契约中立化与 Base.Agent 抽取仍属于后续独立工作，本轮不代表 Base.Agent 已完成。
 
 ## 历史决策与过程参考
 
