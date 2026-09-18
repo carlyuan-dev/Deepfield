@@ -8,14 +8,15 @@ export default defineConfig({
     environment: "node",
     globals: true,
     maxWorkers: 2,
-    include: ["**/*.test.ts", "**/*.test.tsx"],
+    include: ["{apps,packages,scripts,tests}/**/*.test.{ts,tsx}"],
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      "**/{.superpowers,.worktrees,.pnpm-store,release,out,coverage,test-results,playwright-report,benchmark-results}/**",
       "**/cypress/**",
       "**/.{idea,git,cache,output,temp}/**",
       "**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*",
-      "**/*.live.test.ts",
+      "**/*.live.test.{ts,tsx}",
     ],
   },
 });

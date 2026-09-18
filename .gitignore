@@ -10,4 +10,6 @@ playwright-report/
 /docs/架构图/
 benchmark-results/
 .worktrees/
+.superpowers/
+.pnpm-store/
 **/.DS_Store
