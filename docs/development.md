@@ -3,6 +3,9 @@
 Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本文档覆盖当前 Agent-first
 Chat、Capability 壳层、有限功能测试、E2E 与本地打包流程。
 
+当前阅读顺序与历史文档定位见[文档阅读地图](README.md)。本机正式工作目录为
+`/Users/carl/Project/Deepfield`，以 `main` 为主线；worktree 是临时隔离目录，完成验证并合并后整理，不把历史 worktree 名称写成固定开发入口。
+
 ## 环境要求
 
 - macOS（Apple Silicon / arm64）
@@ -29,7 +32,6 @@ node node_modules/electron/install.js
 
 ```bash
 cat node_modules/electron/path.txt   # 应为 Electron.app/Contents/MacOS/Electron
-node_modules/.bin/electron --version # 应为 v43.4.0
 ```
 
 > **下载源与信任说明**：默认优先官方 Electron 下载源（GitHub releases）。
@@ -57,14 +59,23 @@ npm run build        # electron-vite build → out/
 DEEPFIELD_AGENT_MODE=fake npm run dev
 ```
 
-真实模式下需要先在设置页保存 DeepSeek API Key（保存在系统 Keychain，页面只显示
-“已配置/未配置”，不回显 key）。
+真实模式在设置页分别配置 LLM 与 Search Profile。LLM 支持 OpenAI-compatible Chat
+Completions 和 Anthropic Messages，可配置 Provider、Base URL、Model ID、Context Window
+及凭据；保存与“设为当前”是两个操作。联网功能还需可用的当前 Search Profile。
+凭据经 `safeStorage` 加密保存，页面不回显已保存的 key。可先诊断草稿连接，再保存、启用。
+
+“用量信息”展示 Base Usage 采集的 LLM / Search 调用，按 LLM Provider → 模型及
+Search Provider 汇总；用量账本不等同于任务额度、业务进度或 Tool 审计。详见
+[Base Usage](base/base.usage.设计文档.md)。
 
 ## E2E（真实 Electron）
 
 ```bash
 npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake agent）
 ```
+
+macOS E2E 需先确认 GUI 权限，并显式设置 `DEEPFIELD_ALLOW_ELECTRON_E2E=1`；
+现有启动保护禁止在 macOS Seatbelt sandbox 内运行，不应绕过或反复重试。
 
 - 配置：`playwright.config.ts`（串行 workers=1、retries=0）
 - 规格：`tests/e2e/foundation.spec.ts`——首启直入 Chat、Enter 发送与 Shift+Enter 换行、
@@ -111,7 +122,7 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
   用 Fake recognizer 识别、编辑并导入 `Deepfield 演示公司`；列表批量删除行业先取消再确认；关闭
   Capability 后 Chat 仍可用，并在同一 userData 重启后恢复 Conversation。Fake 模式不验证
   DeepSeek 返回质量，也不覆盖真实长文本请求。
-- **真实 DeepSeek 模式**：用户先在设置页配置真实 Key，确认连接灯变为“已连接”，然后依次人工验证：
+- **真实 LLM 模式**：在设置页保存并启用 LLM Profile，确认连接诊断通过；需要联网时另行启用 Search Profile，然后依次人工验证：
   1. 普通问答（如把人形机器人行业研究目标整理成简短清单）；
   2. Coding（如用 TypeScript 写公司名去重函数并解释思路）；
   3. office 写作（粘贴一段粗略笔记，要求简洁内部邮件）；
@@ -120,28 +131,32 @@ npm run test:e2e     # 先 build，再 Playwright 驱动真实 Electron（fake a
      “核心结论 / 关键依据 / 待核实问题”三节组织；
   6. 随后不选 Skill 发一条普通消息，确认三节约束消失。
 
-行业研究的真实 DeepSeek 长文本识别必须由用户手测：分别粘贴超过 4000 code points 的多块
+行业研究的真实 LLM 长文本识别由用户手测：分别粘贴超过 4000 code points 的多块
 文本，确认界面只显示通用识别状态、失败时保留已成功候选且重试不重复成功请求；再输入超过 48000
-code points 的文本，确认在发出任何识别请求前显示长度错误。单次 DeepSeek 识别请求使用 2048 tokens
+code points 的文本，确认在发出任何识别请求前显示长度错误。单次识别请求使用 2048 tokens
 输出预算和专用 20 秒超时；连接检查与标题生成仍为 7 秒。自动 E2E 只使用 Fake recognizer，
-不会调用真实 DeepSeek。
+不会调用真实 LLM。
 
-标题检查：真实模式首条消息应优先显示 DeepSeek 生成的短中文标题；若请求超时、失败或返回空结果，应保留 deterministic fallback，且后续消息不重新生成标题。Fake 模式只验证接线、离线 fallback 和界面状态，不验证答案、标题质量或 Skill 指令效果。
+标题检查：真实模式首条消息应优先显示当前 LLM 生成的短中文标题；若请求超时、失败或返回空结果，应保留 deterministic fallback，且后续消息不重新生成标题。Fake 模式只验证接线、离线 fallback 和界面状态，不验证答案、标题质量或 Skill 指令效果。
 
 ### 单家公司调研真人检查
 
-在真实 DeepSeek 模式下，从“行业研究 → 行业 → 公司列表 → 公司详情”执行：
+在真实 LLM / Search 配置下，从“行业研究 → 行业 → 公司列表 → 公司详情”执行：
 
 1. 选择两家真实公司，分别使用默认时间范围完成一次调研；记录报告用途、来源选择、完成耗时、可见长度及是否截断。
 2. 对其中一家公司重新调研，改用不同时间范围或补充要求；确认新报告成为默认版本，旧报告仍可从“报告版本”切回。
 3. 调研进行中展开 Chat 并发送一条普通消息；确认 Chat 正常返回，研究草稿继续流式更新。
 4. 调研进行中关闭 Capability，随后重新进入同一公司；确认任务未被取消，真实耗时与内存草稿能够恢复。
-5. 检查报告保持纯文本与换行，完整 HTTP/HTTPS 来源可安全打开；界面不显示百分比、内部 Prompt、模型参数或 Worker 信息。
-6. 若调研失败或取消，确认本轮草稿消失、既有成功版本不受影响，并可再次启动。
+5. 检查原始报告以 Markdown 展示，结构化报告可切换查看，HTTP/HTTPS 来源可安全打开；Word 导出可选择已有的原始报告、结构化报告或两者。界面不显示内部 Prompt、模型参数或 Worker 信息。
+6. 调研分为原始调研与结构化整理两阶段。失败记录保留在版本列表并可在当前记录上重试：原始调研失败重新调研；结构化失败且输入未变化时只重试整理，保留原始报告；输入变化时重新调研。
+7. 取消新启动的调研会移除本轮未完成记录，既有成功版本不受影响；取消与失败保留的语义不同。
+8. 在公司列表选择多家公司发起批量调研，检查逐家公司执行、进度、失败反馈和取消行为；已完成公司的结果保留，并可进入详情查看报告。
 
 完成两家公司各一次及其中一家重跑后，将一份代表性报告交给目标记者，仅记录其对实用性、信息密度与来源选择的反馈；本检查不直接发布报告，重要结论仍需人工核实。
 
-有限功能测试策略：本阶段只运行与当前切片直接相关的聚焦测试、一次 typecheck、一次 E2E/build、一次 arm64 目录打包和一次 Fake 冒烟；不运行全量测试、覆盖率、重复构建或真实 DeepSeek/Web Search/付费 API。
+有限功能测试策略：每个小改动只运行直接相关的聚焦测试和必要的 typecheck；文档改动检查链接与 diff 即可。只有涉及桌面集成或交付时才追加 E2E、build、arm64 打包或 Fake 冒烟，不把整套构建作为每个改动的必选步骤，不重复运行已通过的无关验证。
+
+默认 Vitest 仅发现 `apps/`、`packages/`、`scripts/`、`tests/` 下的测试，排除 live、临时 worktree、scratch 和输出目录。真实 Provider / 搜索测试必须显式选择 `vitest.live.config.ts`（或 `test:providers:live` 等专用脚本），并获得相应联网与费用授权；默认测试不调用真实 API。
 
 ## 本地打包（arm64）
 
@@ -155,9 +170,11 @@ npm run dist:local   # build + electron-builder --mac dmg zip --arm64（identity
 - 产物：`release/Deepfield-0.1.0-arm64.dmg` / `release/Deepfield-0.1.0-arm64.zip`
 - `release/`、`out/`、`test-results/`、`playwright-report/` 不入库
 
+保留本地最新 release 供使用。`out/`、已确认的缓存、`.pnpm-store/` 和测试输出可重建且已忽略。`.superpowers/` 是已忽略的本地过程材料，可能含独有笔记和快照；只有其中已确认的构建子目录可按可重建输出处理，清理前须先保留或归档独有材料。仓库卫生整理不删除用户私人文件、用户文档、应用 userData 或密钥。
+
 打包后自检：`file release/mac-arm64/Deepfield.app/Contents/MacOS/Deepfield` 应报
-`Mach-O 64-bit executable arm64`；可用 Playwright `executablePath` 指向
-`Deepfield.app/Contents/MacOS/Deepfield` 加 `DEEPFIELD_E2E=1`/fake/隔离 userData 做冒烟。
+`Mach-O 64-bit executable arm64`。开发和测试通过项目脚本及现有 E2E 启动保护运行，
+冒烟使用 fake 与独立 userData，避免直接启动 Electron 二进制触及正在使用的应用数据。
 
 > 默认优先官方 Electron 下载源；GitHub 直连不可达时，可给 electron-builder 传同一
 > **第三方镜像**（非官方来源，需自行接受供应链信任）：
