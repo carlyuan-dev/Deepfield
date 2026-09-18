@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { LlmRuntimeSnapshot } from "@deepfield/contracts";
-import { PiModelGateway } from "./model-gateway.js";
+import { ModelGatewayError, PiModelGateway, classifyModelGatewayError } from "./model-gateway.js";
 
 const snapshot = (protocol: LlmRuntimeSnapshot["protocol"]): LlmRuntimeSnapshot => ({
   id: `profile-${protocol}`,
@@ -14,7 +14,7 @@ const snapshot = (protocol: LlmRuntimeSnapshot["protocol"]): LlmRuntimeSnapshot 
   apiKey: "secret-value",
 });
 
-function captureCompletionRequests(modelId: string): Record<string, unknown>[] {
+function captureCompletionRequests(modelId: string, finishReason = "stop"): Record<string, unknown>[] {
   const requests: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit) => {
     requests.push(JSON.parse(init.body as string));
@@ -23,7 +23,7 @@ function captureCompletionRequests(modelId: string): Record<string, unknown>[] {
       object: "chat.completion.chunk",
       created: 1,
       model: modelId,
-      choices: [{ index: 0, delta: { role: "assistant", content: "Report body" }, finish_reason: "stop" }],
+      choices: [{ index: 0, delta: { role: "assistant", content: "Report body" }, finish_reason: finishReason }],
       usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
     };
     return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
@@ -90,6 +90,51 @@ describe.each(["agent stream", "completeText"] as const)("PiModelGateway %s requ
 });
 
 describe("PiModelGateway", () => {
+  it.each([
+    [429, "rate_limit", true],
+    [401, "authentication", false],
+  ] as const)("captures HTTP %s through the SDK fetch option without exposing adapter text", async (status, category, retryable) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("provider secret response", { status })));
+    let receivedFetch: typeof fetch | undefined;
+    const completeSimple = vi.fn(async (_model, _context, options) => {
+      receivedFetch = options.fetch;
+      await options.fetch("https://llm.example.test/v1/chat/completions");
+      return {
+        role: "assistant", content: [], stopReason: "error",
+        errorMessage: "adapter stringified provider secret response",
+        timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+    });
+    const gateway = new PiModelGateway({
+      createModels: vi.fn(() => ({ setProvider: vi.fn(), completeSimple })) as never,
+      createProvider: vi.fn((value) => value) as never,
+      openAICompletionsApi: vi.fn(() => ({})) as never,
+      anthropicMessagesApi: vi.fn(() => ({})) as never,
+    });
+
+    const failure = await gateway.completeText(snapshot("openai_compatible"), "system", "prompt").catch((error: unknown) => error);
+
+    expect(receivedFetch).toBeTypeOf("function");
+    expect(failure).toMatchObject({ message: "model request failed", category, retryable });
+    expect(String(failure)).not.toContain("provider secret");
+  });
+  it("classifies only bounded status, network, and timeout shapes as retryable without retaining messages", () => {
+    expect(classifyModelGatewayError({ status: 429 })).toMatchObject({ category: "rate_limit", retryable: true });
+    expect(classifyModelGatewayError({ statusCode: 503 })).toMatchObject({ category: "server", retryable: true });
+    expect(classifyModelGatewayError({ code: "ECONNRESET" })).toMatchObject({ category: "network", retryable: true });
+    expect(classifyModelGatewayError({ status: 401, message: "secret provider text" })).toEqual(new ModelGatewayError("authentication", false));
+    expect(classifyModelGatewayError({ status: 400 })).toMatchObject({ category: "request", retryable: false });
+    expect(classifyModelGatewayError(new Error("arbitrary provider failure"))).toMatchObject({ category: "unknown", retryable: false, message: "model request failed" });
+  });
+  it("returns the provider length stop reason through the optional metadata path", async () => {
+    const input = snapshot("openai_compatible");
+    captureCompletionRequests(input.modelId, "length");
+
+    await expect(new PiModelGateway().completeTextResult(input, "system", "prompt")).resolves.toEqual({
+      text: "Report body", stopReason: "length",
+    });
+  });
+
   it.each([
     ["openai_compatible", "openai-completions"],
     ["anthropic_messages", "anthropic-messages"],

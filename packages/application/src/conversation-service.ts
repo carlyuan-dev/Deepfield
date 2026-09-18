@@ -21,4 +21,8 @@ export class ConversationService {
   delete(conversationId: ConversationId): void {
     this.repositories.conversations.delete(conversationId);
   }
+
+  setWebSearchEnabled(conversationId: ConversationId, enabled: boolean): Conversation {
+    return this.repositories.conversations.setWebSearchEnabled(conversationId, enabled);
+  }
 }

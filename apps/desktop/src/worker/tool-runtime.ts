@@ -398,7 +398,7 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
       await options.audit.recordSynthetic(record);
     },
     createAgentTools(context) {
-      return createPiAgentTools(registry, runner, {
+      const tools = createPiAgentTools(registry, runner, {
         traceId: context.traceId,
         actor: context.actor,
         ...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
@@ -409,6 +409,13 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
           ? createTrustedToolSet(context.actor, true)
           : toolSetByActor.get(context.actor) ?? createTrustedToolSet(context.actor),
       });
+      const searchTool = tools.find((tool) => tool.name === "web_search");
+      if (searchTool && searchSessions.has(context.traceId)) {
+        const definition = createSearchWebDefinition(searchSessions.get(context.traceId));
+        searchTool.parameters = definition.inputSchema;
+        searchTool.description = definition.description;
+      }
+      return tools;
     },
   };
 }

@@ -18,6 +18,7 @@ export {
 export { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 export {
   COMPANY_RESEARCH_HARNESS_VERSION,
+  StructuredResearchValidationError,
   extractMarkdownSources,
   parseStructuredCandidate,
   validateStructuredResearch,
@@ -40,3 +41,4 @@ export type {
   SecretReader,
   RuntimeProfileResolver,
 } from "./ports.js";
+export { CompanyResearchBatchService } from "./company-research-batch-service.js";

@@ -528,6 +528,11 @@ describe("two-stage company research protocol", () => {
       startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:10.000Z", durationMs: 10000,
     };
     expect(Value.Check(CompanyResearchWorkerEventSchema, diagnostic)).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, {
+      ...diagnostic, stage: "structure", phase: "structuring", attempt: 1, errorCategory: "schema_invalid",
+      validationIssues: [{ path: "/sections/0/status", expected: "enum", actual: "string" }], failedCandidate: "{bad}",
+    })).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, { ...diagnostic, failedCandidate: "x".repeat(16_385) })).toBe(false);
     expect(Value.Check(CompanyResearchEventSchema, diagnostic)).toBe(false);
     for (const [key, value] of [["prompt", "private"], ["messages", []], ["apiKey", "secret"], ["errorMessage", "provider body"], ["url", "https://secret.test"]] as const) {
       expect(Value.Check(CompanyResearchWorkerEventSchema, { ...diagnostic, [key]: value })).toBe(false);

@@ -29,6 +29,23 @@ function retrievalContext(traceId: string) {
 }
 
 describe("utility tool runtime assembly (focused revision)", () => {
+  it("gives each trace its provider query schema and rejects oversized model calls without budget use", async () => {
+    const runtime = makeRuntime(false);
+    let calls = 0;
+    const search = async () => { calls++; return { provider: "test", results: [] }; };
+    runtime.bindSearchProvider("doubao-trace", { id: "doubao", capabilities: { timeRange: true, maxQueryLength: 100 }, search });
+    runtime.bindSearchProvider("other-trace", { id: "other", capabilities: { timeRange: true }, search });
+    const getSearch = (traceId: string) => runtime.createAgentTools({ traceId, actor: "main_agent", networkEnabled: true }).find((tool) => tool.name === "web_search")!;
+    const limited = getSearch("doubao-trace");
+    expect(limited.parameters.properties.query.maxLength).toBe(100);
+    expect(limited.description).toContain("100");
+    expect(getSearch("other-trace").parameters.properties.query.maxLength).toBe(512);
+    await expect(limited.execute("call-1", { query: "字".repeat(101) }, new AbortController().signal)).rejects.toThrow(/invalid_input/);
+    expect(calls).toBe(0);
+    expect(runtime.budgetSnapshot("doubao-trace").categories.search.consumed).toBe(0);
+    await limited.execute("call-2", { query: "😀".repeat(100) }, new AbortController().signal);
+    expect(calls).toBe(1);
+  });
   it("constructs without duplicate grants and freezes the registry", () => {
     const runtime = makeRuntime();
     expect(runtime.registry.list()).toHaveLength(11);

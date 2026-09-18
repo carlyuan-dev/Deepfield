@@ -90,6 +90,12 @@ function unzip(buffer: Buffer, member: string): string {
   return execFileSync("unzip", ["-p", file, member], { encoding: "utf8" });
 }
 
+function paragraphContaining(documentXml: string, text: string): string {
+  const paragraph = documentXml.match(/<w:p(?: [^>]*)?>[\s\S]*?<\/w:p>/g)?.find((candidate) => candidate.includes(text));
+  if (!paragraph) throw new Error(`missing paragraph containing: ${text}`);
+  return paragraph;
+}
+
 describe("company research Word document", () => {
   it("preserves both saved stages, metadata, warnings, Markdown structures and safe links in editable OOXML", async () => {
     const run = fixture();
@@ -228,6 +234,51 @@ describe("company research Word document", () => {
     expect(heading).toBeLessThan(summary);
     expect(summary).toBeLessThan(fact);
     expect(fact).toBeLessThan(sources);
+  });
+
+  it("numbers structured fact citations by first URL appearance and keeps source markers outside exact hyperlinks", async () => {
+    const run = fixture();
+    const sharedUrl = "https://evidence.example/exact?b=2&a=1#原文";
+    const nextUrl = "https://evidence.example/next?z=9&y=8";
+    run.structuredContent!.sections[0]!.facts = [
+      { text: "同章共享事实甲。", timeContext: null, claimType: "reported_fact", source: { title: "标题甲", url: sharedUrl } },
+      { text: "同章共享事实乙。", timeContext: null, claimType: "company_statement", source: { title: "标题乙", url: sharedUrl } },
+    ];
+    run.structuredContent!.sections[1]!.facts = [
+      { text: "下一章新来源事实。", timeContext: null, claimType: "reported_fact", source: { title: "新来源", url: nextUrl } },
+      { text: "跨章复用来源事实。", timeContext: null, claimType: "reported_fact", source: { title: "另一标题", url: sharedUrl } },
+    ];
+    run.structuredContent!.sections[2]!.facts = [
+      { text: "不安全来源事实。", timeContext: null, claimType: "reported_fact", source: { title: "危险来源", url: "javascript:alert(1)" } },
+    ];
+
+    const structured = await buildCompanyResearchDocx(run, { raw: false, structured: true });
+    const documentXml = unzip(structured, "word/document.xml");
+    const relationshipsXml = unzip(structured, "word/_rels/document.xml.rels");
+
+    expect(paragraphContaining(documentXml, "同章共享事实甲。")).toContain(" [1]");
+    expect(paragraphContaining(documentXml, "同章共享事实乙。")).toContain(" [1]");
+    expect(paragraphContaining(documentXml, "下一章新来源事实。")).toContain(" [2]");
+    expect(paragraphContaining(documentXml, "跨章复用来源事实。")).toContain(" [1]");
+    expect(paragraphContaining(documentXml, "不安全来源事实。")).toContain(" [3]");
+    expect(paragraphContaining(documentXml, "新品已发布，仍需核验长期销量。")).not.toMatch(/\[\d+\]/);
+    expect(paragraphContaining(documentXml, "首节摘要包含 &lt;转义字符&gt;。")).not.toMatch(/\[\d+\]/);
+
+    const firstSource = paragraphContaining(documentXml, "https://evidence.example/exact?b=2&amp;a=1#原文");
+    expect(firstSource).toContain("[1] ");
+    expect(firstSource).not.toContain("<w:numPr>");
+    expect(firstSource.indexOf("[1] ")).toBeLessThan(firstSource.indexOf("<w:hyperlink"));
+    expect(firstSource.slice(firstSource.indexOf("<w:hyperlink"))).not.toContain("[1]");
+    expect(paragraphContaining(documentXml, "https://evidence.example/next?z=9&amp;y=8")).toContain("[2] ");
+    expect(paragraphContaining(documentXml, "javascript:alert(1)（来源链接不可用）")).toContain("[3] ");
+    expect(relationshipsXml).toContain("Target=\"https://evidence.example/exact?b=2&amp;a=1#原文\"");
+    expect(relationshipsXml).toContain("Target=\"https://evidence.example/next?z=9&amp;y=8\"");
+    expect(relationshipsXml).not.toContain("javascript:");
+
+    const combinedXml = unzip(await buildCompanyResearchDocx(run, { raw: true, structured: true }), "word/document.xml");
+    expect(paragraphContaining(combinedXml, "同章共享事实甲。")).toContain(" [1]");
+    const secondExportXml = unzip(await buildCompanyResearchDocx(run, { raw: false, structured: true }), "word/document.xml");
+    expect(paragraphContaining(secondExportXml, "同章共享事实甲。")).toContain(" [1]");
   });
 
   it("includes exactly the selected report stages while keeping raw-only legacy layout dimensions", async () => {

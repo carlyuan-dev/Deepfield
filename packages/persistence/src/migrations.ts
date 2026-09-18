@@ -5,7 +5,7 @@ interface Migration {
   up: (db: DatabaseSync) => void;
 }
 
-const MIGRATIONS: readonly Migration[] = [
+const MIGRATIONS: Migration[] = [
   {
     version: 1,
     up(db) {
@@ -484,7 +484,73 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 17, up(db) {
     db.exec("ALTER TABLE companies ADD COLUMN profile_identity_hint_json TEXT;");
   } },
+  { version: 18, up(db) {
+    db.exec(`
+      CREATE TABLE company_research_model_diagnostics_v18(
+        diagnostic_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        stage TEXT NOT NULL CHECK(stage IN ('raw','structure')),
+        phase TEXT NOT NULL CHECK(phase IN ('deciding','synthesizing','structuring')),
+        agent_turns INTEGER NOT NULL CHECK(agent_turns >= 0),
+        search_calls INTEGER NOT NULL CHECK(search_calls >= 0),
+        fetch_calls INTEGER NOT NULL CHECK(fetch_calls >= 0),
+        max_model_input_chars_estimate INTEGER NOT NULL CHECK(max_model_input_chars_estimate >= 0),
+        output_chars INTEGER NOT NULL CHECK(output_chars >= 0),
+        stop_reason TEXT NOT NULL CHECK(stop_reason IN ('stop','length','tool_use','error','aborted','unknown')),
+        error_category TEXT CHECK(error_category IS NULL OR error_category IN ('provider_failed','stream_failed','incomplete_lifecycle','invalid_final_empty','invalid_final_protocol','invalid_final_language','invalid_final_tool_use','json_parse','schema_invalid','shape_invalid','status_invalid','source_mismatch','truncated','storage_failed')),
+        attempt INTEGER CHECK(attempt IS NULL OR attempt IN (1,2)),
+        validation_issues_json TEXT,
+        failed_candidate TEXT CHECK(failed_candidate IS NULL OR length(failed_candidate) <= 16384),
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0)
+      );
+      INSERT INTO company_research_model_diagnostics_v18(
+        request_id, run_id, trace_id, stage, phase, agent_turns, search_calls, fetch_calls,
+        max_model_input_chars_estimate, output_chars, stop_reason, error_category, started_at, finished_at, duration_ms
+      ) SELECT request_id, run_id, trace_id, stage, phase, agent_turns, search_calls, fetch_calls,
+        max_model_input_chars_estimate, output_chars, stop_reason, error_category, started_at, finished_at, duration_ms
+        FROM company_research_model_diagnostics;
+      DROP TABLE company_research_model_diagnostics;
+      ALTER TABLE company_research_model_diagnostics_v18 RENAME TO company_research_model_diagnostics;
+      CREATE UNIQUE INDEX idx_company_research_diagnostics_request_attempt ON company_research_model_diagnostics(request_id, COALESCE(attempt, 0));
+      CREATE INDEX idx_company_research_diagnostics_trace ON company_research_model_diagnostics(trace_id);
+      CREATE INDEX idx_company_research_diagnostics_run ON company_research_model_diagnostics(run_id, started_at, request_id, attempt);
+    `);
+  } },
 ];
+
+MIGRATIONS.push({ version: 19, up(db) {
+  db.exec(`CREATE TABLE company_research_batches(id TEXT PRIMARY KEY, item_id TEXT NOT NULL, status TEXT NOT NULL, snapshot TEXT NOT NULL);
+    CREATE UNIQUE INDEX idx_company_research_batch_active ON company_research_batches((1)) WHERE status NOT IN ('completed','cancelled');`);
+} });
+
+MIGRATIONS.push({ version: 20, up(db) {
+  // Independent ledger: business/Profile deletion must never cascade into usage.
+  db.exec(`CREATE TABLE usage_attempts(
+    attempt_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, service_kind TEXT NOT NULL CHECK(service_kind IN ('llm','search')),
+    profile_id TEXT, outcome TEXT NOT NULL CHECK(outcome IN ('running','succeeded','failed','cancelled','interrupted')),
+    revision INTEGER NOT NULL CHECK(revision >= 0), data_json TEXT NOT NULL
+  );
+  CREATE INDEX idx_usage_time ON usage_attempts(started_at, attempt_id);
+  CREATE INDEX idx_usage_kind_time ON usage_attempts(service_kind, started_at);
+  CREATE INDEX idx_usage_profile_time ON usage_attempts(profile_id, started_at);
+  CREATE TABLE usage_health(id INTEGER PRIMARY KEY CHECK(id = 1), data_json TEXT NOT NULL);`);
+} });
+
+MIGRATIONS.push({ version: 21, up(db) {
+  db.exec("ALTER TABLE conversations ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0 CHECK(web_search_enabled IN (0, 1))");
+} });
+
+MIGRATIONS.push({ version: 22, up(db) {
+  db.exec(`CREATE TABLE chat_sessions(
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL, data_json TEXT NOT NULL,
+    PRIMARY KEY(conversation_id, request_id)
+  );`);
+} });
 
 export function migrate(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");

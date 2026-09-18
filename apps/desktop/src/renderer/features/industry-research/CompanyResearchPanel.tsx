@@ -130,6 +130,7 @@ function ResearchTarget({ api, itemId, companyId, active: panelActive = true, on
   currentSelectionKey.current = selectionKey;
   const status = active?.run.status ?? summary?.status;
   const canRetry = researchRetryMode(summary) !== "unavailable";
+  const canRetryStructuring = summary?.status === "structure_failed";
   const reportSearchStatus = run?.searchStatus ?? summary?.searchStatus ?? active?.run.searchStatus ?? "unknown";
   const modalOpen = newReportModalOpen || retryModalOpen;
   const displayedError = research.error;
@@ -199,7 +200,9 @@ function ResearchTarget({ api, itemId, companyId, active: panelActive = true, on
     <div className="company-research-heading">
       <div><h2 id="company-research-title">公司调研</h2><p className="muted">AI 调研结果仅供参考，重要事实仍需人工核验。一次成功调用不保证证据充分。</p></div>
       {!active && <div className="company-research-actions">
-        {canRetry && <button disabled={research.loading || research.pending || occupied} onClick={() => setRetryModalOpen(true)}>重新尝试</button>}
+        {canRetryStructuring
+          ? <button disabled={research.loading || research.pending || occupied} onClick={() => void research.retryStructuring().catch(() => {})}>重新整理</button>
+          : canRetry && <button disabled={research.loading || research.pending || occupied} onClick={() => setRetryModalOpen(true)}>重新尝试</button>}
         <button className="primary-button" disabled={research.loading || research.pending || occupied} onClick={() => setNewReportModalOpen(true)}>{research.state.runs.length ? "新的调研" : "开始调研"}</button>
       </div>}
     </div>

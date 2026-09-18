@@ -1,6 +1,9 @@
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { UsageDashboardArgsSchema } from "@deepfield/contracts";
+import type { UsageDashboardApi } from "@deepfield/base/usage";
 import {
+  CompanyResearchBatchStartArgsSchema, type CompanyResearchBatchState, type BatchResearchEntryInput, type CompanyProfileProgress,
   AppError, appResult,
   ChatRequestOptionsSchema,
   CopyTextArgsSchema,
@@ -10,6 +13,7 @@ import {
   CompanyResearchExportArgsSchema,
   CompanyResearchGetRunArgsSchema,
   CompanyResearchRetryFailedArgsSchema,
+  CompanyResearchRetryStructuringArgsSchema,
   CompanyResearchStartArgsSchema,
   CompanyResearchSubscribeArgsSchema,
   CompanyResearchTargetArgsSchema,
@@ -91,6 +95,7 @@ export interface IndustryResearchServiceLike {
 }
 
 export interface ConversationServiceLike {
+  setWebSearchEnabled(conversationId: string, enabled: boolean): Conversation;
   create(): Conversation;
   delete(conversationId: string): void;
   openInitial(): { active: Conversation; recent: Conversation[] };
@@ -122,6 +127,7 @@ export interface ChatServiceLike {
     options: ChatRequestOptions,
   ): Promise<ChatSendResult>;
   listMessages(conversationId: string): ChatMessage[];
+  subscribeConversationUpdates(listener: (conversation: Conversation) => void): () => void;
 }
 
 export interface CompanyResearchServiceLike {
@@ -131,6 +137,7 @@ export interface CompanyResearchServiceLike {
   listRuns(itemId: string, companyId: string): ResearchRunSummary[];
   getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined;
   retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<ResearchRun>;
+  retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
   deleteRun(itemId: string, companyId: string, runId: string): void;
   subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
 }
@@ -140,6 +147,8 @@ export interface CompanyResearchWordExportServiceLike {
 }
 
 export interface CompanyProfileEventSource {
+  getProgress?(itemId: string): CompanyProfileProgress;
+  subscribeProgress?(listener: (state: CompanyProfileProgress) => void): () => void;
   subscribe(listener: (event: CompanyProfileEvent) => void): () => void;
   configurationChanged?(): void;
 }
@@ -149,6 +158,14 @@ export interface ClipboardWriterLike {
 }
 
 export interface IpcServiceDeps {
+  usage?: UsageDashboardApi;
+  companyResearchBatch?: {
+    start(itemId: string, entries: BatchResearchEntryInput[]): CompanyResearchBatchState;
+    getState(itemId: string): CompanyResearchBatchState | null;
+    cancel(batchId: string): Promise<void>;
+    resume(batchId: string): CompanyResearchBatchState;
+    subscribe(listener: (state: CompanyResearchBatchState) => void): () => void;
+  };
   ipcMain: IpcMainLike;
   conversations: ConversationServiceLike;
   industryResearch: IndustryResearchServiceLike;
@@ -162,6 +179,9 @@ export interface IpcServiceDeps {
 }
 
 const INVOKE_CHANNELS = [
+  IPC_CHANNELS.usageGetDashboard,
+  IPC_CHANNELS.companyResearchBatchStart, IPC_CHANNELS.companyResearchBatchGetState, IPC_CHANNELS.companyResearchBatchCancel, IPC_CHANNELS.companyResearchBatchResume, IPC_CHANNELS.companyResearchBatchSubscribe,
+  IPC_CHANNELS.companyProfileProgressGet, IPC_CHANNELS.companyProfileProgressSubscribe,
   IPC_CHANNELS.copyText,
   IPC_CHANNELS.industryResearchCreateItem,
   IPC_CHANNELS.industryResearchUpdateItem,
@@ -186,9 +206,11 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.companyResearchGetRun,
   IPC_CHANNELS.companyResearchExportWord,
   IPC_CHANNELS.companyResearchRetryFailed,
+  IPC_CHANNELS.companyResearchRetryStructuring,
   IPC_CHANNELS.companyResearchDeleteRun,
   IPC_CHANNELS.companyResearchSubscribe,
   IPC_CHANNELS.conversationsCreate,
+  IPC_CHANNELS.conversationsSetWebSearchEnabled,
   IPC_CHANNELS.conversationsDelete,
   IPC_CHANNELS.conversationsOpenInitial,
   IPC_CHANNELS.conversationsListRecent,
@@ -207,6 +229,12 @@ const INVOKE_CHANNELS = [
 ] as const;
 
 export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
+  deps.ipcMain.handle(IPC_CHANNELS.usageGetDashboard, async (_event, ...args) => appResult(async () => {
+    if (!Value.Check(UsageDashboardArgsSchema, args)) throw new AppError("INPUT.INVALID");
+    try { new Intl.DateTimeFormat("en", { timeZone: args[0].timeZone }).format(); } catch { throw new AppError("INPUT.INVALID"); }
+    if (!deps.usage) throw new AppError("INTERNAL.UNKNOWN");
+    return deps.usage.getDashboard(args[0]);
+  }));
   const senders = new Map<number, WebContentsLike>();
   const destroyedListeners = new Map<number, () => void>();
 
@@ -238,6 +266,33 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     }
   };
   const unsubscribeResearch = deps.companyResearch.subscribe(emitResearch);
+  const unsubscribeBatch = deps.companyResearchBatch?.subscribe(state => { for (const sender of senders.values()) sender.send(IPC_CHANNELS.companyResearchBatchEvents, state); });
+  const unsubscribeProgress = deps.companyProfiles.subscribeProgress?.(state => { for (const sender of senders.values()) sender.send(IPC_CHANNELS.companyProfileProgressEvents, state); });
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchBatchStart, async (event, ...args) => appResult(() => {
+    if (!Value.Check(CompanyResearchBatchStartArgsSchema, args)) throw new AppError("INPUT.INVALID");
+    if (!deps.companyResearchBatch) throw new AppError("INTERNAL.UNKNOWN");
+    trackSender(event.sender); return deps.companyResearchBatch.start(args[0], args[1]);
+  }));
+  for (const [channel, action] of [[IPC_CHANNELS.companyResearchBatchGetState, "getState"], [IPC_CHANNELS.companyResearchBatchResume, "resume"], [IPC_CHANNELS.companyResearchBatchCancel, "cancel"]] as const) {
+    deps.ipcMain.handle(channel, async (event, ...args) => appResult(async () => {
+      if (!Value.Check(CompanyResearchCancelArgsSchema, args)) throw new AppError("INPUT.INVALID");
+      if (!deps.companyResearchBatch) throw new AppError("INTERNAL.UNKNOWN");
+      trackSender(event.sender); return await deps.companyResearchBatch[action](args[0]) ?? null;
+    }));
+  }
+  for (const channel of [IPC_CHANNELS.companyResearchBatchSubscribe, IPC_CHANNELS.companyProfileProgressSubscribe]) deps.ipcMain.handle(channel, async (event, ...args) => {
+    if (args.length) throw new AppError("INPUT.INVALID"); trackSender(event.sender);
+  });
+  deps.ipcMain.handle(IPC_CHANNELS.companyProfileProgressGet, async (event, ...args) => appResult(() => {
+    if (!Value.Check(CompanyResearchCancelArgsSchema, args)) throw new AppError("INPUT.INVALID");
+    if (!deps.industryResearch.getItem(args[0])) throw new AppError("RESOURCE.NOT_FOUND");
+    trackSender(event.sender); return deps.companyProfiles.getProgress?.(args[0]) ?? { itemId: args[0], status: "idle", processed: 0, total: 0, failed: 0 };
+  }));
+  const unsubscribeConversationUpdates = deps.chat.subscribeConversationUpdates((conversation) => {
+    for (const sender of senders.values()) {
+      sender.send(IPC_CHANNELS.conversationUpdates, conversation);
+    }
+  });
   const unsubscribeProfiles = deps.companyProfiles.subscribe((event) => {
     if (!Value.Check(CompanyProfileEventSchema, event)) return;
     for (const sender of senders.values()) {
@@ -539,6 +594,12 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.companyResearch.retryFailed(args[0], args[1], args[2], args[3]);
   }));
 
+  deps.ipcMain.handle(IPC_CHANNELS.companyResearchRetryStructuring, async (event, ...args) => appResult(async () => {
+    if (args.length !== 3 || !Value.Check(CompanyResearchRetryStructuringArgsSchema, args)) throw new AppError("INPUT.INVALID");
+    trackSender(event.sender);
+    return deps.companyResearch.retryStructuring(args[0], args[1], args[2]);
+  }));
+
   deps.ipcMain.handle(IPC_CHANNELS.companyResearchDeleteRun, async (event, ...args) => {
     if (args.length !== 3 || !Value.Check(CompanyResearchDeleteRunArgsSchema, args)) {
       throw new Error("invalid company research input");
@@ -565,6 +626,13 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.conversations.create();
   });
 
+  deps.ipcMain.handle(IPC_CHANNELS.conversationsSetWebSearchEnabled, async (_event, ...args) => {
+    if (args.length !== 2 || !Value.Check(ConversationDeleteArgsSchema, [args[0]]) || typeof args[1] !== "boolean") {
+      throw new Error("invalid conversation input");
+    }
+    return deps.conversations.setWebSearchEnabled(args[0] as string, args[1]);
+  });
+
   deps.ipcMain.handle(IPC_CHANNELS.conversationsDelete, async (_event, ...args) => {
     if (!Value.Check(ConversationDeleteArgsSchema, args)) {
       throw new Error("invalid conversation input");
@@ -572,10 +640,11 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     deps.conversations.delete(args[0]);
   });
 
-  deps.ipcMain.handle(IPC_CHANNELS.conversationsOpenInitial, async (_event, ...args) => {
+  deps.ipcMain.handle(IPC_CHANNELS.conversationsOpenInitial, async (event, ...args) => {
     if (args.length !== 0) {
       throw new Error("invalid conversation input");
     }
+    trackSender(event.sender);
     return deps.conversations.openInitial();
   });
 
@@ -655,7 +724,9 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
   });
 
   return () => {
+    unsubscribeBatch?.(); unsubscribeProgress?.();
     unsubscribeResearch();
+    unsubscribeConversationUpdates();
     unsubscribeProfiles();
     for (const channel of INVOKE_CHANNELS) {
       deps.ipcMain.removeHandler(channel);

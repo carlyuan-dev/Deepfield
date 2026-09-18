@@ -1,5 +1,6 @@
 import { Value } from "typebox/value";
 import {
+  AppError,
   CompanyDraftSchema,
   CompanyProfileIdentityHintSchema,
   CreateIndustryResearchItemInputSchema,
@@ -164,6 +165,10 @@ export class IndustryResearchService {
     if (uniqueItemIds.length === 0) return;
     try {
       this.repositories.runInTransaction(() => {
+        const batch = this.repositories.companyResearchBatches.getActive();
+        if (batch && uniqueItemIds.includes(batch.itemId as CapabilityItemId)) {
+          throw new AppError("BUSINESS.CONFLICT");
+        }
         const companyIds = new Set(
           uniqueItemIds.flatMap((itemId) =>
             this.repositories.itemCompanies
@@ -178,7 +183,8 @@ export class IndustryResearchService {
           this.repositories.companies.deleteIfUnreferenced(companyId);
         }
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof AppError) throw error;
       throw new IndustryResearchServiceError("research item deletion failed");
     }
   }
@@ -194,9 +200,11 @@ export class IndustryResearchService {
   listCompanies(itemId: CapabilityItemId): ItemCompanyView[] {
     requireItem(this.repositories, itemId);
     const issue = this.companyEnrichment?.getIssue?.();
+    const summaries = new Map(this.repositories.companyResearchRuns.summarizeByItem(itemId).map(({ companyId, ...summary }) => [companyId, summary]));
     return this.repositories.itemCompanies.listByItem(itemId).flatMap((membership) => {
       const company = this.repositories.companies.getById(membership.companyId);
-      return company === undefined ? [] : [toView(company.profileStatus === "pending" && issue ? { ...company, profileIssue: issue } : company, membership)];
+      const reportSummary = summaries.get(membership.companyId);
+      return company === undefined ? [] : [{ ...toView(company.profileStatus === "pending" && issue ? { ...company, profileIssue: issue } : company, membership), ...(reportSummary ? { reportSummary } : {}) }];
     });
   }
 
@@ -263,12 +271,17 @@ export class IndustryResearchService {
     requireItem(this.repositories, itemId);
     try {
       this.repositories.runInTransaction(() => {
+        const batch = this.repositories.companyResearchBatches.getActive();
+        if (batch?.itemId === itemId && batch.entries.some(entry => uniqueIds.includes(entry.companyId as Company["id"]))) {
+          throw new AppError("BUSINESS.CONFLICT");
+        }
         for (const companyId of uniqueIds) {
           this.repositories.itemCompanies.remove(itemId, companyId);
           this.repositories.companies.deleteIfUnreferenced(companyId);
         }
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof AppError) throw error;
       throw new IndustryResearchServiceError("company removal failed");
     }
   }

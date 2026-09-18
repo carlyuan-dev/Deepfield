@@ -9,6 +9,15 @@ import {
 } from "./ipc-test-helpers.js";
 
 describe("ipc handler arity", () => {
+  it("validates the dedicated conversation web search setting", async () => {
+    const { ipcMain } = makeDeps();
+    const sender = new FakeWebContents(1);
+    for (const args of [[], ["c1"], ["", true], ["c1", "true"], ["c1", true, "extra"]]) {
+      await expect(ipcMain.invoke(IPC_CHANNELS.conversationsSetWebSearchEnabled, event(sender), ...args)).rejects.toThrow("invalid conversation input");
+    }
+    await expect(ipcMain.invoke(IPC_CHANNELS.conversationsSetWebSearchEnabled, event(sender), "c1", true)).resolves.toMatchObject({ id: "c1", webSearchEnabled: true });
+  });
+
   it.each([
     ["companyResearchStart", "startCalls", ["item-1", "company-1", RESEARCH_INPUT]],
     ["companyResearchCancel", "cancelCalls", ["run-1"]],
@@ -17,6 +26,7 @@ describe("ipc handler arity", () => {
     ["companyResearchGetRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
     ["companyResearchExportWord", "exportCalls", ["item-1", "company-1", "run-1", { raw: false, structured: true }]],
     ["companyResearchRetryFailed", "retryFailedCalls", ["item-1", "company-1", "run-1", RESEARCH_INPUT]],
+    ["companyResearchRetryStructuring", "retryStructuringCalls", ["item-1", "company-1", "run-1"]],
     ["companyResearchDeleteRun", "deleteRunCalls", ["item-1", "company-1", "run-1"]],
   ] as const)("validates exact arity and every field of %s before calling service", async (channel, calls, valid) => {
     const { ipcMain, companyResearch, companyResearchWordExport } = makeDeps();
@@ -37,7 +47,7 @@ describe("ipc handler arity", () => {
     });
     for (const args of invalid) {
       const result = ipcMain.invoke(IPC_CHANNELS[channel], event(sender), ...args);
-      if (channel === "companyResearchStart" || channel === "companyResearchRetryFailed" || channel === "companyResearchExportWord") {
+      if (channel === "companyResearchStart" || channel === "companyResearchRetryFailed" || channel === "companyResearchRetryStructuring" || channel === "companyResearchExportWord") {
         await expect(result).resolves.toEqual({ ok: false, error: { code: "INPUT.INVALID", category: "input" } });
       } else await expect(result).rejects.toThrow("invalid company research input");
     }

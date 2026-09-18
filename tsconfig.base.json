@@ -17,6 +17,7 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
+      "@deepfield/base/usage": ["./packages/base/src/usage/index.ts"],
       "@deepfield/contracts": ["./packages/contracts/src/index.ts"],
       "@deepfield/persistence": ["./packages/persistence/src/index.ts"],
       "@deepfield/tool-platform": ["./packages/tool-platform/src/index.ts"],
@@ -26,6 +27,7 @@
     }
   },
   "include": [
+    "packages/base/src/**/*.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "packages/contracts/src/**/*.ts",

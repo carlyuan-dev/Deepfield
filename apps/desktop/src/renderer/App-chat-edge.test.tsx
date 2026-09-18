@@ -26,6 +26,55 @@ async function openConversation(user: ReturnType<typeof userEvent.setup>, label:
 }
 
 describe("app chat edge cases", () => {
+  it("applies late title metadata without switching conversations or resurrecting deleted ones", async () => {
+    const fake = makeFakeApi();
+    const first = conversation("p1", "第一对话", true);
+    const second = conversation("p2", "第二对话", true);
+    fake.conversations.openInitial.mockResolvedValue({ active: first, recent: [first, second] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { user } = await renderApp(fake);
+    await openConversation(user, "第二对话");
+
+    fake.emitConversation({ ...first, title: "异步智能标题" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "异步智能标题" })).toBeTruthy());
+    expect(screen.getByRole("button", { name: "第二对话" }).getAttribute("aria-current")).toBe("page");
+
+    await user.click(screen.getByRole("button", { name: "删除异步智能标题" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "异步智能标题" })).toBeNull());
+    fake.emitConversation({ ...first, title: "不应复活" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "不应复活" })).toBeNull());
+  });
+
+  it("preserves a title update received while deleting another conversation", async () => {
+    const fake = makeFakeApi();
+    const first = conversation("p1", "第一对话", true);
+    const second = conversation("p2", "第二对话", true);
+    fake.conversations.openInitial.mockResolvedValue({ active: second, recent: [first, second] });
+    let resolveDelete!: () => void;
+    fake.conversations.delete.mockImplementation(() => new Promise<void>((resolve) => { resolveDelete = resolve; }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { user } = await renderApp(fake);
+    await user.click(await screen.findByRole("button", { name: "删除第二对话" }));
+    fake.emitConversation({ ...first, title: "异步智能标题" });
+    resolveDelete();
+    await waitFor(() => expect(screen.getByRole("button", { name: "异步智能标题" }).getAttribute("aria-current")).toBe("page"));
+    expect(screen.queryByRole("button", { name: "第一对话" })).toBeNull();
+  });
+
+  it("keeps a generated title that arrives before the first-send acknowledgement", async () => {
+    const fake = makeFakeApi();
+    const draft = conversation("draft", "新对话", false);
+    fake.conversations.openInitial.mockResolvedValue({ active: draft, recent: [] });
+    let resolveSend!: (result: ChatSendResult) => void;
+    fake.chat.send.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+    const { user } = await renderApp(fake);
+    await user.type(await screen.findByLabelText("消息输入"), "请分析机器人行业");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    fake.emitConversation({ ...draft, title: "机器人行业分析", hasUserMessage: true });
+    resolveSend(chatSendResult(REQUEST_ID, "draft", "请分析机器人行业"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "机器人行业分析" })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "请分析机器人行业" })).toBeNull();
+  });
   it("confirms idle deletion and falls back from the active conversation", async () => {
     const fake = makeFakeApi();
     const first = conversation("p1", "人形机器人", true);

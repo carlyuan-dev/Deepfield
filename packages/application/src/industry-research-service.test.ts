@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import type { CompanyDraft } from "@deepfield/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getCompanyResearchTemplate, type CompanyDraft } from "@deepfield/contracts";
 import { IndustryResearchService } from "./industry-research-service.js";
 import { openTestDb, type TestDb } from "./application-test-helpers.js";
 
@@ -12,6 +12,39 @@ afterEach(() => {
 });
 
 describe("IndustryResearchService", () => {
+  it("aggregates only usable report versions for this topic, using creation time and retaining company metadata", () => {
+    const db = openTestDb(); dbs.push(db);
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] });
+    const item = service.createItem({ industry: "Robotics" });
+    const other = service.createItem({ industry: "Other" });
+    const a = service.addCompany(item.id, { name: "A", note: "保留备注" });
+    const b = service.addCompany(item.id, { name: "B" });
+    service.addCompany(other.id, { name: "A" });
+    const repo = db.repos.companyResearchRuns;
+    const input = { direction: "product_and_technology", asOfDate: "2026-09-17" } as const;
+    const template = getCompanyResearchTemplate(input.direction);
+    const create = (topic = item.id, company = a.id) => repo.createResearching(topic, company, input, { ...input, currentDate: input.asOfDate, companyName: "A", topicName: "Robotics" }, template);
+    const complete = (id: Parameters<typeof repo.completeRaw>[0]) => { repo.completeRaw(id, "可用原文"); repo.completeStructured(id, { coreSummary: ["总结"], sections: template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found", summary: null, facts: [] })) }); };
+    const first = create(); complete(first.id);
+    db.db.prepare("UPDATE company_research_runs SET created_at = ?, completed_at = ? WHERE id = ?").run("2026-09-01T00:00:00.000Z", "2026-09-30T00:00:00.000Z", first.id);
+    const failedStructure = create(); repo.completeRaw(failedStructure.id, "仍然可读"); repo.failStructuring(failedStructure.id);
+    db.db.prepare("UPDATE company_research_runs SET created_at = ? WHERE id = ?").run("2026-09-10T00:00:00.000Z", failedStructure.id);
+    const failedRaw = create(); repo.failResearching(failedRaw.id, "model_failed");
+    const otherRun = create(other.id); complete(otherRun.id);
+    db.db.prepare("INSERT INTO company_research_runs(id,item_id,company_id,schema_version,status,legacy_time_scope,legacy_report_text,created_at,completed_at) VALUES(?,?,?,'legacy-freeform-v1','completed','全部','旧报告',?,?)").run("legacy", item.id, a.id, "2026-09-05T00:00:00.000Z", "2026-09-29T00:00:00.000Z");
+    const active = create();
+    const read = vi.spyOn(repo, "getByIdForTarget"); const lists = vi.spyOn(repo, "listRuns");
+    for (const stage of ["researching", "structuring"]) {
+      if (stage === "structuring") repo.completeRaw(active.id, "进行中原文");
+      const views = service.listCompanies(item.id);
+      expect(views.find(view => view.id === a.id)).toMatchObject({ note: "保留备注", profileStatus: "pending", reportSummary: { count: 3, latestCreatedAt: "2026-09-10T00:00:00.000Z" } });
+      expect(views.find(view => view.id === b.id)?.reportSummary).toBeUndefined();
+    }
+    expect(service.listCompanies(other.id)[0]?.reportSummary?.count).toBe(1);
+    repo.deleteTerminal(item.id, a.id, failedStructure.id);
+    expect(service.listCompanies(item.id).find(view => view.id === a.id)?.reportSummary).toEqual({ count: 2, latestCreatedAt: "2026-09-05T00:00:00.000Z" });
+    expect(read).not.toHaveBeenCalled(); expect(lists).not.toHaveBeenCalled();
+  });
   it("normalizes optional fields, deduplicates one batch, and normalizes recognizer drafts", async () => {
     const db = openTestDb();
     dbs.push(db);

@@ -130,4 +130,5 @@ export interface ItemCompany {
 export interface ItemCompanyView extends Company {
   itemId: CapabilityItemId;
   note?: string;
+  reportSummary?: { count: number; latestCreatedAt: string };
 }

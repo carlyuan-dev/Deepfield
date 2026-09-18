@@ -149,6 +149,9 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
                 requestIdFactory={requestIdFactory}
                 conversation={conversations.activeConversation}
                 acceptUpdated={conversations.acceptUpdated}
+                setWebSearchEnabled={conversations.setWebSearchEnabled}
+                savingWebSearch={conversations.savingWebSearch}
+                settingError={conversations.settingError}
               />
             ) : null}
           </section>

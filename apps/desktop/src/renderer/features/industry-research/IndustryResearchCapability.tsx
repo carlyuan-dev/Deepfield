@@ -7,6 +7,9 @@ import { CompanyProfileForm } from "./CompanyProfileModal.js";
 import { CompanyIdentityConfirmationModal } from "./CompanyIdentityConfirmationModal.js";
 import { ImportCompaniesModal } from "./ImportCompaniesModal.js";
 import { ResearchItemModal } from "./ResearchItemModal.js";
+import { BatchCompanyResearchModal } from "./BatchCompanyResearchModal.js";
+import { OperationProgress } from "./OperationProgress.js";
+import { useOperationProgress } from "./use-operation-progress.js";
 
 export interface IndustryResearchCapabilityProps {
   api: DesktopApi;
@@ -14,7 +17,7 @@ export interface IndustryResearchCapabilityProps {
   active?: boolean;
   onOpenSettings?(module: "llm" | "search"): void;
 }
-type OpenModal = "create" | "edit" | "add" | "import" | undefined;
+type OpenModal = "create" | "edit" | "add" | "import" | "batch" | undefined;
 type Confirmation =
   | { kind: "delete-items"; items: CapabilityItem[] }
   | { kind: "remove-company"; company: ItemCompanyView }
@@ -27,6 +30,12 @@ function newestFirst(items: CapabilityItem[]): CapabilityItem[] {
 
 function companiesByName(companies: ItemCompanyView[]): ItemCompanyView[] {
   return [...companies].sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { sensitivity: "base" }));
+}
+
+function localReportTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function IndustryResearchCapability({ api, onClose, active = true, onOpenSettings }: IndustryResearchCapabilityProps) {
@@ -55,6 +64,9 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId);
   const profileConfigurationIssue = companies.find((company) => company.profileStatus === "pending" && company.profileIssue)?.profileIssue;
   const sortedItems = useMemo(() => newestFirst(items), [items]);
+  const listVisible = active && selectedCompanyId === undefined && selectedItem !== undefined;
+  const operation = useOperationProgress(api, selectedItem?.id ?? "", listVisible);
+  const previousList = useRef({ visible: listVisible, itemId: selectedItem?.id });
 
   const loadItems = useCallback(async (): Promise<void> => {
     setLoadingItems(true);
@@ -64,9 +76,9 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
     finally { setLoadingItems(false); }
   }, [api]);
 
-  const loadCompanies = useCallback(async (item: CapabilityItem): Promise<void> => {
+  const loadCompanies = useCallback(async (item: CapabilityItem, quiet = false): Promise<void> => {
     const request = ++companyRequest.current;
-    setLoadingCompanies(true);
+    if (!quiet) setLoadingCompanies(true);
     setCompanyError(undefined);
     try {
       const loaded = await api.industryResearch.listCompanies(item.id);
@@ -80,6 +92,14 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
       if (companyRequest.current === request) setLoadingCompanies(false);
     }
   }, [api]);
+
+  useEffect(() => {
+    if (listVisible && !previousList.current.visible && selectedItem?.id === previousList.current.itemId && selectedItem) void loadCompanies(selectedItem, true);
+    previousList.current = { visible: listVisible, itemId: selectedItem?.id };
+  }, [listVisible, loadCompanies, selectedItem]);
+  useEffect(() => api.companyResearch.subscribe(event => {
+    if (event.type === "state_changed" && selectedItem?.id === event.itemId) void loadCompanies(selectedItem, true);
+  }), [api, loadCompanies, selectedItem]);
 
   useEffect(() => { void loadItems(); }, [loadItems]);
   useEffect(() => api.industryResearch.subscribeCompanyProfiles((event) => {
@@ -143,7 +163,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
 
   const handleCompanySaved = (saved: ItemCompanyView): void => {
     setCompanies((current) => companiesByName(current.map((company) =>
-      company.id === saved.id ? { ...saved, itemId: company.itemId, ...(company.note !== undefined ? { note: company.note } : {}) } : company,
+      company.id === saved.id ? { ...saved, itemId: company.itemId, ...(company.note !== undefined ? { note: company.note } : {}), ...(company.reportSummary ? { reportSummary: company.reportSummary } : {}) } : company,
     )));
     setEditingCompanyProfile(false);
   };
@@ -325,8 +345,12 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
           <div className="capability-page-heading">
             <div><h1 className="capability-title">{selectedItem.industry}</h1>{(selectedItem.researchScope !== undefined || selectedItem.notes !== undefined) && <dl className="scope-summary">{selectedItem.researchScope !== undefined && <div className="scope-row"><dt>研究范围</dt><dd>{selectedItem.researchScope}</dd></div>}{selectedItem.notes !== undefined && <div className="scope-row"><dt>备注</dt><dd>{selectedItem.notes}</dd></div>}</dl>}</div>
           </div>
+          <div className="company-operations-toolbar">
+          <OperationProgress batch={operation.batch} profile={operation.profile} onCancel={api.companyResearchBatch.cancel} onResume={async (batchId) => { await api.companyResearchBatch.resume(batchId); }} {...(onOpenSettings ? { onOpenSettings } : {})} />
           <div className="company-toolbar">
+            {!selecting && <button onClick={() => setOpenModal("batch")}>批量调研公司</button>}
             {selecting ? <><button onClick={() => setSelectedCompanyIds(selectedCompanyIds.size === companies.length ? new Set() : new Set(companies.map((company) => company.id)))}>{selectedCompanyIds.size === companies.length && companies.length > 0 ? "清空" : "全选"}</button><button className="danger-button" disabled={selectedCompanyIds.size === 0} onClick={() => beginConfirmation({ kind: "remove-batch" })}>删除已选（{selectedCompanyIds.size}）</button><button onClick={() => { setSelecting(false); setSelectedCompanyIds(new Set()); }}>取消</button></> : <><button onClick={() => setOpenModal("add")}>添加公司</button><button disabled={companies.length === 0} onClick={() => setSelecting(true)}>批量删除</button><button className="primary-button" onClick={() => setOpenModal("import")}>一键导入公司</button></>}
+          </div>
           </div>
           {companyError !== undefined && <div className="error" role="alert">{companyError} <button onClick={() => void loadCompanies(selectedItem)}>重新加载</button></div>}
           {profileConfigurationIssue && <div className="error" role="status">{profileConfigurationIssue.category === "configuration" ? <>公司资料补全已暂停，请配置{profileConfigurationIssue.context?.service === "search" ? "搜索" : "模型"}服务。{onOpenSettings && <button onClick={() => onOpenSettings(profileConfigurationIssue.context?.service ?? "llm")}>前往设置</button>}</> : "资料补全队列暂不可用，请重启应用后重试。"}</div>}
@@ -339,6 +363,13 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
                   (company.profileProvenance?.identity.disposition !== undefined && company.profileProvenance.identity.disposition !== "matched")
                 );
                 const formatFailure = company.profileStatus === "failed" && company.profileIssue?.code === "EXTERNAL.INVALID_RESPONSE";
+                const batchEntry = operation.batch?.entries.find((entry) => entry.companyId === company.id);
+                const batchEntryActive = batchEntry?.status === "running" && operation.batch?.status === "running";
+                const batchEntryStatus = batchEntry?.status === "pending" ? "等待调研"
+                  : batchEntry?.status === "running" && operation.batch?.status === "paused" ? "已暂停"
+                    : batchEntry?.status === "running" && operation.batch?.status === "cancelling" ? "正在取消"
+                      : batchEntryActive ? (batchEntry.stage === "structure" ? "正在整理调研结果" : "正在收集调研资料") : undefined;
+                const reportTime = company.reportSummary && company.reportSummary.count > 0 ? localReportTime(company.reportSummary.latestCreatedAt) : undefined;
                 return <li key={company.id}>{selecting
                   ? <label className="company-select-row"><input type="checkbox" aria-label={`选择 ${company.name}`} checked={selectedCompanyIds.has(company.id)} onChange={() => toggleCompany(company.id)} /><span><strong>{company.name}</strong>{company.profileStatus === "ready" && company.headquarters !== undefined && <> · {company.headquarters}</>}</span></label>
                   : <div className={`company-list-row profile-${company.profileStatus}`}>
@@ -347,7 +378,9 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
                       {needsIdentityConfirmation && <span className="company-profile-identity-status">身份待确认</span>}
                       {company.profileStatus === "ready" && company.headquarters !== undefined && <span>{company.headquarters}</span>}
                       {company.profileStatus === "ready" && company.note !== undefined && <small>{company.note}</small>}
+                      {batchEntryStatus && <small className={batchEntryActive ? "company-research-active-status" : undefined}>{batchEntryStatus}</small>}
                     </button>
+                    {batchEntryActive && <span className="company-profile-spinner" role="status" aria-label={`${company.name} ${batchEntryStatus}`} />}
                     {company.profileStatus === "enriching" && <span className="company-profile-spinner" role="status" aria-label={`${company.name} 基本信息补全中`} />}
                     {company.profileStatus === "failed" && <div className="company-profile-actions">
                       {formatFailure && <span className="company-profile-error-text">结果格式错误，请重试</span>}
@@ -355,6 +388,11 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
                       <button className="company-profile-retry" aria-label={`重试补全 ${company.name}`} onClick={() => void retryCompanyProfile(company)}>重试</button>
                       <span className="company-profile-failed" role="img" title={formatFailure ? "结果格式错误，请重试" : "基本信息补全失败"} aria-label={`${company.name} ${formatFailure ? "结果格式错误，请重试" : "基本信息补全失败"}`}>!</span>
                     </div>}
+                    {company.reportSummary && company.reportSummary.count > 0 && reportTime && <small className="company-report-summary muted" aria-label={`报告 ${company.reportSummary.count} 份 · 最新创建于 ${reportTime}`}>
+                        <span className="company-report-count">报告 {company.reportSummary.count} 份</span>
+                        <span className="company-report-separator" aria-hidden="true">·</span>
+                        <span className="company-report-time">最新创建于 <time dateTime={company.reportSummary.latestCreatedAt}>{reportTime}</time></span>
+                      </small>}
                     <button className="company-remove-button" aria-label={`删除公司 ${company.name}`} onClick={(event) => { event.stopPropagation(); beginConfirmation({ kind: "remove-company", company }); }}>×</button>
                   </div>}
                 </li>;
@@ -370,6 +408,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
       {openModal === "edit" && editingItem !== undefined && <ResearchItemModal api={api} item={editingItem} onClose={() => { setOpenModal(undefined); setEditingItem(undefined); }} onSaved={handleSaved} />}
       {openModal === "add" && selectedItem !== undefined && <AddCompaniesModal api={api} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
       {openModal === "import" && selectedItem !== undefined && <ImportCompaniesModal api={api} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
+      {openModal === "batch" && selectedItem !== undefined && <BatchCompanyResearchModal api={api} item={selectedItem} companies={companies} active={active} onClose={() => setOpenModal(undefined)} onStarted={() => {}} {...(onOpenSettings ? { onOpenSettings } : {})} />}
       {confirmingIdentity !== undefined && <CompanyIdentityConfirmationModal api={api} company={confirmingIdentity} active={active} onClose={() => setConfirmingIdentity(undefined)} onConfirmed={handleIdentityConfirmed} />}
       {confirmationProps !== undefined && <ConfirmModal {...confirmationProps} busy={deleting} error={deleteError} onClose={() => { if (!deleting) { setConfirmation(undefined); setDeleteError(undefined); } }} onConfirm={() => void confirmDeletion()} />}
     </section>

@@ -178,13 +178,27 @@ describe("CompanyResearchService profile snapshots", () => {
     expect(f.requests.at(-1)).toMatchObject({ stage: "structure", toolAccess: STRUCTURE_RESEARCH_POLICY });
   });
 
-  it("retryStructuring reroutes an unsearched report through a fresh raw run", async () => {
+  it("retryStructuring always reuses persisted raw even when search was never successful", async () => {
     const f = setup(); const failed = seedFailed(f, "structure_failed");
     const retried = await f.service.retryStructuring(f.item.id, f.company.id, failed.id);
-    expect(retried).toMatchObject({ status: "researching", searchStatus: "none" });
+    expect(retried).toMatchObject({ id: failed.id, status: "structuring", searchStatus: "none", rawReportText: "原始报告" });
     await waitUntil(() => !f.service.isRunning());
-    expect(f.requests[0]).toMatchObject({ stage: "raw" });
-    expect(f.profiles.searchCalls).toBe(1);
+    expect(f.requests[0]).toMatchObject({ stage: "structure", rawReportText: "原始报告", toolAccess: STRUCTURE_RESEARCH_POLICY });
+    expect(f.profiles.searchCalls).toBe(0);
+  });
+
+  it("allows repeated manual structure-only attempts without a retry cap", async () => {
+    const f = setup("invalid"); const failed = seedFailed(f, "structure_failed");
+    await f.service.retryStructuring(f.item.id, f.company.id, failed.id);
+    await waitUntil(() => !f.service.isRunning());
+    await f.service.retryStructuring(f.item.id, f.company.id, failed.id);
+    await waitUntil(() => !f.service.isRunning());
+
+    expect(f.requests.map((request) => request.stage)).toEqual(["structure", "structure"]);
+    expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toMatchObject({
+      id: failed.id, status: "structure_failed", rawReportText: "原始报告", structuringAttempts: 3,
+    });
+    expect(f.profiles.searchCalls).toBe(0);
   });
 
   it("retains the latest safe tool activity in the in-memory state and emits it", async () => {
@@ -257,7 +271,7 @@ describe("CompanyResearchService profile snapshots", () => {
     expect(emitted).toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "protocol_error" }));
   });
 
-  it("persists a safe storage failure when diagnostic persistence throws provider data", async () => {
+  it("does not turn isolated diagnostic persistence failure into a product failure", async () => {
     const f = setup();
     f.db.repos.companyResearchDiagnostics.record = () => { throw new Error("sk-provider-secret"); };
     f.worker.sendResearch = (request) => (async function* () {
@@ -268,15 +282,40 @@ describe("CompanyResearchService profile snapshots", () => {
         stopReason: "error", errorCategory: "provider_failed",
         startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:10.000Z", durationMs: 10000,
       } as const;
+      yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : JSON.stringify(valid) } as const;
     })();
     const emitted: CompanyResearchEvent[] = [];
     f.service.subscribe((event) => emitted.push(event));
     const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
-    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "research_failed", lastFailureCode: "storage_failed" });
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "completed" });
     expect(f.service.listRuns(f.item.id, f.company.id)).toHaveLength(1);
-    expect(emitted).toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "storage_failed" }));
+    expect(emitted).not.toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "storage_failed" }));
     expect(JSON.stringify(emitted)).not.toContain("sk-provider-secret");
+  });
+
+  it("persists safe application validation diagnostics when a worker bypasses structure validation", async () => {
+    const f = setup("{broken");
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => !f.service.isRunning());
+
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "structure_failed", rawReportText: "原始报告" });
+    expect(f.db.repos.companyResearchDiagnostics.listByRunId(run.id)).toContainEqual(expect.objectContaining({
+      stage: "structure", errorCategory: "json_parse", validationIssues: [{ path: "", expected: "json_object", actual: "string" }], failedCandidate: "{broken",
+    }));
+  });
+
+  it("persists a safe storage_failed structure diagnostic when report persistence fails", async () => {
+    const f = setup();
+    f.db.repos.companyResearchRuns.completeStructured = () => { throw new Error("private database path"); };
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => !f.service.isRunning());
+
+    expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "structure_failed", rawReportText: "原始报告" });
+    expect(f.db.repos.companyResearchDiagnostics.listByRunId(run.id)).toContainEqual(expect.objectContaining({
+      stage: "structure", errorCategory: "storage_failed", stopReason: "unknown",
+    }));
+    expect(JSON.stringify(f.db.repos.companyResearchDiagnostics.listByRunId(run.id))).not.toContain("private database path");
   });
 
   it("emits only storage_failed and leaves the active row for recovery when failure persistence throws", async () => {

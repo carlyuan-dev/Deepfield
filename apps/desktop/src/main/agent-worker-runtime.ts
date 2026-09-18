@@ -1,4 +1,7 @@
 import { AgentWorkerClient, type MessageEndpoint } from "./agent-worker-client.js";
+import { randomUUID } from "node:crypto";
+import { Value } from "typebox/value";
+import { UsageFlushReplySchema } from "@deepfield/contracts";
 
 export interface AgentWorkerChild {
   postMessage(value: unknown): void;
@@ -15,6 +18,7 @@ export interface AgentWorkerRuntimeOptions {
 }
 
 export interface AgentWorkerRuntime {
+  flushUsage(): Promise<boolean>;
   client: AgentWorkerClient;
   postMessage(value: unknown): void;
   dispose(): void;
@@ -47,6 +51,24 @@ export function createAgentWorkerRuntime(
     alive = false;
   });
   return {
+    async flushUsage() {
+      if (!alive) return false;
+      const requestId = randomUUID();
+      return new Promise<boolean>((resolve) => {
+        let settled = false;
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer); child.off("message", receive); child.off("exit", exited); resolve(ok);
+        };
+        const receive = (value: unknown) => { if (Value.Check(UsageFlushReplySchema, value) && value.requestId === requestId) finish(true); };
+        const exited = () => finish(false);
+        const timer = setTimeout(() => finish(false), 2500);
+        child.on("message", receive);
+        child.on("exit", exited);
+        try { child.postMessage({ kind: "usage.flush", requestId }); } catch { finish(false); }
+      });
+    },
     client,
     postMessage: (value) => child.postMessage(value),
     dispose() {

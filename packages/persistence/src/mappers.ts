@@ -74,6 +74,7 @@ export function toConversation(row: ConversationRow): Conversation {
     id: row.id as ConversationId,
     title: row.title,
     hasUserMessage: row.has_user_message === 1,
+    webSearchEnabled: row.web_search_enabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

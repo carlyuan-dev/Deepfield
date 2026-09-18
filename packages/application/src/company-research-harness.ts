@@ -1,6 +1,8 @@
 import { Value } from "typebox/value";
 import {
   StructuredResearchContentSchema,
+  type CompanyResearchModelErrorCategory,
+  type CompanyResearchValidationIssue,
   type CompanyResearchTemplateSnapshot,
   type StructuredResearchContent,
 } from "@deepfield/contracts";
@@ -11,6 +13,40 @@ const punctuation = /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/;
 const unescapeMarkdown = (text: string): string => text.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, "$1");
 const referenceKey = (text: string): string => unescapeMarkdown(text).trim().replace(/\s+/g, " ").toLowerCase();
 const sourceKey = (title: string, url: string): string => `${title}\u0000${url}`;
+
+type StructureCategory = Extract<CompanyResearchModelErrorCategory, "json_parse" | "schema_invalid" | "shape_invalid" | "status_invalid" | "source_mismatch">;
+export class StructuredResearchValidationError extends Error {
+  constructor(readonly category: StructureCategory, readonly issues: CompanyResearchValidationIssue[] = []) {
+    super(category);
+    this.name = "StructuredResearchValidationError";
+  }
+}
+
+function actualType(value: unknown): CompanyResearchValidationIssue["actual"] {
+  return value === null ? "null" : Array.isArray(value) ? "array" : ["object", "string", "number", "boolean", "undefined"].includes(typeof value)
+    ? typeof value as CompanyResearchValidationIssue["actual"] : "undefined";
+}
+function safePath(path: string): string {
+  return path.split("/").slice(1, 9).map((part) => /^(?:[A-Za-z][A-Za-z0-9_-]*|[0-9]{1,3})$/u.test(part) ? `/${part}` : "/*").join("").slice(0, 160);
+}
+function atPath(value: unknown, path: string): unknown {
+  for (const segment of path.split("/").slice(1)) {
+    if (typeof value !== "object" || value === null) return undefined;
+    value = (value as Record<string, unknown>)[segment.replace(/~1/gu, "/").replace(/~0/gu, "~")];
+  }
+  return value;
+}
+function schemaIssues(value: unknown): CompanyResearchValidationIssue[] {
+  return Value.Errors(StructuredResearchContentSchema, value).slice(0, 20).map((error) => {
+    const params = error.params as Record<string, unknown>;
+    const required = error.keyword === "required" && Array.isArray(params.requiredProperties) ? params.requiredProperties[0] : undefined;
+    const rawPath = `${error.instancePath}${typeof required === "string" ? `/${required}` : ""}`;
+    const path = safePath(rawPath);
+    const expected = error.keyword === "required" ? "required" : error.keyword === "additionalProperties" ? "allowed_property"
+      : error.keyword === "const" || error.keyword === "enum" ? "enum" : error.keyword === "type" && typeof params.type === "string" ? params.type : "schema";
+    return { path, expected, actual: actualType(atPath(value, rawPath)) };
+  });
+}
 
 function isHttpUrl(url: string): boolean {
   if (!/^https?:\/\//i.test(url) || /[\s\u0000-\u001f\u007f]/u.test(url)) return false;
@@ -288,15 +324,17 @@ export function extractMarkdownSources(markdown: string): Set<string> {
 export function parseStructuredCandidate(text: string): unknown {
   const trimmed = text.trim();
   const fence = /^```json[ \t]*\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed);
-  const candidate: unknown = JSON.parse(fence ? fence[1]! : trimmed);
+  let candidate: unknown;
+  try { candidate = JSON.parse(fence ? fence[1]! : trimmed); }
+  catch { throw new StructuredResearchValidationError("json_parse", [{ path: "", expected: "json_object", actual: "string" }]); }
   if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
-    throw new Error("Structured research must be one JSON object");
+    throw new StructuredResearchValidationError("shape_invalid", [{ path: "", expected: "object", actual: actualType(candidate) }]);
   }
   return candidate;
 }
 
 function requireNonblank(text: string): void {
-  if (!text.trim()) throw new Error("Structured research text must be nonblank");
+  if (!text.trim()) throw new StructuredResearchValidationError("shape_invalid", [{ path: "", expected: "nonblank", actual: "string" }]);
 }
 
 export function validateStructuredResearch(
@@ -306,16 +344,16 @@ export function validateStructuredResearch(
 ): StructuredResearchContent {
   const candidate = parseStructuredCandidate(candidateText);
   if (!Value.Check(StructuredResearchContentSchema, candidate)) {
-    throw new Error("Structured research does not match the content schema");
+    throw new StructuredResearchValidationError("schema_invalid", schemaIssues(candidate));
   }
   if (candidate.sections.length !== template.sections.length) {
-    throw new Error("Structured research must match the template sections");
+    throw new StructuredResearchValidationError("shape_invalid", [{ path: "/sections", expected: "template_sections", actual: "array" }]);
   }
   const sources = extractMarkdownSources(rawMarkdown);
   candidate.coreSummary.forEach(requireNonblank);
   for (const [index, section] of candidate.sections.entries()) {
     if (section.sectionId !== template.sections[index]!.sectionId) {
-      throw new Error("Structured research sections must be in exact template order");
+      throw new StructuredResearchValidationError("shape_invalid", [{ path: `/sections/${index}/sectionId`, expected: "template_order", actual: "string" }]);
     }
     if (section.summary !== null) requireNonblank(section.summary);
     const count = section.facts.length;
@@ -324,14 +362,14 @@ export function validateStructuredResearch(
       : section.status === "not_disclosed"
         ? section.summary === null && count >= 1
         : section.summary !== null && count >= (section.status === "conflicting" ? 2 : 1);
-    if (!validStatus) throw new Error("Structured research status and content disagree");
+    if (!validStatus) throw new StructuredResearchValidationError("status_invalid", [{ path: `/sections/${index}/status`, expected: "status_content_pairing", actual: "string" }]);
     for (const fact of section.facts) {
       requireNonblank(fact.text);
       if (fact.timeContext !== null) requireNonblank(fact.timeContext);
       requireNonblank(fact.source.title);
       requireNonblank(fact.source.url);
       if (!sources.has(sourceKey(fact.source.title, fact.source.url))) {
-        throw new Error("Structured research source must match a raw Markdown title and URL pair");
+        throw new StructuredResearchValidationError("source_mismatch", [{ path: `/sections/${index}/facts`, expected: "raw_source_pair", actual: "array" }]);
       }
     }
   }
@@ -339,7 +377,7 @@ export function validateStructuredResearch(
   if (allFactsEmpty
     ? candidate.coreSummary.length !== 1 || candidate.coreSummary[0] !== EMPTY_FACTS_SUMMARY
     : candidate.coreSummary.some((summary) => summary.trim() === EMPTY_FACTS_SUMMARY)) {
-    throw new Error("Structured research must use the fixed fallback only when all facts are empty");
+    throw new StructuredResearchValidationError("shape_invalid", [{ path: "/coreSummary", expected: "facts_fallback_pairing", actual: "array" }]);
   }
   return candidate;
 }

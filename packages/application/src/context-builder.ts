@@ -1,5 +1,6 @@
 import type { AgentContextSnapshot, ConversationId, MessageId } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
+import { pairedSessionMessages } from "./chat-session-context.js";
 
 export class ContextBuilderError extends Error {
   constructor(message: string) {
@@ -40,6 +41,17 @@ export class ContextBuilder {
         ? recent
         : recent.filter((message) => message.id !== options.excludeMessageId);
     const latest = filtered.slice(-RECENT_MESSAGE_LIMIT);
+    const requestIds = new Set(latest.map(message => message.requestId));
+    let remainingChars = 240_000;
+    const historyTurns = this.repositories.chatSessions.list(conversation.id)
+      .filter(turn => requestIds.has(turn.requestId) && turn.messages.length > 0)
+      .reverse().flatMap(turn => {
+        const messages = pairedSessionMessages(turn.messages, turn.completed);
+        const size = JSON.stringify(messages).length;
+        if (size > remainingChars) return [];
+        remainingChars -= size;
+        return [{ requestId: turn.requestId, network: turn.network, messages }];
+      }).reverse();
 
     return {
       conversationId: conversation.id,
@@ -48,7 +60,9 @@ export class ContextBuilder {
         role: message.role,
         content: message.content,
         timestamp: Date.parse(message.createdAt),
+        ...(message.requestId === undefined ? {} : { requestId: message.requestId }),
       })),
+      ...(historyTurns.length === 0 ? {} : { historyTurns }),
     };
   }
 }

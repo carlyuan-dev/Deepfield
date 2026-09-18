@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ToolActivityView } from "../state/chat.js";
+import { UrlPopoverLink, isSafeHttpUrl } from "./UrlPopoverLink.js";
 
 const TOOL_LABELS: Readonly<Record<string, string>> = {
   web_search: "联网搜索",
@@ -105,14 +106,24 @@ function ActivityRows({ activities }: { activities: ToolActivityView[] }) {
         return (
           <li key={activity.callKey} className="tool-activity-row">
             <span className="tool-activity-name">{labelFor(activity.name)}</span>
-            {activity.summary !== undefined && (
-              <span className="tool-activity-summary">{activity.summary}</span>
+            <span className="tool-activity-meta">
+              <span className={`tool-activity-status ${status.className}`}>{status.label}</span>
+              {activity.durationMs !== undefined && (
+                <span className="tool-activity-duration">{activity.durationMs}ms</span>
+              )}
+              {showErrorCode && <span className="tool-activity-error">{activity.errorCode}</span>}
+              {activity.resultCount !== undefined && <span className="tool-activity-result-count">{activity.resultCount} 条结果</span>}
+            </span>
+            {(activity.queryOrUrl ?? activity.summary) !== undefined && (
+              <span className="tool-activity-summary">{activity.queryOrUrl ?? activity.summary}</span>
             )}
-            {activity.durationMs !== undefined && (
-              <span className="tool-activity-duration">{activity.durationMs}ms</span>
+            {(activity.sources?.length ?? 0) > 0 && (
+              <ul className="tool-activity-sources">
+                {activity.sources?.filter(source => isSafeHttpUrl(source.url)).map((source, index) => (
+                  <li key={`${source.url}-${index}`}><UrlPopoverLink href={source.url}>{source.title || source.url}</UrlPopoverLink></li>
+                ))}
+              </ul>
             )}
-            {showErrorCode && <span className="tool-activity-error">{activity.errorCode}</span>}
-            <span className={`tool-activity-status ${status.className}`}>{status.label}</span>
           </li>
         );
       })}

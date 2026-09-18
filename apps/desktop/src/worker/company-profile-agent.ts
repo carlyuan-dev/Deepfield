@@ -117,7 +117,7 @@ export function createCompanyProfileAgent(options: { piRuntime?: PiRuntime; tool
     };
     try {
       let text: string | undefined;
-      const agent = createPiChatAgent(options.piRuntime, [], undefined, {}, sessions, undefined, undefined, "capability", (value) => {
+      const agent = createPiChatAgent(options.piRuntime, [], undefined, {}, sessions, gateway, undefined, "capability", (value) => {
         const { traceId: _traceId, ...safeModel } = value;
         model = safeModel;
       });

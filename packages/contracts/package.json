@@ -2,5 +2,6 @@
   "name": "@deepfield/contracts",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@deepfield/base": "*" }
 }

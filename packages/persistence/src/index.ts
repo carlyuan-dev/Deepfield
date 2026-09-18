@@ -1,5 +1,6 @@
 export { openDatabase } from "./database.js";
 export { migrate } from "./migrations.js";
+export { createUsageRepository } from "./usage-repository.js";
 export { createRepositories } from "./repositories.js";
 export { createToolExecutionRepository, ToolExecutionError } from "./tool-execution-repository.js";
 export { createCapabilityItemRepository } from "./capability-item-repository.js";

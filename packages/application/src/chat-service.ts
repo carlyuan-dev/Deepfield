@@ -8,6 +8,7 @@ import {
   type ChatSendResult,
   type Conversation,
   type ConversationId,
+  type MessageId,
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { ContextBuilder } from "./context-builder.js";
@@ -43,6 +44,8 @@ export function titleFromFirstMessage(content: string): string {
 }
 
 export class ChatService {
+  private readonly conversationUpdateListeners = new Set<(conversation: Conversation) => void>();
+
   constructor(
     private readonly repositories: Repositories,
     private readonly contextBuilder: ContextBuilder,
@@ -110,19 +113,16 @@ export class ChatService {
       // Background consumption must never surface as an unhandled rejection.
     });
     if (!conversation.hasUserMessage && this.options.titleGenerator !== undefined) {
-      try {
-        const generatedTitle = await this.options.titleGenerator.generateConversationTitle(content);
-        if (generatedTitle !== undefined && generatedTitle.trim().length > 0) {
-          updated = this.repositories.conversations.updateTitle(
-            conversation.id,
-            generatedTitle,
-          );
-        }
-      } catch {
+      void this.generateTitle(conversation.id, content).catch(() => {
         // The deterministic title already returned by activation remains the fallback.
-      }
+      });
     }
     return { requestId, conversation: updated };
+  }
+
+  subscribeConversationUpdates(listener: (conversation: Conversation) => void): () => void {
+    this.conversationUpdateListeners.add(listener);
+    return () => this.conversationUpdateListeners.delete(listener);
   }
 
   listMessages(conversationId: string): ChatMessage[] {
@@ -132,17 +132,26 @@ export class ChatService {
     }
     const messages = this.repositories.messages.listByConversation(conversation.id);
     const tools = this.repositories.toolExecutions.listByConversation(conversation.id);
+    const sessions = new Map(this.repositories.chatSessions.list(conversation.id).map(turn => [turn.requestId, turn]));
     const byRequest = new Map<string, typeof tools>();
     for (const tool of tools) {
       const current = byRequest.get(tool.traceId) ?? [];
       current.push(tool); byRequest.set(tool.traceId, current);
     }
-    return messages.map((message) => {
+    const displayed = messages.flatMap((message): ChatMessage[] => {
+      const turn = message.requestId === undefined ? undefined : sessions.get(message.requestId);
+      if (message.role !== "user" || turn === undefined || turn.completed || (!turn.failed && turn.activities.length === 0) || messages.some(item => item.role === "assistant" && item.requestId === turn.requestId)) return [message];
+      return [message, { id: `interrupted-${turn.requestId}` as MessageId, conversationId: conversation.id, requestId: turn.requestId, role: "assistant", content: "", status: "failed", createdAt: message.createdAt }];
+    });
+    return displayed.map((message) => {
       if (message.role !== "assistant" || message.requestId === undefined) return message;
       const associated = byRequest.get(message.requestId) ?? [];
+      const projected = (sessions.get(message.requestId)?.activities ?? []).map(activity => message.status === "failed" && activity.status === "running" ? { ...activity, status: "failed" as const } : activity);
       return {
         ...message,
-        toolExecutions: associated.map((tool) => {
+        toolExecutions: [...projected, ...associated.filter(tool => !projected.some(activity =>
+          activity.callKey === tool.id || (activity.toolCallId !== undefined && activity.toolCallId === tool.toolCallId),
+        )).map((tool) => {
           const status = tool.status === "cancelled" ? "failed" as const : tool.status;
           return {
             callKey: tool.id,
@@ -157,7 +166,7 @@ export class ChatService {
             ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
             ...(tool.errorCode === undefined ? {} : { errorCode: tool.errorCode }),
           };
-        }),
+        })],
       };
     });
   }
@@ -182,6 +191,7 @@ export class ChatService {
         return;
       }
       settled = true;
+      try { this.repositories.chatSessions.fail(conversationId, request.requestId); } catch { /* Preserve the original failure. */ }
       safeEmit({ requestId: request.requestId, type: "failed", code, message: FAILED_MESSAGE });
     };
 
@@ -201,11 +211,23 @@ export class ChatService {
         if (!Value.Check(AgentWorkerEventSchema, event)) {
           continue;
         }
+        if (event.requestId !== request.requestId) continue;
+        if (event.type === "transcript_checkpoint" || event.type === "tool_activity") {
+          try {
+            if (event.type === "transcript_checkpoint") {
+              this.repositories.chatSessions.checkpoint(conversationId, request.requestId, request.toolAccess.network, event.messages);
+            } else {
+              this.repositories.chatSessions.activity(conversationId, request.requestId, request.toolAccess.network, event);
+            }
+          } catch { fail("chat_persistence_failed"); return; }
+          if (event.type === "transcript_checkpoint") continue;
+        }
         if (event.type === "completed") {
           try {
             // Standalone Chat has no CapabilityItem: persist the assistant reply only.
             this.repositories.runInTransaction(() => {
               this.repositories.messages.append(conversationId, "assistant", event.text, request.requestId);
+              this.repositories.chatSessions.complete(conversationId, request.requestId);
             });
           } catch {
             fail("chat_persistence_failed");
@@ -216,6 +238,7 @@ export class ChatService {
           return;
         }
         if (event.type === "failed") {
+          this.repositories.chatSessions.fail(conversationId, request.requestId);
           safeEmit(event);
           settled = true;
           return;
@@ -227,6 +250,17 @@ export class ChatService {
       fail("worker_stream_failed");
     } finally {
       this.options.onConsumptionFinished?.(request.requestId);
+    }
+  }
+
+  private async generateTitle(conversationId: ConversationId, content: string): Promise<void> {
+    const generatedTitle = await this.options.titleGenerator?.generateConversationTitle(content);
+    if (generatedTitle === undefined || generatedTitle.trim().length === 0) return;
+    // A late completion must not recreate a Conversation deleted while the model was running.
+    if (this.repositories.conversations.getById(conversationId) === undefined) return;
+    const updated = this.repositories.conversations.updateTitle(conversationId, generatedTitle);
+    for (const listener of [...this.conversationUpdateListeners]) {
+      try { listener(updated); } catch { /* A metadata sink must not break persistence. */ }
     }
   }
 }

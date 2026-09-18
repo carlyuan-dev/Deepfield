@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { parseUsageAttempt, type UsageAttempt, type UsageDeliveryHealth } from "@deepfield/base/usage";
 import {
   HostRequestSchema,
   type HostReply,
@@ -10,6 +11,7 @@ import type { ConversationRepositories } from "./conversation-reader.js";
 import { createRepositoryConversationReader } from "./conversation-reader.js";
 
 export interface ToolWorkerHostOptions {
+  usage?: { record(value: UsageAttempt): Promise<boolean>; health(sessionId: string, health: UsageDeliveryHealth): void };
   audit: ToolAuditSink;
   secrets: { get(name: string): string | undefined };
   conversationRepositories?: ConversationRepositories;
@@ -24,6 +26,7 @@ export interface ToolWorkerHost {
 }
 
 const HOST_RPC_METHODS = new Set<HostRpcMethod>([
+  "usage.record", "usage.health",
   "audit.start",
   "audit.finish",
   "audit.synthetic",
@@ -92,6 +95,14 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
   async function handleValid(request: HostRequest): Promise<void> {
     const { hostRequestId, method } = request;
     try {
+      if (request.method === "usage.record" || request.method === "usage.health") {
+        if (!options.usage) throw new Error("usage_unavailable");
+        if (request.method === "usage.record") {
+          if (!await options.usage.record(parseUsageAttempt(request.payload))) throw new Error("usage_failed");
+        } else options.usage.health(request.payload.sessionId, request.payload.health);
+        if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method: request.method, ok: true, payload: { acknowledged: true } });
+        return;
+      }
       if (method === "audit.start") {
         await options.audit.start({
           executionId: request.payload.executionId,
@@ -275,7 +286,7 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           kind: "host.reply",
           method,
           ok: false,
-          code: method.startsWith("conversation.")
+          code: method.startsWith("usage.") ? "usage_failed" : method.startsWith("conversation.")
             ? "conversation_unavailable"
             : "audit_failed",
         });

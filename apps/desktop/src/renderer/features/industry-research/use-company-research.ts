@@ -35,6 +35,7 @@ interface Actions {
   start(input: StartCompanyResearchInput): Promise<void>;
   cancel(): Promise<void>;
   retry(input: StartCompanyResearchInput): Promise<void>;
+  retryStructuring(): Promise<void>;
   deleteSelected(): Promise<void>;
   reload(): void;
   selectRun(id: string): void;
@@ -222,6 +223,27 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         }
         finally { publish({ pending: false }); }
       },
+      async retryStructuring() {
+        const run = current.state.runs.find((entry) => entry.id === current.selectedRunId);
+        if (!alive || current.pending || current.state.globalActiveRun || run?.status !== "structure_failed") return;
+        publish({ pending: true, error: undefined });
+        try {
+          await assertResearchReady(api, { search: false });
+          if (!alive) return;
+          await api.companyResearch.retryStructuring(itemId, companyId, run.id);
+          if (!alive) return;
+          ++detailTicket;
+          publish({ selectedRunId: run.id });
+          ++revision;
+          await refresh();
+        } catch (error) {
+          const presentation = researchActionError(error, "retry");
+          publish({ error: presentation.settingsModule
+            ? { kind: "configuration", message: presentation.message, settingsModule: presentation.settingsModule }
+            : { kind: "action", message: presentation.message } });
+          throw error;
+        } finally { publish({ pending: false }); }
+      },
       async deleteSelected() {
         const deletedId = current.selectedRunId;
         const deletedIndex = current.state.runs.findIndex((run) => run.id === deletedId);
@@ -299,6 +321,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     start: (input: StartCompanyResearchInput) => actions.current!.start(input),
     cancel: () => actions.current!.cancel(),
     retry: (input: StartCompanyResearchInput) => actions.current!.retry(input),
+    retryStructuring: () => actions.current!.retryStructuring(),
     deleteSelected: () => actions.current!.deleteSelected(),
     reload: () => actions.current!.reload(),
     selectRun: (id: string) => actions.current!.selectRun(id),

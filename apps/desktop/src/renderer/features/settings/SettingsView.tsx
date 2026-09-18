@@ -2,15 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { toPublicError, DEFAULT_DEEPSEEK_MODEL_ID, LLM_PROVIDER_PRESETS, type DesktopApi, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView as SettingsData } from "@deepfield/contracts";
 
 import { diagnosticErrorText } from "./error-presentation.js";
+import { UsageDashboardView } from "./UsageDashboard.js";
 
-type Module = "llm" | "search";
+type ConfigurationModule = "llm" | "search";
+type Module = ConfigurationModule | "usage";
 export interface SettingsViewProps { api: DesktopApi; onKeySaved(): void; onBack(): void; initialModule?: Module }
 type DiagnosticState = DiagnosticResult | "testing";
 const newLlm = (): LlmProfileDraft => ({ name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: LLM_PROVIDER_PRESETS.deepseek.baseUrl, modelId: DEFAULT_DEEPSEEK_MODEL_ID, contextWindow: 128000 });
 const llmDraft = (p: SettingsData["llm"]["profiles"][number]): LlmProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, protocol: p.protocol, baseUrl: p.baseUrl, modelId: p.modelId, contextWindow: p.contextWindow });
 const searchDraft = (p: SettingsData["search"]["profiles"][number]): SearchProfileDraft => ({ id: p.id, name: p.name, provider: p.provider, baseUrl: p.baseUrl, options: p.options });
 
-function Diagnostic({ value, service }: { service: Module; value: DiagnosticResult | "testing" | undefined }) {
+function Diagnostic({ value, service }: { service: ConfigurationModule; value: DiagnosticResult | "testing" | undefined }) {
   if (!value) return <span className="diagnostic idle">未检测</span>;
   if (value === "testing") return <span className="diagnostic testing">检测中…</span>;
   return value.ok ? <span className="diagnostic success">连接正常 · {value.latencyMs}ms</span> : <span className="diagnostic failure">连接失败 · {diagnosticErrorText(value.error, service)}</span>;
@@ -67,7 +69,7 @@ export function SettingsView({ api, onKeySaved, onBack, initialModule = "llm" }:
   };
   const accept = (view: SettingsData) => { setData(view); onKeySaved(); };
   const diagnose = async () => {
-    const kind = module; const key = diagnosticKey;
+    const kind: ConfigurationModule = module === "llm" ? "llm" : "search"; const key = diagnosticKey;
     const id = (requestIds.current.get(key) ?? 0) + 1;
     requestIds.current.set(key, id);
     setDiagnostics((values) => ({ ...values, [key]: "testing" }));
@@ -89,9 +91,11 @@ export function SettingsView({ api, onKeySaved, onBack, initialModule = "llm" }:
       <div className="settings-navigation-title">设置</div>
       <button className={module === "llm" ? "active" : ""} aria-current={module === "llm" ? "page" : undefined} onClick={() => setModule("llm")}>LLM</button>
       <button className={module === "search" ? "active" : ""} aria-current={module === "search" ? "page" : undefined} onClick={() => setModule("search")}>Search</button>
+      <button className={module === "usage" ? "active" : ""} aria-current={module === "usage" ? "page" : undefined} onClick={() => setModule("usage")}>用量信息</button>
     </nav>
     <section className="settings-view" aria-label="设置">
       <div className="settings-content">
+        {module === "usage" ? <UsageDashboardView api={api} /> : <>
         <header className="settings-header"><div><h2>模型与搜索</h2><p>配置运行时使用的模型和联网搜索服务。</p></div></header>
         {error && <p role="alert" className="error">{error}</p>}
         <div className="settings-layout">
@@ -107,6 +111,7 @@ export function SettingsView({ api, onKeySaved, onBack, initialModule = "llm" }:
         <div className="editor-actions"><button type="submit">保存</button><button type="button" disabled={!selectedId || activeId === selectedId} onClick={() => void (module === "llm" ? api.settings.activateLlmProfile(llm.id!) : api.settings.activateSearchProfile(search!.id!)).then(accept)}>设为当前</button><button type="button" disabled={!selectedId || activeId === selectedId} onClick={() => void (module === "llm" ? api.settings.deleteLlmProfile(llm.id!) : api.settings.deleteSearchProfile(search!.id!)).then(accept)}>删除</button></div>
       </form>
         </div>
+        </>}
       </div>
     </section>
   </div>;

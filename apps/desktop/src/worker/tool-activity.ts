@@ -21,6 +21,7 @@ const KNOWN_TOOL_NAMES = new Set([
 export interface SafeToolActivity {
   name: string;
   summary?: string;
+  queryOrUrl?: string;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -105,5 +106,12 @@ function summaryFor(toolName: string, args: unknown): string | undefined {
 export function safeToolActivity(toolName: string, args: unknown): SafeToolActivity {
   const name = safeName(toolName);
   const summary = summaryFor(name, args);
-  return { name, ...(summary === undefined ? {} : { summary: clippedLine(summary) }) };
+  const input = record(args);
+  const query = input?.query;
+  const url = input?.url;
+  let queryOrUrl: string | undefined = name === "web_search" && typeof query === "string" ? clippedLine(query, 8192) : undefined;
+  if (typeof url === "string" && url.length <= 8192) {
+    try { const parsed = new URL(url); if (["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password) queryOrUrl = url; } catch { /* no URL */ }
+  }
+  return { name, ...(summary === undefined ? {} : { summary: clippedLine(summary) }), ...(queryOrUrl === undefined ? {} : { queryOrUrl }) };
 }

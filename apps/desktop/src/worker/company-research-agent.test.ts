@@ -19,6 +19,13 @@ import {
   textDelta,
 } from "./pi-chat-agent-test-helpers.js";
 
+function validStructuredCandidate() {
+  return {
+    coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
+    sections: structureResearchRequest().template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+  };
+}
+
 const budgetSnapshot = (
   searchLimit: number,
   fetchLimit: number,
@@ -404,7 +411,7 @@ describe("generic company research agent", () => {
   });
 
   it("structures in one no-tool model call without a Search snapshot", async () => {
-    const completeText = vi.fn(async () => '{"coreSummary":[],"sections":[]}');
+    const completeText = vi.fn(async () => JSON.stringify(validStructuredCandidate()));
     const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
     expect(request).not.toHaveProperty("search");
     await createCompanyResearchAgent({ gateway: { completeText } as never, rawAgent: {} as never }).run(request, (event) => events.push(event), new AbortController().signal);
@@ -429,6 +436,54 @@ describe("generic company research agent", () => {
       outputChars: 0,
     }));
     expect(events.at(-1)).toMatchObject({ type: "failed", code: "structuring_failed" });
+  });
+
+  it("records the failed JSON candidate and makes exactly one format-only repair attempt", async () => {
+    const completeText = vi.fn()
+      .mockResolvedValueOnce('{"coreSummary": [}')
+      .mockResolvedValueOnce(JSON.stringify(validStructuredCandidate()));
+    const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
+
+    await createCompanyResearchAgent({ gateway: { completeText } as never }).run(request, (event) => events.push(event), new AbortController().signal);
+
+    expect(completeText).toHaveBeenCalledTimes(2);
+    expect(completeText.mock.calls[1]?.[1]).toContain("格式修复");
+    expect(completeText.mock.calls[1]?.[2]).toContain(request.rawReportText);
+    expect(events.filter((event) => event.type === "model_diagnostic")).toEqual([
+      expect.objectContaining({ attempt: 1, errorCategory: "json_parse", failedCandidate: '{"coreSummary": [}' }),
+      expect.objectContaining({ attempt: 2, stopReason: "stop" }),
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "completed", text: JSON.stringify(validStructuredCandidate()) });
+  });
+
+  it("persists real length truncation and never repairs it as malformed JSON", async () => {
+    const completeTextResult = vi.fn(async () => ({ text: '{"coreSummary": [', stopReason: "length" as const }));
+    const completeText = vi.fn();
+    const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
+
+    await createCompanyResearchAgent({ gateway: { completeText, completeTextResult } as never }).run(request, (event) => events.push(event), new AbortController().signal);
+
+    expect(completeTextResult).toHaveBeenCalledOnce();
+    expect(completeText).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ type: "model_diagnostic", attempt: 1, stopReason: "length", errorCategory: "truncated", failedCandidate: '{"coreSummary": [' }));
+    expect(events.at(-1)).toMatchObject({ type: "failed", code: "structuring_failed" });
+  });
+
+  it("preserves cancellation while the single format repair is in flight", async () => {
+    let rejectRepair!: (error: Error) => void;
+    const completeText = vi.fn()
+      .mockResolvedValueOnce("{broken")
+      .mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { rejectRepair = reject; }));
+    const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
+    const controller = new AbortController();
+    const run = createCompanyResearchAgent({ gateway: { completeText } as never }).run(request, (event) => events.push(event), controller.signal);
+    await vi.waitFor(() => expect(completeText).toHaveBeenCalledTimes(2));
+    controller.abort();
+    rejectRepair(new Error("provider body remains private"));
+    await run;
+
+    expect(events).toContainEqual(expect.objectContaining({ type: "model_diagnostic", attempt: 2, stopReason: "aborted" }));
+    expect(events.at(-1)).toMatchObject({ type: "cancelled" });
   });
 
   it("records a mid-flight structure cancellation as aborted without provider failure", async () => {

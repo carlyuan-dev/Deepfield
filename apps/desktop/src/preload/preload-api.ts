@@ -1,6 +1,9 @@
 import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { UsageDashboardArgsSchema, UsageDashboardSchema } from "@deepfield/contracts";
+import type { UsageDashboard } from "@deepfield/base/usage";
 import {
+  CompanyResearchBatchStateSchema, CompanyProfileProgressSchema, type CompanyResearchBatchState, type CompanyProfileProgress,
   toPublicError, PublicAppErrorSchema, ResearchRunSchema, DiagnosticResultSchema, CompanyResearchWordExportResultSchema,
   AgentWorkerEventSchema,
   CompanyResearchEventSchema,
@@ -31,6 +34,16 @@ import {
 } from "@deepfield/contracts";
 
 export const IPC_CHANNELS = {
+  usageGetDashboard: "deepfield:usage:getDashboard",
+  companyResearchBatchStart: "deepfield:companyResearchBatch:start",
+  companyResearchBatchGetState: "deepfield:companyResearchBatch:getState",
+  companyResearchBatchCancel: "deepfield:companyResearchBatch:cancel",
+  companyResearchBatchResume: "deepfield:companyResearchBatch:resume",
+  companyResearchBatchSubscribe: "deepfield:companyResearchBatch:subscribe",
+  companyResearchBatchEvents: "deepfield:companyResearchBatch:events",
+  companyProfileProgressGet: "deepfield:companyProfiles:progress",
+  companyProfileProgressSubscribe: "deepfield:companyProfiles:subscribeProgress",
+  companyProfileProgressEvents: "deepfield:companyProfiles:progressEvents",
   copyText: "deepfield:clipboard:copyText",
   industryResearchCreateItem: "deepfield:industryResearch:createItem",
   industryResearchUpdateItem: "deepfield:industryResearch:updateItem",
@@ -56,13 +69,16 @@ export const IPC_CHANNELS = {
   companyResearchGetRun: "deepfield:companyResearch:getRun",
   companyResearchExportWord: "deepfield:companyResearch:exportWord",
   companyResearchRetryFailed: "deepfield:companyResearch:retryFailed",
+  companyResearchRetryStructuring: "deepfield:companyResearch:retryStructuring",
   companyResearchDeleteRun: "deepfield:companyResearch:deleteRun",
   companyResearchSubscribe: "deepfield:companyResearch:subscribe",
   companyResearchEvents: "deepfield:companyResearch:events",
   conversationsCreate: "deepfield:conversations:create",
+  conversationsSetWebSearchEnabled: "deepfield:conversations:setWebSearchEnabled",
   conversationsDelete: "deepfield:conversations:delete",
   conversationsOpenInitial: "deepfield:conversations:openInitial",
   conversationsListRecent: "deepfield:conversations:listRecent",
+  conversationUpdates: "deepfield:conversations:updates",
   settingsGet: "deepfield:settings:get",
   settingsSaveLlmProfile: "deepfield:settings:saveLlmProfile",
   settingsActivateLlmProfile: "deepfield:settings:activateLlmProfile",
@@ -101,8 +117,14 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
     return result.value as T;
   };
   return {
+    usage: { getDashboard: (query) => {
+      if (!Value.Check(UsageDashboardArgsSchema, [query])) return Promise.reject(toPublicError(undefined));
+      return invokeResult<UsageDashboard>(IPC_CHANNELS.usageGetDashboard, UsageDashboardSchema, query);
+    } },
     copyText: (text) => ipc.invoke(IPC_CHANNELS.copyText, text) as Promise<void>,
     conversations: {
+      setWebSearchEnabled: (conversationId, enabled) =>
+        ipc.invoke(IPC_CHANNELS.conversationsSetWebSearchEnabled, conversationId, enabled) as Promise<Conversation>,
       create: () => ipc.invoke(IPC_CHANNELS.conversationsCreate) as Promise<Conversation>,
       delete: (conversationId) =>
         ipc.invoke(IPC_CHANNELS.conversationsDelete, conversationId) as Promise<void>,
@@ -113,8 +135,20 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         }>,
       listRecent: () =>
         ipc.invoke(IPC_CHANNELS.conversationsListRecent) as Promise<Conversation[]>,
+      subscribe: (listener) => ipc.on(IPC_CHANNELS.conversationUpdates, (_event, value) => {
+        const schema = Type.Object({
+          id: Type.String(), title: Type.String(), hasUserMessage: Type.Boolean(),
+          createdAt: Type.String(), updatedAt: Type.String(),
+        }, { additionalProperties: false });
+        if (Value.Check(schema, value)) listener(value as Conversation);
+      }),
     },
     industryResearch: {
+      getCompanyProfileProgress: (itemId) => invokeResult<CompanyProfileProgress>(IPC_CHANNELS.companyProfileProgressGet, CompanyProfileProgressSchema, itemId),
+      subscribeCompanyProfileProgress: (listener) => {
+        void ipc.invoke(IPC_CHANNELS.companyProfileProgressSubscribe).catch(() => {});
+        return ipc.on(IPC_CHANNELS.companyProfileProgressEvents, (_event, value) => { if (Value.Check(CompanyProfileProgressSchema, value)) listener(value); });
+      },
       createItem: (input) =>
         ipc.invoke(IPC_CHANNELS.industryResearchCreateItem, input) as Promise<CapabilityItem>,
       updateItem: (itemId, input) =>
@@ -175,6 +209,8 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         ipc.invoke(IPC_CHANNELS.companyResearchGetRun, itemId, companyId, runId) as Promise<ResearchRun | undefined>,
       exportWord: (itemId, companyId, runId, selection) =>
         invokeResult<CompanyResearchWordExportResult>(IPC_CHANNELS.companyResearchExportWord, CompanyResearchWordExportResultSchema, itemId, companyId, runId, selection),
+      retryStructuring: (itemId, companyId, runId) =>
+        invokeResult<ResearchRun>(IPC_CHANNELS.companyResearchRetryStructuring, ResearchRunSchema, itemId, companyId, runId) as Promise<ResearchRun>,
       retryFailed: (itemId, companyId, runId, input) =>
         invokeResult<ResearchRun>(IPC_CHANNELS.companyResearchRetryFailed, ResearchRunSchema, itemId, companyId, runId, input) as Promise<ResearchRun>,
       deleteRun: (itemId, companyId, runId) =>
@@ -184,6 +220,16 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         return ipc.on(IPC_CHANNELS.companyResearchEvents, (_event, value) => {
           if (Value.Check(CompanyResearchEventSchema, value)) listener(value);
         });
+      },
+    },
+    companyResearchBatch: {
+      start: (itemId, entries) => invokeResult<CompanyResearchBatchState>(IPC_CHANNELS.companyResearchBatchStart, CompanyResearchBatchStateSchema, itemId, entries),
+      getState: (itemId) => invokeResult<CompanyResearchBatchState | null>(IPC_CHANNELS.companyResearchBatchGetState, Type.Union([CompanyResearchBatchStateSchema, Type.Null()]), itemId),
+      cancel: async (batchId) => { await invokeResult(IPC_CHANNELS.companyResearchBatchCancel, Type.Null(), batchId); },
+      resume: (batchId) => invokeResult<CompanyResearchBatchState>(IPC_CHANNELS.companyResearchBatchResume, CompanyResearchBatchStateSchema, batchId),
+      subscribe: (listener) => {
+        void ipc.invoke(IPC_CHANNELS.companyResearchBatchSubscribe).catch(() => {});
+        return ipc.on(IPC_CHANNELS.companyResearchBatchEvents, (_event, value) => { if (Value.Check(CompanyResearchBatchStateSchema, value)) listener(value); });
       },
     },
     settings: {

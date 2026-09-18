@@ -9,7 +9,7 @@ import {
 
 function event(
   requestId: string,
-  type: Exclude<AgentWorkerEvent["type"], "tool_activity">,
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint"> | "text_reset",
   payload?: string,
 ): AgentWorkerEvent {
   switch (type) {
@@ -17,6 +17,8 @@ function event(
       return { requestId, type: "started" };
     case "text_delta":
       return { requestId, type: "text_delta", delta: payload ?? "" };
+    case "text_reset":
+      return { requestId, type: "text_reset" } as AgentWorkerEvent;
     case "completed":
       return { requestId, type: "completed", text: payload ?? "" };
     case "failed":
@@ -172,6 +174,40 @@ describe("chat reducer", () => {
     });
     expect(state.drafts["r1"]).toMatchObject({ status: "streaming", content: "测试回" });
     expect(visibleMessages(state).at(-1)).toMatchObject({ role: "assistant", content: "测试回" });
+  });
+
+  it("clears transient assistant text without removing tool activity", () => {
+    let state = chatReducer(loadedConversation("c1"), {
+      type: "USER_SUBMIT",
+      content: "你好",
+      requestId: "r1",
+    });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "text_delta", "我先查一下"),
+    });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: {
+        requestId: "r1",
+        type: "tool_activity",
+        callKey: "search-1",
+        name: "web_search",
+        status: "completed",
+      },
+    });
+    state = chatReducer(state, {
+      type: "WORKER_EVENT",
+      conversationId: "c1",
+      event: event("r1", "text_reset"),
+    });
+
+    expect(state.drafts.r1?.content).toBe("");
+    expect(state.drafts.r1?.toolActivities).toEqual([
+      expect.objectContaining({ callKey: "search-1", status: "completed" }),
+    ]);
   });
 
   it("finalizes the completed draft in place and restores sending", () => {

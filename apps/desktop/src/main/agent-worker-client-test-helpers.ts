@@ -68,7 +68,7 @@ export function request(requestId: string): AgentWorkerRequest {
 
 export function event(
   requestId: string,
-  type: Exclude<AgentWorkerEvent["type"], "tool_activity">,
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint">,
   text?: string,
 ): AgentWorkerEvent {
   switch (type) {
@@ -76,6 +76,8 @@ export function event(
       return { requestId, type: "started" };
     case "text_delta":
       return { requestId, type: "text_delta", delta: text ?? "" };
+    case "text_reset":
+      return { requestId, type: "text_reset" };
     case "completed":
       return { requestId, type: "completed", text: text ?? "" };
     case "failed":
@@ -85,10 +87,14 @@ export function event(
 
 export function label(item: AgentWorkerEvent): string {
   switch (item.type) {
+    case "transcript_checkpoint":
+      return "transcript_checkpoint";
     case "started":
       return "started";
     case "text_delta":
       return item.delta;
+    case "text_reset":
+      return "text_reset";
     case "tool_activity":
       return `tool:${item.status}:${item.name}`;
     case "completed":

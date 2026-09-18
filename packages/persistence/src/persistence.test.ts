@@ -35,6 +35,26 @@ afterEach(() => {
 });
 
 describe("standalone conversation persistence", () => {
+  it("persists each conversation's web search preference without changing recency", () => {
+    const { path, db } = openTestDb();
+    const repos = createRepositories(db);
+    const a = repos.conversations.create();
+    const b = repos.conversations.create();
+    expect(a.webSearchEnabled).toBe(false);
+    expect(b.webSearchEnabled).toBe(false);
+    expect(repos.conversations.setWebSearchEnabled(a.id, true)).toEqual({ ...a, webSearchEnabled: true });
+    db.close();
+    const reopened = openDatabase(path);
+    try {
+      migrate(reopened);
+      const next = createRepositories(reopened);
+      expect(next.conversations.getById(a.id)?.webSearchEnabled).toBe(true);
+      expect(next.conversations.getById(b.id)?.webSearchEnabled).toBe(false);
+      expect(next.conversations.setWebSearchEnabled(a.id, false)).toEqual(a);
+      expect(next.conversations.getById(a.id)?.webSearchEnabled).toBe(false);
+    } finally { reopened.close(); }
+  });
+
   it("survives database reopen after activation and recent lists it first", () => {
     const { dir, path, db } = openTestDb();
     const repos = createRepositories(db);

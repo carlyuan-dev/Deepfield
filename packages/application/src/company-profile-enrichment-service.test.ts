@@ -9,6 +9,79 @@ const database = () => { const db = openTestDb(); dbs.push(db); return db; };
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("company profile Agent queue", () => {
+  it("emits one terminal result for the current cohort, then returns idle and starts imports and retries fresh", async () => {
+    const db = database();
+    const historicReady = db.repos.companies.upsert({ name: "历史成功" }); db.repos.companies.setProfileStatus(historicReady.id, "ready");
+    const historicFailed = db.repos.companies.upsert({ name: "历史失败" }); db.repos.companies.setProfileStatus(historicFailed.id, "failed");
+    const success = db.repos.companies.upsert({ name: "本轮成功" }); const failure = db.repos.companies.upsert({ name: "本轮失败" });
+    const ids = [historicReady.id, historicFailed.id, success.id, failure.id]; let failOnce = true;
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async (company) => async () => {
+      if (company.id === failure.id && failOnce) { failOnce = false; throw new AppError("EXTERNAL.TIMEOUT"); }
+      return profileResult();
+    } }, { getTopicCompanyIds: () => ids, getTopicIds: () => ["topic"] });
+    const progress: Array<ReturnType<typeof service.getProgress>> = []; service.subscribeProgress((state) => progress.push(state));
+
+    service.start(); await service.whenIdle();
+    expect(progress.filter(state => state.status === "completed")).toEqual([
+      expect.objectContaining({ itemId: "topic", total: 2, processed: 2, failed: 1 }),
+    ]);
+    expect(service.getProgress("topic")).toEqual({ itemId: "topic", status: "idle", total: 0, processed: 0, failed: 0 });
+    service.getProgress("topic"); service.configurationChanged(); await service.whenIdle();
+    expect(progress.filter(state => state.status === "completed")).toHaveLength(1);
+
+    const imported = db.repos.companies.upsert({ name: "下一批" }); ids.push(imported.id);
+    service.enqueue(imported.id); await service.whenIdle();
+    expect(progress.filter(state => state.status === "completed").at(-1)).toMatchObject({ total: 1, processed: 1, failed: 0 });
+
+    expect(service.retry(failure.id)).toBe(true); await service.whenIdle();
+    expect(progress.filter(state => state.status === "completed").at(-1)).toMatchObject({ total: 1, processed: 1, failed: 0 });
+    expect(progress.filter(state => state.status === "completed")).toHaveLength(3);
+    expect(service.getProgress("topic")).toEqual({ itemId: "topic", status: "idle", total: 0, processed: 0, failed: 0 });
+  });
+
+  it("does not let a completion-time read consume the terminal event or mix reentrant work into its cohort", async () => {
+    const db = database(); const first = db.repos.companies.upsert({ name: "第一批" }); const ids = [first.id];
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => profileResult() }, { getTopicCompanyIds: () => ids, getTopicIds: () => ["topic"] });
+    const terminal: Array<ReturnType<typeof service.getProgress>> = []; const observerStatuses: string[] = []; let readBeforeDelivery: ReturnType<typeof service.getProgress> | undefined;
+    service.subscribe((event) => {
+      if (event.status === "ready" && event.companyId === first.id) readBeforeDelivery = service.getProgress("topic");
+    });
+    service.subscribeProgress((state) => {
+      if (state.status !== "completed") return;
+      terminal.push(state);
+      if (terminal.length === 1) {
+        const next = db.repos.companies.upsert({ name: "监听器加入的下一批" }); ids.push(next.id); service.enqueue(next.id);
+      }
+    });
+    service.subscribeProgress((state) => observerStatuses.push(state.status));
+
+    service.start(); await service.whenIdle();
+    expect(readBeforeDelivery).toMatchObject({ status: "completed", total: 1, processed: 1, failed: 0 });
+    expect(terminal).toEqual([
+      expect.objectContaining({ status: "completed", total: 1, processed: 1, failed: 0 }),
+      expect.objectContaining({ status: "completed", total: 1, processed: 1, failed: 0 }),
+    ]);
+    expect(observerStatuses).toEqual(["waiting", "running", "completed", "waiting", "running", "completed"]);
+    expect(service.getProgress("topic")).toEqual({ itemId: "topic", status: "idle", total: 0, processed: 0, failed: 0 });
+  });
+
+  it("finalizes a terminal cohort before a company event listener enqueues the next cohort", async () => {
+    const db = database(); const first = db.repos.companies.upsert({ name: "第一批" }); const ids = [first.id];
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => profileResult() }, { getTopicCompanyIds: () => ids, getTopicIds: () => ["topic"] });
+    const progress: Array<ReturnType<typeof service.getProgress>> = [];
+    service.subscribeProgress((state) => progress.push(state));
+    service.subscribe((event) => {
+      if (event.companyId !== first.id || event.status !== "ready") return;
+      const next = db.repos.companies.upsert({ name: "公司事件加入的下一批" }); ids.push(next.id); service.enqueue(next.id);
+    });
+
+    service.start(); await service.whenIdle();
+    expect(progress.filter(state => state.status === "completed")).toEqual([
+      expect.objectContaining({ total: 1, processed: 1, failed: 0 }),
+      expect.objectContaining({ total: 1, processed: 1, failed: 0 }),
+    ]);
+    expect(service.getProgress("topic")).toEqual({ itemId: "topic", status: "idle", total: 0, processed: 0, failed: 0 });
+  });
   it("clears old ambiguous evidence when a user retry fails for a new reason", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Ambiguous" }); let attempts = 0;
     const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => {

@@ -79,7 +79,11 @@ export interface NormalizedSearchResponse {
 export interface SearchProvider {
   readonly id: string;
   /** Explicit capability declaration; a provider that lacks it rejects timeRange. */
-  readonly capabilities: { timeRange: boolean };
+  readonly capabilities: {
+    timeRange: boolean;
+    /** Optional Unicode code point limit. */
+    maxQueryLength?: number;
+  };
   search(request: SearchRequest, signal: AbortSignal): Promise<NormalizedSearchResponse>;
 }
 
@@ -122,11 +126,12 @@ export function isValidDateString(value: string): boolean {
  * adapter call this before touching the network so an illegal time range or
  * query never reaches a remote provider.
  */
-export function assertValidSearchRequest(request: SearchRequest): void {
+export function assertValidSearchRequest(request: SearchRequest, maxQueryLength?: number): void {
   if (
     typeof request.query !== "string" ||
     request.query.trim().length === 0 || // whitespace-only queries are rejected
-    request.query.length > MAX_QUERY_LENGTH
+    request.query.length > MAX_QUERY_LENGTH ||
+    (maxQueryLength !== undefined && Array.from(request.query).length > maxQueryLength)
   ) {
     throw new SearchProviderError("invalid_request");
   }

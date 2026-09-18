@@ -32,6 +32,7 @@ export function createConversationRepository(db: DatabaseSync): ConversationRepo
     });
     return {
       id: conversationId,
+      webSearchEnabled: false,
       title: BLANK_CONVERSATION_TITLE,
       hasUserMessage: false,
       createdAt: now,
@@ -92,6 +93,13 @@ export function createConversationRepository(db: DatabaseSync): ConversationRepo
       if (!updated) {
         throw new Error(`conversation not found: ${conversationId}`);
       }
+      return toConversation(updated);
+    },
+
+    setWebSearchEnabled(conversationId: ConversationId, enabled: boolean): Conversation {
+      db.prepare("UPDATE conversations SET web_search_enabled = ? WHERE id = ?").run(enabled ? 1 : 0, conversationId);
+      const updated = db.prepare("SELECT * FROM conversations WHERE id = ?").get(conversationId) as unknown as ConversationRow | undefined;
+      if (!updated) throw new Error(`conversation not found: ${conversationId}`);
       return toConversation(updated);
     },
 

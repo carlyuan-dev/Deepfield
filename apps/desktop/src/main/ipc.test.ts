@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Value } from "typebox/value";
-import { ResearchRunSchema, ResearchRunSummarySchema } from "@deepfield/contracts";
+import { AppError, ResearchRunSchema, ResearchRunSummarySchema, type CompanyResearchBatchState } from "@deepfield/contracts";
 import type { ConversationId, MessageId } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
@@ -18,6 +18,20 @@ const SKILL_OPTIONS = { webSearch: false, skillName: "structured-brief" };
 const CONVERSATION_ID = "conv-1";
 
 describe("ipc handlers", () => {
+  it("validates batch inputs, sanitizes errors, streams snapshots and unsubscribes at teardown", async () => {
+    const state: CompanyResearchBatchState = { batchId: "b", itemId: "item-1", status: "paused", entries: [], processed: 0, total: 0, succeeded: 0, failed: 0 };
+    let listener: ((snapshot: CompanyResearchBatchState) => void) | undefined;
+    const service = { start: vi.fn(() => { throw new AppError("BUSINESS.CONFLICT"); }), getState: () => state, resume: () => state, cancel: async () => {}, subscribe: (next: typeof listener) => { listener = next; return () => { listener = undefined; }; } };
+    const { ipcMain, dispose } = makeDeps({ companyResearchBatch: service }); const sender = new FakeWebContents(1);
+    for (const args of [[], ["item-1", []], ["item-1", [{ companyId: "c", input: { ...RESEARCH_INPUT, direction: "secret" } }]], ["item-1", [{ companyId: "c", input: RESEARCH_INPUT }], "extra"]]) {
+      await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchBatchStart, event(sender), ...args)).resolves.toMatchObject({ ok: false, error: { code: "INPUT.INVALID" } });
+    }
+    expect(service.start).not.toHaveBeenCalled(); expect(sender.destroyedListenerCount).toBe(0);
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchBatchStart, event(sender), "item-1", [{ companyId: "c", input: RESEARCH_INPUT }])).resolves.toMatchObject({ ok: false, error: { code: "BUSINESS.CONFLICT" } });
+    await ipcMain.invoke(IPC_CHANNELS.companyResearchBatchSubscribe, event(sender));
+    listener!(state); expect(sender.sent).toContainEqual({ channel: IPC_CHANNELS.companyResearchBatchEvents, payload: state });
+    dispose(); expect(listener).toBeUndefined(); expect(ipcMain.handlers.has(IPC_CHANNELS.companyResearchBatchStart)).toBe(false);
+  });
   it("resumes profile queue after real Settings activation, not reads or diagnostics", async () => {
     const { ipcMain, companyProfiles } = makeDeps(); const sender = new FakeWebContents(1);
     await ipcMain.invoke(IPC_CHANNELS.settingsGet, event(sender));
@@ -33,6 +47,10 @@ describe("ipc handlers", () => {
     const registered = [...ipcMain.handlers.keys()].sort();
     expect(registered).toEqual(
       [
+        IPC_CHANNELS.usageGetDashboard,
+        IPC_CHANNELS.conversationsSetWebSearchEnabled,
+        IPC_CHANNELS.companyResearchBatchStart, IPC_CHANNELS.companyResearchBatchGetState, IPC_CHANNELS.companyResearchBatchCancel, IPC_CHANNELS.companyResearchBatchResume, IPC_CHANNELS.companyResearchBatchSubscribe,
+        IPC_CHANNELS.companyProfileProgressGet, IPC_CHANNELS.companyProfileProgressSubscribe,
         IPC_CHANNELS.industryResearchCreateItem,
         IPC_CHANNELS.industryResearchUpdateItem,
         IPC_CHANNELS.industryResearchDeleteItem,
@@ -56,6 +74,7 @@ describe("ipc handlers", () => {
         IPC_CHANNELS.companyResearchGetRun,
         IPC_CHANNELS.companyResearchExportWord,
         IPC_CHANNELS.companyResearchRetryFailed,
+        IPC_CHANNELS.companyResearchRetryStructuring,
         IPC_CHANNELS.companyResearchDeleteRun,
         IPC_CHANNELS.companyResearchSubscribe,
         IPC_CHANNELS.conversationsCreate,
@@ -272,10 +291,12 @@ describe("ipc handlers", () => {
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchListRuns, event(sender), "item-1", "company-1")).resolves.toEqual([summary]);
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchGetState, event(sender), "item-1", "company-1")).resolves.toEqual({ runs: [summary], globalActiveRun: null });
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryFailed, event(sender), ...target, RESEARCH_INPUT)).resolves.toMatchObject({ ok: true, value: { id: "run-1", status: "researching" } });
+    await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchRetryStructuring, event(sender), ...target)).resolves.toMatchObject({ ok: true, value: { id: "run-1" } });
     await expect(ipcMain.invoke(IPC_CHANNELS.companyResearchDeleteRun, event(sender), ...target)).resolves.toBeUndefined();
     expect(companyResearch.getRunCalls[0]).toEqual({ itemId: "item-1", companyId: "company-1", runId: "run-1" });
     expect(companyResearch.listRunsCalls).toEqual([{ itemId: "item-1", companyId: "company-1" }]);
     expect(companyResearch.retryFailedCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1", input: RESEARCH_INPUT }]);
+    expect(companyResearch.retryStructuringCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1" }]);
     expect(companyResearch.deleteRunCalls).toEqual([{ itemId: "item-1", companyId: "company-1", runId: "run-1" }]);
   });
 
@@ -296,12 +317,13 @@ describe("ipc handlers", () => {
     ["listRuns", "companyResearchListRuns", ["item-1", "company-1"], "read"],
     ["getRun", "companyResearchGetRun", ["item-1", "company-1", "run-1"], "read"],
     ["retryFailed", "companyResearchRetryFailed", ["item-1", "company-1", "run-1", RESEARCH_INPUT], "retry"],
+    ["retryStructuring", "companyResearchRetryStructuring", ["item-1", "company-1", "run-1"], "retry"],
     ["deleteRun", "companyResearchDeleteRun", ["item-1", "company-1", "run-1"], "deletion"],
   ] as const)("sanitizes %s service errors", async (method, channel, args, action) => {
     const { ipcMain, companyResearch } = makeDeps();
     vi.spyOn(companyResearch, method).mockImplementation(() => { throw new Error('sk-secret provider error {"candidate":true}'); });
     const error = await ipcMain.invoke(IPC_CHANNELS[channel], event(new FakeWebContents(1)), ...args).catch((error: Error) => error);
-    if (method === "start" || method === "retryFailed") expect(error).toEqual({ ok: false, error: { code: "INTERNAL.UNKNOWN", category: "internal" } });
+    if (method === "start" || method === "retryFailed" || method === "retryStructuring") expect(error).toEqual({ ok: false, error: { code: "INTERNAL.UNKNOWN", category: "internal" } });
     else expect((error as Error).message).toBe(`company research ${action} failed`);
   });
 
@@ -459,7 +481,7 @@ describe("ipc handlers", () => {
   });
 
   it("validates chat input by Conversation ID and delegates options to the service", async () => {
-    const { ipcMain, chat } = makeDeps();
+    const { ipcMain, chat, conversations } = makeDeps();
     const sender = new FakeWebContents(1);
     const result = await ipcMain.invoke(
       IPC_CHANNELS.chatSend,
@@ -544,6 +566,15 @@ describe("ipc handlers", () => {
     expect(senderB.sent).toEqual([
       { channel: channels.chatEvents, payload: workerEvent("req-2") },
     ]);
+  });
+
+  it("broadcasts late conversation metadata on its separate channel", async () => {
+    const { ipcMain, chat, conversations } = makeDeps();
+    const sender = new FakeWebContents(12);
+    await ipcMain.invoke(IPC_CHANNELS.conversationsOpenInitial, event(sender));
+    const updated = conversations.makeConversation("conv-late", "异步智能标题", true);
+    chat.emitConversationUpdate(updated);
+    expect(sender.sent).toContainEqual({ channel: IPC_CHANNELS.conversationUpdates, payload: updated });
   });
 
   it("keeps a single destroyed listener per sender across repeated sends", async () => {

@@ -234,7 +234,7 @@ describe("pi chat agent", () => {
     });
   });
 
-  it("streams only the explicit online synthesis turn after keeping tool-phase text private", async () => {
+  it("keeps Capability tool-phase text private and streams only its explicit synthesis", async () => {
     const planning = assistantWithTool("正在搜索");
     const draft = assistant("工具阶段草稿");
     const final = assistant("最终答案");
@@ -275,7 +275,10 @@ describe("pi chat agent", () => {
     };
     const events: AgentWorkerEvent[] = [];
 
-    await createPiChatAgent(makeRuntime(fake, stubModel), [], undefined, {}, toolSessions).run(
+    await createPiChatAgent(
+      makeRuntime(fake, stubModel), [], undefined, {}, toolSessions,
+      undefined, undefined, "capability",
+    ).run(
       request({ webSearch: true }),
       (event) => events.push(event),
       new AbortController().signal,
@@ -291,7 +294,7 @@ describe("pi chat agent", () => {
     expect(JSON.stringify(events)).not.toContain("工具阶段草稿");
   });
 
-  it("uses a clean tool-disabled provider request after natural tool stopping and streams the validated answer", async () => {
+  it("uses a clean tool-disabled Capability request after natural tool stopping", async () => {
     const searchCall = {
       type: "toolCall" as const,
       id: "natural-search",
@@ -321,7 +324,10 @@ describe("pi chat agent", () => {
     };
 
     const result = await capture(
-      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      createPiChatAgent(
+        recording.runtime, [], undefined, {}, sessions,
+        undefined, undefined, "capability",
+      ),
       undefined,
       webRequest,
     );
@@ -386,7 +392,7 @@ describe("pi chat agent", () => {
         arguments: { url: "https://evidence.test/source" },
       },
     },
-  ])("enters the same finalization immediately at the $limit limit", async ({
+  ])("enters Capability finalization immediately at the $limit limit", async ({
     maxAgentTurns,
     maxSearchCalls,
     maxFetchCalls,
@@ -409,7 +415,10 @@ describe("pi chat agent", () => {
     };
 
     const result = await capture(
-      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      createPiChatAgent(
+        recording.runtime, [], undefined, {}, sessions,
+        undefined, undefined, "capability",
+      ),
       undefined,
       webRequest,
     );
@@ -427,7 +436,7 @@ describe("pi chat agent", () => {
     });
   });
 
-  it("does not execute or continue after a finalization response returns another tool intent", async () => {
+  it("does not execute or continue after a Capability finalization response returns another tool intent", async () => {
     const firstCall = {
       type: "toolCall" as const,
       id: "limit-search",
@@ -454,7 +463,10 @@ describe("pi chat agent", () => {
     };
 
     const result = await capture(
-      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      createPiChatAgent(
+        recording.runtime, [], undefined, {}, sessions,
+        undefined, undefined, "capability",
+      ),
       undefined,
       webRequest,
     );
@@ -466,7 +478,7 @@ describe("pi chat agent", () => {
     expect(result.events.some((event) => event.type === "completed")).toBe(false);
   });
 
-  it("converts a terminal tool failure into ordinary text evidence for finalization", async () => {
+  it("converts a terminal Capability tool failure into ordinary finalization evidence", async () => {
     const failedCall = {
       type: "toolCall" as const,
       id: "terminal-failed-search",
@@ -490,7 +502,10 @@ describe("pi chat agent", () => {
     };
 
     const result = await capture(
-      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      createPiChatAgent(
+        recording.runtime, [], undefined, {}, sessions,
+        undefined, undefined, "capability",
+      ),
       undefined,
       webRequest,
     );
@@ -504,7 +519,7 @@ describe("pi chat agent", () => {
     expect(result.events.at(-1)).toEqual({ requestId: "req-1", type: "completed", text: finalText });
   });
 
-  it("converts a terminal budget-trimmed result into ordinary text evidence without another tool round", async () => {
+  it("converts a terminal Capability budget trim into ordinary finalization evidence", async () => {
     const admittedCall = {
       type: "toolCall" as const,
       id: "admitted-search",
@@ -532,7 +547,10 @@ describe("pi chat agent", () => {
     };
 
     const result = await capture(
-      createPiChatAgent(recording.runtime, [], undefined, {}, sessions),
+      createPiChatAgent(
+        recording.runtime, [], undefined, {}, sessions,
+        undefined, undefined, "capability",
+      ),
       undefined,
       webRequest,
     );
@@ -546,7 +564,7 @@ describe("pi chat agent", () => {
     expect(result.events.at(-1)).toEqual({ requestId: "req-1", type: "completed", text: finalText });
   });
 
-  it("keeps tool-turn narration private and emits only the final tool-free answer", async () => {
+  it("resets streamed tool-turn narration before the final tool-free answer", async () => {
     const planning = assistantWithTool("I'll search recent sources.");
     const retrying = assistantWithTool("Some calls failed; retrying.", "read_webpage");
     const answerText = "近三个月，宇树科技公布了新的人形机器人进展。[来源](https://example.com)";
@@ -572,15 +590,16 @@ describe("pi chat agent", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.events.filter((event) => event.type === "text_delta")).toEqual([
+      { requestId: "req-1", type: "text_delta", delta: "I'll search recent sources." },
       { requestId: "req-1", type: "text_delta", delta: answerText },
     ]);
+    expect(result.events.some((event) => event.type === "text_reset")).toBe(true);
     expect(result.events.at(-1)).toEqual({
       requestId: "req-1",
       type: "completed",
       text: answerText,
     });
-    expect(JSON.stringify(result.events)).not.toContain("I'll search");
-    expect(JSON.stringify(result.events)).not.toContain("retrying");
+    expect(JSON.stringify(result.events.filter(event => event.type !== "transcript_checkpoint"))).not.toContain("retrying");
   });
 
   it("fails instead of persisting narration when the run ends on a tool-using turn", async () => {
@@ -602,7 +621,7 @@ describe("pi chat agent", () => {
 
     expect(result.error).toBeInstanceOf(PiChatAgentError);
     expect(result.events.some((event) => event.type === "completed")).toBe(false);
-    expect(JSON.stringify(result.events)).not.toContain("I'll retry");
+    expect(result.events.at(-1)).toEqual({ requestId: "req-1", type: "text_reset" });
   });
 
   it("reserves the last agent turn for tool-free synthesis", async () => {
@@ -747,7 +766,7 @@ describe("pi chat agent", () => {
     },
   );
 
-  it("starts in synthesis when search is terminal and no usable URL exists", async () => {
+  it("does not globally stop Chat when search is exhausted and no URL is known", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
     });
@@ -765,8 +784,8 @@ describe("pi chat agent", () => {
       request({ webSearch: true }),
     );
 
-    expect(fake.receivedOptions?.initialState?.tools).toEqual([]);
-    expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("phase: synthesizing");
+    expect(fake.receivedOptions?.initialState?.tools?.map((tool) => tool.name)).toEqual(["read_webpage"]);
+    expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("phase: deciding");
   });
 
   it("keeps fetch available when the terminal search result supplies a usable URL", async () => {
@@ -1319,7 +1338,7 @@ describe("pi chat agent", () => {
     ]);
   });
 
-  it("treats two reuse-only batches as no new evidence and transitions to synthesis", async () => {
+  it("does not globally stop Chat after two reuse-only network batches", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
     });
@@ -1379,8 +1398,8 @@ describe("pi chat agent", () => {
       } as never);
     }
 
-    expect(finalUpdate?.context?.tools).toEqual([]);
-    expect(finalUpdate?.context?.systemPrompt).toContain("phase: synthesizing");
+    expect(finalUpdate?.context?.tools?.map((candidate) => candidate.name)).toEqual(["web_search"]);
+    expect(finalUpdate?.context?.systemPrompt).toContain("phase: deciding");
   });
 
   it("announces synthesis when batch completion itself moves capability control to synthesis", async () => {
@@ -1418,7 +1437,7 @@ describe("pi chat agent", () => {
     expect(result.events.filter((event) => event.type === "tool_activity" && event.name === "research_synthesis" && event.status === "running")).toHaveLength(1);
   });
 
-  it("treats two distinct successful empty search payloads as empty evidence", async () => {
+  it("keeps Chat running after two distinct successful empty search payloads", async () => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant("最终答案")])],
     });
@@ -1464,8 +1483,8 @@ describe("pi chat agent", () => {
       } as never);
     }
 
-    expect(update?.context?.tools).toEqual([]);
-    expect(update?.context?.systemPrompt).toContain("phase: synthesizing");
+    expect(update?.context?.tools).toHaveLength(1);
+    expect(update?.context?.systemPrompt).toContain("phase: deciding");
   });
 
   it("closes search after authentication failure while preserving fetch", async () => {
@@ -1686,10 +1705,10 @@ describe("pi chat agent", () => {
     );
 
     expect(result.error).toBeUndefined();
-    expect(result.events.find((event) => event.type === "tool_activity" && event.status === "skipped")).toEqual({
+    expect(result.events.find((event) => event.type === "tool_activity" && event.status === "skipped")).toMatchObject({
       requestId: "req-1",
       type: "tool_activity",
-      callKey: "activity-1",
+      callKey: expect.stringMatching(/^tool-/),
       name: "web_search",
       status: "skipped",
       summary: "overflow",
@@ -1789,8 +1808,8 @@ describe("pi chat agent", () => {
     expect(systemPrompt).toContain("当前日期：2026-09-09");
     expect(systemPrompt).toContain("本机时区：Asia/Shanghai");
     expect(systemPrompt).toContain("本轮未启用联网搜索");
-    expect(systemPrompt).toContain("不能访问用户提供的网页");
-    expect(systemPrompt).toContain("打开输入区的“联网搜索”");
+    expect(systemPrompt).toContain("不允许发起新的网页搜索或抓取");
+    expect(systemPrompt).toContain("可以直接使用上下文已有的网页内容及来源链接");
     expect(systemPrompt).not.toContain("不能处理本地文件");
     expect(workerRequest.context.systemPrompt).toBe(MAIN_AGENT_SYSTEM_PROMPT);
     expect(fake.promptedWith).toBe("当前问题");
@@ -1899,31 +1918,37 @@ describe("pi chat agent", () => {
     );
     expect(result.error).toBeUndefined();
     expect(result.events.filter((event) => event.type === "started")).toHaveLength(1);
-    expect(result.events).toEqual([
+    expect(result.events.filter(event => event.type !== "transcript_checkpoint")).toEqual([
       { requestId: "req-1", type: "started", webSearch: true },
+      { requestId: "req-1", type: "text_delta", delta: "你" },
+      { requestId: "req-1", type: "text_delta", delta: "好" },
       {
         requestId: "req-1",
         type: "tool_activity",
-        callKey: "activity-1",
+        callKey: expect.stringMatching(/^tool-/),
         name: "fetch_url",
         status: "running",
         summary: "example.com",
+        queryOrUrl: "https://example.com/private?q=secret",
+        toolCallId: "provider-secret-id",
       },
       {
         requestId: "req-1",
         type: "tool_activity",
-        callKey: "activity-1",
+        callKey: expect.stringMatching(/^tool-/),
         name: "fetch_url",
         status: "completed",
         summary: "example.com",
+        queryOrUrl: "https://example.com/private?q=secret",
+        toolCallId: "provider-secret-id",
+        durationMs: expect.any(Number),
       },
-      { requestId: "req-1", type: "text_delta", delta: "你好" },
       { requestId: "req-1", type: "completed", text: "你好" },
     ]);
     const serialized = JSON.stringify(result.events);
-    expect(serialized).not.toContain("provider-secret-id");
+    expect(serialized).toContain("provider-secret-id");
     expect(serialized).not.toContain("sk-never-render");
-    expect(serialized).not.toContain("private");
+    expect(serialized).toContain("https://example.com/private?q=secret");
     expect(serialized).not.toContain("full private page body");
     expect(serialized).not.toContain("never render this body");
     expect(serialized).not.toContain("sk-secret-test-key");
@@ -1949,10 +1974,11 @@ describe("pi chat agent", () => {
     expect(result.events.at(-1)).toEqual({
       requestId: "req-1",
       type: "tool_activity",
-      callKey: "activity-1",
+      callKey: expect.stringMatching(/^tool-/),
       name: "read_conversation",
       status: "failed",
       summary: "指定对话",
+      toolCallId: "internal-t2",
     });
     expect(JSON.stringify(result.events)).not.toContain("internal-c1");
   });

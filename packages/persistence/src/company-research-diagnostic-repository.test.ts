@@ -24,6 +24,25 @@ function fixture() {
 }
 
 describe("company research model diagnostic repository", () => {
+  it("retains both initial and repair structure diagnostics for one request with bounded safe candidates", () => {
+    const f = fixture();
+    const base: CompanyResearchModelDiagnostic = {
+      requestId: "request-structure", runId: f.run.id, traceId: "trace-structure", stage: "structure", type: "model_diagnostic",
+      phase: "structuring", agentTurns: 1, searchCalls: 0, fetchCalls: 0, maxModelInputCharsEstimate: 5000,
+      outputChars: 20, stopReason: "stop", startedAt: "2026-09-15T08:00:00.000Z", finishedAt: "2026-09-15T08:00:01.000Z", durationMs: 1000,
+    };
+    f.repos.companyResearchDiagnostics.record({ ...base, attempt: 1, errorCategory: "json_parse", validationIssues: [{ path: "", expected: "json_object", actual: "string" }], failedCandidate: "{broken" });
+    f.repos.companyResearchDiagnostics.record({ ...base, attempt: 2, outputChars: 200 });
+
+    expect(f.repos.companyResearchDiagnostics.listByRunId(f.run.id)).toEqual([
+      expect.objectContaining({ attempt: 1, errorCategory: "json_parse", failedCandidate: "{broken" }),
+      expect.objectContaining({ attempt: 2, outputChars: 200 }),
+    ]);
+    expect(f.repos.companyResearchDiagnostics.getByRequestId("request-structure")).toMatchObject({ attempt: 2 });
+    expect(f.repos.companyResearchDiagnostics.deleteByRunId(f.run.id)).toEqual(["trace-structure"]);
+    expect(f.repos.companyResearchDiagnostics.listByRunId(f.run.id)).toEqual([]);
+  });
+
   it("retains a safe diagnostic after the failed raw run is deleted and queries all correlation ids", () => {
     const f = fixture();
     const diagnostic: CompanyResearchModelDiagnostic = {

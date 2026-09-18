@@ -127,11 +127,12 @@ function mapProviderError(error: SearchProviderError): ToolExecutionError {
 export function createSearchWebDefinition(
   provider: SearchProvider | ((traceId: string) => SearchProvider),
 ): ToolDefinition<typeof SearchWebInputSchema, typeof SearchWebOutputSchema> {
+  const maxQueryLength = typeof provider === "function" ? MAX_QUERY_LENGTH : provider.capabilities.maxQueryLength ?? MAX_QUERY_LENGTH;
   return {
     identity: { name: "web_search", version: 1 },
     label: "Search Web",
-    description: "Search the web through a fixed configured search provider.",
-    inputSchema: SearchWebInputSchema,
+    description: `Search the web through a fixed configured search provider. Keep query within ${maxQueryLength} characters; shorten or split longer queries.`,
+    inputSchema: Type.Object({ ...SearchWebInputSchema.properties, query: Type.String({ minLength: 1, maxLength: maxQueryLength }) }, { additionalProperties: false }),
     outputSchema: SearchWebOutputSchema,
     effect: "network.read.public",
     timeoutMs: 40_000,
@@ -162,7 +163,7 @@ export function createSearchWebDefinition(
           maxResults,
           ...(useNativeTimeRange ? { timeRange: input.timeRange } : {}),
         };
-        assertValidSearchRequest(request);
+        assertValidSearchRequest(request, activeProvider.capabilities.maxQueryLength);
         context.markBudgetConsumed?.();
         const response = await activeProvider.search(request, signal);
         return {

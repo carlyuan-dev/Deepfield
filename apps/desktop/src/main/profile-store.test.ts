@@ -11,6 +11,38 @@ const llm = { name: "DeepSeek Flash", provider: "deepseek", protocol: "openai_co
 const search = { name: "Tavily", provider: "tavily", baseUrl: "https://api.tavily.com", options: {}, apiKey: "search-secret" } as const;
 
 describe("ProfileStore", () => {
+  it("persists opaque revisions only on actual config/key changes and keeps draft identity separate", async () => {
+    const { root, store, secrets } = fixture(); await store.initialize();
+    const view = await store.saveLlmProfile(llm); const id = view.llm.profiles[0]!.id;
+    await store.activateLlmProfile(id);
+    const original = await store.resolveActiveLlm();
+    expect(original.configRevisionId).toMatch(/^[a-f0-9-]{36}$/);
+    await store.saveLlmProfile({ ...llm, id });
+    expect((await store.resolveActiveLlm()).configRevisionId).toBe(original.configRevisionId);
+    await store.saveLlmProfile({ ...llm, id, apiKey: "new-secret" });
+    const changed = await store.resolveActiveLlm();
+    expect(changed.configRevisionId).not.toBe(original.configRevisionId);
+    const reopened = new ProfileStore(join(root, "settings.json"), secrets); await reopened.initialize();
+    expect((await reopened.resolveActiveLlm()).configRevisionId).toBe(changed.configRevisionId);
+    const draft = await store.resolveLlmDraft({ ...llm, id });
+    expect(draft.draftSessionId).toBeTypeOf("string");
+    expect(draft.configRevisionId).not.toBe(changed.configRevisionId);
+    expect(readFileSync(join(root, "settings.json"), "utf8")).not.toContain("new-secret");
+  });
+  it("resolves unsaved Doubao search drafts and persists them with independent search credentials", async () => {
+    const { root, secrets, store } = fixture();
+    await store.initialize();
+    const draft = { name: "豆包搜索 Custom", provider: "doubao" as const, baseUrl: "https://open.feedcoopapi.com", options: {}, apiKey: "doubao-search-secret" };
+    expect(await store.resolveSearchDraft(draft)).toMatchObject(draft);
+    expect((await store.getView()).search.profiles).toEqual([]);
+    const view = await store.saveSearchProfile(draft);
+    await store.activateSearchProfile(view.search.profiles[0]!.id);
+    const reopened = new ProfileStore(join(root, "settings.json"), secrets);
+    await reopened.initialize();
+    expect(await reopened.resolveActiveSearch()).toMatchObject(draft);
+    expect((await reopened.getView()).llm.profiles).toEqual([]);
+    expect(readFileSync(join(root, "settings.json"), "utf8")).not.toContain(draft.apiKey);
+  });
   it("stores only non-secret profile data and masks runtime credentials", async () => {
     const { root, store } = fixture(); await store.initialize(); const view = await store.saveLlmProfile(llm);
     expect(view.llm.profiles[0]).toMatchObject({ name: llm.name, hasCredential: true });
@@ -53,6 +85,11 @@ describe("ProfileStore", () => {
     const expected = structuredClone(before);
     expected.llm.profiles[0].modelId = "deepseek-flash";
     expected.llm.profiles[1].modelId = "deepseek-flash";
+    const migrated = JSON.parse(readFileSync(settingsPath, "utf8"));
+    for (const index of [0, 1]) {
+      expect(migrated.llm.profiles[index].configRevisionId).not.toBe(before.llm.profiles[index].configRevisionId);
+      expected.llm.profiles[index].configRevisionId = migrated.llm.profiles[index].configRevisionId;
+    }
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(expected);
     expect((await reopened.getView()).llm.profiles.map((profile) => profile.modelId)).toEqual([
       "deepseek-flash", "deepseek-flash", "deepseek-v4-flash-custom", "deepseek-flash",

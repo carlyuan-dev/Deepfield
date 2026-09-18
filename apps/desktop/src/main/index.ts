@@ -4,6 +4,9 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityPro
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createUsageRepository } from "@deepfield/persistence";
+import { createMainUsageRuntime } from "./usage-runtime.js";
+import { configureUsageRecorder } from "../shared/usage-collection.js";
 import type { Repositories } from "@deepfield/persistence";
 import { SqliteToolAudit } from "@deepfield/application";
 import { createAppPaths, resolveUserDataRoot } from "./paths.js";
@@ -34,6 +37,7 @@ let appRuntime: ApplicationRuntime | undefined;
 let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
 let mainSkillCatalog: PiSkillCatalog | undefined;
+let usageRuntime: ReturnType<typeof createMainUsageRuntime> | undefined;
 
 const ipcMainAdapter = createTrustedIpcMainAdapter(
   ipcMain,
@@ -51,6 +55,7 @@ function startAgentWorker(
   });
   let runtimeRef!: AgentWorkerRuntime;
   const host = createToolWorkerHost({
+    ...(usageRuntime ? { usage: usageRuntime.worker } : {}),
     audit: new SqliteToolAudit(repositories.toolExecutions),
     secrets: { get: (name) => secrets.get(name) },
     conversationRepositories: {
@@ -63,6 +68,7 @@ function startAgentWorker(
   const runtime = createAgentWorkerRuntime(child, { host });
   runtimeRef = runtime;
   child.on("exit", () => {
+    void usageRuntime?.workerExited(!usageShutdownComplete);
     // Unexpected worker exit must also dispose the host so no reply can land
     // on a dead transport or against a closed database.
     toolHost?.dispose();
@@ -85,6 +91,8 @@ void app.whenReady().then(async () => {
   const paths = createAppPaths(userDataRoot);
   database = openDatabase(paths.database);
   migrate(database);
+  usageRuntime = createMainUsageRuntime(createUsageRepository(database));
+  configureUsageRecorder(usageRuntime.recorder);
   const repositories = createRepositories(database);
   const secrets = new SecretStore(paths.secretsFile, {
     isAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -97,6 +105,7 @@ void app.whenReady().then(async () => {
   const configuredLlm = new ConfiguredLlmService(
     () => profiles.resolveActiveLlm(),
     modelGateway,
+    { onTitleDiagnostic: ({ category }) => console.warn(`[conversation-title] ${category}`) },
   );
   const configuration = new ConfigurationService(profiles, modelGateway);
   const companyRecognizer =
@@ -171,6 +180,7 @@ void app.whenReady().then(async () => {
     randomToken: randomUUID,
   });
   ipcDispose = registerIpcHandlers({
+    usage: usageRuntime.query,
     ipcMain: ipcMainAdapter,
     clipboard: { writeText: (text) => clipboard.writeText(text) },
     conversations: appRuntime.conversationService,
@@ -179,6 +189,7 @@ void app.whenReady().then(async () => {
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
     companyResearch: appRuntime.companyResearch,
+    companyResearchBatch: appRuntime.companyResearchBatch,
     companyResearchWordExport,
     companyProfiles: appRuntime.companyProfiles,
   });
@@ -198,7 +209,23 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
+let usageShutdownStarted = false;
+let usageShutdownComplete = false;
+app.on("before-quit", (event) => {
+  if (!usageShutdownComplete && usageRuntime) {
+    event.preventDefault();
+    if (!usageShutdownStarted) {
+      usageShutdownStarted = true;
+      ipcDispose?.(); ipcDispose = undefined;
+      appRuntime?.companyProfiles.dispose(); appRuntime?.companyResearchBatch.dispose();
+      void (async () => {
+        // Pass the current Worker into the bounded shutdown orchestration so
+        // an unacknowledged flush remains visible even if it exits meanwhile.
+        await usageRuntime?.shutdown(agentRuntime);
+      })().catch(() => {}).finally(() => { usageShutdownComplete = true; app.quit(); });
+    }
+    return;
+  }
   ipcDispose?.();
   ipcDispose = undefined;
   // Order: reject/clean host RPC first, then kill the worker, then close the DB.
@@ -207,6 +234,7 @@ app.on("before-quit", () => {
   agentRuntime?.dispose();
   agentRuntime = undefined;
   appRuntime?.companyProfiles.dispose();
+  appRuntime?.companyResearchBatch.dispose();
   appRuntime = undefined;
   if (database) {
     try {

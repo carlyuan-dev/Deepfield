@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { makeFakeApi } from "../../renderer-test-helpers.js";
 import { SettingsView } from "./SettingsView.js";
+import { listSearchProviderManifests } from "@deepfield/retrieval";
 
 const settings = {
   schemaVersion: 1 as const,
@@ -34,6 +35,21 @@ const multiProfileSettings = {
 };
 
 describe("SettingsView", () => {
+  it("selects Doubao Custom defaults and diagnoses an unsaved search credential", async () => {
+    const api = makeFakeApi();
+    api.settings.get.mockResolvedValue({ ...settings, search: { ...settings.search, manifests: [...listSearchProviderManifests()] } });
+    api.settings.diagnoseSearch.mockResolvedValue({ ok: true, latencyMs: 1, summary: "ok" });
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} initialModule="search" />);
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Provider"), "doubao");
+    expect(screen.getByLabelText("Base URL").getAttribute("value")).toBe("https://open.feedcoopapi.com");
+    expect(screen.queryByLabelText("搜索引擎")).toBeNull();
+    await user.type(screen.getByLabelText("API Key"), "doubao-search-key");
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(api.settings.diagnoseSearch).toHaveBeenCalledWith({ name: "豆包搜索 Custom", provider: "doubao", baseUrl: "https://open.feedcoopapi.com", options: {}, apiKey: "doubao-search-key" });
+    expect(api.settings.saveSearchProfile).not.toHaveBeenCalled();
+    expect(api.settings.diagnoseLlm).not.toHaveBeenCalled();
+  });
   it("opens the requested settings module from a recovery action", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
     render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} initialModule="search" />);
@@ -173,5 +189,26 @@ describe("SettingsView", () => {
     expect(await screen.findByText("连接正常 · 55ms")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "＋ 新建 Profile" }));
     expect(screen.getByText("未检测")).toBeTruthy();
+  });
+
+  it("opens 用量信息 without saving settings and preserves the in-progress Profile draft", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
+    await screen.findByDisplayValue("主模型");
+    const user = userEvent.setup();
+    const modelId = screen.getByLabelText("Model ID");
+    await user.clear(modelId);
+    await user.type(modelId, "draft-model");
+
+    const navigation = screen.getByRole("navigation", { name: "设置导航" });
+    await user.click(within(navigation).getByRole("button", { name: "用量信息" }));
+    expect(await screen.findByRole("heading", { name: "用量信息" })).toBeTruthy();
+    expect(api.usage.getDashboard).toHaveBeenCalledTimes(1);
+    expect(api.settings.saveLlmProfile).not.toHaveBeenCalled();
+    expect(api.settings.activateLlmProfile).not.toHaveBeenCalled();
+    expect(screen.queryByRole("combobox", { name: /Profile/i })).toBeNull();
+
+    await user.click(within(navigation).getByRole("button", { name: "LLM" }));
+    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe("draft-model");
   });
 });

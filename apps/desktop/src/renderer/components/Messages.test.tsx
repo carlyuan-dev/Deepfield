@@ -21,6 +21,58 @@ function message(
 }
 
 describe("Chat message rendering", () => {
+  it.each(["", ".", "。"])("preserves terminal underscores in a bare source URL before '%s' and its copied destination", async (punctuation) => {
+    const url = "https://h5.ifeng.com/c/vivoArticle/v002HEzQBOzuQO8W9qYu9BZgIK5Ygahx9hILpwNgkP1uMHc__";
+    const copyText = vi.fn(async () => undefined);
+    Object.defineProperty(window, "deepfield", { configurable: true, value: { copyText } });
+    const { container } = render(<Messages messages={[message("assistant", `${url}${punctuation}`)]} />);
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe(url);
+    expect(link.textContent).toBe(url);
+    expect(container.querySelector(".markdown-message")?.textContent).toBe(`${url}${punctuation}`);
+    fireEvent.mouseEnter(link);
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(url));
+  });
+
+  it("keeps emphasis delimiters and text after titled links outside their destinations", () => {
+    const { container } = render(<Messages messages={[message("assistant", "__https://example.com/report__\n\n[报告](https://example.com/report)__")]} />);
+    const links = screen.getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "https://example.com/report", "https://example.com/report",
+    ]);
+    expect(container.querySelector("strong a")?.textContent).toBe("https://example.com/report");
+    expect(container.querySelector(".markdown-message")?.textContent).toContain("报告__");
+  });
+
+  it.each(["bare", "autolink", "explicit"])(
+    "compacts %s URL labels while retaining the complete destination and copy value",
+    async (syntax) => {
+      const url = "https://example.com/reports/%E4%B8%AD%E5%9B%BD%E4%BA%A7%E4%B8%9A%E7%A0%94%E7%A9%B6%E6%8A%A5%E5%91%8A/%E4%BC%81%E4%B8%9A%E5%88%86%E6%9E%90%E4%B8%8E%E5%B8%82%E5%9C%BA%E5%89%8D%E6%99%AF?q=%E4%B8%AD%E6%96%87&source=research&report=annual-industry-development-2026#details";
+      const content = syntax === "bare" ? url : syntax === "autolink" ? `<${url}>` : `[${url}](${url})`;
+      const copyText = vi.fn(async () => undefined);
+      Object.defineProperty(window, "deepfield", { configurable: true, value: { copyText } });
+      render(<Messages messages={[message("assistant", content)]} />);
+      const link = screen.getByRole("link", { name: url });
+
+      expect(link.classList.contains("markdown-link-label--bare")).toBe(true);
+      expect(link.textContent).toBe(url);
+      expect(link.getAttribute("href")).toBe(url);
+      fireEvent.mouseEnter(link);
+      expect(within(screen.getByRole("dialog")).getByText(url).textContent).toBe(url);
+      fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+      await waitFor(() => expect(copyText).toHaveBeenCalledWith(url));
+    },
+  );
+
+  it("leaves titled links outside the compact URL label treatment", () => {
+    render(<Messages messages={[message("assistant", "[阅读 **报告**](https://example.com/report)")]} />);
+    const link = screen.getByRole("link", { name: "阅读 报告" });
+    expect(link.classList.contains("markdown-link-label--bare")).toBe(false);
+    expect(link.querySelector("strong")?.textContent).toBe("报告");
+    expect(link.getAttribute("href")).toBe("https://example.com/report");
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     Reflect.deleteProperty(window, "deepfield");

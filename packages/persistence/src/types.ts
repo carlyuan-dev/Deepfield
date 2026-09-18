@@ -58,6 +58,8 @@ export interface ItemCompanyRepository {
 }
 
 export interface CompanyResearchRunRepository {
+  /** Topic-wide usable report counts; excludes active work and report bodies. */
+  summarizeByItem(itemId: CapabilityItemId): Array<{ companyId: CompanyId; count: number; latestCreatedAt: string }>;
   createResearching(
     itemId: CapabilityItemId,
     companyId: CompanyId,
@@ -113,6 +115,7 @@ export interface ConversationRepository {
   listRecent(): Conversation[];
   activate(conversationId: ConversationId, title: string): Conversation;
   updateTitle(conversationId: ConversationId, title: string): Conversation;
+  setWebSearchEnabled(conversationId: ConversationId, enabled: boolean): Conversation;
   delete(conversationId: ConversationId): boolean;
 }
 
@@ -208,6 +211,8 @@ export interface ToolExecutionCleanupRepository {
 }
 
 export interface Repositories {
+  chatSessions: ReturnType<typeof import("./chat-session-repository.js").createChatSessionRepository>;
+  companyResearchBatches: ReturnType<typeof createCompanyResearchBatchRepository>;
   capabilityItems: CapabilityItemRepository;
   companies: CompanyRepository;
   itemCompanies: ItemCompanyRepository;
@@ -270,6 +275,7 @@ export interface ConversationRow {
   id: string;
   title: string;
   has_user_message: number;
+  web_search_enabled: number;
   created_at: string;
   updated_at: string;
 }
@@ -333,3 +339,4 @@ export interface CompanyResearchRunRow {
   created_at: string;
   completed_at: string | null;
 }
+import type { createCompanyResearchBatchRepository } from "./company-research-batch-repository.js";

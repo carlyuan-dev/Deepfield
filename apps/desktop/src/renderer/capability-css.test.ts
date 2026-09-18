@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync(join(process.cwd(), "apps/desktop/src/renderer/capability.css"), "utf8");
+const appCss = readFileSync(join(process.cwd(), "apps/desktop/src/renderer/app.css"), "utf8");
 
 describe("company list status alignment", () => {
   it("centers both the enrichment spinner and remove control within a company row", () => {
@@ -15,6 +16,33 @@ describe("company list status alignment", () => {
     expect(css).not.toMatch(/\.capability-header\s*\{[^}]*border-bottom:/su);
     expect(css).not.toMatch(/\.capability-contextual-navigation\s*\{[^}]*border-bottom:/su);
     expect(css).toMatch(/\.company-detail-action\s*\{[^}]*height:\s*36px;[^}]*white-space:\s*nowrap;/su);
+  });
+
+  it("uses shared tabular report columns and only colors active research labels with the theme accent", () => {
+    const style = document.createElement("style"); style.textContent = `${appCss}\n${css}`; document.head.append(style);
+    const row = document.createElement("div"); row.className = "company-list-row";
+    const company = document.createElement("button"); company.className = "company-row-button";
+    const active = document.createElement("small"); active.className = "company-research-active-status"; active.textContent = "正在收集调研资料"; company.append(active);
+    const spinner = document.createElement("span"); spinner.className = "company-profile-spinner";
+    const summary = document.createElement("small"); summary.className = "company-report-summary muted";
+    const count = document.createElement("span"); count.className = "company-report-count"; count.textContent = "报告 12 份";
+    const separator = document.createElement("span"); separator.textContent = "·";
+    const time = document.createElement("span"); time.className = "company-report-time"; time.textContent = "最新创建于 2026-09-17 14:05";
+    const remove = document.createElement("button"); remove.className = "company-remove-button";
+    summary.append(count, separator, time); row.append(company, spinner, summary, remove); document.body.append(row);
+
+    expect(getComputedStyle(row).display).toBe("grid");
+    expect(getComputedStyle(spinner).gridColumn).toBe("2");
+    expect(getComputedStyle(summary).gridColumn).toBe("3");
+    expect(getComputedStyle(remove).gridColumn).toBe("4");
+    expect(getComputedStyle(summary).display).toBe("grid");
+    expect(getComputedStyle(summary).gridTemplateColumns).toBe("5.5em max-content 14.5em");
+    expect(getComputedStyle(summary).fontVariantNumeric).toBe("tabular-nums");
+    expect(getComputedStyle(active).color).toBe("var(--accent-strong)");
+    expect(getComputedStyle(summary).color).toBe("var(--muted)");
+    expect(css).toMatch(/@container\s+company-list\s*\(max-width:\s*560px\)/u);
+
+    row.remove(); style.remove();
   });
 });
 

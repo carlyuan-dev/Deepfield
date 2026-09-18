@@ -118,4 +118,18 @@ describe("createAgentRunControl", () => {
 
     expect(control.phase()).toBe("synthesizing");
   });
+
+  it("keeps generic Chat deciding when network terminal rules fire", () => {
+    const control = createAgentRunControl(WEB_CHAT_POLICY, 10_000, {
+      automaticSynthesis: false,
+    });
+
+    control.observeSnapshot(snapshot({ search: 0, fetch: 2 }));
+    for (let index = 0; index < WEB_CHAT_POLICY.toolDecisionTurns; index += 1) {
+      control.recordToolDecisionTurn();
+    }
+
+    expect(control.phase()).toBe("deciding");
+    expect(control.availableNetworkTools()).toEqual(["read_webpage"]);
+  });
 });

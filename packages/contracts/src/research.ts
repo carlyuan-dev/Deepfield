@@ -257,9 +257,17 @@ const RawFailureCodeSchema = Type.Exclude(ResearchFailureCodeSchema, Type.Litera
 export const CompanyResearchModelErrorCategorySchema = Type.Union([
   Type.Literal("provider_failed"), Type.Literal("stream_failed"), Type.Literal("incomplete_lifecycle"),
   Type.Literal("invalid_final_empty"), Type.Literal("invalid_final_protocol"), Type.Literal("invalid_final_language"),
-  Type.Literal("invalid_final_tool_use"),
+  Type.Literal("invalid_final_tool_use"), Type.Literal("json_parse"), Type.Literal("schema_invalid"),
+  Type.Literal("shape_invalid"), Type.Literal("status_invalid"), Type.Literal("source_mismatch"),
+  Type.Literal("truncated"), Type.Literal("storage_failed"),
 ]);
 export type CompanyResearchModelErrorCategory = Static<typeof CompanyResearchModelErrorCategorySchema>;
+export const CompanyResearchValidationIssueSchema = Type.Object({
+  path: Type.String({ maxLength: 160, pattern: "^(?:/(?:[A-Za-z][A-Za-z0-9_-]*|\\*|[0-9]{1,3})){0,8}$" }),
+  expected: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z_]+$" }),
+  actual: Type.Union([Type.Literal("object"), Type.Literal("array"), Type.Literal("string"), Type.Literal("number"), Type.Literal("boolean"), Type.Literal("null"), Type.Literal("undefined")]),
+}, { additionalProperties: false });
+export type CompanyResearchValidationIssue = Static<typeof CompanyResearchValidationIssueSchema>;
 export const CompanyResearchModelDiagnosticSchema = Type.Object({
   ...EventIdentity,
   type: Type.Literal("model_diagnostic"),
@@ -275,6 +283,9 @@ export const CompanyResearchModelDiagnosticSchema = Type.Object({
     Type.Literal("error"), Type.Literal("aborted"), Type.Literal("unknown"),
   ]),
   errorCategory: Type.Optional(CompanyResearchModelErrorCategorySchema),
+  attempt: Type.Optional(Type.Integer({ minimum: 1, maximum: 2 })),
+  validationIssues: Type.Optional(Type.Array(CompanyResearchValidationIssueSchema, { maxItems: 20 })),
+  failedCandidate: Type.Optional(Type.String({ maxLength: 16_384 })),
   startedAt: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", maxLength: 24 }),
   finishedAt: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", maxLength: 24 }),
   durationMs: Type.Integer({ minimum: 0, maximum: 2_147_483_647 }),

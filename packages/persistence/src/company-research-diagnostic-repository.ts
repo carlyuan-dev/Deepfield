@@ -19,6 +19,9 @@ interface DiagnosticRow {
   output_chars: number;
   stop_reason: CompanyResearchModelDiagnostic["stopReason"];
   error_category: CompanyResearchModelDiagnostic["errorCategory"] | null;
+  attempt: number | null;
+  validation_issues_json: string | null;
+  failed_candidate: string | null;
   started_at: string;
   finished_at: string;
   duration_ms: number;
@@ -30,6 +33,10 @@ function valid(value: unknown): CompanyResearchModelDiagnostic {
 }
 
 function fromRow(row: DiagnosticRow): CompanyResearchModelDiagnostic {
+  let validationIssues: unknown;
+  if (row.validation_issues_json !== null) {
+    try { validationIssues = JSON.parse(row.validation_issues_json); } catch { throw new Error("invalid company research diagnostic"); }
+  }
   return valid({
     requestId: row.request_id, runId: row.run_id, traceId: row.trace_id, stage: row.stage,
     type: "model_diagnostic", phase: row.phase, agentTurns: row.agent_turns,
@@ -37,6 +44,9 @@ function fromRow(row: DiagnosticRow): CompanyResearchModelDiagnostic {
     maxModelInputCharsEstimate: row.max_model_input_chars_estimate,
     outputChars: row.output_chars, stopReason: row.stop_reason,
     ...(row.error_category === null ? {} : { errorCategory: row.error_category }),
+    ...(row.attempt === null ? {} : { attempt: row.attempt }),
+    ...(row.validation_issues_json === null ? {} : { validationIssues }),
+    ...(row.failed_candidate === null ? {} : { failedCandidate: row.failed_candidate }),
     startedAt: row.started_at, finishedAt: row.finished_at, durationMs: row.duration_ms,
   });
 }
@@ -48,23 +58,26 @@ export function createCompanyResearchDiagnosticRepository(db: DatabaseSync): Com
       const record = valid(value);
       db.prepare(`INSERT INTO company_research_model_diagnostics(
         request_id, run_id, trace_id, stage, phase, agent_turns, search_calls, fetch_calls,
-        max_model_input_chars_estimate, output_chars, stop_reason, error_category, started_at, finished_at, duration_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        max_model_input_chars_estimate, output_chars, stop_reason, error_category, attempt,
+        validation_issues_json, failed_candidate, started_at, finished_at, duration_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(record.requestId, record.runId, record.traceId, record.stage, record.phase,
           record.agentTurns, record.searchCalls, record.fetchCalls, record.maxModelInputCharsEstimate,
           record.outputChars, record.stopReason, record.errorCategory ?? null,
+          record.attempt ?? null, record.validationIssues === undefined ? null : JSON.stringify(record.validationIssues),
+          record.failedCandidate ?? null,
           record.startedAt, record.finishedAt, record.durationMs);
     },
     getByRequestId(requestId) {
-      const row = db.prepare(`${select} WHERE request_id = ?`).get(requestId) as unknown as DiagnosticRow | undefined;
+      const row = db.prepare(`${select} WHERE request_id = ? ORDER BY COALESCE(attempt, 0) DESC LIMIT 1`).get(requestId) as unknown as DiagnosticRow | undefined;
       return row === undefined ? undefined : fromRow(row);
     },
     getByTraceId(traceId) {
-      const row = db.prepare(`${select} WHERE trace_id = ? ORDER BY started_at DESC, request_id DESC LIMIT 1`).get(traceId) as unknown as DiagnosticRow | undefined;
+      const row = db.prepare(`${select} WHERE trace_id = ? ORDER BY started_at DESC, request_id DESC, COALESCE(attempt, 0) DESC LIMIT 1`).get(traceId) as unknown as DiagnosticRow | undefined;
       return row === undefined ? undefined : fromRow(row);
     },
     listByRunId(runId) {
-      const rows = db.prepare(`${select} WHERE run_id = ? ORDER BY started_at ASC, request_id ASC`).all(runId) as unknown as DiagnosticRow[];
+      const rows = db.prepare(`${select} WHERE run_id = ? ORDER BY started_at ASC, request_id ASC, COALESCE(attempt, 0) ASC`).all(runId) as unknown as DiagnosticRow[];
       return rows.map(fromRow);
     },
     deleteByRunId(runId) {

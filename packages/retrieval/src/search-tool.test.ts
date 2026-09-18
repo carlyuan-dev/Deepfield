@@ -10,6 +10,22 @@ function provider(timeRange: boolean) {
 }
 
 describe("web_search provider-aware date handling", () => {
+  it("exposes a provider query limit and rejects overflow before spending budget", async () => {
+    const fake = provider(true);
+    const limited = { ...fake.value, capabilities: { timeRange: true, maxQueryLength: 100 } };
+    const definition = createSearchWebDefinition(limited);
+    expect(definition.inputSchema.properties.query).toMatchObject({ maxLength: 100 });
+    expect(definition.description).toContain("100");
+    const markBudgetConsumed = vi.fn();
+    await expect(createSearchWebDefinition(() => limited).execute(
+      { query: "字".repeat(101) }, { ...context, markBudgetConsumed }, new AbortController().signal, () => {},
+    )).rejects.toMatchObject({ code: "invalid_input" });
+    expect(fake.search).not.toHaveBeenCalled();
+    expect(markBudgetConsumed).not.toHaveBeenCalled();
+    await definition.execute({ query: "😀".repeat(100) }, context, new AbortController().signal, () => {});
+    expect(fake.search).toHaveBeenCalledWith({ query: "😀".repeat(100), maxResults: 5 }, expect.any(AbortSignal));
+    expect(createSearchWebDefinition(provider(false).value).inputSchema.properties.query).toMatchObject({ maxLength: 512 });
+  });
   it("formats large search results as bounded valid JSON for the model", async () => {
     const results = Array.from({ length: 10 }, (_, index) => ({
       title: `结果 ${index + 1} ${"标题".repeat(200)}`,

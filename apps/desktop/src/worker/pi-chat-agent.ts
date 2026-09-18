@@ -19,7 +19,8 @@ import {
 } from "@deepfield/contracts";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import type { ChatAgent } from "./message-loop.js";
-import { mapHistoryMessages } from "./pi-message-mapper.js";
+import { restoreSessionContext, transcriptMessage, toolResultProjection } from "./pi-session-transcript.js";
+import type { ChatTranscriptMessage, ChatToolSource } from "@deepfield/contracts";
 import {
   buildRuntimeSystemContext,
   type RuntimeSystemContextOptions,
@@ -27,7 +28,8 @@ import {
 import type { PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { safeToolActivity, type SafeToolActivity } from "./tool-activity.js";
 import { PiModelGateway, type ModelGateway } from "../shared/model-gateway.js";
-import { createSearchProvider, type SearchProvider } from "@deepfield/retrieval";
+import type { SearchProvider } from "@deepfield/retrieval";
+import { createMeteredSearchProvider } from "../shared/usage-search.js";
 import { createAgentRunControl, WEB_CHAT_POLICY } from "./agent-run-control.js";
 import {
   buildRuntimeBudgetContext,
@@ -41,9 +43,10 @@ import {
 } from "./tool-batch-admission.js";
 
 const OFFLINE_SYSTEM_PROMPT = [
-  "本轮未启用联网搜索，不能访问用户提供的网页，也不能获取最新或实时信息。",
-  "如需网页内容或最新信息，提示用户打开输入区的“联网搜索”后重新发送。",
+  "本轮未启用联网搜索，不允许发起新的网页搜索或抓取；可以直接使用上下文已有的网页内容及来源链接。",
+  "只有任务确需新的外部核验且现有证据不足时才建议开启联网；不得把本轮关闭解释为过往未检索。",
   "不要据此声称本地文件不可处理；本地附件能力不属于本轮联网状态说明。",
+  "联网权限仅限制本轮新工具调用。可以使用历史工具结果、来源链接和已有证据；明确其时间，不得说本轮已重新核实。",
 ].join("\n");
 const ONLINE_SYSTEM_PROMPT = [
   "本轮已开放联网工具 web_search 与 read_webpage。",
@@ -64,6 +67,8 @@ const CHAT_FORMATTING_SYSTEM_PROMPT = [
   "优先使用简洁段落和必要的列表。",
   "避免不必要的一级标题、重复的水平分隔线、装饰性 emoji 和过度加粗。",
   "仅在能提升可读性时使用 Markdown；可以使用有助于表达的表格、链接和代码。",
+  "最终回答直接从结论或用户所需结果开始。不要输出‘信息已经足够’‘我来整理’‘先说明我会’等过程旁白。",
+  "基于网页证据的事实应附有可用的来源链接；具体日期和不确定性就近说明。是否搜索取决于问题需要，开启权限不代表已经搜索成功。",
 ].join("\n");
 
 export class PiChatAgentError extends Error {
@@ -130,7 +135,7 @@ export interface PiRunDiagnostic {
 export function defaultPiRuntime(gateway: ModelGateway = new PiModelGateway()): PiRuntime {
   return {
     createSession(snapshot) {
-      return { model: gateway.createModel(snapshot), streamFn: streamSimple };
+      return { model: gateway.createModel(snapshot), streamFn: gateway.createStream?.(snapshot) ?? streamSimple };
     },
     createAgent(options) {
       return new Agent(options);
@@ -394,7 +399,7 @@ export function createPiChatAgent(
   runtimeContext: RuntimeSystemContextOptions = {},
   toolSessions?: PiToolSessionProvider,
   gateway: ModelGateway = new PiModelGateway(),
-  searchProviderFactory: (snapshot: NonNullable<AgentWorkerRequest["search"]>) => SearchProvider = createSearchProvider,
+  searchProviderFactory: (snapshot: NonNullable<AgentWorkerRequest["search"]>) => SearchProvider = createMeteredSearchProvider,
   toolActor: "main_agent" | "capability" = "main_agent",
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void,
 ): ChatAgent {
@@ -477,6 +482,8 @@ export function createPiChatAgent(
 
       try {
         const online = request.toolAccess.network === "enabled";
+        const restoredSession = restoreSessionContext(request.context, session.model);
+        const transcript: ChatTranscriptMessage[] = [];
         const batchScopeByCallId = new Map<string, ToolExecutionBatchScope>();
         const priorResults = new Map<string, PriorToolResult>();
         const plans = new WeakMap<AssistantMessage, ToolBatchPlan>();
@@ -492,7 +499,11 @@ export function createPiChatAgent(
             readWebpage: request.toolAccess.maxFetchCalls,
           },
         };
-        const control = createAgentRunControl(runPolicy, Number.POSITIVE_INFINITY);
+        const capabilityFinalization = toolActor === "capability";
+        const control = createAgentRunControl(runPolicy, Number.POSITIVE_INFINITY, {
+          automaticSynthesis: capabilityFinalization,
+        });
+        let forceGenericFinal = !capabilityFinalization && request.toolAccess.maxAgentTurns <= 1;
         let finalizationReason: "natural_stop" | "budget_exhausted" | undefined;
         let finalizationTrigger: AssistantMessage | undefined;
         const evidence: string[] = [];
@@ -645,28 +656,39 @@ export function createPiChatAgent(
           buildRuntimeSystemContext(runtimeContext),
           online ? ONLINE_SYSTEM_PROMPT : OFFLINE_SYSTEM_PROMPT,
           ...(toolActor === "main_agent" ? [CHAT_FORMATTING_SYSTEM_PROMPT] : []),
+          ...(toolActor === "main_agent" ? [restoredSession.provenance] : []),
         ].join("\n");
-        const composeSystemPrompt = (): string =>
-          online
-            ? `${baseSystemPrompt}\n${buildRuntimeBudgetContext(control, latestBatchSummary)}`
-            : baseSystemPrompt;
+        const composeSystemPrompt = (): string => {
+          const runtimeBudget = online
+            ? buildRuntimeBudgetContext(control, latestBatchSummary, {
+                forcedFinal: forceGenericFinal,
+                userNetworkPermission: "enabled",
+              })
+            : "";
+          return [
+            baseSystemPrompt,
+            runtimeBudget,
+            ...(forceGenericFinal ? [SYNTHESIS_SYSTEM_PROMPT] : []),
+          ].filter((part) => part.length > 0).join("\n");
+        };
         let finalText: string | undefined;
         let finalHadToolUse = false;
         let startedEmitted = false;
         let sawAgentEnd = false;
         let providerFailure = false;
         let adapterSettled = false;
-        let streamAnswer = !online || control.phase() === "synthesizing";
+        let streamAnswer = !capabilityFinalization || !online || control.phase() === "synthesizing";
         let streamedAnswer = "";
+        let suppressCurrentTurnText = false;
         let synthesisActivityEmitted = false;
         let activitySequence = 0;
         const activeActivities = new Map<
           string,
-          SafeToolActivity & { callKey: string }
+          SafeToolActivity & { callKey: string; toolCallId: string; startedAt: number; sources?: ChatToolSource[]; resultCount?: number; durationMs?: number }
         >();
 
         const emitActivity = (
-          activity: SafeToolActivity & { callKey: string },
+          activity: SafeToolActivity & { callKey: string; toolCallId?: string; sources?: ChatToolSource[]; resultCount?: number; durationMs?: number },
           status: "running" | "completed" | "failed" | "skipped" | "reused",
           metadata?: {
             errorCode?: string;
@@ -683,6 +705,11 @@ export function createPiChatAgent(
             name: activity.name,
             status,
             ...(activity.summary === undefined ? {} : { summary: activity.summary }),
+            ...(activity.queryOrUrl === undefined ? {} : { queryOrUrl: activity.queryOrUrl }),
+            ...(activity.sources === undefined ? {} : { sources: activity.sources }),
+            ...(activity.resultCount === undefined ? {} : { resultCount: activity.resultCount }),
+            ...(activity.durationMs === undefined ? {} : { durationMs: activity.durationMs }),
+            ...(activity.toolCallId === undefined ? {} : { toolCallId: activity.toolCallId }),
             ...(metadata?.errorCode === undefined ? {} : { errorCode: metadata.errorCode }),
             ...(metadata?.agentTurnIndex === undefined
               ? {}
@@ -713,7 +740,7 @@ export function createPiChatAgent(
         };
 
         let agent!: PiAgentHandle;
-        const initialMessages = mapHistoryMessages(request.context.messages, session.model);
+        const initialMessages = restoredSession.messages;
         const synthesisSystemPrompt = [
           request.context.finalizationSystemPrompt ?? request.context.systemPrompt,
           buildRuntimeSystemContext(runtimeContext),
@@ -760,7 +787,9 @@ export function createPiChatAgent(
             });
           }
         };
-        if (online && control.phase() === "synthesizing") enterFinalization("budget_exhausted");
+        if (capabilityFinalization && online && control.phase() === "synthesizing") {
+          enterFinalization("budget_exhausted");
+        }
         const initialSystemPrompt = finalizationReason === undefined ? composeSystemPrompt() : synthesisSystemPrompt;
         maxModelInputCharsEstimate = Math.max(
           maxModelInputCharsEstimate,
@@ -771,15 +800,31 @@ export function createPiChatAgent(
             systemPrompt: initialSystemPrompt,
             model: session.model,
             messages: initialMessages,
-            tools: online
+            tools: forceGenericFinal
+              ? []
+              : online
               ? control.phase() === "synthesizing"
                 ? []
                 : filterRuntimeTools(requestTools, control.availableNetworkTools())
-              : requestTools,
+              : filterRuntimeTools(requestTools, []),
             thinkingLevel: "off",
           },
           streamFn: (model, context, options) => {
-            if (finalizationReason === undefined) return session.streamFn(model, context, options);
+            if (finalizationReason === undefined && !forceGenericFinal) {
+              return session.streamFn(model, context, options);
+            }
+            if (!capabilityFinalization) {
+              const finalContext = {
+                ...context,
+                systemPrompt: composeSystemPrompt(),
+                tools: [],
+              };
+              maxModelInputCharsEstimate = Math.max(
+                maxModelInputCharsEstimate,
+                modelInputCharsEstimate(finalContext.systemPrompt, finalContext.messages),
+              );
+              return session.streamFn(model, finalContext, { ...options, toolChoice: "none" });
+            }
             const finalContext = {
               ...context,
               systemPrompt: synthesisSystemPrompt,
@@ -876,7 +921,7 @@ export function createPiChatAgent(
             };
           },
           prepareNextTurnWithContext: ({ message, toolResults, context, newMessages }) => {
-            if (finalizationReason !== undefined) {
+            if (capabilityFinalization && finalizationReason !== undefined) {
               return { context: { ...context, systemPrompt: synthesisSystemPrompt, messages: finalizationMessages(), tools: [] } };
             }
             for (const result of toolResults) {
@@ -891,10 +936,10 @@ export function createPiChatAgent(
                 ...(urls.length > 0 ? [`来源 URL：${urls.join("\n")}`] : []),
               ].join("\n"));
             }
-            const mustReserveLastTurn =
+            const mustReserveLastTurn = capabilityFinalization &&
               hasToolCalls(message) &&
               assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns - 1;
-            const toolPhaseFinished = online && !streamAnswer && !hasToolCalls(message);
+            const toolPhaseFinished = capabilityFinalization && online && !streamAnswer && !hasToolCalls(message);
             if (online && hasToolCalls(message)) {
               const admittedCallIds = new Set(
                 assistantToolCalls(message)
@@ -978,10 +1023,18 @@ export function createPiChatAgent(
                 }
               }
             }
-            const fetchLimitReached = online && toolResults.some((result) => result.toolName === "read_webpage") &&
+            const fetchLimitReached = capabilityFinalization && online && toolResults.some((result) => result.toolName === "read_webpage") &&
               control.budgetSnapshot()?.categories.fetch.remaining === 0;
             if (mustReserveLastTurn || toolPhaseFinished || fetchLimitReached || control.phase() === "synthesizing") {
               enterFinalization(toolPhaseFinished ? "natural_stop" : "budget_exhausted", message);
+            }
+            if (
+              !capabilityFinalization &&
+              hasToolCalls(message) &&
+              assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns - 1
+            ) {
+              forceGenericFinal = true;
+              diagnosticPhase = "synthesizing";
             }
             if (finalizationReason === undefined) {
               const nextSystemPrompt = composeSystemPrompt();
@@ -993,7 +1046,11 @@ export function createPiChatAgent(
                 context: {
                   ...context,
                   systemPrompt: nextSystemPrompt,
-                  tools: filterRuntimeTools(requestTools, control.availableNetworkTools()),
+                  tools: forceGenericFinal
+                    ? []
+                    : online
+                      ? filterRuntimeTools(requestTools, control.availableNetworkTools())
+                      : filterRuntimeTools(requestTools, []),
                 },
               };
             }
@@ -1017,7 +1074,13 @@ export function createPiChatAgent(
             };
           },
           shouldStopAfterTurn: ({ message, newMessages }) => {
-            if (finalizationReason !== undefined) return message !== finalizationTrigger;
+            if (capabilityFinalization && finalizationReason !== undefined) {
+              return message !== finalizationTrigger;
+            }
+            if (!capabilityFinalization) {
+              if (!hasToolCalls(message)) return true;
+              return assistantTurnCount(newMessages) >= request.toolAccess.maxAgentTurns;
+            }
             if (request.toolAccess.network === "enabled") {
               if (streamAnswer && !hasToolCalls(message)) return true;
             }
@@ -1047,9 +1110,27 @@ export function createPiChatAgent(
             }
             return;
           }
+          if (event.type === "message_start" && event.message.role === "assistant") {
+            suppressCurrentTurnText = false;
+            return;
+          }
           if (event.type === "message_update") {
             if (
+              !capabilityFinalization &&
+              (event.assistantMessageEvent.type === "toolcall_start" ||
+                event.assistantMessageEvent.type === "toolcall_delta" ||
+                event.assistantMessageEvent.type === "toolcall_end") &&
+              !suppressCurrentTurnText
+            ) {
+              suppressCurrentTurnText = true;
+              if (streamedAnswer.length > 0) {
+                streamedAnswer = "";
+                emit({ requestId: request.requestId, type: "text_reset" });
+              }
+            }
+            if (
               streamAnswer &&
+              !suppressCurrentTurnText &&
               event.assistantMessageEvent.type === "text_delta" &&
               event.assistantMessageEvent.delta.length > 0
             ) {
@@ -1063,12 +1144,30 @@ export function createPiChatAgent(
             return;
           }
           if (event.type === "message_end") {
+            if (!capabilityFinalization) {
+              const message = transcriptMessage(event.message);
+              if (message !== undefined) {
+                transcript.push(message);
+                emit({ requestId: request.requestId, type: "transcript_checkpoint", messages: structuredClone(transcript) });
+              }
+            }
             if (event.message.role === "assistant") {
               diagnosticAgentTurns += 1;
               diagnosticStopReason = normalizedStopReason([event.message]);
               diagnosticOutputChars = assistantText(event.message).length;
               if (hasProviderFailure([event.message])) providerFailure = true;
               if (finalizationReason === undefined) planAssistantToolBatch(event.message);
+              if (
+                !capabilityFinalization &&
+                hasToolCalls(event.message) &&
+                !suppressCurrentTurnText
+              ) {
+                suppressCurrentTurnText = true;
+                if (streamedAnswer.length > 0) {
+                  streamedAnswer = "";
+                  emit({ requestId: request.requestId, type: "text_reset" });
+                }
+              }
             }
             return;
           }
@@ -1078,8 +1177,10 @@ export function createPiChatAgent(
             const scope = batchScopeByCallId.get(event.toolCallId);
             const activity = {
               callKey: scope === undefined
-                ? `activity-${activitySequence}`
+                ? `tool-${createHash("sha256").update(`${request.requestId}\0${event.toolCallId}`).digest("hex").slice(0, 32)}`
                 : scopedActivityCallKey(request.requestId, scope),
+              toolCallId: event.toolCallId,
+              startedAt: Date.now(),
               ...safeToolActivity(event.toolName, event.args),
             };
             activeActivities.set(event.toolCallId, activity);
@@ -1089,6 +1190,7 @@ export function createPiChatAgent(
           if (event.type === "tool_execution_end") {
             const activity = activeActivities.get(event.toolCallId);
             if (activity === undefined) return;
+            Object.assign(activity, toolResultProjection(event.result), { durationMs: Math.max(0, Date.now() - activity.startedAt) });
             const decision = decisionsByCallId.get(event.toolCallId);
             const scope = batchScopeByCallId.get(event.toolCallId);
             const preDispatchValidationFailure =

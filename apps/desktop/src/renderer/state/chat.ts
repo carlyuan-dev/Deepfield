@@ -1,4 +1,4 @@
-import type { AgentWorkerEvent, ChatMessage } from "@deepfield/contracts";
+import type { AgentWorkerEvent, ChatMessage, ChatToolSource } from "@deepfield/contracts";
 
 export type DraftStatus = "streaming" | "done" | "failed";
 
@@ -13,6 +13,9 @@ export interface ToolActivityView {
   summary?: string;
   durationMs?: number;
   errorCode?: string;
+  queryOrUrl?: string;
+  sources?: ChatToolSource[];
+  resultCount?: number;
 }
 
 export interface ChatMessageView {
@@ -70,7 +73,7 @@ function toView(message: ChatMessage): ChatMessageView {
     key: message.id,
     role: message.role,
     content: message.content,
-    status: "done",
+    status: message.status ?? "done",
     requestId: message.requestId,
     pending: false,
     toolActivities: (message.toolExecutions ?? []).map((execution) => ({
@@ -83,6 +86,10 @@ function toView(message: ChatMessage): ChatMessageView {
       ...(execution.budgetConsumed === undefined ? {} : { budgetConsumed: execution.budgetConsumed }),
       ...(execution.durationMs === undefined ? {} : { durationMs: execution.durationMs }),
       ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
+      ...(execution.summary === undefined ? {} : { summary: execution.summary }),
+      ...(execution.queryOrUrl === undefined ? {} : { queryOrUrl: execution.queryOrUrl }),
+      ...(execution.sources === undefined ? {} : { sources: execution.sources }),
+      ...(execution.resultCount === undefined ? {} : { resultCount: execution.resultCount }),
     })),
   };
 }
@@ -137,7 +144,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         loadState: "ready",
-        messages: action.messages.map(toView),
+        messages: action.messages.filter(message => !(message.status === "failed" && message.requestId !== undefined && state.drafts[message.requestId]?.status === "streaming")).map(toView),
         sending: state.draftOrder.some(
           (requestId) =>
             state.requestConversations[requestId] === action.conversationId &&
@@ -186,6 +193,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     case "WORKER_EVENT": {
       const { event, conversationId } = action;
+      if (event.type === "transcript_checkpoint") return state;
       if (conversationId === undefined) {
         return state;
       }
@@ -248,6 +256,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         case "text_delta":
           draft = { ...draft, content: draft.content + event.delta };
           break;
+        case "text_reset":
+          draft = { ...draft, content: "" };
+          break;
         case "tool_activity": {
           const activityIndex = draft.toolActivities.findIndex(
             (activity) => activity.callKey === event.callKey,
@@ -262,6 +273,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ...(event.batchId === undefined ? {} : { batchId: event.batchId }),
             ...(event.toolCallId === undefined ? {} : { toolCallId: event.toolCallId }),
             ...(event.budgetConsumed === undefined ? {} : { budgetConsumed: event.budgetConsumed }),
+            ...(event.queryOrUrl === undefined ? {} : { queryOrUrl: event.queryOrUrl }),
+            ...(event.sources === undefined ? {} : { sources: event.sources }),
+            ...(event.resultCount === undefined ? {} : { resultCount: event.resultCount }),
+            ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
           };
           if (activityIndex < 0) {
             draft = { ...draft, toolActivities: [...draft.toolActivities, activity] };

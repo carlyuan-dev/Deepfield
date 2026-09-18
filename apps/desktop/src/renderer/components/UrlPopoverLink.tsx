@@ -1,4 +1,5 @@
 import {
+  Children,
   type ComponentPropsWithoutRef,
   type ReactNode,
   useEffect,
@@ -50,6 +51,9 @@ export function UrlPopoverLink({
   useEffect(() => cancelHide, []);
 
   const external = isSafeHttpUrl(href);
+  const labelParts = Children.toArray(children);
+  const bareUrlLabel = labelParts.every((part) => typeof part === "string")
+    && isSafeHttpUrl(labelParts.join(""));
   const safeProps = Object.fromEntries(
     Object.entries(remainingProps).filter(([name]) => !/^on/iu.test(name)),
   ) as ComponentPropsWithoutRef<"a">;
@@ -63,9 +67,10 @@ export function UrlPopoverLink({
   };
 
   return (
-    <span className="markdown-link-shell">
+    <span className={`markdown-link-shell${bareUrlLabel ? " markdown-link-shell--bare" : ""}`}>
       <a
         {...safeProps}
+        className={[safeProps.className, bareUrlLabel ? "markdown-link-label--bare" : undefined].filter(Boolean).join(" ") || undefined}
         href={href}
         {...(external ? { target: "_blank", rel: "noreferrer noopener" } : {})}
         onMouseEnter={showPopover}

@@ -1,4 +1,6 @@
 import { Type, type Static, type TProperties } from "typebox";
+import { UsageAttemptSchema } from "@deepfield/base/usage";
+import { UsageHealthEnvelopeSchema, UsageFlushRequestSchema, UsageFlushReplySchema } from "./usage.js";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
 import { CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "./company-profile.js";
 import {
@@ -70,6 +72,7 @@ export const ToolRunRequestSchema = Type.Object(
 export type ToolRunRequest = Static<typeof ToolRunRequestSchema>;
 
 export const UtilityWorkerRequestSchema = Type.Union([
+  UsageFlushRequestSchema,
   CompanyProfileWorkerRequestSchema,
   AgentWorkerRequestSchema,
   CompanyResearchRawWorkerRequestSchema,
@@ -261,6 +264,8 @@ export const HostConversationSearchPayloadSchema = Type.Object(
 
 /** Narrow host RPC requests: explicit audit, secret and read-only conversation methods. */
 export const HostRequestSchema = Type.Union([
+  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.request"), method: Type.Literal("usage.record"), payload: UsageAttemptSchema }, { additionalProperties: false }),
+  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.request"), method: Type.Literal("usage.health"), payload: UsageHealthEnvelopeSchema }, { additionalProperties: false }),
   Type.Object(
     {
       hostRequestId: Type.String({ minLength: 1 }),
@@ -343,6 +348,8 @@ export const HostRequestSchema = Type.Union([
 export type HostRequest = Static<typeof HostRequestSchema>;
 
 export const HostRpcMethodSchema = Type.Union([
+  Type.Literal("usage.record"),
+  Type.Literal("usage.health"),
   Type.Literal("audit.start"),
   Type.Literal("audit.finish"),
   Type.Literal("audit.synthetic"),
@@ -355,6 +362,7 @@ export type HostRpcMethod = Static<typeof HostRpcMethodSchema>;
 
 /** Fixed host error codes: never arbitrary strings that could carry secrets. */
 export const HostErrorCodeSchema = Type.Union([
+  Type.Literal("usage_failed"),
   Type.Literal("audit_failed"),
   Type.Literal("secret_unavailable"),
   Type.Literal("conversation_unavailable"),
@@ -368,6 +376,8 @@ export const HostErrorCodeSchema = Type.Union([
  * cross-method data and generic database responses are rejected.
  */
 export const HostReplySchema = Type.Union([
+  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.reply"), method: Type.Literal("usage.record"), ok: Type.Literal(true), payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }) }, { additionalProperties: false }),
+  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.reply"), method: Type.Literal("usage.health"), ok: Type.Literal(true), payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }) }, { additionalProperties: false }),
   Type.Object(
     {
       hostRequestId: Type.String({ minLength: 1 }),
@@ -471,6 +481,7 @@ export const HostReplySchema = Type.Union([
 export type HostReply = Static<typeof HostReplySchema>;
 
 export const UtilityWorkerEventSchema = Type.Union([
+  UsageFlushReplySchema,
   ...CompanyProfileWorkerEventSchema.anyOf,
   ...AgentWorkerEventSchema.anyOf,
   ...CompanyResearchWorkerEventSchema.anyOf,

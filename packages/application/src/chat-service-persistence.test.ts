@@ -18,12 +18,31 @@ afterEach(() => {
 });
 
 describe("chat service persistence guarantees", () => {
+  it("consumes internal checkpoints, persists live tool details and restores failed request activity", async () => {
+    const db = openTestDb(); dbs.push(db);
+    const worker = new FakeWorker({ events: request => [
+      { requestId: request.requestId, type: "transcript_checkpoint", messages: [{ role: "user", content: "question", timestamp: 1 }] },
+      { requestId: request.requestId, type: "tool_activity", callKey: "stable-call", toolCallId: "call-1", name: "web_search", status: "completed", summary: "original query", queryOrUrl: "original query", sources: [{ title: "Source", url: "https://example.test/original" }], resultCount: 1, durationMs: 10 },
+      { requestId: request.requestId, type: "failed", code: "cancelled", message: "cancelled" },
+    ] });
+    const { service, finished } = makeChatService(db, worker);
+    const conversation = makeConversation(db);
+    const forwarded: AgentWorkerEvent[] = [];
+    await service.send(conversation.id, "question", "req-checkpoint", event => forwarded.push(event));
+    await finished.promise;
+    expect(forwarded.some(event => event.type === "transcript_checkpoint")).toBe(false);
+    expect(db.repos.chatSessions.list(conversation.id)[0]).toMatchObject({ network: "disabled", completed: false, failed: true, messages: [{ role: "user", content: "question" }] });
+    const restored = service.listMessages(conversation.id);
+    expect(restored[1]).toMatchObject({ status: "failed", content: "", toolExecutions: [{ queryOrUrl: "original query", sources: [{ url: "https://example.test/original" }], resultCount: 1, durationMs: 10 }] });
+    expect(db.repos.messages.listByConversation(conversation.id)).toHaveLength(1);
+  });
   it("makes the assistant message durable before forwarding completed and writes no activity", async () => {
     const db = openTestDb();
     dbs.push(db);
     const worker = new FakeWorker({
       events: (request) => [
         chatEvent(request.requestId, "started"),
+        { requestId: request.requestId, type: "transcript_checkpoint", messages: [{ role: "user", content: request.prompt, timestamp: 1 }] },
         { requestId: request.requestId, type: "completed", text: "测试回复" },
       ],
     });
@@ -43,6 +62,8 @@ describe("chat service persistence guarantees", () => {
     await finished.promise;
 
     expect(assistantDurableAtCompleted).toBe(true);
+    expect(db.repos.chatSessions.list(conversation.id)[0]?.completed).toBe(true);
+    expect(forwarded.some(event => event.type === "transcript_checkpoint")).toBe(false);
     expect(forwarded[forwarded.length - 1]).toEqual({
       requestId: "req-1",
       type: "completed",

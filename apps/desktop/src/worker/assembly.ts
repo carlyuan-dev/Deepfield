@@ -54,6 +54,7 @@ const fakeCompanyResearchAgent: ResearchAgent = {
 };
 
 export interface UtilityAssemblyDeps {
+  flushUsage?: () => Promise<void>;
   endpoint: WorkerEndpoint;
   agentMode: string | undefined;
   hostClient: HostClient;
@@ -99,6 +100,7 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
       createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
   });
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
+    ...(deps.flushUsage ? { flushUsage: deps.flushUsage } : {}),
     toolRuntime,
     profileAgent: deps.agentMode === "fake" ? {
       async run(request, emit) { emit({ kind: "company-profile.event", requestId: request.requestId, companyId: request.companyId, type: "failed", code: "search_unavailable" }); },

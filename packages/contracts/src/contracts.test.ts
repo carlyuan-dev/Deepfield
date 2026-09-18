@@ -31,6 +31,15 @@ describe("shared contracts", () => {
       requestId: "req_1",
       type: "text_delta",
     })).toBe(false);
+    expect(Value.Check(AgentWorkerEventSchema, {
+      requestId: "req_1",
+      type: "text_reset",
+    })).toBe(true);
+    expect(Value.Check(AgentWorkerEventSchema, {
+      requestId: "req_1",
+      type: "text_reset",
+      delta: "must not be accepted",
+    })).toBe(false);
   });
 });
 

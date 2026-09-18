@@ -1,0 +1,8 @@
+{
+  "name": "@deepfield/base",
+  "private": true,
+  "type": "module",
+  "exports": { "./usage": "./src/usage/index.ts" },
+  "dependencies": { "typebox": "1.3.7" },
+  "devDependencies": { "@babel/parser": "7.29.8" }
+}

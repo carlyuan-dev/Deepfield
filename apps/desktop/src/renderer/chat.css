@@ -225,6 +225,21 @@
   display: inline;
 }
 
+.markdown-link-shell--bare {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+.markdown-link-label--bare {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 .markdown-link-popover {
   position: absolute;
   z-index: 20;
@@ -536,7 +551,7 @@
 
 .tool-activity-row {
   display: grid;
-  grid-template-columns: minmax(110px, auto) minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   gap: 10px;
   min-width: 0;
@@ -549,9 +564,9 @@
 }
 
 .tool-activity-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .tool-activity-status {
@@ -577,4 +592,22 @@
 .tool-activity-status.reused,
 .tool-activity-status.not-executed {
   color: var(--muted);
+}
+.tool-activity-sources {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+.tool-activity-result-count { color: var(--muted); font-size: 12px; }
+
+.tool-activity-meta {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

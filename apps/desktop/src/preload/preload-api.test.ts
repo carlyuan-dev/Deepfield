@@ -28,7 +28,7 @@ function makeFakeIpc(): FakeIpc {
   const ipc: IpcBridge = {
     invoke: async (channel, ...args) => {
       invokes.push({ channel, args });
-      if (channel === IPC_CHANNELS.companyResearchStart || channel === IPC_CHANNELS.companyResearchRetryFailed) return { ok: true, value: researchRun({ status: "researching" }) };
+      if (channel === IPC_CHANNELS.companyResearchStart || channel === IPC_CHANNELS.companyResearchRetryFailed || channel === IPC_CHANNELS.companyResearchRetryStructuring) return { ok: true, value: researchRun({ status: "researching" }) };
       if (channel === IPC_CHANNELS.companyResearchExportWord) return { ok: true, value: { status: "saved" } };
       if (channel === IPC_CHANNELS.settingsDiagnoseLlm || channel === IPC_CHANNELS.settingsDiagnoseSearch) return { ok: true, value: { ok: true, latencyMs: 0, summary: "连接正常" } };
       return undefined;
@@ -46,6 +46,15 @@ function makeFakeIpc(): FakeIpc {
 }
 
 describe("preload api", () => {
+  it("validates batch snapshots and releases the event listener", async () => {
+    const { ipc, listeners } = makeFakeIpc(); const api = createPreloadApi(ipc); const received: unknown[] = [];
+    const unsubscribe = api.companyResearchBatch.subscribe(state => received.push(state));
+    const state = { batchId: "b", itemId: "i", status: "paused", entries: [], processed: 0, total: 0, succeeded: 0, failed: 0 };
+    for (const listener of listeners.get(IPC_CHANNELS.companyResearchBatchEvents)!) { listener({}, state); listener({}, { ...state, status: "unknown" }); }
+    expect(received).toEqual([state]); unsubscribe(); expect(listeners.get(IPC_CHANNELS.companyResearchBatchEvents)?.size).toBe(0);
+    ipc.invoke = async () => ({ ok: false, error: { code: "BUSINESS.CONFLICT", category: "business" } });
+    await expect(api.companyResearchBatch.start("i", [])).rejects.toMatchObject({ code: "BUSINESS.CONFLICT" });
+  });
   it("forwards safe transient state outcomes without admitting Worker failures", () => {
     const { ipc, listeners } = makeFakeIpc();
     const api = createPreloadApi(ipc);
@@ -70,13 +79,15 @@ describe("preload api", () => {
     expect(Object.keys(api).sort()).toEqual([
       "chat",
       "companyResearch",
+      "companyResearchBatch",
       "conversations",
       "copyText",
       "industryResearch",
       "settings",
       "skills",
+      "usage",
     ]);
-    expect(Object.keys(api.conversations).sort()).toEqual(["create", "delete", "listRecent", "openInitial"]);
+    expect(Object.keys(api.conversations).sort()).toEqual(["create", "delete", "listRecent", "openInitial", "setWebSearchEnabled", "subscribe"]);
     expect(Object.keys(api.industryResearch).sort()).toEqual([
       "addCompanies",
       "addCompany",
@@ -84,6 +95,7 @@ describe("preload api", () => {
       "createItem",
       "deleteItem",
       "deleteItems",
+      "getCompanyProfileProgress",
       "getItem",
       "listCompanies",
       "listItems",
@@ -91,6 +103,7 @@ describe("preload api", () => {
       "removeCompanies",
       "removeCompany",
       "retryCompanyProfile",
+      "subscribeCompanyProfileProgress",
       "subscribeCompanyProfiles",
       "updateCompany",
       "updateItem",
@@ -106,6 +119,7 @@ describe("preload api", () => {
       "getState",
       "listRuns",
       "retryFailed",
+      "retryStructuring",
       "start",
       "subscribe",
     ]);
@@ -178,6 +192,7 @@ describe("preload api", () => {
     await api.companyResearch.listRuns("item-1", "company-1");
     await api.companyResearch.getRun("item-1", "company-1", "run-1");
     await api.companyResearch.exportWord("item-1", "company-1", "run-1", { raw: false, structured: true });
+    await api.companyResearch.retryStructuring("item-1", "company-1", "run-1");
     const retryInput = { direction: "product_and_technology", focusScope: "整机", asOfDate: "2026-09-11" } as const;
     await api.companyResearch.retryFailed("item-1", "company-1", "run-1", retryInput);
     await api.companyResearch.deleteRun("item-1", "company-1", "run-1");
@@ -215,6 +230,7 @@ describe("preload api", () => {
       { channel: IPC_CHANNELS.companyResearchListRuns, args: ["item-1", "company-1"] },
       { channel: IPC_CHANNELS.companyResearchGetRun, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.companyResearchExportWord, args: ["item-1", "company-1", "run-1", { raw: false, structured: true }] },
+      { channel: IPC_CHANNELS.companyResearchRetryStructuring, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.companyResearchRetryFailed, args: ["item-1", "company-1", "run-1", retryInput] },
       { channel: IPC_CHANNELS.companyResearchDeleteRun, args: ["item-1", "company-1", "run-1"] },
       { channel: IPC_CHANNELS.settingsGet, args: [] },

@@ -9,6 +9,7 @@ import {
   type CompanyId,
   type CompanyResearchContext,
   type CompanyResearchEvent,
+  type CompanyResearchModelDiagnostic,
   type CompanyResearchStage,
   type CompanyResearchState,
   type CompanyResearchWorkerRequest,
@@ -23,7 +24,7 @@ import {
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "./ports.js";
-import { validateStructuredResearch } from "./company-research-harness.js";
+import { StructuredResearchValidationError, validateStructuredResearch } from "./company-research-harness.js";
 
 export class CompanyResearchServiceError extends AppError {
   constructor(message: string, code: AppErrorCode = "INTERNAL.UNKNOWN") {
@@ -73,6 +74,18 @@ type CompanyResearchRepositories = Omit<Repositories, "companies"> & {
 export class CompanyResearchService {
   private active: ActiveResearch | undefined;
   private starting = false;
+  private reservation: string | undefined;
+  private onOwnedRunCreated: ((run: KeyResearchRun) => void) | undefined;
+  private settled: Promise<void> = Promise.resolve();
+  reserve(owner: string, onCreated?: (run: KeyResearchRun) => void): void { this.requireAvailable(owner); this.reservation = owner; this.onOwnedRunCreated = onCreated; }
+  release(owner: string): void { if (this.reservation === owner) { this.reservation = undefined; this.onOwnedRunCreated = undefined; } }
+  async whenSettled(): Promise<void> { await this.settled; }
+  isActiveRun(runId: string): boolean { return this.active?.run.id === runId; }
+  validateBatchEntry(itemId: string, companyId: string, input: StartCompanyResearchInput): void {
+    this.normalizeInput(input);
+    const target = this.requireTarget(itemId, companyId);
+    if (target.company.profileStatus !== "ready") throw new AppError("BUSINESS.CONFLICT");
+  }
   private readonly listeners = new Set<(event: CompanyResearchEvent) => void>();
   private readonly now: () => Date;
 
@@ -85,22 +98,26 @@ export class CompanyResearchService {
     this.now = options.now ?? (() => new Date());
   }
 
-  async start(itemId: string, companyId: string, input: StartCompanyResearchInput): Promise<KeyResearchRun> {
+  async start(itemId: string, companyId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean): Promise<KeyResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
-    this.requireAvailable();
+    this.requireAvailable(owner);
     const target = this.requireTarget(itemId, companyId);
     this.starting = true;
     try {
       let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
       catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
+      if (cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
       const { context, template } = this.buildResearchSnapshots(target, normalized, today);
       try {
         const requestId = this.options.requestIdFactory();
-        const run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.createResearching(
-          target.item.id, target.company.id, normalized, context, template,
-        ));
+        const run = this.repositories.runInTransaction(() => {
+          const created = this.repositories.companyResearchRuns.createResearching(target.item.id, target.company.id, normalized, context, template);
+          this.onOwnedRunCreated?.(created);
+          return created;
+        });
         this.launch(run, requestId, llm, search);
+        if (cancelled?.() && this.isActiveRun(run.id)) void this.cancel(run.id);
         return structuredClone(run);
       } catch {
         throw new CompanyResearchServiceError("company research could not start", "STORAGE.FAILED");
@@ -110,7 +127,7 @@ export class CompanyResearchService {
     }
   }
 
-  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<KeyResearchRun> {
+  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean): Promise<KeyResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
     const target = this.requireTarget(itemId, companyId);
     const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
@@ -120,13 +137,14 @@ export class CompanyResearchService {
     if (saved?.schemaVersion !== "company-research-report-v1" || mode === "unavailable") {
       throw new CompanyResearchServiceError("company research cannot be retried", "BUSINESS.CONFLICT");
     }
-    this.requireAvailable();
+    this.requireAvailable(owner);
     this.starting = true;
     try {
       if (mode === "structure") {
         let llm: LlmRuntimeSnapshot;
         try { llm = await this.profiles.resolveActiveLlm(); }
         catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
+        if (cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
         try {
           const requestId = this.options.requestIdFactory();
           const active = this.repositories.runInTransaction(() =>
@@ -142,6 +160,7 @@ export class CompanyResearchService {
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
       catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
       const { context, template } = this.buildResearchSnapshots(target, normalized, today);
+      if (cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
       try {
         const requestId = this.options.requestIdFactory();
         const active = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryResearching(
@@ -163,7 +182,23 @@ export class CompanyResearchService {
     if (saved?.schemaVersion !== "company-research-report-v1" || saved.status !== "structure_failed") {
       throw new CompanyResearchServiceError("company research cannot be restructured", "BUSINESS.CONFLICT");
     }
-    return this.retryFailed(itemId, companyId, runId, normalizeResearchInput(saved));
+    this.starting = true;
+    try {
+      let llm: LlmRuntimeSnapshot;
+      try { llm = await this.profiles.resolveActiveLlm(); }
+      catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
+      try {
+        const requestId = this.options.requestIdFactory();
+        const active = this.repositories.runInTransaction(() =>
+          this.repositories.companyResearchRuns.retryStructuring(saved.id, this.now().toISOString()));
+        this.launch(active, requestId, llm);
+        return structuredClone(active);
+      } catch {
+        throw new CompanyResearchServiceError("company research could not retry", "STORAGE.FAILED");
+      }
+    } finally {
+      this.starting = false;
+    }
   }
 
   async cancel(runId: string): Promise<void> {
@@ -266,8 +301,8 @@ export class CompanyResearchService {
     return this.starting || this.active !== undefined || this.read(() => this.repositories.companyResearchRuns.getActive()) !== undefined;
   }
 
-  private requireAvailable(): void {
-    if (this.isRunning()) throw new CompanyResearchServiceError("company research is already running", "BUSINESS.CONFLICT");
+  private requireAvailable(owner?: string): void {
+    if ((this.reservation !== undefined && this.reservation !== owner) || this.isRunning()) throw new CompanyResearchServiceError("company research is already running", "BUSINESS.CONFLICT");
   }
 
   private requireTarget(itemId: string, companyId: string) {
@@ -330,6 +365,7 @@ export class CompanyResearchService {
     this.active = active;
     // Install done before notifying listeners, so synchronous cancellation is safe.
     active.done = Promise.resolve().then(() => this.consume(active));
+    this.settled = active.done;
     this.stateChanged(active.run);
   }
 
@@ -376,8 +412,7 @@ export class CompanyResearchService {
             active.latestActivity = structuredClone(event);
             this.emit(event);
           } else if (event.type === "model_diagnostic") {
-            try { this.repositories.companyResearchDiagnostics.record(event); }
-            catch { throw new ResearchConsumeFailure("storage_failed"); }
+            this.recordDiagnosticSafe(event);
           } else if (event.type === "completed") {
             if (active.stage === "raw") {
               try {
@@ -394,10 +429,30 @@ export class CompanyResearchService {
               if (this.active === active) active.requestId = this.options.requestIdFactory();
               break;
             }
-            const content = validateStructuredResearch(event.text, active.run.rawReportText!, active.run.template);
+            let content;
+            try {
+              content = validateStructuredResearch(event.text, active.run.rawReportText!, active.run.template);
+            } catch (error) {
+              const validation = error instanceof StructuredResearchValidationError ? error : undefined;
+              this.recordDiagnosticSafe(this.applicationStructureDiagnostic(
+                active, request.requestId, "application-validation", event.text.length,
+                validation?.category ?? "schema_invalid",
+                {
+                  attempt: 1,
+                  validationIssues: validation?.issues ?? [],
+                  failedCandidate: event.text.slice(0, 16_384),
+                },
+              ));
+              throw new ResearchConsumeFailure("research_failed");
+            }
             try {
               active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeStructured(active.run.id, content));
-            } catch { throw new ResearchConsumeFailure("storage_failed"); }
+            } catch {
+              this.recordDiagnosticSafe(this.applicationStructureDiagnostic(
+                active, request.requestId, "report-storage", event.text.length, "storage_failed",
+              ));
+              throw new ResearchConsumeFailure("storage_failed");
+            }
             this.active = undefined;
             this.stateChanged(active.run);
             return;
@@ -446,6 +501,31 @@ export class CompanyResearchService {
       this.active = undefined;
     }
     this.stateChanged(active.run, targetGone ? undefined : publicOutcome);
+  }
+
+  private recordDiagnosticSafe(diagnostic: CompanyResearchModelDiagnostic): void {
+    try { this.repositories.companyResearchDiagnostics.record(diagnostic); } catch {
+      // Diagnostics are failure-isolated; report lifecycle owns product success.
+    }
+  }
+
+  private applicationStructureDiagnostic(
+    active: ActiveResearch,
+    requestId: string,
+    suffix: string,
+    outputChars: number,
+    errorCategory: NonNullable<CompanyResearchModelDiagnostic["errorCategory"]>,
+    extra: Pick<CompanyResearchModelDiagnostic, "attempt" | "validationIssues" | "failedCandidate"> = {},
+  ): CompanyResearchModelDiagnostic {
+    const at = this.now().toISOString();
+    const correlatedRequestId = `${requestId.slice(0, Math.max(1, 199 - suffix.length))}:${suffix}`;
+    return {
+      requestId: correlatedRequestId, runId: active.run.id, traceId: requestId,
+      stage: "structure", type: "model_diagnostic", phase: "structuring",
+      agentTurns: 0, searchCalls: 0, fetchCalls: 0, maxModelInputCharsEstimate: 0,
+      outputChars, stopReason: "unknown", errorCategory, ...extra,
+      startedAt: at, finishedAt: at, durationMs: 0,
+    };
   }
 
   private stateChanged(run: KeyResearchRun, outcome?: ResearchOutcome): void {

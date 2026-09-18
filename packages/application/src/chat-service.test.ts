@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AgentWorkerEvent,
   type ChatMessage,
   type ChatRequestOptions,
+  type Conversation,
 } from "@deepfield/contracts";
 import { ChatService, ChatServiceError, titleFromFirstMessage } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
@@ -41,6 +42,40 @@ async function captureWorkerRequest(options: ChatRequestOptions) {
 }
 
 describe("chat service", () => {
+  it("acknowledges the first send before a late generated title and publishes the persisted update", async () => {
+    const db = openTestDb(); dbs.push(db);
+    const worker = new FakeWorker({ events: (request) => [chatEvent(request.requestId, "completed", "ok")] });
+    let resolveTitle!: (title: string) => void;
+    const titleGenerator = { generateConversationTitle: vi.fn(() => new Promise<string>((resolve) => { resolveTitle = resolve; })) };
+    const updates: Conversation[] = [];
+    const service = new ChatService(db.repos, new ContextBuilder(db.repos), makeSecrets("sk-configured"), worker, { titleGenerator });
+    service.subscribeConversationUpdates((conversation) => updates.push(conversation));
+    const conversation = makeConversation(db);
+
+    const result = await service.send(conversation.id, "请帮我分析人形机器人产业链", "req-title", () => {});
+    expect(result.conversation.title).toBe("请帮我分析人形机器人产业链");
+    expect(updates).toEqual([]);
+
+    resolveTitle("人形机器人产业链");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+    expect(db.repos.conversations.getById(conversation.id)?.title).toBe("人形机器人产业链");
+  });
+
+  it("does not publish or resurrect a conversation deleted before its title arrives", async () => {
+    const db = openTestDb(); dbs.push(db); const worker = new FakeWorker();
+    let resolveTitle!: (title: string) => void;
+    const service = new ChatService(db.repos, new ContextBuilder(db.repos), makeSecrets("sk-configured"), worker, {
+      titleGenerator: { generateConversationTitle: () => new Promise<string>((resolve) => { resolveTitle = resolve; }) },
+    });
+    const updates: Conversation[] = []; service.subscribeConversationUpdates((value) => updates.push(value));
+    const conversation = makeConversation(db);
+    await service.send(conversation.id, "删除前的问题", "req-delete-title", () => {});
+    db.repos.conversations.delete(conversation.id);
+    resolveTitle("不应复活的标题");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(db.repos.conversations.getById(conversation.id)).toBeUndefined();
+    expect(updates).toEqual([]);
+  });
   it("keeps approved Chat budgets and reserves synthesis", async () => {
     const request = await captureWorkerRequest({ webSearch: true });
 

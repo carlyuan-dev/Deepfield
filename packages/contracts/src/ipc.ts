@@ -1,4 +1,6 @@
 import { Type, type Static } from "typebox";
+import type { UsageDashboardApi } from "@deepfield/base/usage";
+import type { BatchResearchEntryInput, CompanyResearchBatchState, CompanyProfileProgress } from "./batch-research.js";
 import { CompanyProfileIdentityHintSchema } from "./capability-items.js";
 import type {
   CapabilityItem,
@@ -71,6 +73,7 @@ export const CompanyResearchRetryFailedArgsSchema = Type.Tuple([
   StartCompanyResearchInputSchema,
 ]);
 export const CompanyResearchDeleteRunArgsSchema = Type.Tuple([IdSchema, IdSchema, IdSchema]);
+export const CompanyResearchRetryStructuringArgsSchema = Type.Tuple([IdSchema, IdSchema, IdSchema]);
 export const ConfirmCompanyProfileIdentityArgsSchema = Type.Tuple([
   IdSchema,
   CompanyProfileIdentityHintSchema,
@@ -79,14 +82,19 @@ export const ConfirmCompanyProfileIdentityArgsSchema = Type.Tuple([
 export type LlmConnectionStatus = "connected" | "disconnected";
 
 export interface DesktopApi {
+  usage: UsageDashboardApi;
   copyText(text: string): Promise<void>;
   conversations: {
+    setWebSearchEnabled(conversationId: string, enabled: boolean): Promise<Conversation>;
     create(): Promise<Conversation>;
     delete(conversationId: string): Promise<void>;
     openInitial(): Promise<{ active: Conversation; recent: Conversation[] }>;
     listRecent(): Promise<Conversation[]>;
+    subscribe(listener: (conversation: Conversation) => void): () => void;
   };
   industryResearch: {
+    getCompanyProfileProgress(itemId: string): Promise<CompanyProfileProgress>;
+    subscribeCompanyProfileProgress(listener: (state: CompanyProfileProgress) => void): () => void;
     createItem(input: CreateIndustryResearchItemInput): Promise<CapabilityItem>;
     updateItem(itemId: string, input: UpdateIndustryResearchItemInput): Promise<CapabilityItem>;
     deleteItem(itemId: string): Promise<void>;
@@ -115,6 +123,7 @@ export interface DesktopApi {
     listRuns(itemId: string, companyId: string): Promise<ResearchRunSummary[]>;
     getRun(itemId: string, companyId: string, runId: string): Promise<ResearchRun | undefined>;
     exportWord(itemId: string, companyId: string, runId: string, selection: CompanyResearchWordExportSelection): Promise<CompanyResearchWordExportResult>;
+    retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
     retryFailed(
       itemId: string,
       companyId: string,
@@ -123,6 +132,13 @@ export interface DesktopApi {
     ): Promise<ResearchRun>;
     deleteRun(itemId: string, companyId: string, runId: string): Promise<void>;
     subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
+  };
+  companyResearchBatch: {
+    start(itemId: string, entries: BatchResearchEntryInput[]): Promise<CompanyResearchBatchState>;
+    getState(itemId: string): Promise<CompanyResearchBatchState | null>;
+    cancel(batchId: string): Promise<void>;
+    resume(batchId: string): Promise<CompanyResearchBatchState>;
+    subscribe(listener: (state: CompanyResearchBatchState) => void): () => void;
   };
   settings: {
     get(): Promise<SettingsView>;

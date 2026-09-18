@@ -7,7 +7,7 @@ export const LlmProtocolSchema = Type.Union([Type.Literal("openai_compatible"), 
 export type LlmProtocol = Static<typeof LlmProtocolSchema>;
 export const LlmProviderPresetIdSchema = Type.Union([Type.Literal("deepseek"), Type.Literal("qwen"), Type.Literal("openai"), Type.Literal("anthropic"), Type.Literal("custom")]);
 export type LlmProviderPresetId = Static<typeof LlmProviderPresetIdSchema>;
-export const SearchProviderIdSchema = Type.Union([Type.Literal("metaso"), Type.Literal("baidu"), Type.Literal("zhipu"), Type.Literal("tavily"), Type.Literal("serper")]);
+export const SearchProviderIdSchema = Type.Union([Type.Literal("metaso"), Type.Literal("baidu"), Type.Literal("zhipu"), Type.Literal("tavily"), Type.Literal("serper"), Type.Literal("doubao")]);
 export type SearchProviderId = Static<typeof SearchProviderIdSchema>;
 
 export const LLM_PROVIDER_PRESETS = {
@@ -23,7 +23,8 @@ export const LlmProfileDraftSchema = Type.Object({ id: Type.Optional(Id), ...Llm
 export type LlmProfileDraft = Static<typeof LlmProfileDraftSchema>;
 export const LlmProfileViewSchema = Type.Object({ id: Id, ...LlmBase, hasCredential: Type.Boolean() }, { additionalProperties: false });
 export type LlmProfileView = Static<typeof LlmProfileViewSchema>;
-export const LlmRuntimeSnapshotSchema = Type.Object({ id: Id, ...LlmBase, apiKey: Type.String({ minLength: 1, maxLength: 10000 }) }, { additionalProperties: false });
+const UsageSnapshotFields = { configRevisionId: Type.Optional(Id), draftSessionId: Type.Optional(Id) };
+export const LlmRuntimeSnapshotSchema = Type.Object({ id: Id, ...UsageSnapshotFields, ...LlmBase, apiKey: Type.String({ minLength: 1, maxLength: 10000 }) }, { additionalProperties: false });
 export type LlmRuntimeSnapshot = Static<typeof LlmRuntimeSnapshotSchema>;
 
 export const JsonOptionsSchema = Type.Record(Type.String(), Type.Unknown());
@@ -32,7 +33,7 @@ export const SearchProfileDraftSchema = Type.Object({ id: Type.Optional(Id), ...
 export type SearchProfileDraft = Static<typeof SearchProfileDraftSchema>;
 export const SearchProfileViewSchema = Type.Object({ id: Id, ...SearchBase, hasCredential: Type.Boolean() }, { additionalProperties: false });
 export type SearchProfileView = Static<typeof SearchProfileViewSchema>;
-export const SearchRuntimeSnapshotSchema = Type.Object({ id: Id, ...SearchBase, apiKey: Type.String({ minLength: 1, maxLength: 10000 }) }, { additionalProperties: false });
+export const SearchRuntimeSnapshotSchema = Type.Object({ id: Id, ...UsageSnapshotFields, ...SearchBase, apiKey: Type.String({ minLength: 1, maxLength: 10000 }) }, { additionalProperties: false });
 export type SearchRuntimeSnapshot = Static<typeof SearchRuntimeSnapshotSchema>;
 
 export const SettingsFieldSchema = Type.Object({ key: Type.String({ minLength: 1 }), label: Type.String({ minLength: 1 }), type: Type.Union([Type.Literal("text"), Type.Literal("select"), Type.Literal("number")]), required: Type.Boolean(), options: Type.Optional(Type.Array(Type.Object({ value: Type.String(), label: Type.String() }, { additionalProperties: false }))) }, { additionalProperties: false });

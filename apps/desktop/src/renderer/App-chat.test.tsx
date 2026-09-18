@@ -31,6 +31,39 @@ async function chatVisible(): Promise<HTMLTextAreaElement> {
 }
 
 describe("app conversation chat", () => {
+  it("saves web search before sending and retains each conversation's setting across navigation", async () => {
+    const fake = makeFakeApi();
+    const first = conversation("c1", "对话一", true);
+    const second = conversation("c2", "对话二", true);
+    fake.conversations.openInitial.mockResolvedValue({ active: first, recent: [first, second] });
+    let resolveSave!: (value: typeof first) => void;
+    fake.conversations.setWebSearchEnabled.mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve; }));
+    fake.chat.send.mockResolvedValue(chatSendResult(REQUEST_ID, "c1", "对话一"));
+    const { user } = await renderApp(fake);
+    await chatVisible();
+    await user.click(screen.getByRole("button", { name: "联网搜索" }));
+    expect(fake.conversations.setWebSearchEnabled).toHaveBeenCalledWith("c1", true);
+    expect((screen.getByLabelText("消息输入") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "联网搜索" }).getAttribute("aria-pressed")).toBe("false");
+    await user.click(screen.getByRole("button", { name: "对话二" }));
+    await chatVisible();
+    await act(async () => resolveSave({ ...first, webSearchEnabled: true }));
+    expect(screen.getByRole("button", { name: "对话二" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "联网搜索" }).getAttribute("aria-pressed")).toBe("false");
+    await user.click(screen.getByRole("button", { name: "对话一" }));
+    const input = await chatVisible();
+    expect(screen.getByRole("button", { name: "联网搜索" }).getAttribute("aria-pressed")).toBe("true");
+    await user.type(input, "继续搜索");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(fake.chat.send).toHaveBeenCalledWith("c1", "继续搜索", REQUEST_ID, { webSearch: true });
+    act(() => fake.emit(workerEvent(REQUEST_ID, "completed", "完成")));
+    await chatVisible();
+    expect(screen.getByRole("button", { name: "联网搜索" }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "联网搜索" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "联网搜索" }).getAttribute("aria-pressed")).toBe("false"));
+    expect(fake.conversations.setWebSearchEnabled).toHaveBeenLastCalledWith("c1", false);
+  });
+
   it("rechecks a stale disconnected indicator when the window regains focus", async () => {
     const fake = makeFakeApi();
     fake.settings.get.mockResolvedValueOnce(connectionView(false)).mockResolvedValueOnce(connectionView(true));

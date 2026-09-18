@@ -34,8 +34,22 @@ describe("runtime budget context", () => {
   it("reports a tool-free synthesis phase", () => {
     const control = controlWithRemaining(0, 0, 3);
 
-    expect(buildRuntimeBudgetContext(control)).toContain(
-      "phase: synthesizing\navailable_tools: none",
-    );
+    const text = buildRuntimeBudgetContext(control);
+    expect(text).toContain("phase: synthesizing");
+    expect(text).toContain("user_network_permission: enabled");
+    expect(text).toContain("available_tools: none");
+  });
+
+  it("distinguishes a global turn cap from disabled network permission", () => {
+    const control = controlWithRemaining(2, 1, 2);
+    const text = buildRuntimeBudgetContext(control, undefined, {
+      forcedFinal: true,
+      userNetworkPermission: "enabled",
+    });
+
+    expect(text).toContain("phase: final_answer");
+    expect(text).toContain("user_network_permission: enabled");
+    expect(text).toContain("available_tools: none (global model-turn cap)");
+    expect(text).toContain("联网权限状态没有因此改变");
   });
 });

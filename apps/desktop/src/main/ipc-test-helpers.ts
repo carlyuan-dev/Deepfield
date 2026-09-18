@@ -256,6 +256,10 @@ export class FakeConversationService {
     this.deleteCalls.push(conversationId);
   }
 
+  setWebSearchEnabled(conversationId: string, enabled: boolean): Conversation {
+    return { ...this.makeConversation(conversationId), webSearchEnabled: enabled };
+  }
+
   openInitial(): { active: Conversation; recent: Conversation[] } {
     this.openInitialCalls += 1;
     const active = this.initialActive ?? this.create();
@@ -304,6 +308,7 @@ export class FakeChatService {
   listMessagesCalls: string[] = [];
   history: ChatMessage[] = [];
   private listeners: Array<(event: AgentWorkerEvent) => void> = [];
+  private conversationListeners = new Set<(conversation: Conversation) => void>();
 
   send(
     conversationId: string,
@@ -334,6 +339,15 @@ export class FakeChatService {
   emitToLast(event: AgentWorkerEvent): void {
     this.listeners[this.listeners.length - 1]?.(event);
   }
+
+  subscribeConversationUpdates(listener: (conversation: Conversation) => void): () => void {
+    this.conversationListeners.add(listener);
+    return () => this.conversationListeners.delete(listener);
+  }
+
+  emitConversationUpdate(conversation: Conversation): void {
+    for (const listener of this.conversationListeners) listener(conversation);
+  }
 }
 
 export class FakeCompanyResearchService {
@@ -343,6 +357,7 @@ export class FakeCompanyResearchService {
   listRunsCalls: Array<{ itemId: string; companyId: string }> = [];
   getRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
   retryFailedCalls: Array<{ itemId: string; companyId: string; runId: string; input: StartCompanyResearchInput }> = [];
+  retryStructuringCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
   deleteRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
   run: ResearchRun = researchRun();
   runs: ResearchRunSummary[] = [];
@@ -379,6 +394,11 @@ export class FakeCompanyResearchService {
   async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): Promise<ResearchRun> {
     this.retryFailedCalls.push({ itemId, companyId, runId, input });
     return researchRun({ id: runId as ResearchRunId, itemId: itemId as CapabilityItemId, companyId: companyId as CompanyId, ...input });
+  }
+  async retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun> {
+    this.retryStructuringCalls.push({ itemId, companyId, runId });
+    if (this.run.id !== runId || this.run.itemId !== itemId || this.run.companyId !== companyId) throw new Error("not found");
+    return this.run;
   }
 
   deleteRun(itemId: string, companyId: string, runId: string): void {
@@ -452,7 +472,7 @@ export class FakeClipboardWriter {
   }
 }
 
-export function makeDeps() {
+export function makeDeps(overrides: Partial<IpcServiceDeps> = {}) {
   const ipcMain = new FakeIpcMain();
   const conversations = new FakeConversationService();
   const industryResearch = new FakeIndustryResearchService();
@@ -474,6 +494,7 @@ export function makeDeps() {
     companyResearchWordExport,
     companyProfiles,
     clipboard,
+    ...overrides,
   };
   const dispose = registerIpcHandlers(deps);
   return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyResearchWordExport, companyProfiles, clipboard, dispose };

@@ -1,4 +1,6 @@
 import { Value } from "typebox/value";
+import { UsageFlushRequestSchema } from "@deepfield/contracts";
+import { withUsageContext } from "../shared/usage-collection.js";
 import {
   AgentWorkerEventSchema,
   CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema,
@@ -35,6 +37,7 @@ import type { CompanyProfileAgent } from "./company-profile-agent.js";
 export type { ActiveExecution, ChatAgent, ResearchAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
 
 export interface WorkerMessageLoopOptions {
+  flushUsage?: () => Promise<void>;
   toolRuntime?: ToolRuntime;
   researchAgent?: ResearchAgent;
   profileAgent?: CompanyProfileAgent;
@@ -55,6 +58,13 @@ export function createWorkerMessageLoop(
 
   function handleInbound(value: unknown): void {
     if (disposed) {
+      return;
+    }
+    if (Value.Check(UsageFlushRequestSchema, value)) {
+      for (const execution of active.values()) execution.controller.abort();
+      void Promise.resolve().then(() => options.flushUsage?.()).catch(() => {}).then(() => {
+        endpoint.postMessage({ kind: "usage.flushed", requestId: value.requestId });
+      });
       return;
     }
     if (isHostReply(value)) {
@@ -105,7 +115,7 @@ export function createWorkerMessageLoop(
       if (event.type !== "diagnostic") execution.finalize();
       endpoint.postMessage(event);
     };
-    void Promise.resolve().then(() => options.profileAgent?.run(request, emit, execution.controller.signal))
+    void Promise.resolve().then(() => withUsageContext({ sourceId: "company-profile", taskId: request.requestId }, () => options.profileAgent?.run(request, emit, execution.controller.signal)))
       .then(() => { if (!execution.settled) execution.settle("agent_failed", "", false); })
       .catch(() => execution.settle("agent_failed", "", false));
   }
@@ -142,7 +152,7 @@ export function createWorkerMessageLoop(
       endpoint.postMessage(event);
     };
     void Promise.resolve()
-      .then(() => agent.run(request, emit, execution.controller.signal))
+      .then(() => withUsageContext({ sourceId: `company-research-${request.stage}`, taskId: request.requestId, operationId: request.runId, stageId: request.stage }, () => agent.run(request, emit, execution.controller.signal)))
       .then(() => {
         if (!execution.settled && !disposed) {
           execution.settle("research_failed", "company research failed", false);
@@ -186,7 +196,7 @@ export function createWorkerMessageLoop(
     };
 
     void Promise.resolve()
-      .then(() => chatAgent.run(request, emit, execution.controller.signal))
+      .then(() => withUsageContext({ sourceId: "chat", taskId: request.requestId }, () => chatAgent.run(request, emit, execution.controller.signal)))
       .then(() => {
         if (!execution.settled && !disposed) {
           execution.settle(

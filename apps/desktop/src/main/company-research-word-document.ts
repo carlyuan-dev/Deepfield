@@ -287,15 +287,24 @@ function safeSourceChildren(title: string, url: string, context: MarkdownContext
 
 const CHINESE_SECTION_NUMBERS = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"] as const;
 
-function structuredSourceUrlChildren(url: string): ParagraphChild[] {
-  if (!isSafeLink(url)) return [new TextRun(`${url}（来源链接不可用）`)];
+function structuredSourceUrlChildren(url: string, citationNumber: number): ParagraphChild[] {
+  const marker = new TextRun(`[${citationNumber}] `);
+  if (!isSafeLink(url)) return [marker, new TextRun(`${url}（来源链接不可用）`)];
   const hyperlink = new ExternalHyperlink({ link: url, children: [new TextRun({ text: url, color: "0563C1", underline: { type: "single" } })] });
-  return [hyperlink];
+  return [marker, hyperlink];
 }
 
 function structuredBlocks(run: KeyResearchRun, combined: boolean): FileChild[] {
   const content = run.structuredContent;
   if (!content) return [];
+  const citationNumbers = new Map<string, number>();
+  const citationNumberFor = (url: string): number => {
+    const existing = citationNumbers.get(url);
+    if (existing !== undefined) return existing;
+    const assigned = citationNumbers.size + 1;
+    citationNumbers.set(url, assigned);
+    return assigned;
+  };
   const children: FileChild[] = [
     ...(combined ? [new Paragraph({ children: [new PageBreak()] })] : []),
     new Paragraph({ style: "Title", text: `${run.researchContext.companyName} ${run.template.title}调研报告` }),
@@ -328,9 +337,10 @@ function structuredBlocks(run: KeyResearchRun, combined: boolean): FileChild[] {
     if (section.summary) children.push(new Paragraph({ keepNext: section.facts.length > 0, spacing: { line: 336, after: 140 }, text: section.summary }));
     if (section.facts.length === 0) continue;
     for (const fact of section.facts) {
+      const citationNumber = citationNumberFor(fact.source.url);
       children.push(new Paragraph({
         numbering: { reference: "deepfield-bullets", level: 0 },
-        children: [new TextRun({ text: fact.text })],
+        children: [new TextRun({ text: fact.text }), new TextRun({ text: ` [${citationNumber}]` })],
         spacing: { line: 336, after: 140 },
       }));
     }
@@ -338,9 +348,8 @@ function structuredBlocks(run: KeyResearchRun, combined: boolean): FileChild[] {
     children.push(
       new Paragraph({ heading: HeadingLevel.HEADING_3, text: "资料来源" }),
       ...sourceUrls.map((url) => new Paragraph({
-        numbering: { reference: "deepfield-bullets", level: 0 },
         spacing: { line: 336, after: 120 },
-        children: structuredSourceUrlChildren(url),
+        children: structuredSourceUrlChildren(url, citationNumberFor(url)),
       })),
     );
   }

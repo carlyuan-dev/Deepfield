@@ -3,6 +3,7 @@ import type { Repositories } from "@deepfield/persistence";
 import {
   ChatService,
   CompanyResearchService,
+  CompanyResearchBatchService,
   CompanyProfileEnrichmentService,
   ContextBuilder,
   ConversationService,
@@ -33,6 +34,7 @@ export interface ApplicationRuntime {
   contextBuilder: ContextBuilder;
   chatService: ChatService;
   companyResearch: CompanyResearchService;
+  companyResearchBatch: CompanyResearchBatchService;
   companyProfiles: CompanyProfileEnrichmentService;
 }
 
@@ -63,12 +65,14 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.worker,
     { requestIdFactory: randomUUID },
   );
-  companyResearch.cleanupAbandoned();
+  let companyResearchBatch: CompanyResearchBatchService | undefined;
   const companyProfiles = new CompanyProfileEnrichmentService(
     deps.repositories.companies,
     companyCompleter,
     {
-      isForegroundBusy: () => companyResearch.isRunning(),
+      isForegroundBusy: () => companyResearch.isRunning() || !!companyResearchBatch?.isReserved(),
+      getTopicCompanyIds: (itemId) => deps.repositories.itemCompanies.listByItem(itemId as import("@deepfield/contracts").CapabilityItemId).map(entry => entry.companyId),
+      getTopicIds: () => deps.repositories.capabilityItems.list().map(item => item.id),
       getResearchTopics: (companyId) => deps.repositories.capabilityItems.list()
         .filter((item) => deps.repositories.itemCompanies.listByItem(item.id)
           .some((membership) => membership.companyId === companyId))
@@ -80,11 +84,13 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     companyRecognizer,
     companyProfiles,
   );
+  companyResearchBatch = new CompanyResearchBatchService(deps.repositories, companyResearch, companyProfiles);
+  companyResearch.cleanupAbandoned();
   companyResearch.subscribe((event) => {
     if (event.type === "state_changed" && !companyResearch.isRunning()) {
       companyProfiles.resume();
     }
   });
   companyProfiles.start();
-  return { industryResearch, conversationService, contextBuilder, chatService, companyResearch, companyProfiles };
+  return { industryResearch, conversationService, contextBuilder, chatService, companyResearch, companyResearchBatch, companyProfiles };
 }

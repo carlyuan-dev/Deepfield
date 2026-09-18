@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { createCompanyResearchBatchRepository } from "./company-research-batch-repository.js";
 import { createCapabilityItemRepository } from "./capability-item-repository.js";
 import { createCompanyRepository } from "./company-repository.js";
 import { createConversationRepository } from "./conversation-repository.js";
@@ -10,9 +11,12 @@ import { createCompanyResearchDiagnosticRepository } from "./company-research-di
 import { createCompanyProfileDiagnosticRepository } from "./company-profile-diagnostic-repository.js";
 import { runInTransaction } from "./transactions.js";
 import type { Repositories } from "./types.js";
+import { createChatSessionRepository } from "./chat-session-repository.js";
 
 export function createRepositories(db: DatabaseSync): Repositories {
   return {
+    chatSessions: createChatSessionRepository(db),
+    companyResearchBatches: createCompanyResearchBatchRepository(db),
     capabilityItems: createCapabilityItemRepository(db),
     companies: createCompanyRepository(db),
     itemCompanies: createItemCompanyRepository(db),

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { vi, type Mock } from "vitest";
+import type { UsageDashboard, UsageDashboardApi } from "@deepfield/base/usage";
 import type {
   AgentWorkerEvent,
   CapabilityItem,
@@ -30,13 +31,19 @@ import type {
 } from "@deepfield/contracts";
 
 export interface FakeDesktopApi extends DesktopApi {
+  usage: { getDashboard: Mock<UsageDashboardApi["getDashboard"]> };
+  companyResearchBatch: { [K in keyof DesktopApi["companyResearchBatch"]]: Mock<DesktopApi["companyResearchBatch"][K]> };
   conversations: {
+    setWebSearchEnabled: Mock<DesktopApi["conversations"]["setWebSearchEnabled"]>;
     create: Mock<() => Promise<Conversation>>;
     delete: Mock<(id: string) => Promise<void>>;
     openInitial: Mock<() => Promise<{ active: Conversation; recent: Conversation[] }>>;
     listRecent: Mock<() => Promise<Conversation[]>>;
+    subscribe: Mock<(listener: (conversation: Conversation) => void) => () => void>;
   };
   industryResearch: {
+    getCompanyProfileProgress: Mock<DesktopApi["industryResearch"]["getCompanyProfileProgress"]>;
+    subscribeCompanyProfileProgress: Mock<DesktopApi["industryResearch"]["subscribeCompanyProfileProgress"]>;
     createItem: Mock<(input: { industry: string; researchScope?: string; notes?: string }) => Promise<CapabilityItem>>;
     updateItem: Mock<(itemId: string, input: { industry: string; researchScope?: string; notes?: string }) => Promise<CapabilityItem>>;
     deleteItem: Mock<(itemId: string) => Promise<void>>;
@@ -60,6 +67,7 @@ export interface FakeDesktopApi extends DesktopApi {
     getState: Mock<(itemId: string, companyId: string) => Promise<CompanyResearchState>>;
     listRuns: Mock<(itemId: string, companyId: string) => Promise<ResearchRunSummary[]>>;
     getRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun | undefined>>;
+    retryStructuring: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun>>;
     retryFailed: Mock<(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
     deleteRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<void>>;
     exportWord: Mock<(itemId: string, companyId: string, runId: string, selection: { raw: boolean; structured: boolean }) => Promise<{ status: "saved" | "cancelled" }>>;
@@ -92,8 +100,10 @@ export interface FakeDesktopApi extends DesktopApi {
     listMessages: Mock<(conversationId: string) => Promise<ChatMessage[]>>;
   };
   listeners: Set<(event: AgentWorkerEvent) => void>;
+  conversationListeners: Set<(conversation: Conversation) => void>;
   researchListeners: Set<(event: CompanyResearchEvent) => void>;
   emit(event: AgentWorkerEvent): void;
+  emitConversation(conversation: Conversation): void;
   emitResearch(event: CompanyResearchEvent): void;
   emitProfile(event: CompanyProfileEvent): void;
   nextRequestId(): string;
@@ -138,11 +148,82 @@ export function chatSendResult(
 
 export function makeFakeApi(): FakeDesktopApi {
   const listeners = new Set<(event: AgentWorkerEvent) => void>();
+  const conversationListeners = new Set<(conversation: Conversation) => void>();
   const researchListeners = new Set<(event: CompanyResearchEvent) => void>();
   const profileListeners = new Set<(event: CompanyProfileEvent) => void>();
   const api = {
+    usage: {
+      getDashboard: vi.fn(async (): Promise<UsageDashboard> => ({
+        summary: {
+          requests: 0,
+          running: 0,
+          succeeded: 0,
+          failed: 0,
+          cancelled: 0,
+          interrupted: 0,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheWriteTokens: null,
+          totalTokens: null,
+          resultCount: null,
+          reportedUsageRequests: 0,
+          unknownUsageRequests: 0,
+          partialUsageRequests: 0,
+          incompleteAttemptCountRequests: 0,
+        },
+        daily: [],
+        trend: {
+          granularity: "day",
+          points: [],
+          summary: {
+            requests: 0,
+            running: 0,
+            succeeded: 0,
+            failed: 0,
+            cancelled: 0,
+            interrupted: 0,
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+            totalTokens: null,
+            resultCount: null,
+            reportedUsageRequests: 0,
+            unknownUsageRequests: 0,
+            partialUsageRequests: 0,
+            incompleteAttemptCountRequests: 0,
+            inputCacheHitTokens: null,
+            inputCacheMissTokens: null,
+            inputCacheUnknownTokens: null,
+            cacheSplitUnknownRequests: 0,
+          },
+          models: [],
+          selectedModel: null,
+        },
+        providers: [],
+        health: {
+          collectionStartedAt: "2026-09-01T00:00:00.000Z",
+          lastInitializedAt: "2026-09-01T00:00:00.000Z",
+          cleanShutdown: true,
+          previousUncleanShutdown: false,
+          interruptedRequests: 0,
+          pendingRecords: 0,
+          failedRecords: 0,
+          droppedRecords: 0,
+          lastErrorCode: null,
+          degraded: false,
+        },
+        from: "2026-09-01T00:00:00.000Z",
+        to: "2026-10-01T00:00:00.000Z",
+        timeZone: "Asia/Shanghai",
+      })),
+    },
     copyText: vi.fn(async (): Promise<void> => {}),
     conversations: {
+      setWebSearchEnabled: vi.fn(async (id: string, enabled: boolean): Promise<Conversation> => ({
+        ...conversationFixture(), id: id as Conversation["id"], webSearchEnabled: enabled,
+      })),
       create: vi.fn(async (): Promise<Conversation> => conversationFixture()),
       delete: vi.fn(async (): Promise<void> => {}),
       openInitial: vi.fn(
@@ -152,8 +233,14 @@ export function makeFakeApi(): FakeDesktopApi {
         },
       ),
       listRecent: vi.fn(async (): Promise<Conversation[]> => []),
+      subscribe: vi.fn((listener: (conversation: Conversation) => void) => {
+        conversationListeners.add(listener);
+        return () => conversationListeners.delete(listener);
+      }),
     },
     industryResearch: {
+      getCompanyProfileProgress: vi.fn(async (itemId: string) => ({ itemId, status: "idle" as const, processed: 0, total: 0, failed: 0 })),
+      subscribeCompanyProfileProgress: vi.fn(() => () => {}),
       createItem: vi.fn(async (input: { industry: string; researchScope?: string; notes?: string }): Promise<CapabilityItem> => ({
         id: `item-${++sendSeq}` as CapabilityItemId,
         type: "industry-research",
@@ -194,6 +281,9 @@ export function makeFakeApi(): FakeDesktopApi {
         return () => profileListeners.delete(listener);
       }),
     },
+    companyResearchBatch: {
+      start: vi.fn(async () => { throw new Error("batch start not configured"); }), getState: vi.fn(async () => null), cancel: vi.fn(async () => {}), resume: vi.fn(async () => { throw new Error("batch resume not configured"); }), subscribe: vi.fn(() => () => {}),
+    },
     companyResearch: {
       start: vi.fn(async (): Promise<ResearchRun> => {
         throw new Error("not implemented");
@@ -202,6 +292,7 @@ export function makeFakeApi(): FakeDesktopApi {
       getState: vi.fn(async (): Promise<CompanyResearchState> => ({ runs: [], globalActiveRun: null })),
       listRuns: vi.fn(async (): Promise<ResearchRunSummary[]> => []),
       getRun: vi.fn(async (): Promise<ResearchRun | undefined> => undefined),
+      retryStructuring: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
       retryFailed: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
       deleteRun: vi.fn(async (): Promise<void> => {}),
       exportWord: vi.fn(async () => ({ status: "saved" as const })),
@@ -250,11 +341,15 @@ export function makeFakeApi(): FakeDesktopApi {
       listMessages: vi.fn(async (_projectId: string): Promise<ChatMessage[]> => []),
     },
     listeners,
+    conversationListeners,
     researchListeners,
     emit: (event: AgentWorkerEvent): void => {
       for (const listener of [...listeners]) {
         listener(event);
       }
+    },
+    emitConversation: (conversation: Conversation): void => {
+      for (const listener of [...conversationListeners]) listener(conversation);
     },
     emitResearch: (event: CompanyResearchEvent): void => {
       for (const listener of [...researchListeners]) listener(event);

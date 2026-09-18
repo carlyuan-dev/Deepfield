@@ -19,6 +19,9 @@ export interface ChatViewProps {
   requestIdFactory: () => string;
   conversation: Conversation;
   acceptUpdated(conversation: Conversation): void;
+  setWebSearchEnabled(id: string, enabled: boolean): Promise<void>;
+  savingWebSearch: boolean;
+  settingError: string | undefined;
 }
 
 export function ChatView({
@@ -27,12 +30,15 @@ export function ChatView({
   requestIdFactory,
   conversation,
   acceptUpdated,
+  setWebSearchEnabled,
+  savingWebSearch,
+  settingError,
 }: ChatViewProps) {
   const { state, submit, reload } = useChat(api, conversation.id, eventHub, requestIdFactory);
   const [draft, setDraft] = useState("");
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string | undefined>(undefined);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const webSearchEnabled = conversation.webSearchEnabled === true;
   const lastSubmitted = useRef("");
   const messagesRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
@@ -79,6 +85,7 @@ export function ChatView({
 
   return (
     <section className="chat-view" aria-label="Chat">
+      {settingError !== undefined && <p className="chat-content-status error" role="alert">{settingError}</p>}
       {state.loadState === "error" && (
         <div className="chat-content-status error" role="alert">
           {state.loadError}
@@ -102,13 +109,13 @@ export function ChatView({
           <Composer
             value={draft}
             onChange={setDraft}
-            disabled={state.sending || state.loadState !== "ready"}
+            disabled={savingWebSearch || state.sending || state.loadState !== "ready"}
             actions={
               <>
                 <WebSearchToggle
                   enabled={webSearchEnabled}
-                  disabled={state.sending}
-                  onChange={setWebSearchEnabled}
+                  disabled={savingWebSearch || state.sending}
+                  onChange={(enabled) => { void setWebSearchEnabled(conversation.id, enabled); }}
                 />
                 <SkillPicker
                   skills={skills}
@@ -122,6 +129,7 @@ export function ChatView({
               </>
             }
             onSubmit={(content) => {
+              if (savingWebSearch) return;
               lastSubmitted.current = content;
               setDraft("");
               const options: ChatRequestOptions = {

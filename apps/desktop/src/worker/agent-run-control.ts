@@ -64,7 +64,12 @@ function hasCapacity(snapshot: ToolBudgetSnapshot | undefined, category: "search
   return !budget.exhausted && budget.remaining !== 0;
 }
 
-export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number): AgentRunControl {
+export function createAgentRunControl(
+  policy: AgentRunPolicy,
+  deadlineAt: number,
+  options: { automaticSynthesis?: boolean } = {},
+): AgentRunControl {
+  const automaticSynthesis = options.automaticSynthesis ?? true;
   let currentPhase: AgentPhase = "deciding";
   let snapshot: ToolBudgetSnapshot | undefined;
   let toolDecisionUsed = 0;
@@ -98,6 +103,7 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
     knownUrls.size === 0;
 
   const synthesizeIfTerminal = (): void => {
+    if (!automaticSynthesis) return;
     if (
       currentPhase === "deciding" &&
       (availableNetworkTools().length === 0 || searchUnavailableWithoutUrl())
@@ -143,7 +149,7 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
     recordToolDecisionTurn() {
       if (currentPhase !== "deciding") return;
       toolDecisionUsed += 1;
-      if (toolDecisionUsed >= policy.toolDecisionTurns) enterSynthesis();
+      if (automaticSynthesis && toolDecisionUsed >= policy.toolDecisionTurns) enterSynthesis();
     },
     recordBatchEvidence(batchEvidence) {
       const searchCount = batchEvidence.successfulSearches ?? 0;
@@ -162,7 +168,10 @@ export function createAgentRunControl(policy: AgentRunPolicy, deadlineAt: number
     },
     completeBatch() {
       if (currentPhase !== "executing") return;
-      if (consecutiveEmptyBatches >= policy.termination.consecutiveEmptyBatches) {
+      if (
+        automaticSynthesis &&
+        consecutiveEmptyBatches >= policy.termination.consecutiveEmptyBatches
+      ) {
         enterSynthesis();
         return;
       }

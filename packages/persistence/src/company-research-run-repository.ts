@@ -161,6 +161,18 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
   }
 
   const repository: CompanyResearchRunRepository = {
+    summarizeByItem(itemId) {
+      return db.prepare(`
+        SELECT company_id AS companyId, COUNT(*) AS count, MAX(created_at) AS latestCreatedAt
+        FROM company_research_runs
+        WHERE item_id = ? AND (
+          (schema_version = 'legacy-freeform-v1' AND status = 'completed') OR
+          (schema_version = 'company-research-report-v1' AND status IN ('completed', 'structure_failed')
+            AND length(trim(raw_report_text)) > 0)
+        )
+        GROUP BY company_id
+      `).all(itemId) as ReturnType<CompanyResearchRunRepository["summarizeByItem"]>;
+    },
     createResearching(itemId, companyId, input, context, template) {
       if (!Value.Check(StartCompanyResearchInputSchema, input)) {
         throw new Error("invalid research input");

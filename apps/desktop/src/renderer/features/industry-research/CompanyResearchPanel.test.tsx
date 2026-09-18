@@ -315,7 +315,7 @@ describe("two-stage company research", () => {
     ["empty", undefined, ["开始调研"]],
     ["completed", "completed", ["新的调研"]],
     ["research failure", "research_failed", ["重新尝试", "新的调研"]],
-    ["structure failure", "structure_failed", ["重新尝试", "新的调研"]],
+    ["structure failure", "structure_failed", ["重新整理", "新的调研"]],
   ] as const)("shows the intended report actions for %s history", async (_label, status, expected) => {
     const fake = makeFakeApi();
     const run = status === undefined ? undefined : researchRun({
@@ -337,6 +337,22 @@ describe("two-stage company research", () => {
       expect(screen.queryByRole("tabpanel")).toBeNull();
       expect(view.container.querySelector(".company-report-text")).toBeNull();
     }
+  });
+
+  it("retries structure failures directly without opening the editable retry modal or rerunning raw research", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const run = researchRun({ status: "structure_failed", searchStatus: "none", rawReportText: "保留的原始报告", lastFailureCode: "structuring_failed" });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    fake.companyResearch.retryStructuring.mockResolvedValue({ ...run, status: "structuring", structuringAttempts: run.structuringAttempts + 1 });
+    render(<CompanyResearchPanel api={fake} {...context} />);
+
+    await user.click(await screen.findByRole("button", { name: "重新整理" }));
+
+    expect(screen.queryByRole("dialog", { name: "重新尝试调研" })).toBeNull();
+    expect(fake.companyResearch.retryStructuring).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
+    expect(fake.companyResearch.retryFailed).not.toHaveBeenCalled();
+    expect(fake.companyResearch.start).not.toHaveBeenCalled();
   });
 
   it("retries the selected failure with edited inputs and keeps the same selected run after completion", async () => {
@@ -546,7 +562,7 @@ describe("two-stage company research", () => {
     let state = activeResearch(run);
     fake.companyResearch.getState.mockImplementation(async () => state);
     fake.companyResearch.getRun.mockImplementation(async () => run);
-    fake.companyResearch.retryFailed.mockImplementation(async (_item, _company, _run, input) => {
+    fake.companyResearch.retryStructuring.mockImplementation(async () => {
       run = { ...run, status: "structuring" };
       state = activeResearch(run);
       return run;
@@ -559,11 +575,9 @@ describe("two-stage company research", () => {
     act(() => fake.emitResearch({ type: "state_changed", runId: run.id, ...context }));
     expect(await screen.findByText("整理失败，请重试")).toBeTruthy();
     expect(screen.getByText(/原始事实/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "重新尝试" }));
-    await user.click(within(screen.getByRole("dialog", { name: "重新尝试调研" })).getByRole("button", { name: "重新尝试" }));
-    expect(fake.companyResearch.retryFailed).toHaveBeenCalledWith(context.itemId, context.companyId, run.id, {
-      direction: run.direction, focusScope: run.focusScope, asOfDate: run.asOfDate,
-    });
+    await user.click(screen.getByRole("button", { name: "重新整理" }));
+    expect(fake.companyResearch.retryStructuring).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
+    expect(fake.companyResearch.retryFailed).not.toHaveBeenCalled();
     expect(await screen.findByText("正在整理结构化报告…")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "取消调研" }));
     expect(fake.companyResearch.cancel).toHaveBeenCalledWith(run.id);
@@ -612,14 +626,13 @@ describe("two-stage company research", () => {
     const run = researchRun({ status: "structure_failed" });
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
     fake.companyResearch.getRun.mockRejectedValueOnce(new Error("secret storage path")).mockResolvedValue(run);
-    fake.companyResearch.retryFailed.mockRejectedValue(new Error("secret provider response"));
+    fake.companyResearch.retryStructuring.mockRejectedValue(new Error("secret provider response"));
     render(<CompanyResearchPanel api={fake} {...context} />);
     expect(await screen.findByText("加载调研报告失败，请重试")).toBeTruthy();
     expect(screen.queryByText(/secret/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "重新加载" }));
     await screen.findByText(/原始事实/);
-    await user.click(screen.getByRole("button", { name: "重新尝试" }));
-    await user.click(within(screen.getByRole("dialog", { name: "重新尝试调研" })).getByRole("button", { name: "重新尝试" }));
+    await user.click(screen.getByRole("button", { name: "重新整理" }));
     expect(await screen.findByText("无法重新尝试，请稍后重试")).toBeTruthy();
     expect(screen.getByText(/原始事实/)).toBeTruthy();
     expect(screen.queryByText(/secret/)).toBeNull();

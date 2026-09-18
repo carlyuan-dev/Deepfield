@@ -1,5 +1,7 @@
 import { AppError, toPublicError, type AppErrorCode, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView } from "@deepfield/contracts";
-import { createSearchProvider, SearchProviderError, type SearchProvider } from "@deepfield/retrieval";
+import { SearchProviderError, type SearchProvider } from "@deepfield/retrieval";
+import { createMeteredSearchProvider } from "../shared/usage-search.js";
+import { withUsageContext } from "../shared/usage-collection.js";
 import { ModelGatewayError, type ModelGateway } from "../shared/model-gateway.js";
 import type { ProfileStore } from "./profile-store.js";
 
@@ -9,7 +11,7 @@ export class ConfigurationService {
   constructor(
     private readonly store: ProfileConfigurationStore,
     private readonly gateway: ModelGateway,
-    private readonly providerFactory: (snapshot: Awaited<ReturnType<ProfileStore["resolveSearchDraft"]>>) => SearchProvider = createSearchProvider,
+    private readonly providerFactory: (snapshot: Awaited<ReturnType<ProfileStore["resolveSearchDraft"]>>) => SearchProvider = createMeteredSearchProvider,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -25,7 +27,7 @@ export class ConfigurationService {
     const started = this.now();
     try {
       const snapshot = await this.store.resolveLlmDraft(input);
-      await this.gateway.completeText(snapshot, "只回复 OK。", "Deepfield connection test");
+      await withUsageContext({ sourceId: "settings-diagnosis" }, () => this.gateway.completeText(snapshot, "只回复 OK。", "Deepfield connection test"));
       return { ok: true, latencyMs: Math.max(0, this.now() - started), summary: "模型连接正常" };
     } catch (error) { return this.diagnosticFailure(error, "llm", started); }
   }
@@ -34,7 +36,7 @@ export class ConfigurationService {
     const started = this.now();
     try {
       const snapshot = await this.store.resolveSearchDraft(input);
-      await this.providerFactory(snapshot).search({ query: "Deepfield connection test", maxResults: 1 }, new AbortController().signal);
+      await withUsageContext({ sourceId: "settings-diagnosis" }, () => this.providerFactory(snapshot).search({ query: "Deepfield connection test", maxResults: 1 }, new AbortController().signal));
       return { ok: true, latencyMs: Math.max(0, this.now() - started), summary: "搜索连接正常" };
     } catch (error) {
       return this.diagnosticFailure(error, "search", started);

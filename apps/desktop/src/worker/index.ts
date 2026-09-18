@@ -1,6 +1,8 @@
 import type { WorkerEndpoint } from "./message-loop.js";
 import { createUtilityAssembly } from "./assembly.js";
 import { HostClient } from "./host-client.js";
+import { createWorkerUsageRuntime } from "./usage-runtime.js";
+import { configureUsageRecorder } from "../shared/usage-collection.js";
 
 interface ParentPortLike {
   postMessage(value: unknown): void;
@@ -34,7 +36,12 @@ function startWorker(parentPort: ParentPortLike): void {
     timeoutMs: 10_000,
   });
   const skillsDir = resolveSkillsDirArg(process.argv);
+  const usageHost = new HostClient({ postMessage: (value) => parentPort.postMessage(value), timeoutMs: 750 });
+  endpoint.onMessage((value) => usageHost.handleReply(value));
+  const usage = createWorkerUsageRuntime(usageHost);
+  configureUsageRecorder(usage.recorder);
   createUtilityAssembly({
+    flushUsage: () => usage.flush(),
     endpoint,
     agentMode: process.env.DEEPFIELD_AGENT_MODE,
     hostClient,

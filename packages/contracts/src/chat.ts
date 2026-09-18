@@ -2,6 +2,7 @@ import { Type, type Static } from "typebox";
 import type { ConversationId, MessageId } from "./ids.js";
 import type { Conversation } from "./conversations.js";
 import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "./settings.js";
+import { ChatHistoryTurnSchema, ChatTranscriptMessageSchema, ChatToolSourceSchema, type ChatToolSource } from "./chat-transcript.js";
 
 export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-flash" as const;
 
@@ -10,6 +11,7 @@ export const AgentContextMessageSchema = Type.Object(
     role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
     content: Type.String(),
     timestamp: Type.Number(),
+    requestId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
@@ -21,6 +23,7 @@ export const AgentContextSnapshotSchema = Type.Object(
     systemPrompt: Type.String(),
     finalizationSystemPrompt: Type.Optional(Type.String()),
     messages: Type.Array(AgentContextMessageSchema),
+    historyTurns: Type.Optional(Type.Array(ChatHistoryTurnSchema)),
   },
   { additionalProperties: false },
 );
@@ -65,6 +68,10 @@ const toolActivityFields = {
   callKey: Type.String({ minLength: 1, maxLength: 64 }),
   name: Type.String({ minLength: 1, maxLength: 48 }),
   summary: Type.Optional(Type.String({ maxLength: 96 })),
+  queryOrUrl: Type.Optional(Type.String({ maxLength: 8192 })),
+  sources: Type.Optional(Type.Array(ChatToolSourceSchema, { maxItems: 20 })),
+  resultCount: Type.Optional(Type.Integer({ minimum: 0 })),
+  durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
   errorCode: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   agentTurnIndex: Type.Optional(Type.Integer({ minimum: 0 })),
   batchId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
@@ -95,6 +102,7 @@ const ToolActivityEventSchema = Type.Union([
 ]);
 
 export const AgentWorkerEventSchema = Type.Union([
+  Type.Object({ requestId: Type.String(), type: Type.Literal("transcript_checkpoint"), messages: Type.Array(ChatTranscriptMessageSchema) }, { additionalProperties: false }),
   Type.Object(
     {
       requestId: Type.String(),
@@ -106,6 +114,10 @@ export const AgentWorkerEventSchema = Type.Union([
   ),
   Type.Object(
     { requestId: Type.String(), type: Type.Literal("text_delta"), delta: Type.String() },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { requestId: Type.String(), type: Type.Literal("text_reset") },
     { additionalProperties: false },
   ),
   ToolActivityEventSchema,
@@ -133,6 +145,7 @@ export interface ChatMessage {
   createdAt: string;
   requestId?: string;
   toolExecutions?: ChatToolExecution[];
+  status?: "failed";
 }
 
 export interface ChatToolExecution {
@@ -145,6 +158,10 @@ export interface ChatToolExecution {
   budgetConsumed?: boolean;
   durationMs?: number;
   errorCode?: string;
+  summary?: string;
+  queryOrUrl?: string;
+  sources?: ChatToolSource[];
+  resultCount?: number;
 }
 
 export interface ChatSendResult {

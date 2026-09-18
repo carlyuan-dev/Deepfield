@@ -3,11 +3,14 @@ import { Value } from "typebox/value";
 import { normalizeCompanyProfile } from "./company-profile-validation.js";
 import type { CompanyRepository } from "@deepfield/persistence";
 import type { CompanyProfileCompleter } from "./ports.js";
+import type { CompanyProfileProgress } from "@deepfield/contracts";
 
 export interface CompanyProfileFailureDiagnostic { companyId: CompanyId; code: string; attempts: number }
 export interface CompanyProfileEnrichmentOptions {
   isForegroundBusy?: () => boolean;
   getResearchTopics?: (companyId: CompanyId) => string[];
+  getTopicCompanyIds?: (itemId: string) => CompanyId[];
+  getTopicIds?: () => string[];
   onFailure?: (failure: CompanyProfileFailureDiagnostic) => void;
 }
 
@@ -18,9 +21,73 @@ export class CompanyProfileEnrichmentService {
   private blocked = false;
   private queueIssue: PublicAppError | undefined;
   private configurationVersion = 0;
+  private cohorts = new Map<string, Set<CompanyId>>();
+  private finalizingProgress = new Map<string, CompanyProfileProgress>();
+  private progressListeners = new Set<(progress: CompanyProfileProgress) => void>();
+  private progressPublications: CompanyProfileProgress[] = [];
+  private publishingProgress = false;
+  private progressPublicationDeferrals = 0;
+  getProgress(itemId: string): CompanyProfileProgress {
+    const tracked = this.cohorts.get(itemId);
+    if (tracked) return this.progressFor(itemId, tracked);
+    const finalizing = this.finalizingProgress.get(itemId);
+    if (finalizing) return finalizing;
+    const ids = this.options.getTopicCompanyIds?.(itemId) ?? [];
+    const companies = ids.map(id => this.companies.getById(id)).filter(c => c !== undefined);
+    const pending = companies.filter(c => c.profileStatus === "pending" || c.profileStatus === "enriching");
+    return pending.length ? this.progressFor(itemId, new Set(pending.map(company => company.id))) : this.idleProgress(itemId);
+  }
+  private idleProgress(itemId: string): CompanyProfileProgress {
+    return { itemId, status: "idle", processed: 0, total: 0, failed: 0 };
+  }
+  private progressFor(itemId: string, cohort: Set<CompanyId>): CompanyProfileProgress {
+    const ids = this.options.getTopicCompanyIds?.(itemId) ?? [];
+    const companies = ids.map(id => this.companies.getById(id)).filter(c => c !== undefined);
+    const members = companies.filter(c => cohort.has(c.id));
+    if (!members.length) return this.idleProgress(itemId);
+    const processed = members.filter(c => c.profileStatus === "ready" || c.profileStatus === "failed").length;
+    const pending = members.filter(c => c.profileStatus === "pending" || c.profileStatus === "enriching");
+    const issue = pending.length ? this.getIssue() : undefined;
+    return { itemId, total: members.length, processed, failed: members.filter(c => c.profileStatus === "failed").length,
+      status: !members.length ? "idle" : !pending.length ? "completed" : issue ? "paused" : pending.some(c => c.profileStatus === "enriching") ? "running" : "waiting", ...(issue ? { issue } : {}) };
+  }
+  subscribeProgress(listener: (progress: CompanyProfileProgress) => void): () => void { this.progressListeners.add(listener); return () => this.progressListeners.delete(listener); }
   constructor(private readonly companies: CompanyRepository, private readonly completer: CompanyProfileCompleter, private readonly options: CompanyProfileEnrichmentOptions = {}) {}
-  start(): void { this.stopped = false; this.companies.resetEnrichingProfiles(); this.resume(); }
-  enqueue(_companyId: CompanyId): void { this.resume(); }
+  start(): void { this.stopped = false; this.companies.resetEnrichingProfiles(); this.captureProgress(); this.resume(); }
+  enqueue(_companyId: CompanyId): void { this.captureProgress(); this.resume(); }
+  private captureProgress(): void {
+    for (const itemId of [...(this.options.getTopicIds?.() ?? [])]) {
+      const ids = this.options.getTopicCompanyIds?.(itemId) ?? [];
+      const pending = ids.map(id => this.companies.getById(id)).filter(c => c?.profileStatus === "pending" || c?.profileStatus === "enriching");
+      let cohort = this.cohorts.get(itemId);
+      if (!cohort && pending.length) { cohort = new Set(); this.cohorts.set(itemId, cohort); }
+      if (!cohort) continue;
+      for (const company of pending) cohort.add(company!.id);
+      const progress = this.progressFor(itemId, cohort);
+      if (progress.status === "completed" || progress.status === "idle") {
+        this.cohorts.delete(itemId);
+        if (progress.status === "completed") this.finalizingProgress.set(itemId, progress);
+      }
+      this.publishProgress(progress);
+    }
+  }
+  private publishProgress(progress: CompanyProfileProgress): void {
+    this.progressPublications.push(progress);
+    this.drainProgressPublications();
+  }
+  private drainProgressPublications(): void {
+    if (this.publishingProgress || this.progressPublicationDeferrals > 0) return;
+    this.publishingProgress = true;
+    try {
+      while (this.progressPublications.length) {
+        const next = this.progressPublications.shift()!;
+        for (const listener of [...this.progressListeners]) {
+          try { listener(next); } catch { /* closed renderer */ }
+        }
+        if (next.status === "completed" && this.finalizingProgress.get(next.itemId) === next) this.finalizingProgress.delete(next.itemId);
+      }
+    } finally { this.publishingProgress = false; }
+  }
   getIssue() { return this.queueIssue ?? this.companies.list().find((company) => company.profileStatus === "pending" && company.profileIssue?.category === "configuration")?.profileIssue; }
   retry(companyId: CompanyId): boolean {
     if (this.companies.getById(companyId)?.profileStatus !== "failed") return false;
@@ -64,7 +131,7 @@ export class CompanyProfileEnrichmentService {
   }
   async whenIdle(): Promise<void> { await this.loopPromise; }
   subscribe(listener: (event: CompanyProfileEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  dispose(): void { this.stopped = true; this.listeners.clear(); }
+  dispose(): void { this.stopped = true; this.listeners.clear(); this.progressListeners.clear(); }
   private async runLoop(): Promise<void> {
     while (!this.stopped && !this.blocked && !this.options.isForegroundBusy?.()) {
       const company = this.companies.getNextPendingProfile();
@@ -110,5 +177,14 @@ export class CompanyProfileEnrichmentService {
       }
     }
   }
-  private emit(event: CompanyProfileEvent): void { for (const listener of this.listeners) { try { listener(event); } catch { /* closed renderer */ } } }
+  private emit(event: CompanyProfileEvent): void {
+    this.progressPublicationDeferrals += 1;
+    try {
+      this.captureProgress();
+      for (const listener of [...this.listeners]) { try { listener(event); } catch { /* closed renderer */ } }
+    } finally {
+      this.progressPublicationDeferrals -= 1;
+      this.drainProgressPublications();
+    }
+  }
 }
