@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { ChatService, ChatServiceError } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 import { FakeWorker, makeConversation, makeSecrets } from "./chat-service-helpers.js";
 
 const dbs: TestDb[] = [];

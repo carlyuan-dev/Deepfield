@@ -6,7 +6,7 @@ import { createToolRuntime } from "./tool-runtime.js";
 import { assistant, makeRecordingInstalledPiRuntime } from "./pi-chat-agent-test-helpers.js";
 import { rawResearchRequest } from "./company-research-test-helpers.js";
 import { SearchProviderError } from "@deepfield/retrieval";
-import { profileResult } from "../../../../packages/application/src/company-profile-test-fixtures.js";
+import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 
 describe("profile capability generic Agent run", () => {
   it.each([

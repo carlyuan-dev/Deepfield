@@ -1,12 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { AppError, type CompanyResearchBatchState, type CompanyResearchWorkerRequest } from "@deepfield/contracts";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../../testing/application-test-helpers.js";
 import { CompanyResearchService } from "./company-research-service.js";
 import { CompanyResearchBatchService } from "./company-research-batch-service.js";
 import { IndustryResearchService } from "./industry-research-service.js";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
-import { profileResult } from "./company-profile-test-fixtures.js";
-import type { CompanyResearchWorkerPort } from "./ports.js";
+import { profileResult } from "../../testing/company-profile-test-fixtures.js";
+import type { CompanyResearchWorkerPort } from "../../ports.js";
 import { getCompanyResearchTemplate } from "@deepfield/contracts";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });

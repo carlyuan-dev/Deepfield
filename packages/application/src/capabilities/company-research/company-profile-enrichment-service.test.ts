@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppError, type CompanyProfileFields, type CompanyProfileResult } from "@deepfield/contracts";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
-import { profileResult } from "./company-profile-test-fixtures.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { profileResult } from "../../testing/company-profile-test-fixtures.js";
+import { openTestDb, type TestDb } from "../../testing/application-test-helpers.js";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const database = () => { const db = openTestDb(); dbs.push(db); return db; };

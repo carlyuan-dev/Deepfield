@@ -2,7 +2,7 @@ import { AppError, CompanyProfileResultSchema, toPublicError, type PublicAppErro
 import { Value } from "typebox/value";
 import { normalizeCompanyProfile } from "./company-profile-validation.js";
 import type { CompanyRepository } from "@deepfield/persistence";
-import type { CompanyProfileCompleter } from "./ports.js";
+import type { CompanyProfileCompleter } from "../../ports.js";
 import type { CompanyProfileProgress } from "@deepfield/contracts";
 
 export interface CompanyProfileFailureDiagnostic { companyId: CompanyId; code: string; attempts: number }

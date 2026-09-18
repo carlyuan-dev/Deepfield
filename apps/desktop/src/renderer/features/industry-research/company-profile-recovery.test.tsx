@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppError, toPublicError, type CompanyId, type ItemCompanyView } from "@deepfield/contracts";
 import { IndustryResearchCapability } from "./IndustryResearchCapability.js";
 import { capabilityItem, makeFakeApi } from "../../renderer-test-helpers.js";
-import { profileResult } from "../../../../../../packages/application/src/company-profile-test-fixtures.js";
+import { profileResult } from "../../../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 
 describe("profile recovery presentation", () => {
   it("loads persisted queue guidance, opens the correct Settings module, and clears on resume", async () => {

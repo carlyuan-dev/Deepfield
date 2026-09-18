@@ -11,10 +11,10 @@ import {
 } from "@deepfield/tool-platform";
 import { ToolExecutionError } from "@deepfield/persistence";
 import type { ToolExecutionRepository } from "@deepfield/persistence";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 import { SqliteToolAudit, SqliteToolAuditError } from "./tool-audit.js";
 import { createSearchWebDefinition } from "@deepfield/retrieval";
-import { ChatService } from "./chat-service.js";
+import { ChatService } from "../chat/chat-service.js";
 
 const dbs: TestDb[] = [];
 

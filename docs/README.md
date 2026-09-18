@@ -8,6 +8,15 @@
 2. [Base 总览](base/base.overview.设计文档.md)：当前 Chat / Capability → Base 的单向依赖边界、能力目录和实施状态。
 3. [Base Usage](base/base.usage.设计文档.md)：统一用量账本、统计口径、采集与看板。当前 Base 包只包含 Usage，不意味着其他通用模块已完成迁移。
 
+## 源码导航
+
+- `packages/application/src/chat/`：Chat 会话编排、上下文构建与会话相关测试。
+- `packages/application/src/capabilities/company-research/`：公司研究能力、行业研究入口、校验与能力测试。
+- `packages/application/src/tools/`：应用层工具审计实现与测试。
+- `packages/application/src/testing/`：Application 及跨包测试共享的数据库 helper 与 fixture。
+- `packages/application/src/ports.ts`：Application 对外部运行时与能力适配器的端口定义。
+- `packages/application/src/index.ts`：Application 公共导出入口；目录调整不改变其公共 API。
+
 已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
 
 ## 历史决策与过程参考

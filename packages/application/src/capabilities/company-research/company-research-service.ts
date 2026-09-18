@@ -23,7 +23,7 @@ import {
   type SearchRuntimeSnapshot,
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
-import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "./ports.js";
+import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "../../ports.js";
 import { StructuredResearchValidationError, validateStructuredResearch } from "./company-research-harness.js";
 
 export class CompanyResearchServiceError extends AppError {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolAuditFinish, ToolAuditStart } from "@deepfield/tool-platform";
 import type { ToolExecutionRepository } from "@deepfield/persistence";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 import { SqliteToolAudit, SqliteToolAuditError } from "./tool-audit.js";
 
 const dbs: TestDb[] = [];

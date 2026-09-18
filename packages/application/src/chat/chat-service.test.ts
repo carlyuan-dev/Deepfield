@@ -7,7 +7,7 @@ import {
 } from "@deepfield/contracts";
 import { ChatService, ChatServiceError, titleFromFirstMessage } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 import {
   chatEvent,
   FakeWorker,

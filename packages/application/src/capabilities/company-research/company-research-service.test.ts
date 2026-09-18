@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCompanyResearchTemplate, type CompanyResearchEvent, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type LlmRuntimeSnapshot, type ResearchRunId, type SearchRuntimeSnapshot, type StartCompanyResearchInput } from "@deepfield/contracts";
 import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY } from "./company-research-service.js";
 import { AppError } from "@deepfield/contracts";
-import type { CompanyResearchWorkerPort } from "./ports.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import type { CompanyResearchWorkerPort } from "../../ports.js";
+import { openTestDb, type TestDb } from "../../testing/application-test-helpers.js";
 
 const dbs: TestDb[] = []; afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const llm: LlmRuntimeSnapshot = { id: "l1", name: "LLM", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 32000, apiKey: "llm-secret" };

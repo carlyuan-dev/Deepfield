@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationId } from "@deepfield/contracts";
 import { ContextBuilder, ContextBuilderError, MAIN_AGENT_SYSTEM_PROMPT } from "./context-builder.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 
 const dbs: TestDb[] = [];
 

@@ -12,7 +12,7 @@ import {
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import type { ContextBuilder } from "./context-builder.js";
-import type { AgentWorkerPort, ConversationTitleGenerator, RuntimeProfileResolver } from "./ports.js";
+import type { AgentWorkerPort, ConversationTitleGenerator, RuntimeProfileResolver } from "../ports.js";
 
 export const DEEPSEEK_KEY_NAME = "deepseek.apiKey";
 export const OFFLINE_CHAT_POLICY = { network: "disabled", maxAgentTurns: 6, maxSearchCalls: 0, maxFetchCalls: 0 } as const;

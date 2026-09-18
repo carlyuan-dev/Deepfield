@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentWorkerEvent } from "@deepfield/contracts";
 import { ChatService, ChatServiceError } from "./chat-service.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 import {
   chatEvent,
   FakeWorker,

@@ -1,6 +1,6 @@
 import type { AgentWorkerEvent, AgentWorkerRequest, Conversation, LlmRuntimeSnapshot, SearchRuntimeSnapshot } from "@deepfield/contracts";
-import type { AgentWorkerPort, RuntimeProfileResolver } from "./ports.js";
-import type { TestDb } from "./application-test-helpers.js";
+import type { AgentWorkerPort, RuntimeProfileResolver } from "../ports.js";
+import type { TestDb } from "../testing/application-test-helpers.js";
 import { ChatService } from "./chat-service.js";
 import { ContextBuilder } from "./context-builder.js";
 

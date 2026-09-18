@@ -19,7 +19,7 @@ import {
 } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import { normalizeCompanyName } from "@deepfield/persistence";
-import type { CompanyRecognizer } from "./ports.js";
+import type { CompanyRecognizer } from "../../ports.js";
 import { normalizeCompanyProfile } from "./company-profile-validation.js";
 
 export type ItemCompanyView = ContractItemCompanyView;

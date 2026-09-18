@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCompanyResearchTemplate, type CompanyDraft } from "@deepfield/contracts";
 import { IndustryResearchService } from "./industry-research-service.js";
-import { openTestDb, type TestDb } from "./application-test-helpers.js";
+import { openTestDb, type TestDb } from "../../testing/application-test-helpers.js";
 
 const dbs: TestDb[] = [];
 
