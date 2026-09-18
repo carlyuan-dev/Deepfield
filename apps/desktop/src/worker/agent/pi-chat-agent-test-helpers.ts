@@ -16,7 +16,7 @@ import {
   type ChatRequestOptions,
 } from "@deepfield/contracts";
 import type { PiAgentHandle, PiRuntime } from "./pi-chat-agent.js";
-import type { ChatAgent } from "./message-loop.js";
+import type { ChatAgent } from "../message-loop.js";
 
 export const zeroUsage = (): Usage => ({
   input: 0,

@@ -1,10 +1,10 @@
 import { Value } from "typebox/value";
 import { CompanyProfileCandidateSchema, type CompanyProfileDiagnostic, type ProfileSchemaIssue, type CompanyProfileResult, type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent, type ProfileSource, type ProfileSourceRef } from "@deepfield/contracts";
 import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/retrieval";
-import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "./pi-chat-agent.js";
-import { successfulToolOutput } from "./pi-tool-adapter.js";
+import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "../../agent/pi-chat-agent.js";
+import { successfulToolOutput } from "../../tools/pi-tool-adapter.js";
 import { profileSchemaIssues, safeProfilePath } from "./profile-diagnostic.js";
-import { PiModelGateway, type ModelGateway } from "../shared/model-gateway.js";
+import { PiModelGateway, type ModelGateway } from "../../../shared/model-gateway.js";
 import {
   buildCompanyProfileRepairPrompt,
   buildCompanyProfileRequestPrompt,

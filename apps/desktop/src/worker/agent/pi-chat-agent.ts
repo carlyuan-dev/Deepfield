@@ -18,18 +18,18 @@ import {
   type ToolSyntheticAuditRecord,
 } from "@deepfield/contracts";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
-import type { ChatAgent } from "./message-loop.js";
-import { restoreSessionContext, transcriptMessage, toolResultProjection } from "./pi-session-transcript.js";
+import type { ChatAgent } from "../message-loop.js";
+import { restoreSessionContext, transcriptMessage, toolResultProjection } from "../chat/pi-session-transcript.js";
 import type { ChatTranscriptMessage, ChatToolSource } from "@deepfield/contracts";
 import {
   buildRuntimeSystemContext,
   type RuntimeSystemContextOptions,
 } from "./runtime-system-context.js";
-import type { PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import { safeToolActivity, type SafeToolActivity } from "./tool-activity.js";
-import { PiModelGateway, type ModelGateway } from "../shared/model-gateway.js";
+import type { PiSkillCatalog } from "../../shared/pi-skill-catalog.js";
+import { safeToolActivity, type SafeToolActivity } from "../tools/tool-activity.js";
+import { PiModelGateway, type ModelGateway } from "../../shared/model-gateway.js";
 import type { SearchProvider } from "@deepfield/retrieval";
-import { createMeteredSearchProvider } from "../shared/usage-search.js";
+import { createMeteredSearchProvider } from "../../shared/usage-search.js";
 import { createAgentRunControl, WEB_CHAT_POLICY } from "./agent-run-control.js";
 import {
   buildRuntimeBudgetContext,

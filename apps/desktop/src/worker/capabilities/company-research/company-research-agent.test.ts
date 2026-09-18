@@ -3,9 +3,9 @@ import { Type } from "typebox";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerRequest, CompanyResearchWorkerEvent } from "@deepfield/contracts";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
-import type { ChatAgent } from "./message-loop.js";
+import type { ChatAgent } from "../../message-loop.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
-import { PiChatAgentError } from "./pi-chat-agent.js";
+import { PiChatAgentError } from "../../agent/pi-chat-agent.js";
 import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
 import {
   agentEnd,
@@ -17,7 +17,7 @@ import {
   makeRuntime,
   stubModel,
   textDelta,
-} from "./pi-chat-agent-test-helpers.js";
+} from "../../agent/pi-chat-agent-test-helpers.js";
 
 function validStructuredCandidate() {
   return {

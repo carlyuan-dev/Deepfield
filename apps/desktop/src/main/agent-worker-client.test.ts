@@ -4,7 +4,7 @@ import type {
   CompanyResearchWorkerRequest,
 } from "@deepfield/contracts";
 import { createWorkerMessageLoop } from "../worker/message-loop.js";
-import { rawResearchRequest, structureResearchRequest } from "../worker/company-research-test-helpers.js";
+import { rawResearchRequest, structureResearchRequest } from "../worker/capabilities/company-research/company-research-test-helpers.js";
 import {
   echoAgent,
   flushPending,

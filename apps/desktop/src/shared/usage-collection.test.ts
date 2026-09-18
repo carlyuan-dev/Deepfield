@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { UsageAttempt } from "@deepfield/base/usage";
 import { PiModelGateway } from "./model-gateway.js";
 import { configureUsageRecorder, createLlmUsageTransport } from "./usage-collection.js";
-import { defaultPiRuntime } from "../worker/pi-chat-agent.js";
+import { defaultPiRuntime } from "../worker/agent/pi-chat-agent.js";
 
 const snapshot = { id: "中文 profile", name: "测试", provider: "openai" as const, protocol: "openai_compatible" as const, baseUrl: "https://fixture.invalid/v1", modelId: "model", contextWindow: 32000, apiKey: "secret-never-record", configRevisionId: "revision-1" };
 afterEach(() => { vi.unstubAllGlobals(); configureUsageRecorder(undefined); });

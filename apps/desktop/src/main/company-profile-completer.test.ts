@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppError, type Company, type CompanyProfileWorkerRequest } from "@deepfield/contracts";
 import { createCompanyProfileCompleter } from "./company-profile-completer.js";
-import { rawResearchRequest } from "../worker/company-research-test-helpers.js";
+import { rawResearchRequest } from "../worker/capabilities/company-research/company-research-test-helpers.js";
 import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 import { AgentWorkerClient } from "./agent-worker-client.js";
 import { createWorkerMessageLoop } from "../worker/message-loop.js";

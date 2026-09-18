@@ -3,14 +3,14 @@ import { HostClient } from "./host-client.js";
 import { createUtilityAssembly } from "./assembly.js";
 import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "@deepfield/contracts";
 import { Value } from "typebox/value";
-import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
+import { rawResearchRequest, structureResearchRequest } from "./capabilities/company-research/company-research-test-helpers.js";
 import {
   assistant,
   FakePiAgent,
   makeRuntime,
   request,
   stubModel,
-} from "./pi-chat-agent-test-helpers.js";
+} from "./agent/pi-chat-agent-test-helpers.js";
 import {
   flushPending,
   InMemoryEndpoint,

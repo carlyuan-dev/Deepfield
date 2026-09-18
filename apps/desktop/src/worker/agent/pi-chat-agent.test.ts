@@ -6,8 +6,8 @@ import { FakeAuditSink, type ToolBudgetSnapshot } from "@deepfield/tool-platform
 import { MAIN_AGENT_SYSTEM_PROMPT } from "@deepfield/application";
 import { SearchProviderError } from "@deepfield/retrieval";
 import { createPiChatAgent, PiChatAgentError, type SkillCatalogProvider } from "./pi-chat-agent.js";
-import { SkillNotFoundError, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import { createToolRuntime } from "./tool-runtime.js";
+import { SkillNotFoundError, type PiSkillCatalog } from "../../shared/pi-skill-catalog.js";
+import { createToolRuntime } from "../tools/tool-runtime.js";
 import {
   agentEnd,
   assistant,

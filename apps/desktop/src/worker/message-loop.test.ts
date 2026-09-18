@@ -8,7 +8,7 @@ import {
   type ToolExecutionEvent,
 } from "@deepfield/contracts";
 import { createWorkerMessageLoop, type ChatAgent, type ToolRuntime } from "./message-loop.js";
-import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
+import { rawResearchRequest, structureResearchRequest } from "./capabilities/company-research/company-research-test-helpers.js";
 import {
   echoAgent,
   echoToolRuntime,

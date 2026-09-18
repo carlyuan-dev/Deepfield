@@ -11,8 +11,8 @@ import {
   ToolSet,
 } from "@deepfield/tool-platform";
 import type { ToolDefinition, ToolRunContext } from "@deepfield/tool-platform";
-import { createPiChatAgent } from "./pi-chat-agent.js";
-import { assistant, FakePiAgent, makeRuntime, request, stubModel } from "./pi-chat-agent-test-helpers.js";
+import { createPiChatAgent } from "../agent/pi-chat-agent.js";
+import { assistant, FakePiAgent, makeRuntime, request, stubModel } from "../agent/pi-chat-agent-test-helpers.js";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { createPiAgentTools, deterministicOutputText, type PiToolAdapterContext } from "./pi-tool-adapter.js";
 import { createToolRuntime } from "./tool-runtime.js";

@@ -1,12 +1,12 @@
 import type { AgentWorkerRequest, CompanyResearchModelErrorCategory, CompanyResearchWorkerEvent, CompanyResearchWorkerRequest } from "@deepfield/contracts";
 import { StructuredResearchValidationError, validateStructuredResearch } from "@deepfield/application";
-import type { ChatAgent } from "./message-loop.js";
+import type { ChatAgent } from "../../message-loop.js";
 import { buildCompanyResearchPrompt } from "./company-research-prompt.js";
 import { buildCompanyResearchStructuringPrompt } from "./company-research-structuring-prompt.js";
-import { researchFailure } from "./message-loop-types.js";
+import { researchFailure } from "../../message-loop-types.js";
 import { CompanyResearchRawFilter } from "./company-research-raw-filter.js";
-import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "./pi-chat-agent.js";
-import { PiModelGateway, type ModelCompletionResult, type ModelGateway } from "../shared/model-gateway.js";
+import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "../../agent/pi-chat-agent.js";
+import { PiModelGateway, type ModelCompletionResult, type ModelGateway } from "../../../shared/model-gateway.js";
 
 export interface CompanyResearchAgentOptions {
   piRuntime?: PiRuntime;

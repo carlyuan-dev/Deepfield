@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { selectChatAgent, type ChatAgentFactories } from "./select-chat-agent.js";
-import type { ChatAgent } from "./message-loop.js";
+import type { ChatAgent } from "../message-loop.js";
 
 const fakeAgent: ChatAgent = { run: async () => {} };
 const piAgent: ChatAgent = { run: async () => {} };

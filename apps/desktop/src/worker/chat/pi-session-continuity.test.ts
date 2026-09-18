@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
 import { ContextBuilder } from "@deepfield/application";
-import { createPiChatAgent } from "./pi-chat-agent.js";
-import { assistant, capture, makeRecordingInstalledPiRuntime, request } from "./pi-chat-agent-test-helpers.js";
+import { createPiChatAgent } from "../agent/pi-chat-agent.js";
+import { assistant, capture, makeRecordingInstalledPiRuntime, request } from "../agent/pi-chat-agent-test-helpers.js";
 import { transcriptMessage } from "./pi-session-transcript.js";
 
 describe("persistent Pi Chat transcript", () => {

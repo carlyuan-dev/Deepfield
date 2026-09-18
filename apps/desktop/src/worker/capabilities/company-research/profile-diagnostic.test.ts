@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { profileSchemaIssues, safeProfilePath } from "./profile-diagnostic.js";
-import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
+import { profileResult } from "../../../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 describe("safe profile validation diagnostics", () => {
   it("reports reference item type without retaining values or arbitrary property names", () => {
     const { sources: _sources, ...candidate } = profileResult({ legalName: "secret-value" });

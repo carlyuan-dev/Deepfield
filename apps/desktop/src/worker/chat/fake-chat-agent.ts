@@ -1,4 +1,4 @@
-import type { ChatAgent } from "./message-loop.js";
+import type { ChatAgent } from "../message-loop.js";
 
 export type ScheduleFn = (callback: () => void) => void;
 

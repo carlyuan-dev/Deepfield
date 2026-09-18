@@ -1,7 +1,7 @@
 import { Value } from "typebox/value";
 import { CompanyProfileWorkerEventSchema, CompanyProfileWorkerRequestSchema, type CompanyProfileWorkerEvent } from "@deepfield/contracts";
-import { createCompanyProfileAgent, type CompanyProfileAgent } from "../worker/company-profile-agent.js";
-import { createToolRuntime } from "../worker/tool-runtime.js";
+import { createCompanyProfileAgent, type CompanyProfileAgent } from "../worker/capabilities/company-research/company-profile-agent.js";
+import { createToolRuntime } from "../worker/tools/tool-runtime.js";
 
 /** Isolated single-attempt harness. No production database/settings/file writes. */
 export async function runProfileDiagnostic(value: unknown, write: (safeJsonLine: string) => void, agent?: CompanyProfileAgent): Promise<0 | 1 | 2> {

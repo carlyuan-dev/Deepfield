@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runProfileDiagnostic } from "./profile-diagnose-runner.js";
-import { rawResearchRequest } from "../worker/company-research-test-helpers.js";
+import { rawResearchRequest } from "../worker/capabilities/company-research/company-research-test-helpers.js";
 import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 describe("isolated diagnostic harness", () => {
   it("never outputs request credentials, profile fields or model text", async () => {

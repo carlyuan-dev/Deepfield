@@ -1,19 +1,19 @@
-import type { PiRuntime, SkillCatalogProvider } from "./pi-chat-agent.js";
+import type { PiRuntime, SkillCatalogProvider } from "./agent/pi-chat-agent.js";
 import type { WorkerEndpoint, WorkerLoop } from "./message-loop.js";
 import { createWorkerMessageLoop } from "./message-loop.js";
-import { createFakeChatAgent } from "./fake-chat-agent.js";
-import { createPiChatAgent } from "./pi-chat-agent.js";
-import { selectChatAgent } from "./select-chat-agent.js";
+import { createFakeChatAgent } from "./chat/fake-chat-agent.js";
+import { createPiChatAgent } from "./agent/pi-chat-agent.js";
+import { selectChatAgent } from "./chat/select-chat-agent.js";
 import {
   createHostConversationReader,
   RemoteToolAuditSink,
   type HostClient,
 } from "./host-client.js";
-import { createToolRuntime, type UtilityToolRuntime } from "./tool-runtime.js";
+import { createToolRuntime, type UtilityToolRuntime } from "./tools/tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import { createCompanyResearchAgent } from "./company-research-agent.js";
+import { createCompanyResearchAgent } from "./capabilities/company-research/company-research-agent.js";
 import type { ResearchAgent } from "./message-loop.js";
-import { createCompanyProfileAgent } from "./company-profile-agent.js";
+import { createCompanyProfileAgent } from "./capabilities/company-research/company-profile-agent.js";
 
 const fakeCompanyResearchAgent: ResearchAgent = {
   async run(request, emit, signal) {

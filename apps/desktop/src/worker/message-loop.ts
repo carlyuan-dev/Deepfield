@@ -32,7 +32,7 @@ import {
   type WorkerEndpoint,
   type WorkerLoop,
 } from "./message-loop-types.js";
-import type { CompanyProfileAgent } from "./company-profile-agent.js";
+import type { CompanyProfileAgent } from "./capabilities/company-research/company-profile-agent.js";
 
 export type { ActiveExecution, ChatAgent, ResearchAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
 

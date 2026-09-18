@@ -40,7 +40,7 @@ import {
   createCurrentDatetimeDefinition,
   type ConversationReader,
 } from "@deepfield/utility-tools";
-import type { ToolRuntime } from "./message-loop.js";
+import type { ToolRuntime } from "../message-loop.js";
 import { createPiAgentTools } from "./pi-tool-adapter.js";
 
 class RealRetryClock implements RetryClock {
