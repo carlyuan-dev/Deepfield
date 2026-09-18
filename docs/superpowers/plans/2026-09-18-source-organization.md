@@ -90,3 +90,41 @@
 - 更新docs/README真实说明：默认实现留在兼容装配入口，执行器消费显式依赖；配置、工具协议仍未迁入Base。不得声称彻底独立Base.Agent。
 - 必要验证：先改直接测试观察入口不匹配RED，再实现。运行typecheck、build和以下受影响组一次（既有1 skip允许）：`npx --no-install vitest run apps/desktop/src/worker/agent apps/desktop/src/worker/chat apps/desktop/src/worker/capabilities/company-research/company-research-agent.test.ts apps/desktop/src/worker/capabilities/company-research/company-profile-agent.test.ts apps/desktop/src/worker/capabilities/company-research/company-profile-run.test.ts apps/desktop/src/worker/assembly.test.ts apps/desktop/src/shared/model-gateway.test.ts apps/desktop/src/shared/usage-collection.test.ts packages/base/src/architecture.test.ts`。不调用真实Provider、不打包应用、不修改用户数据。
 - 子Agent不提交，由主Agent复核后提交、合并main并推送；保留用户未跟踪材料。
+
+## 本批完成标准（2026-09-19 收口）
+
+本批指第二批源码职责归类与执行器边界整理，不包含Base.Agent迁移。Task 7完成窄契约入口与边界守卫，Task 8进行整批验收和文档收口后结束，不再无限增加小步骤。仍保持现有Chat/Capability使用方式、所有运行行为、公共旧入口、持久化格式与安装包不变；不新增业务功能。
+
+## Task 7: 配置与工具协议窄入口及执行器依赖守卫
+
+- `packages/contracts/src/model-config.ts`：从settings.ts原样迁移纯LLM/Search配置定义（protocol/provider枚举、presets、base字段、draft/view/runtime snapshot、JsonOptions、SettingsField、SearchProviderManifest及类型）。不迁移SettingsView、DiagnosticResult、PublicAppError依赖；新文件只依赖TypeBox。settings.ts导入自己的3个view/manifest依赖并重新导出model-config，保留所有既有出口；Id等简单本地schema约束按原值保留，不能改变任何校验边界或schema结构。
+- 将ToolAccessPolicySchema/类型从settings.ts原样移至tools.ts；settings.ts重新导出保持内部相对路径兼容。避免重复定义或新schema转换，旧root导出与新窄入口必须指向同一schema对象。
+- 在contracts/package.json增加 `./model-config`→`./src/model-config.ts`、`./tools`→`./src/tools.ts` 公开入口，tsconfig.base.json加入对应精确path。现有 `.` 入口保持。
+- `packages/tool-platform/src/budget-contract.ts`：原样承接 ToolMeterCategory、BudgetDimensionSnapshot、ToolBudgetSnapshot 三个类型，不依赖业务/执行器。definition.ts及budget.ts改为导入并重新导出原符号，保留根入口与内部消费者；不改预算实现。tool-platform/package.json增加 `./budget-contract` 入口和tsconfig精确path。
+- retrieval现有search-provider.ts无业务依赖，直接公开 `./search-provider` 子入口和tsconfig精确path，不复制SearchProvider定义、不改其实现/错误class。
+- 更新通用执行器闭包的生产imports：pi-execution-contract、pi-runtime、pi-executor-dependencies、pi-agent-executor、pi-tool-results、agent-run-control、runtime-budget-context、tool-batch-admission。配置走contracts/model-config，ToolAccessPolicy/批次/审计走contracts/tools，预算类型走tool-platform/budget-contract，SearchProvider走retrieval/search-provider。不要求全项目替换root imports，pi-chat-agent/default-runtime等装配文件仍可使用原入口。
+- 新增最小契约兼容用例（contracts目录）：原root/原settings/新窄入口schema同对象；合法runtime snapshots和ToolAccessPolicy仍通过，空Key、越界policy等仍拒绝。主要依靠原contracts/tools/budget测试，勿新增重复大套case。
+- 新增 `apps/desktop/src/worker/agent/pi-execution-boundary.test.ts` 轻量AST依赖检查，覆盖executor及三个核心契约入口的传递静态/动态/type import与re-export，允许原生Pi、TypeBox、node:crypto和明确中性子入口。拒绝Chat/Capability/shared/default-runtime/兼容factory、contracts/retrieval/tool-platform根总入口、其他apps层和不可解析的动态路径；允许核心agent模块和两个纯工具投影模块。使用现有TypeScript或babel解析器，不新增依赖。对实际源码图检查，并至少用小型负例证明经本地转出口绕回Chat或root总入口会失败。不得把type import一概跳过，也不得只靠文本grep。这个守卫是Worker执行器边界，不取代Base架构测试。
+- docs/README说明窄入口用途，明确当前中性契约仍属于现有packages，尚未下沉Base；不增加层级、不改Base现有依赖规则。更新package exports不需要升级依赖或联网install。
+- 验证：新增守卫在原宽入口上先RED，再作迁移。typecheck、build；一次受影响回归：`npx --no-install vitest run packages/contracts/src packages/tool-platform/src packages/retrieval/src/search-provider.test.ts packages/base/src/architecture.test.ts apps/desktop/src/worker/agent apps/desktop/src/worker/chat apps/desktop/src/worker/capabilities/company-research/company-research-agent.test.ts apps/desktop/src/worker/capabilities/company-research/company-profile-agent.test.ts apps/desktop/src/worker/capabilities/company-research/company-profile-run.test.ts apps/desktop/src/worker/assembly.test.ts apps/desktop/src/shared/model-gateway.test.ts apps/desktop/src/shared/usage-collection.test.ts`。不调用真实Provider、不打包、不碰用户数据。
+- 子Agent实现并自审、不提交不暂存；主Agent独立审查、必要复验后合并推送。
+
+## Task 8: 本批整体验收与文档收口
+
+- 主Agent复核Task1至Task7的最终模块与依赖方向，确认旧公共入口、原生Pi Loop、Chat历史/checkpoint、Capability专属流程、用量接线仍各守职责。
+- 在既有计划和docs/README中记录完成状态、已验证范围和剩余独立议题，不把本批完成描述为Base.Agent完整迁移。
+- 完成一次面向当前完整结果的独立审查，聚焦跨步骤接线/出口/默认行为/依赖规则，不重复每一步的测试大套。发现本批问题交子Agent修复，必要定向回归。
+- 最后运行typecheck、build及Application/Worker/边界相关必要集成测试；不以本批为由开启全仓库历史债务修复。真实Provider和UI手测由用户后续完成。
+- 提交、合并并推送main；保留用户材料和最新安装包。报告本批成果、验证结果、尚未包含的后续事项，本批结束。
+
+## 本批验收记录
+
+状态：Task 1–8 已完成，第二批在此收口。2026-09-19 最终独立审查对 Task 7 规格/质量及整批接线均给出 PASS，无重要问题；核验范围涵盖单一Pi循环/错误类、默认依赖与计量、每run历史隔离、Capability流程和公共出口。
+
+- Application与Worker按Chat、公司调研、工具、运行时职责归类；Application公共出口保留。
+- Pi执行循环、运行时辅助函数和Chat会话适配分离；Chat管理历史/provenance/checkpoint，Capability仍保留专用流程与输出校验。两者继续复用同一原生Pi执行循环。
+- 执行请求/事件为独立契约；模型密钥、运行时、Search工厂显式注入，默认模型和用量采集仍由兼容入口装配。
+- 通用配置、工具协议、预算快照和Search Provider使用窄入口，旧出口保持；AST守卫递归检查依赖并校验package exports与TypeScript paths。
+- 2026-09-19必要自动验证：契约/工具/Agent受影响组45文件462通过、1原有跳过；Application/Worker/Main接线组21文件361通过；类型检查与main/preload/renderer构建通过。不包含真实Provider、桌面真人操作或全仓历史债务验证。
+- 10项既有公司档案测试失败已单独修复完整ModelGateway测试替身（5165469），未改生产行为或弱化断言。
+- 未做事项：没有迁入Base.Agent，没有新增模型路由/工具或改变业务规则，没有改变数据库格式，也没有重打包本地release。后续Base迁移应独立设计公开API、依赖和兼容策略，不继续附加在本批目录整理中。

@@ -1,8 +1,8 @@
 import type {
   LlmRuntimeSnapshot,
   SearchRuntimeSnapshot,
-  ToolAccessPolicy,
-} from "@deepfield/contracts";
+} from "@deepfield/contracts/model-config";
+import type { ToolAccessPolicy } from "@deepfield/contracts/tools";
 
 export interface PiExecutionContextMessage {
   role: "user" | "assistant";

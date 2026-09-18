@@ -1,5 +1,15 @@
 import type { ToolIdentity } from "@deepfield/contracts";
-import type { ToolMeterCategory } from "./definition.js";
+import type {
+  BudgetDimensionSnapshot,
+  ToolBudgetSnapshot,
+  ToolMeterCategory,
+} from "./budget-contract.js";
+
+export type {
+  BudgetDimensionSnapshot,
+  ToolBudgetSnapshot,
+  ToolMeterCategory,
+} from "./budget-contract.js";
 
 export class ToolBudgetError extends Error {
   readonly code = "budget_exceeded" as const;
@@ -23,19 +33,6 @@ export interface ToolBudgetLimits {
 export interface ToolBudgetToken {
   readonly identity: ToolIdentity;
   readonly category: ToolMeterCategory;
-}
-
-export interface BudgetDimensionSnapshot {
-  limit?: number;
-  reserved: number;
-  consumed: number;
-  remaining?: number;
-  exhausted: boolean;
-}
-
-export interface ToolBudgetSnapshot {
-  total: BudgetDimensionSnapshot;
-  categories: Record<ToolMeterCategory, BudgetDimensionSnapshot>;
 }
 
 const METER_CATEGORY_VALUES = ["search", "fetch", "link_check", "parse", "none"] as const;

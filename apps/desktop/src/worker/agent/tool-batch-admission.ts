@@ -1,4 +1,4 @@
-import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
+import type { ToolBudgetSnapshot } from "@deepfield/tool-platform/budget-contract";
 
 export type PlannedDisposition = "admitted" | "skipped" | "reused";
 export type NetworkToolCallName = "web_search" | "read_webpage";

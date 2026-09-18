@@ -1,4 +1,4 @@
-import type { BudgetDimensionSnapshot } from "@deepfield/tool-platform";
+import type { BudgetDimensionSnapshot } from "@deepfield/tool-platform/budget-contract";
 import type { AgentRunControl } from "./agent-run-control.js";
 
 export interface RuntimeBatchSummary {

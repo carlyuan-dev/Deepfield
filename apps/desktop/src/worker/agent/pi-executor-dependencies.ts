@@ -2,8 +2,8 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   LlmRuntimeSnapshot,
   SearchRuntimeSnapshot,
-} from "@deepfield/contracts";
-import type { SearchProvider } from "@deepfield/retrieval";
+} from "@deepfield/contracts/model-config";
+import type { SearchProvider } from "@deepfield/retrieval/search-provider";
 import type { RuntimeSystemContextOptions } from "./runtime-system-context.js";
 import type {
   PiRunDiagnostic,

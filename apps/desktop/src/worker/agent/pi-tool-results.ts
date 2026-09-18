@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ToolExecutionBatchScope } from "@deepfield/contracts";
+import type { ToolExecutionBatchScope } from "@deepfield/contracts/tools";
 
 export interface CachedPiToolOutcome {
   status: "completed" | "failed";

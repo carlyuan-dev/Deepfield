@@ -1,6 +1,9 @@
 import type { Static, TSchema } from "typebox";
 import type { ToolIdentity } from "@deepfield/contracts";
+import type { ToolMeterCategory } from "./budget-contract.js";
 import type { ToolSet } from "./tool-set.js";
+
+export type { ToolMeterCategory } from "./budget-contract.js";
 
 export type ToolActor =
   | "main_agent"
@@ -42,8 +45,6 @@ export interface ToolRetryPolicy {
   readonly maxRetries: 0 | 1 | 2;
   readonly backoffMs: number;
 }
-
-export type ToolMeterCategory = "search" | "fetch" | "link_check" | "parse" | "none";
 
 export interface ToolMeter {
   readonly category: ToolMeterCategory;

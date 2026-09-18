@@ -2,5 +2,8 @@
   "name": "@deepfield/tool-platform",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts",
+    "./budget-contract": "./src/budget-contract.ts"
+  }
 }

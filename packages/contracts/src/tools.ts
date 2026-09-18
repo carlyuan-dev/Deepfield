@@ -47,6 +47,17 @@ export const ToolExecutionBatchScopeSchema = Type.Object(
 );
 export type ToolExecutionBatchScope = Static<typeof ToolExecutionBatchScopeSchema>;
 
+export const ToolAccessPolicySchema = Type.Object(
+  {
+    network: Type.Union([Type.Literal("disabled"), Type.Literal("enabled")]),
+    maxAgentTurns: Type.Integer({ minimum: 1, maximum: 100 }),
+    maxSearchCalls: Type.Integer({ minimum: 0, maximum: 100 }),
+    maxFetchCalls: Type.Integer({ minimum: 0, maximum: 100 }),
+  },
+  { additionalProperties: false },
+);
+export type ToolAccessPolicy = Static<typeof ToolAccessPolicySchema>;
+
 export const SyntheticToolExecutionStatusSchema = Type.Union([
   Type.Literal("skipped"),
   Type.Literal("reused"),

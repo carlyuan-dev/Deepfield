@@ -4,7 +4,7 @@ import type {
   AgentToolResult,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import type { ToolExecutionBatchScope } from "@deepfield/contracts";
+import type { ToolExecutionBatchScope } from "@deepfield/contracts/tools";
 import { buildRuntimeSystemContext } from "./runtime-system-context.js";
 import { safeToolActivity, type SafeToolActivity } from "../tools/tool-activity.js";
 import { toolResultProjection } from "../tools/tool-source-projection.js";

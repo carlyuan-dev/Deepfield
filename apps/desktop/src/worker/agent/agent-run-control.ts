@@ -1,4 +1,4 @@
-import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
+import type { ToolBudgetSnapshot } from "@deepfield/tool-platform/budget-contract";
 
 export type AgentPhase = "deciding" | "executing" | "synthesizing" | "done";
 export type NetworkToolName = "web_search" | "read_webpage";

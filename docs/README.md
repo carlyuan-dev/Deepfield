@@ -16,6 +16,7 @@
 - `packages/application/src/testing/`：Application 及跨包测试共享的数据库 helper 与 fixture。
 - `packages/application/src/ports.ts`：Application 对外部运行时与能力适配器的端口定义。
 - `packages/application/src/index.ts`：Application 公共导出入口；目录调整不改变其公共 API。
+- `packages/contracts/src/model-config.ts`、`packages/contracts/src/tools.ts`、`packages/tool-platform/src/budget-contract.ts` 与 `packages/retrieval/src/search-provider.ts`：为通用执行器提供配置、工具协议、预算快照和搜索 Provider 的窄入口，避免执行器依赖各包根总入口；旧根入口与 `settings` 兼容出口继续保留。
 - `apps/desktop/src/worker/`：Worker 入口、装配、主进程传输、消息生命周期与用量运行时。
 - `apps/desktop/src/worker/agent/`：Pi Agent 执行与运行时契约；`pi-execution-contract` 定义不依赖 Chat Worker 形状的执行请求、事件与工具来源，`pi-agent-executor` 保留执行循环并只消费显式注入的运行时、密钥读取与搜索 Provider 工厂，`pi-execution-context` 定义注入的 Pi 会话上下文边界，`pi-chat-agent` 是保持旧 API、装配默认具体实现的兼容工厂。`pi-runtime` 只定义运行时契约，`pi-default-runtime` 提供默认 Pi 实现；`pi-message-utils`、`pi-tool-results` 和 `finalization-prompts` 分别承载消息判定、工具结果处理和终局提示词，运行控制、运行时上下文与工具批次准入保持为独立模块。
 - `apps/desktop/src/worker/chat/`：Chat agent 选择、消息映射、Chat 提示词、会话转录与每轮 checkpoint 收集；`pi-chat-context` 将这些 Chat 行为装配为执行器上下文。
@@ -24,9 +25,11 @@
 
 已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
 
-Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，且不导入 `chat/`、desktop shared 具体模型、Search 计量工厂或 Skill 目录实现；Chat 提示词、会话恢复、历史 provenance 和 checkpoint 由 `pi-chat-agent` 在每次 run 经 `pi-chat-context` 适配。`pi-chat-agent` 继续实现旧 `ChatAgent` 工厂 API，并在兼容装配入口保留默认模型运行时、密钥读取与 Search 计量实现；Capability 调用点也仍经该兼容工厂进入执行器。执行器仍依赖现有配置与工具协议，尚未迁入 Base；本边界不是 Base.Agent，也不表示 Worker 传输契约已经移除。
+Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，且不导入 `chat/`、desktop shared 具体模型、Search 计量工厂或 Skill 目录实现；Chat 提示词、会话恢复、历史 provenance 和 checkpoint 由 `pi-chat-agent` 在每次 run 经 `pi-chat-context` 适配。`pi-chat-agent` 继续实现旧 `ChatAgent` 工厂 API，并在兼容装配入口保留默认模型运行时、密钥读取与 Search 计量实现；Capability 调用点也仍经该兼容工厂进入执行器。执行器通过上述窄入口依赖现有配置与工具协议；这些中性契约仍属于现有 packages，尚未下沉 Base，也没有增加新的架构层级或改变 Base 依赖规则。本边界不是 Base.Agent，也不表示 Worker 传输契约已经移除。
 
 ## 历史决策与过程参考
+
+本轮源码整理的范围与验收记录见[第二批源码职责归类](superpowers/plans/2026-09-18-source-organization.md#本批验收记录)：完成职责归类、执行器适配/依赖拆分和窄契约守卫；不包含Base.Agent迁移、业务功能变更或安装包更新。
 
 `superpowers/specs/` 和 `superpowers/plans/` 下的日期型文件保留用于追溯背景、批准方向和实施过程，不作为当前实现的完整事实来源；同一文件中的后续更新可能覆盖早期章节。`manual-tests/` 记录特定切片的人工验收清单，也需结合当前代码使用。本轮不搬迁或删除这些材料。
 

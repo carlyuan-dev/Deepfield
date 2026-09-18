@@ -19,11 +19,15 @@
     "paths": {
       "@deepfield/base/usage": ["./packages/base/src/usage/index.ts"],
       "@deepfield/contracts": ["./packages/contracts/src/index.ts"],
+      "@deepfield/contracts/model-config": ["./packages/contracts/src/model-config.ts"],
+      "@deepfield/contracts/tools": ["./packages/contracts/src/tools.ts"],
       "@deepfield/persistence": ["./packages/persistence/src/index.ts"],
       "@deepfield/tool-platform": ["./packages/tool-platform/src/index.ts"],
+      "@deepfield/tool-platform/budget-contract": ["./packages/tool-platform/src/budget-contract.ts"],
       "@deepfield/utility-tools": ["./packages/utility-tools/src/index.ts"],
       "@deepfield/application": ["./packages/application/src/index.ts"],
-      "@deepfield/retrieval": ["./packages/retrieval/src/index.ts"]
+      "@deepfield/retrieval": ["./packages/retrieval/src/index.ts"],
+      "@deepfield/retrieval/search-provider": ["./packages/retrieval/src/search-provider.ts"]
     }
   },
   "include": [

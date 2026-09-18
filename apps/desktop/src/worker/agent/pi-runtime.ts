@@ -6,13 +6,13 @@ import type {
   StreamFn,
 } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { LlmRuntimeSnapshot } from "@deepfield/contracts/model-config";
 import type {
-  LlmRuntimeSnapshot,
   ToolExecutionBatchScope,
   ToolSyntheticAuditRecord,
-} from "@deepfield/contracts";
-import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
-import type { SearchProvider } from "@deepfield/retrieval";
+} from "@deepfield/contracts/tools";
+import type { ToolBudgetSnapshot } from "@deepfield/tool-platform/budget-contract";
+import type { SearchProvider } from "@deepfield/retrieval/search-provider";
 
 export class PiChatAgentError extends Error {
   constructor(
