@@ -3,10 +3,19 @@ import { FakeAuditSink } from "@deepfield/tool-platform";
 import type { CompanyProfileWorkerEvent, CompanyProfileWorkerRequest } from "@deepfield/contracts";
 import { createCompanyProfileAgent } from "./company-profile-agent.js";
 import { createToolRuntime } from "../../tools/tool-runtime.js";
-import { assistant, makeRecordingInstalledPiRuntime } from "../../agent/pi-chat-agent-test-helpers.js";
+import { assistant, makeRecordingInstalledPiRuntime, stubModel } from "../../agent/pi-chat-agent-test-helpers.js";
 import { rawResearchRequest } from "./company-research-test-helpers.js";
 import { SearchProviderError } from "@deepfield/retrieval";
 import { profileResult } from "../../../../../../packages/application/src/testing/company-profile-test-fixtures.js";
+import type { ModelGateway } from "../../../shared/model-gateway.js";
+
+function gatewayWithCompleteText(completeText: ModelGateway["completeText"]): ModelGateway {
+  return {
+    createModel: () => stubModel,
+    getApiKey: async (snapshot) => snapshot.apiKey,
+    completeText,
+  };
+}
 
 describe("profile capability generic Agent run", () => {
   it.each([
@@ -21,7 +30,7 @@ describe("profile capability generic Agent run", () => {
       assistant(output), assistant(output),
     ]);
     const events: CompanyProfileWorkerEvent[] = [];
-    await createCompanyProfileAgent({ piRuntime: recording.runtime, gateway: { completeText } as never, toolSessions: { ...tools,
+    await createCompanyProfileAgent({ piRuntime: recording.runtime, gateway: gatewayWithCompleteText(completeText), toolSessions: { ...tools,
       bindSearchProvider: (trace, _provider, limits) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search: async () => ({ provider: "fixture", results: [{ title: "公司", url: "https://example.com", snippet: "公司资料", rank: 1, provider: "fixture" }] }) }, limits),
     } }).run({ kind: "company-profile.enrich", requestId: "trace", companyId: "c1", name: "公司", researchTopics: [], existingFields: {}, llm: raw.llm, search: raw.search }, (event) => events.push(event), new AbortController().signal);
     expect(events[0]).toMatchObject({ type: "diagnostic", code, searchSourceCount: 1, searchToolCalls: 1, model: { stopReason: "stop" } });
@@ -102,7 +111,7 @@ describe("profile capability generic Agent run", () => {
 
     await createCompanyProfileAgent({
       piRuntime: recording.runtime,
-      gateway: { completeText } as never,
+      gateway: gatewayWithCompleteText(completeText),
       toolSessions: { ...tools, bindSearchProvider: (trace, _provider, limits) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search }, limits) },
     }).run(request, (event) => events.push(event), new AbortController().signal);
 
@@ -140,7 +149,7 @@ describe("profile capability generic Agent run", () => {
     const events: CompanyProfileWorkerEvent[] = [];
     await createCompanyProfileAgent({
       piRuntime: recording.runtime,
-      gateway: { completeText } as never,
+      gateway: gatewayWithCompleteText(completeText),
       toolSessions: { ...tools, bindSearchProvider: (trace, _provider, limits) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search: async () => ({ provider: "fixture", results: [{ title: "示例公司", url: "https://example.com", snippet: "示例公司资料", rank: 1, provider: "fixture" }] }) }, limits) },
     }).run({ kind: "company-profile.enrich", requestId: "repair-invalid", companyId: "c1", name: "示例公司", researchTopics: [], existingFields: {}, llm: raw.llm, search: raw.search }, (event) => events.push(event), new AbortController().signal);
 
@@ -163,7 +172,7 @@ describe("profile capability generic Agent run", () => {
     const events: CompanyProfileWorkerEvent[] = [];
     await createCompanyProfileAgent({
       piRuntime: recording.runtime,
-      gateway: { completeText } as never,
+      gateway: gatewayWithCompleteText(completeText),
       toolSessions: { ...tools, bindSearchProvider: (trace, _provider, limits) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search: async () => ({ provider: "fixture", results: [{ title: "公司手机业务", url: ref.url, snippet: "存在两个无法区分的主体", rank: 1, provider: "fixture" }] }) }, limits) },
     }).run({ kind: "company-profile.enrich", requestId: "ambiguous", companyId: "c1", name: "公司", researchTopics: ["手机"], existingFields: {}, llm: raw.llm, search: raw.search }, (event) => events.push(event), new AbortController().signal);
 
@@ -184,7 +193,7 @@ describe("profile capability generic Agent run", () => {
     const events: CompanyProfileWorkerEvent[] = [];
     const run = createCompanyProfileAgent({
       piRuntime: recording.runtime,
-      gateway: { completeText } as never,
+      gateway: gatewayWithCompleteText(completeText),
       toolSessions: { ...tools, bindSearchProvider: (trace, _provider, limits) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search: async () => ({ provider: "fixture", results: [{ title: "示例公司", url: "https://example.com", snippet: "示例公司资料", rank: 1, provider: "fixture" }] }) }, limits) },
     }).run({ kind: "company-profile.enrich", requestId: "repair-cancel", companyId: "c1", name: "示例公司", researchTopics: [], existingFields: {}, llm: raw.llm, search: raw.search }, (event) => events.push(event), controller.signal);
     await vi.waitFor(() => expect(completeText).toHaveBeenCalledOnce());
@@ -202,7 +211,7 @@ describe("profile capability generic Agent run", () => {
     const completeText = vi.fn(async () => "不应调用");
     const recording = makeRecordingInstalledPiRuntime([assistant("这不是JSON"), assistant("这不是JSON")]);
     const events: CompanyProfileWorkerEvent[] = [];
-    await createCompanyProfileAgent({ piRuntime: recording.runtime, gateway: { completeText } as never, toolSessions: tools })
+    await createCompanyProfileAgent({ piRuntime: recording.runtime, gateway: gatewayWithCompleteText(completeText), toolSessions: tools })
       .run({ kind: "company-profile.enrich", requestId: "no-evidence-repair", companyId: "c1", name: "示例公司", researchTopics: [], existingFields: {}, llm: raw.llm, search: raw.search }, (event) => events.push(event), new AbortController().signal);
 
     expect(completeText).not.toHaveBeenCalled();
