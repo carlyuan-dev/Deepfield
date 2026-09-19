@@ -4,6 +4,8 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentWorkerRequest, CompanyResearchWorkerEvent } from "@deepfield/contracts";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import type { ChatAgent } from "../../message-loop.js";
+import { createWorkerMessageLoop } from "../../message-loop.js";
+import { echoAgent, InMemoryEndpoint } from "../../message-loop-test-helpers.js";
 import { createCompanyResearchAgent } from "./company-research-agent.js";
 import { PiChatAgentError } from "../../agent/pi-chat-agent.js";
 import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
@@ -136,6 +138,37 @@ function toolTurn(calls: AssistantMessage["content"]): AssistantMessage {
 }
 
 describe("generic company research agent", () => {
+  it("completes through the worker loop when real search activities include chat-only display metadata", async () => {
+    const rawReport = "# 宇树科技调研报告\n\n公开资料支持公司持续推进机器人商业化。";
+    const runtime = makeInstalledPiRuntime([
+      toolTurn([{
+        type: "toolCall",
+        id: "search-1",
+        name: "web_search",
+        arguments: { query: "宇树科技商业化" },
+      }]),
+      assistant(rawReport),
+    ]);
+    const endpoint = new InMemoryEndpoint();
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, {
+      researchAgent: createCompanyResearchAgent({
+        piRuntime: runtime,
+        toolSessions: makeResearchToolSessions(1, 0),
+      }),
+    });
+
+    endpoint.emit(rawResearchRequest());
+    await vi.waitFor(() => expect(loop.activeCount()).toBe(0));
+
+    const searchActivities = endpoint.posted.filter((event) =>
+      (event as { type?: string; name?: string }).type === "tool_activity" &&
+      (event as { name?: string }).name === "web_search"
+    ) as CompanyResearchWorkerEvent[];
+    expect(searchActivities.map((event) => event.type === "tool_activity" ? event.status : undefined)).toEqual(["running", "completed"]);
+    expect(endpoint.posted.at(-1)).toMatchObject({ type: "completed", stage: "raw", text: rawReport });
+    loop.dispose();
+  });
+
   it.each(["natural_stop", "budget_exhausted"] as const)(
     "keeps research requirements but removes exploration instructions from %s finalization",
     async (reason) => {

@@ -201,8 +201,20 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
               const delta = previewFilter.push(event.delta);
               if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });
             } else if (event.type === "tool_activity") {
-              const { requestId: _requestId, ...activity } = event;
-              emit({ ...identity, stage: "raw", ...activity });
+              emit({
+                ...identity,
+                stage: "raw",
+                type: "tool_activity",
+                callKey: event.callKey,
+                name: event.name,
+                status: event.status,
+                ...(event.summary === undefined ? {} : { summary: event.summary }),
+                ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
+                ...(event.agentTurnIndex === undefined ? {} : { agentTurnIndex: event.agentTurnIndex }),
+                ...(event.batchId === undefined ? {} : { batchId: event.batchId }),
+                ...(event.toolCallId === undefined ? {} : { toolCallId: event.toolCallId }),
+                ...(event.budgetConsumed === undefined ? {} : { budgetConsumed: event.budgetConsumed }),
+              });
             } else if (event.type === "completed") {
               terminalSeen = true;
               terminalText = event.text;

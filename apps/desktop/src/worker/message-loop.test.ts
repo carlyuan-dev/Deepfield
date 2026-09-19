@@ -5,6 +5,7 @@ import {
   CompanyResearchWorkerEventSchema,
   ToolEventEnvelopeSchema,
   type AgentWorkerEvent,
+  type CompanyResearchWorkerEvent,
   type ToolExecutionEvent,
 } from "@deepfield/contracts";
 import { createWorkerMessageLoop, type ChatAgent, type ToolRuntime } from "./message-loop.js";
@@ -51,6 +52,42 @@ describe("worker message loop", () => {
     await flushPending();
     expect(endpoint.posted).toHaveLength(1);
     expect(endpoint.posted[0]).toMatchObject({ type: "failed", stage: "structure", code: "structuring_failed" });
+    expect(aborted).toBe(true);
+    expect(loop.activeCount()).toBe(0);
+    loop.dispose();
+  });
+
+  it("classifies an invalid raw research event as protocol_error and suppresses later events", async () => {
+    const endpoint = new InMemoryEndpoint();
+    let aborted = false;
+    const loop = createWorkerMessageLoop(endpoint, echoAgent, {
+      researchAgent: { async run(req, emit, signal) {
+        signal.addEventListener("abort", () => { aborted = true; });
+        emit({
+          requestId: req.requestId,
+          runId: req.runId,
+          stage: "raw",
+          type: "tool_activity",
+          callKey: "search-1",
+          name: "web_search",
+          status: "completed",
+          queryOrUrl: "chat-only metadata",
+        } as unknown as CompanyResearchWorkerEvent);
+        emit({ requestId: req.requestId, runId: req.runId, stage: "raw", type: "completed", text: "late" });
+      } },
+    });
+
+    endpoint.emit(rawResearchRequest());
+    await flushPending();
+
+    expect(endpoint.posted).toEqual([{
+      requestId: rawResearchRequest().requestId,
+      runId: rawResearchRequest().runId,
+      stage: "raw",
+      type: "failed",
+      code: "protocol_error",
+      message: "company research failed",
+    }]);
     expect(aborted).toBe(true);
     expect(loop.activeCount()).toBe(0);
     loop.dispose();

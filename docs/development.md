@@ -4,7 +4,19 @@ Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本�
 Chat、Capability 壳层、有限功能测试、E2E 与本地打包流程。
 
 当前阅读顺序与历史文档定位见[文档阅读地图](README.md)。本机正式工作目录为
-`/Users/carl/Project/Deepfield`，以 `main` 为主线；worktree 是临时隔离目录，完成验证并合并后整理，不把历史 worktree 名称写成固定开发入口。
+`/Users/carl/Project/Deepfield`，日常开发使用 `develop`；worktree 是临时隔离目录，完成验证并合并后整理，不把历史 worktree 名称写成固定开发入口。
+
+## 分支与版本管理
+
+三个长期分支按 `develop → staging → main` 流转：
+
+- `develop`：日常开发与修复，只在这里修改代码。
+- `staging`：待验收最新版；从 `develop` 合并并完成必要测试后打包，交用户手测。
+- `main`：稳定版；仅在用户验收通过后从 `staging` 合并，不直接开发。
+
+手测发现问题回到 `develop` 修复，再按同一路径推进。默认不强推、不覆盖已有提交。
+每次稳定验收添加可追溯标签；`stable-2026-09-19` 为三分支建立时的验收基线，
+不是正式 1.0 发布。正式版本发布另行确认。仓库默认分支保持 `main`，本地工作分支为 `develop`。
 
 ## 环境要求
 

@@ -141,7 +141,7 @@ export function createWorkerMessageLoop(
         event.runId !== request.runId ||
         event.stage !== request.stage
       ) {
-        execution.settle("research_failed", "company research failed", true);
+        execution.settle(request.stage === "raw" ? "protocol_error" : "structuring_failed", "company research failed", true);
         return;
       }
       if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
@@ -369,6 +369,17 @@ export function createWorkerMessageLoop(
         return;
       }
       if (execution.kind === "research" && execution.runId !== undefined && execution.stage !== undefined) {
+        if (execution.stage === "raw" && code === "protocol_error") {
+          endpoint.postMessage({
+            requestId,
+            runId: execution.runId,
+            stage: "raw",
+            type: "failed",
+            code: "protocol_error",
+            message: "company research failed",
+          } satisfies CompanyResearchWorkerEvent);
+          return;
+        }
         endpoint.postMessage({
           requestId,
           runId: execution.runId,
