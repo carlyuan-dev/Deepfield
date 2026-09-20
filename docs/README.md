@@ -29,7 +29,7 @@ Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，且
 
 ## 历史决策与过程参考
 
-Capability 包化目标见 [Capability 架构设计文档](capabilities/capability.overview.设计文档.md)（2026-09-20 草案，待审阅）：自有可信包、启动扫描与按需加载、统一动作协议、Chat 渐进说明加载，以及 Capability A 的迁移边界。当前代码尚未实现该加载协议。
+Capability 包化目标见 [Capability 架构设计文档](capabilities/capability.overview.设计文档.md)（2026-09-20 设计已确认）：自有可信包、启动扫描与按需加载、统一动作协议、Chat 渐进说明加载，以及 Capability A 的迁移边界。[第一批实施计划](superpowers/plans/2026-09-20-capability-packages-phase-1.md)待审阅；当前代码尚未实现该加载协议。
 
 本轮源码整理的范围与验收记录见[第二批源码职责归类](superpowers/plans/2026-09-18-source-organization.md#本批验收记录)：完成职责归类、执行器适配/依赖拆分和窄契约守卫；不包含Base.Agent迁移、业务功能变更或安装包更新。
 
