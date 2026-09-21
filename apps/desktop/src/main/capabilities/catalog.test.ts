@@ -27,6 +27,12 @@ function manifest(id: string) {
   };
 }
 
+function deeplyNestedArraySchema(depth: number): Record<string, unknown> {
+  let schema: Record<string, unknown> = { type: "string" };
+  for (let index = 0; index < depth; index += 1) schema = { type: "array", items: schema };
+  return schema;
+}
+
 async function makePackage(root: string, directory: string, value = manifest(directory)) {
   const packageRoot = join(root, directory);
   await mkdir(join(packageRoot, "dist"), { recursive: true });
@@ -58,6 +64,19 @@ describe("scanCapabilities", () => {
 
     expect(catalog.entries.map(({ manifest: value }) => value.id)).toEqual(["good"]);
     expect(catalog.issues).toContainEqual({ packageName: "broken", code: "invalid_manifest" });
+  });
+
+  it("keeps valid siblings when recursive manifest validation overflows", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deepfield-catalog-"));
+    await makePackage(root, "good");
+    const nested = manifest("nested");
+    (nested.actions[0] as { inputSchema: Record<string, unknown> }).inputSchema = deeplyNestedArraySchema(3_000);
+    await makePackage(root, "nested", nested);
+
+    await expect(scanCapabilities(root)).resolves.toMatchObject({
+      entries: [{ manifest: { id: "good" } }],
+      issues: [{ packageName: "nested", code: "invalid_manifest" }],
+    });
   });
 
   it("removes every package sharing a duplicate id", async () => {

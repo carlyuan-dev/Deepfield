@@ -37,6 +37,18 @@ const validManifest = {
   }],
 } as const;
 
+function deeplyNestedArraySchema(depth: number): Record<string, unknown> {
+  let schema: Record<string, unknown> = { type: "string" };
+  for (let index = 0; index < depth; index += 1) schema = { type: "array", items: schema };
+  return schema;
+}
+
+function deeplyNestedArrayValue(depth: number): unknown[] {
+  let value: unknown[] = [];
+  for (let index = 0; index < depth; index += 1) value = [value];
+  return value;
+}
+
 describe("validateManifest", () => {
   it("accepts the closed v1 probe declaration", () => {
     expect(validateManifest(validManifest)).toEqual({ ok: true, manifest: validManifest });
@@ -81,6 +93,27 @@ describe("validateManifest", () => {
       }],
     };
     expect(validateManifest(withRemoteRef)).toEqual({ ok: false, code: "invalid_manifest" });
+  });
+
+  it("returns invalid_manifest when recursive schema validation exceeds the checker stack", () => {
+    const deeplyNested = {
+      ...validManifest,
+      actions: [{ ...validManifest.actions[0], inputSchema: deeplyNestedArraySchema(3_000) }],
+    };
+
+    expect(validateManifest(deeplyNested)).toEqual({ ok: false, code: "invalid_manifest" });
+  });
+
+  it("rejects deeply nested enum data before publishing a manifest snapshot", () => {
+    const deeplyNested = {
+      ...validManifest,
+      actions: [{
+        ...validManifest.actions[0],
+        inputSchema: { enum: [deeplyNestedArrayValue(10_000)] },
+      }],
+    };
+
+    expect(validateManifest(deeplyNested)).toEqual({ ok: false, code: "invalid_manifest" });
   });
 
   it.each([

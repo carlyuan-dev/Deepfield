@@ -32,6 +32,8 @@ export type ManifestResult =
   | { ok: false; code: "invalid_manifest" | "incompatible" };
 
 const nonEmptyText = Type.String({ minLength: 1 });
+// Keep untrusted JSON comfortably below recursive validator and snapshot stack limits.
+const MAX_MANIFEST_DEPTH = 128;
 const semVerPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const declarationSchema = Type.Cyclic({ Declaration: Type.Object({
   type: Type.Optional(Type.Union([
@@ -94,7 +96,23 @@ function isPackageRelativePath(path: string): boolean {
   return !path.split(/[\\/]/).includes("..");
 }
 
-export function validateManifest(value: unknown): ManifestResult {
+function isWithinManifestDepth(value: unknown): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current.depth > MAX_MANIFEST_DEPTH) return false;
+    if (current.value === null || typeof current.value !== "object") continue;
+    if (visited.has(current.value)) continue;
+    visited.add(current.value);
+    for (const nested of Object.values(current.value)) {
+      pending.push({ value: nested, depth: current.depth + 1 });
+    }
+  }
+  return true;
+}
+
+function validateManifestValue(value: unknown): ManifestResult {
   if (!Value.Check(manifestSchema, value)) return { ok: false, code: "invalid_manifest" };
 
   const candidate = value as Omit<CapabilityManifest, "protocolVersion" | "hostApiVersion"> & {
@@ -123,4 +141,13 @@ export function validateManifest(value: unknown): ManifestResult {
   }
 
   return { ok: true, manifest: candidate as CapabilityManifest };
+}
+
+export function validateManifest(value: unknown): ManifestResult {
+  try {
+    if (!isWithinManifestDepth(value)) return { ok: false, code: "invalid_manifest" };
+    return validateManifestValue(value);
+  } catch {
+    return { ok: false, code: "invalid_manifest" };
+  }
 }
