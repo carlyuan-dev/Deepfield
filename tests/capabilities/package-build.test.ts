@@ -10,6 +10,13 @@ import { buildProbePackage, collectHostModuleGraphs } from "../fixtures/capabili
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const temporaryRoots: string[] = [];
+const moduleMarkerKey = "__deepfieldCapabilityProbeMarkers";
+
+function bareModuleSpecifiers(source: string): string[] {
+  return [...source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?)["']([^"']+)["']/g)]
+    .map((match) => match[1])
+    .filter((specifier): specifier is string => specifier !== undefined && !specifier.startsWith(".") && !specifier.startsWith("/"));
+}
 
 async function temporaryDirectory(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "deepfield-capability-probe-"));
@@ -18,6 +25,7 @@ async function temporaryDirectory(): Promise<string> {
 }
 
 afterEach(async () => {
+  Reflect.deleteProperty(globalThis, moduleMarkerKey);
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -28,12 +36,13 @@ describe("standalone capability package build", () => {
     await buildProbePackage(packageRoot);
 
     const marker: string[] = [];
+    Reflect.set(globalThis, moduleMarkerKey, marker);
     const catalog = await scanCapabilities(catalogRoot);
     expect(catalog.issues).toEqual([]);
     expect(marker).toEqual([]);
     for (const entry of ["main", "worker"] as const) {
       const artifact = await readFile(join(packageRoot, `dist/${entry}.js`), "utf8");
-      expect(artifact).not.toMatch(/(?:from\s+|import\s*\()["'][^./]/);
+      expect(bareModuleSpecifiers(artifact)).toEqual([]);
       expect(artifact).not.toContain("node_modules");
     }
 
@@ -62,9 +71,16 @@ describe("standalone capability package build", () => {
     });
 
     expect(result.ready.map((entry) => entry.manifest.id)).toEqual(["probe"]);
-    expect(marker).toEqual(["main:activate", "worker:activate"]);
+    expect(marker).toEqual(["main:module", "main:activate", "worker:module", "worker:activate"]);
     await result.dispose();
-    expect(marker).toEqual(["main:activate", "worker:activate", "worker:cleanup", "main:cleanup"]);
+    expect(marker).toEqual([
+      "main:module",
+      "main:activate",
+      "worker:module",
+      "worker:activate",
+      "worker:cleanup",
+      "main:cleanup",
+    ]);
   });
 
   it("mounts and cleans up the independently built DOM UI entry", async () => {
