@@ -43,6 +43,9 @@ export function activate(registrar: CapabilityRegistrar, ports: CompanyResearchM
   if (ports.onConfigurationChanged) registrar.defer(ports.onConfigurationChanged(() => services.companyProfiles.configurationChanged()));
   const word = createCompanyResearchWordExportService({ ...ports.documentSave, getRun: (...args) => services.companyResearch.getRun(...args) });
   registerCompanyResearchOperations(registrar, { ...services, settings: ports.settings, companyResearchWordExport: word });
+  // LIFO cleanup must interrupt live work before any asynchronous registration
+  // teardown yields to rejected Worker streams. The early defer covers setup failure.
+  registrar.defer(services.dispose);
 }
 
 export type CompanyResearchOperationServices = Pick<ReturnType<typeof createCompanyResearchServices>, "industryResearch" | "companyResearch" | "companyResearchBatch" | "companyProfiles"> & { settings: { get(): Promise<SettingsView> }; companyResearchWordExport: ReturnType<typeof createCompanyResearchWordExportService> };

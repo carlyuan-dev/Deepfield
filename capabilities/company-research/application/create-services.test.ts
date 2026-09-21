@@ -4,8 +4,58 @@ import { activate, type CompanyResearchMainPorts } from "../main.js";
 import { CapabilityRegistry, activateRegisteredCapability } from "../../../apps/desktop/src/main/capabilities/registry.js";
 import { getCompanyResearchTemplate } from "../contracts/index.js";
 import { CompanyResearchService } from "./company-research-service.js";
+import { AgentWorkerClient } from "../../../apps/desktop/src/main/agent-worker-client.js";
+import { FakeEndpoint } from "../../../apps/desktop/src/main/agent-worker-client-test-helpers.js";
+import { createCompanyResearchWorkerClient } from "../worker-client.js";
 const dbs: TestDb[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.cleanup(); });
+
+it("interrupts registered business services before Worker exit rejects their live stream", async () => {
+  const db = openTestDb(); dbs.push(db);
+  const item = db.repos.capabilityItems.create({ industry: "test" });
+  const companies = ["first", "next"].map(name => {
+    const company = db.repos.companies.upsert({ name });
+    db.repos.companies.setProfileStatus(company.id, "ready");
+    db.repos.itemCompanies.add(item.id, company.id);
+    return company;
+  });
+  const endpoint = new FakeEndpoint();
+  const client = new AgentWorkerClient(endpoint);
+  const send = vi.spyOn(client, "sendCapability");
+  const cancel = vi.spyOn(client, "cancelCapability");
+  const registry = new CapabilityRegistry();
+  const ports: CompanyResearchMainPorts = {
+    repositories: db.repos,
+    profiles: {
+      resolveActiveLlm: async () => ({ id: "l", name: "l", provider: "custom", protocol: "openai_compatible", baseUrl: "https://a.test", modelId: "m", contextWindow: 32000, apiKey: "s" }),
+      resolveActiveSearch: async () => ({ id: "s", name: "s", provider: "zhipu", baseUrl: "https://a.test", options: {}, apiKey: "s" }),
+    },
+    worker: createCompanyResearchWorkerClient(client),
+    companyRecognizer: { recognize: async () => [] }, companyCompleter: { prepare: vi.fn() }, requestIdFactory: () => crypto.randomUUID(),
+    settings: { get: vi.fn() }, documentSave: { showSaveDialog: vi.fn(), writeFile: vi.fn(), rename: vi.fn(), unlink: vi.fn(), randomToken: () => "token" },
+  };
+  const activation = await activateRegisteredCapability({ registry, capabilityId: "company-research",
+    activateMain: registrar => activate(registrar, ports), activateWorker: async () => {},
+    onWorkerUnavailable: listener => client.subscribeUnavailable(listener),
+  });
+  await registry.call({ capabilityId: "company-research", operation: "companyResearchBatch.start", requestId: "start",
+    input: [item.id, companies.map(company => ({ companyId: company.id, input: { direction: "product_and_technology", asOfDate: "2026-09-01" } }))],
+  });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const batch = db.repos.companyResearchBatches.getActive()!;
+  const run = db.repos.companyResearchRuns.getByIdForTarget(item.id, companies[0]!.id, db.repos.companyResearchRuns.getActive()!.id)!;
+  expect(send).toHaveBeenCalledTimes(1);
+  endpoint.emitExit(1);
+  await activation.dispose();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(registry.readyIds()).toEqual([]);
+  expect(db.repos.companyResearchBatches.getById(batch.batchId)).toEqual(batch);
+  expect(db.repos.companyResearchRuns.getByIdForTarget(item.id, companies[0]!.id, run.id)).toEqual(run);
+  expect(db.repos.companyResearchRuns.listRuns(item.id, companies[1]!.id)).toEqual([]);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(cancel).not.toHaveBeenCalled();
+  client.dispose();
+});
 
 it("leaves actual active batch and raw report untouched until successful Worker readiness, then recovers once", async () => {
   const db = openTestDb(); dbs.push(db);
