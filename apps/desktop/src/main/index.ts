@@ -1,7 +1,8 @@
-import { CapabilityRegistry, activateRegisteredCapability } from "./capabilities/registry.js";
-import { activate as activateCompanyResearch } from "../../../../capabilities/company-research/main.js";
-import { createCompanyResearchWorkerClient } from "../../../../capabilities/company-research/worker-client.js";
-import { ConfiguredCompanyRecognizer } from "../../../../capabilities/company-research/application/company-recognizer.js";
+import { CapabilityRegistry } from "./capabilities/registry.js";
+import { createCapabilityHostServices } from "@deepfield/capability-sdk";
+import { capabilityPaths } from "./capabilities/installation.js";
+import { prepareCapabilities, createCapabilityRuntime, type CapabilityRuntime } from "./capabilities/runtime.js";
+import type { TrustedCapabilityEntry } from "../shared/capability-entry.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
@@ -28,18 +29,18 @@ import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
 import { ProfileStore } from "./profile-store.js";
 import { ConfiguredLlmService } from "./configured-llm-service.js";
-import { FakeCompanyRecognizer } from "../../../../capabilities/company-research/application/fake-company-recognizer.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { PiModelGateway } from "../shared/model-gateway.js";
 import { listSearchProviderManifests } from "@deepfield/retrieval";
 import { ConfigurationService } from "./configuration-service.js";
-import { createCompanyProfileCompleter } from "../../../../capabilities/company-research/application/company-profile-completer.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
 let toolHost: ToolWorkerHost | undefined;
 let appRuntime: ApplicationRuntime | undefined;
 const capabilities = new CapabilityRegistry();
+let capabilityRuntime: CapabilityRuntime | undefined;
+let capabilitySnapshot: readonly TrustedCapabilityEntry[] = Object.freeze([]);
 const configurationListeners = new Set<() => void>();
 let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
@@ -57,7 +58,7 @@ function startAgentWorker(
   secrets: SecretStore,
   skillsDir: string,
 ): AgentWorkerRuntime {
-  const child = utilityProcess.fork(join(__dirname, "agent-worker.js"), [skillsDir], {
+  const child = utilityProcess.fork(join(__dirname, "agent-worker.js"), [skillsDir, JSON.stringify(capabilitySnapshot)], {
     serviceName: "Deepfield Agent",
   });
   let runtimeRef!: AgentWorkerRuntime;
@@ -115,18 +116,12 @@ void app.whenReady().then(async () => {
     { onTitleDiagnostic: ({ category }) => console.warn(`[conversation-title] ${category}`) },
   );
   const configuration = new ConfigurationService(profiles, modelGateway);
-  const companyRecognizer =
-    process.env.DEEPFIELD_AGENT_MODE === "fake"
-      ? new FakeCompanyRecognizer()
-      : new ConfiguredCompanyRecognizer(() => profiles.resolveActiveLlm(), modelGateway, withUsageContext);
-
   const skillsDir = resolveSkillsDir({
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
     isPackaged: app.isPackaged,
   });
 
-  agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
   // Finish loading the Main catalog before IPC registration and window
   // creation: the renderer reads skills.list once on mount, so the first call
   // must already see the bundled summary instead of a transient empty list.
@@ -154,31 +149,38 @@ void app.whenReady().then(async () => {
     },
     titleGenerator: configuredLlm,
   });
-  // Temporary explicit built-in snapshot; Task4 replaces this with the package loader.
-  const companyWorker = createCompanyResearchWorkerClient(agentRuntime.client);
-  await activateRegisteredCapability({
-    registry: capabilities, capabilityId: "company-research",
-    activateMain: registrar => activateCompanyResearch(registrar, {
+  const prepared = await prepareCapabilities(capabilityPaths({ userDataRoot, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, isPackaged: app.isPackaged }));
+  capabilitySnapshot = prepared.workerSnapshot;
+  capabilityRuntime = createCapabilityRuntime(prepared, capabilities);
+  agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
+  const services = createCapabilityHostServices({
+    "company-research.repositories": {
       repositories: {
         capabilityItems: repositories.capabilityItems, companies: repositories.companies,
         itemCompanies: repositories.itemCompanies, companyResearchRuns: repositories.companyResearchRuns,
         companyResearchDiagnostics: repositories.companyResearchDiagnostics, companyResearchBatches: repositories.companyResearchBatches,
-        toolExecutions: { deleteByTraceIds: ids => repositories.toolExecutions.deleteByTraceIds(ids) },
-        runInTransaction: work => repositories.runInTransaction(work),
+        toolExecutions: { deleteByTraceIds: (ids: string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
+        runInTransaction: <T>(work: () => T) => repositories.runInTransaction(work),
       },
-      profiles, worker: companyWorker, companyRecognizer,
-      companyCompleter: createCompanyProfileCompleter(profiles, companyWorker, diagnostic => repositories.companyProfileDiagnostics.record(diagnostic)),
-      requestIdFactory: randomUUID, settings: configuration,
-      onConfigurationChanged: listener => { configurationListeners.add(listener); return () => { configurationListeners.delete(listener); }; },
-      documentSave: {
-        showSaveDialog: options => mainWindow && !mainWindow.isDestroyed() ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options),
-        writeFile, rename, unlink, randomToken: randomUUID,
-      },
-    }),
-    activateWorker: () => agentRuntime!.client.activateCapability("company-research", "builtin:company-research", randomUUID()),
-    deactivateWorker: () => agentRuntime?.client.deactivateCapability("company-research"),
-    onWorkerUnavailable: listener => agentRuntime!.client.subscribeUnavailable(listener),
-  }).catch(() => { /* Chat remains available if the optional package fails. */ });
+      recordProfileDiagnostic: (diagnostic: Parameters<typeof repositories.companyProfileDiagnostics.record>[0]) => repositories.companyProfileDiagnostics.record(diagnostic),
+    },
+    "model.configuration": {
+      profiles: { resolveActiveLlm: () => profiles.resolveActiveLlm(), resolveActiveSearch: () => profiles.resolveActiveSearch() },
+      settings: { get: () => configuration.get() },
+      onConfigurationChanged: (listener: () => void) => { configurationListeners.add(listener); return () => { configurationListeners.delete(listener); }; },
+    },
+    "model.execution": { gateway: modelGateway, transport: {
+      sendCapability: agentRuntime.client.sendCapability.bind(agentRuntime.client),
+      cancelCapability: agentRuntime.client.cancelCapability.bind(agentRuntime.client),
+    }, mode: process.env.DEEPFIELD_AGENT_MODE },
+    "tools.retrieval": true,
+    "usage.context": withUsageContext,
+    "document.save": {
+      showSaveDialog: (options: Electron.SaveDialogOptions) => mainWindow && !mainWindow.isDestroyed() ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options),
+      writeFile, rename, unlink, randomToken: randomUUID,
+    },
+  });
+  await capabilityRuntime.start(agentRuntime.client, services);
   ipcDispose = registerIpcHandlers({
     capabilities,
     onConfigurationChanged: () => { for (const listener of configurationListeners) listener(); },
@@ -214,8 +216,8 @@ app.on("before-quit", (event) => {
     if (!usageShutdownStarted) {
       usageShutdownStarted = true;
       ipcDispose?.(); ipcDispose = undefined;
-      void capabilities.dispose();
       void (async () => {
+        await capabilityRuntime?.dispose();
         // Pass the current Worker into the bounded shutdown orchestration so
         // an unacknowledged flush remains visible even if it exits meanwhile.
         await usageRuntime?.shutdown(agentRuntime);
@@ -230,7 +232,7 @@ app.on("before-quit", (event) => {
   toolHost = undefined;
   agentRuntime?.dispose();
   agentRuntime = undefined;
-  void capabilities.dispose();
+  void capabilityRuntime?.dispose();
   appRuntime = undefined;
   if (database) {
     try {

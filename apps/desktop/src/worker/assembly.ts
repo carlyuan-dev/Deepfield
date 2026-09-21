@@ -11,15 +11,15 @@ import {
 } from "./host-client.js";
 import { createToolRuntime, type UtilityToolRuntime } from "./tools/tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import { activate as activateCompanyResearch } from "../../../../capabilities/company-research/worker.js";
+import { createCapabilityHostServices } from "@deepfield/capability-sdk";
+import { createSnapshotWorkerLoader, type TrustedCapabilityEntry } from "../shared/capability-entry.js";
 import { createCapabilityAgentRuntime } from "./capabilities/agent-runtime.js";
 import { WorkerCapabilityRegistry, type CapabilityWorkerLoader } from "./capabilities/registry.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 
 export interface UtilityAssemblyDeps {
   capabilityLoader?: CapabilityWorkerLoader;
-  /** Temporary first-party compatibility activation; Task4 supplies the snapshot loader. */
-  activateBundledCapability?: boolean;
+  capabilitySnapshot?: readonly TrustedCapabilityEntry[];
   flushUsage?: () => Promise<void>;
   endpoint: WorkerEndpoint;
   agentMode: string | undefined;
@@ -66,12 +66,12 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
     pi: () =>
       createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
   });
-  // Temporary first-party loader. It activates only after Main requests the fixed trusted entry.
-  const bundledLoader: CapabilityWorkerLoader | undefined = deps.activateBundledCapability === false ? undefined : async (request, activation) => {
-    if (request.capabilityId !== "company-research" || request.entry !== "builtin:company-research") throw new Error("capability_unavailable");
-    activateCompanyResearch(activation, { runtime: createCapabilityAgentRuntime({ ...(deps.piRuntime ? { runtime: deps.piRuntime } : {}), toolSessions: toolRuntime }), ...(deps.agentMode ? { mode: deps.agentMode } : {}), withUsage: withUsageContext });
-  };
-  const capabilities = new WorkerCapabilityRegistry(value => deps.endpoint.postMessage(value), deps.capabilityLoader ?? bundledLoader);
+  const services = createCapabilityHostServices({
+    "model.execution": { runtime: createCapabilityAgentRuntime({ ...(deps.piRuntime ? { runtime: deps.piRuntime } : {}), toolSessions: toolRuntime }), ...(deps.agentMode ? { mode: deps.agentMode } : {}) },
+    "tools.retrieval": toolRuntime, "usage.context": withUsageContext,
+  });
+  const capabilities = new WorkerCapabilityRegistry(value => deps.endpoint.postMessage(value),
+    deps.capabilityLoader ?? createSnapshotWorkerLoader(deps.capabilitySnapshot ?? [], services));
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     ...(deps.flushUsage ? { flushUsage: deps.flushUsage } : {}),
     toolRuntime,

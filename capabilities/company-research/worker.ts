@@ -1,4 +1,4 @@
-import type { CapabilityWorkerRegistrar } from "@deepfield/capability-sdk";
+import type { CapabilityWorkerRegistrar, CapabilityHostServices } from "@deepfield/capability-sdk";
 import { CompanyResearchWorkerRequestSchema, CompanyResearchWorkerEventSchema, CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "./contracts/index.js";
 import { createCompanyResearchAgent, type CompanyResearchAgent } from "./runtime/company-research-agent.js";
 import { createCompanyProfileAgent } from "./runtime/company-profile-agent.js";
@@ -47,6 +47,11 @@ export interface CompanyResearchWorkerPorts {
   runtime: CompanyAgentRuntime;
   mode?: string;
   withUsage<T>(context: { sourceId: string; taskId: string; operationId?: string; stageId?: string }, work: () => T): T;
+}
+export function bootstrap(registrar: CapabilityWorkerRegistrar, services: CapabilityHostServices): void {
+  if (services.version !== 1) throw new Error("incompatible_host_services");
+  const execution = services.get<{ runtime: CompanyAgentRuntime; mode?: string }>("model.execution");
+  activate(registrar, { ...execution, withUsage: services.get<CompanyResearchWorkerPorts["withUsage"]>("usage.context") });
 }
 export function activate(registrar: CapabilityWorkerRegistrar, ports: CompanyResearchWorkerPorts): void {
   const research = ports.mode === "fake" ? fakeCompanyResearchAgent : createCompanyResearchAgent({ runtime: ports.runtime });

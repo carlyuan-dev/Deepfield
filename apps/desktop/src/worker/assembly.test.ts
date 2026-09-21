@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { HostClient } from "./host-client.js";
 import { createUtilityAssembly } from "./assembly.js";
+import { activate as activateCompanyResearch } from "../../../../capabilities/company-research/worker.js";
+import { createCapabilityAgentRuntime } from "./capabilities/agent-runtime.js";
+import { withUsageContext } from "../shared/usage-collection.js";
 import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
 import { Value } from "typebox/value";
 import { rawResearchRequest, structureResearchRequest } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
@@ -21,7 +24,9 @@ describe("utility worker assembly (focused revision)", () => {
   it.each(RESEARCH_DIRECTIONS)("fake research completes both stages for %s without structure deltas", async (direction) => {
     const endpoint = new InMemoryEndpoint();
     const hostClient = new HostClient({ postMessage: () => {}, timeoutMs: 1000 });
-    const { loop } = createUtilityAssembly({ endpoint, agentMode: "fake", hostClient });
+    const { loop } = createUtilityAssembly({ endpoint, agentMode: "fake", hostClient,
+      capabilityLoader: async (_request, registrar) => activateCompanyResearch(registrar, { runtime: createCapabilityAgentRuntime(), mode: "fake", withUsage: withUsageContext }),
+    });
     endpoint.emit({ kind: "capability.activate", capabilityId: "company-research", requestId: "activate", entry: "builtin:company-research" });
     await flushPending();
     expect(endpoint.posted).toEqual([{ kind: "capability.activated", capabilityId: "company-research", requestId: "activate", ok: true }]);

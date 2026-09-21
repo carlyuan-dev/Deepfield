@@ -15,3 +15,4 @@ export type { CapabilityBridge, CapabilityCall, CapabilityEvent, CapabilityUiRun
 export * from "./transport.js";
 export type * from "./execution.js";
 export type { CapabilityRegistrar, CapabilityWorkerRegistrar } from "./host.js";
+export { createCapabilityHostServices, type CapabilityHostServices } from "./services.js";
