@@ -7,6 +7,7 @@ import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
 export interface ImportCompaniesModalProps {
   api: DesktopApi;
   itemId: string;
+  active?: boolean;
   onClose(): void;
   onCompaniesAdded(companies: ItemCompanyView[]): void;
 }
@@ -30,7 +31,7 @@ function mergeDrafts(current: CompanyDraft[], incoming: CompanyDraft[]): Company
   return merged;
 }
 
-export function ImportCompaniesModal({ api, itemId, onClose, onCompaniesAdded }: ImportCompaniesModalProps) {
+export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCompaniesAdded }: ImportCompaniesModalProps) {
   const [sourceText, setSourceText] = useState("");
   const [drafts, setDrafts] = useState<CompanyDraft[]>();
   const [run, setRun] = useState<RecognitionRun>();
@@ -137,7 +138,7 @@ export function ImportCompaniesModal({ api, itemId, onClose, onCompaniesAdded }:
       : drafts === undefined ? "识别公司" : "重新识别";
 
   return (
-    <Modal title="一键导入公司" onClose={close}>
+    <Modal title="一键导入公司" active={active} onClose={close}>
       <div className="modal-body import-companies">
         {error !== undefined && <p className="error" role="alert">{error}</p>}
         <label>公司文本<textarea value={sourceText} disabled={recognizing} onChange={(event) => changeSource(event.target.value)} placeholder="粘贴公司名称或含公司信息的文本" rows={5} /></label>

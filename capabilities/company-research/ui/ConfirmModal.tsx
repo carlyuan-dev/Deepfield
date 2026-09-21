@@ -5,15 +5,16 @@ export interface ConfirmModalProps {
   message: string;
   confirmLabel: string;
   busy: boolean;
+  active?: boolean;
   disabled?: boolean;
   error: string | undefined;
   onClose(): void;
   onConfirm(): void;
 }
 
-export function ConfirmModal({ title, message, confirmLabel, busy, disabled = false, error, onClose, onConfirm }: ConfirmModalProps) {
+export function ConfirmModal({ title, message, confirmLabel, busy, active = true, disabled = false, error, onClose, onConfirm }: ConfirmModalProps) {
   return (
-    <Modal title={title} onClose={busy ? () => undefined : onClose}>
+    <Modal title={title} active={active} onClose={busy ? () => undefined : onClose}>
       <div className="modal-body confirmation-modal">
         <p>{message}</p>
         {error !== undefined && <p className="error" role="alert">{error}</p>}

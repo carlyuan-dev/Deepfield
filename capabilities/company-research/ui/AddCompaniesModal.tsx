@@ -6,11 +6,12 @@ import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
 export interface AddCompaniesModalProps {
   api: DesktopApi;
   itemId: string;
+  active?: boolean;
   onClose(): void;
   onCompaniesAdded(companies: ItemCompanyView[]): void;
 }
 
-export function AddCompaniesModal({ api, itemId, onClose, onCompaniesAdded }: AddCompaniesModalProps) {
+export function AddCompaniesModal({ api, itemId, active = true, onClose, onCompaniesAdded }: AddCompaniesModalProps) {
   const [name, setName] = useState("");
   const [drafts, setDrafts] = useState<CompanyDraft[]>([]);
   const [error, setError] = useState<string>();
@@ -41,7 +42,7 @@ export function AddCompaniesModal({ api, itemId, onClose, onCompaniesAdded }: Ad
   };
 
   return (
-    <Modal title="添加公司" onClose={onClose}>
+    <Modal title="添加公司" active={active} onClose={onClose}>
       <div className="modal-body company-manager">
         {error !== undefined && <p className="error" role="alert">{error}</p>}
         <section className="draft-entry">
