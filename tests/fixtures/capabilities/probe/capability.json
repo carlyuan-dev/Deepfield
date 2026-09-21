@@ -1,0 +1,15 @@
+{
+  "id": "probe",
+  "name": "Delivery Probe",
+  "description": "Verifies capability package delivery boundaries",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "hostApiVersion": 1,
+  "entries": {
+    "main": "dist/main.js",
+    "worker": "dist/worker.js",
+    "ui": "dist/ui.js"
+  },
+  "requirements": [],
+  "actions": []
+}
