@@ -26,12 +26,14 @@
       "@deepfield/tool-platform/budget-contract": ["./packages/tool-platform/src/budget-contract.ts"],
       "@deepfield/utility-tools": ["./packages/utility-tools/src/index.ts"],
       "@deepfield/application": ["./packages/application/src/index.ts"],
+      "@deepfield/capability-sdk": ["./packages/capability-sdk/src/index.ts"],
       "@deepfield/retrieval": ["./packages/retrieval/src/index.ts"],
       "@deepfield/retrieval/search-provider": ["./packages/retrieval/src/search-provider.ts"]
     }
   },
   "include": [
     "packages/base/src/**/*.ts",
+    "packages/capability-sdk/src/**/*.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "packages/contracts/src/**/*.ts",
