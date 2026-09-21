@@ -32,6 +32,7 @@ export type ManifestResult =
   | { ok: false; code: "invalid_manifest" | "incompatible" };
 
 const nonEmptyText = Type.String({ minLength: 1 });
+const semVerPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const declarationSchema = Type.Cyclic({ Declaration: Type.Object({
   type: Type.Optional(Type.Union([
     Type.Literal("object"),
@@ -89,7 +90,7 @@ const manifestSchema = Type.Object({
 }, { additionalProperties: false });
 
 function isPackageRelativePath(path: string): boolean {
-  if (path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path)) return false;
+  if (path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path)) return false;
   return !path.split(/[\\/]/).includes("..");
 }
 
@@ -103,6 +104,7 @@ export function validateManifest(value: unknown): ManifestResult {
   if (candidate.protocolVersion !== 1 || candidate.hostApiVersion !== 1) {
     return { ok: false, code: "incompatible" };
   }
+  if (!semVerPattern.test(candidate.version)) return { ok: false, code: "invalid_manifest" };
 
   const paths = [
     candidate.entries.main,

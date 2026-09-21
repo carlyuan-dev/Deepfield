@@ -6,6 +6,10 @@ export interface ResourceScopeIssue {
 
 export interface ResourceScope {
   defer(cleanup: Cleanup): void;
+  /**
+   * Returns the one shared disposal promise. A cleanup may call this method
+   * without awaiting it, but must not await its own enclosing disposal.
+   */
   dispose(): Promise<void>;
   readonly issues: readonly ResourceScopeIssue[];
 }
@@ -21,7 +25,7 @@ export function createResourceScope(): ResourceScope {
       cleanups.push(cleanup);
     },
     dispose() {
-      disposal ??= (async () => {
+      disposal ??= Promise.resolve().then(async () => {
         for (const cleanup of cleanups.reverse()) {
           try {
             await cleanup();
@@ -30,7 +34,7 @@ export function createResourceScope(): ResourceScope {
           }
         }
         cleanups.length = 0;
-      })();
+      });
       return disposal;
     },
     get issues() {

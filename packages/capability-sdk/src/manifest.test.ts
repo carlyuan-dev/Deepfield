@@ -42,6 +42,10 @@ describe("validateManifest", () => {
     expect(validateManifest(validManifest)).toEqual({ ok: true, manifest: validManifest });
   });
 
+  it.each(["1.0", "v1.0.0", "01.0.0", "1.0.0-01"])("rejects a non-SemVer package version: %s", (version) => {
+    expect(validateManifest({ ...validManifest, version })).toEqual({ ok: false, code: "invalid_manifest" });
+  });
+
   it.each([
     { ...validManifest, protocolVersion: 2 },
     { ...validManifest, hostApiVersion: 2 },
@@ -58,6 +62,9 @@ describe("validateManifest", () => {
     { ...validManifest, entries: { ...validManifest.entries, main: "/tmp/main.js" } },
     { ...validManifest, entries: { ...validManifest.entries, worker: "dist/../worker.js" } },
     { ...validManifest, actions: [{ ...validManifest.actions[0], documentation: { path: "../probe.md", version: "1" } }] },
+    { ...validManifest, entries: { ...validManifest.entries, main: "https://example.com/main.js" } },
+    { ...validManifest, entries: { ...validManifest.entries, worker: "C:dist/worker.js" } },
+    { ...validManifest, actions: [{ ...validManifest.actions[0], documentation: { path: "file:docs/probe.md", version: "1" } }] },
   ])("rejects absolute and parent-traversing package paths", (manifest) => {
     expect(validateManifest(manifest)).toEqual({ ok: false, code: "invalid_manifest" });
   });

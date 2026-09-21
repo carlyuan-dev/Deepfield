@@ -27,4 +27,22 @@ describe("createResourceScope", () => {
     expect(scope.issues).toEqual([{ code: "cleanup_failed" }]);
     expect(JSON.stringify(scope.issues)).not.toContain("secret");
   });
+
+  it("publishes one disposal promise before a cleanup reenters disposal", async () => {
+    const calls: string[] = [];
+    const scope = createResourceScope();
+    let reentrantDisposal: Promise<void> | undefined;
+    scope.defer(() => { calls.push("first"); });
+    scope.defer(() => {
+      calls.push("second");
+      reentrantDisposal = scope.dispose();
+    });
+
+    const disposal = scope.dispose();
+    expect(scope.dispose()).toBe(disposal);
+    await disposal;
+    await reentrantDisposal;
+
+    expect(calls).toEqual(["second", "first"]);
+  });
 });
