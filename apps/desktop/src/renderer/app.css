@@ -229,6 +229,11 @@ h3,
   color: var(--muted);
 }
 
+.nav-capabilities-empty {
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
 .nav-footer {
   margin-top: auto;
 }

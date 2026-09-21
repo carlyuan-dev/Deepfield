@@ -8,19 +8,29 @@ export function CapabilitiesSettings({ api }: { api: CapabilityManagementApi }) 
   const [pending, setPending] = useState<string>();
   const [message, setMessage] = useState<string>();
   return <>
-    <header className="settings-header"><div><h2>能力</h2><p>选择下次启动时启用的能力，当前运行状态保持不变。</p></div></header>
+    <header className="settings-header"><div><h2>能力</h2><p>勾选或取消勾选以选择启用的能力，配置将在软件重启后生效。</p></div></header>
     {error && <p role="alert">无法读取能力列表</p>}
     {!snapshot && !error && <p>加载能力…</p>}
     {snapshot?.packages.length === 0 && <p>暂无已安装能力</p>}
     {snapshot?.issues.map((issue, i) => <p role="alert" key={i}>{issue.code} · {issue.message}</p>)}
     {snapshot?.packages.map(item => <section key={item.id} className="capability-setting">
-      <h3>{item.name} <small>{item.version}</small></h3><p>{item.description}</p>
-      <p>当前状态：{statusLabels[item.status]}</p>
+      <div className="capability-setting-row">
+        <input
+          type="checkbox"
+          aria-label={`下次启动启用${item.name}`}
+          checked={item.enabledNextStart}
+          disabled={pending !== undefined}
+          onChange={event => {
+            setPending(item.id); setMessage(undefined);
+            void api.setEnabled(item.id, event.target.checked).then(() => setMessage("下次启动生效"), () => setMessage("无法保存能力设置，请重试")).finally(() => setPending(undefined));
+          }}
+        />
+        <strong className="capability-setting-name">{item.name}</strong>
+        <span className="capability-setting-version">{item.version}</span>
+        <span className="capability-setting-description" title={item.description}>{item.description}</span>
+        <span className="capability-setting-status">当前状态：{statusLabels[item.status]}</span>
+      </div>
       {item.issue && <p role="alert">{item.issue.code} · {item.issue.message}</p>}
-      <label><input type="checkbox" checked={item.enabledNextStart} disabled={pending !== undefined} onChange={event => {
-        setPending(item.id); setMessage(undefined);
-        void api.setEnabled(item.id, event.target.checked).then(() => setMessage("下次启动生效"), () => setMessage("无法保存能力设置，请重试")).finally(() => setPending(undefined));
-      }} />下次启动启用{item.name}</label>
     </section>)}
     {message && <p role="status">{message}</p>}
   </>;

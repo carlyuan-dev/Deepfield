@@ -87,13 +87,14 @@ export function Sidebar({
         {conversations.length === 0 && <li className="muted">暂无对话</li>}
       </ul>
       {deletionError !== undefined && <p className="nav-error" role="alert">{deletionError}</p>}
-      {capabilities.length > 0 && <div className="nav-section-title">工作流</div>}
+      <div className="nav-section-title">能力</div>
       <ul className="nav-primary">
         {capabilities.map(item => <li key={item.id}>
           <button className={active === "capability" && activeCapability === item.id ? "active" : ""} onClick={() => onOpenCapability(item.id)}>
             {item.title}
           </button>
         </li>)}
+        {capabilities.length === 0 && <li className="muted nav-capabilities-empty">暂时未启用任何能力</li>}
       </ul>
       <div className="nav-footer">
         <button className={active === "settings" ? "active" : ""} onClick={onOpenSettings}>

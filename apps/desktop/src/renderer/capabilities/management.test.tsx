@@ -15,6 +15,7 @@ it("keeps zero-package navigation empty and management available", async () => {
   expect(screen.queryByText("研究主题")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "设置" }));
   await userEvent.click(screen.getByRole("button", { name: "能力" }));
+  expect(screen.getByText("勾选或取消勾选以选择启用的能力，配置将在软件重启后生效。")).toBeTruthy();
   expect(await screen.findByText("暂无已安装能力")).toBeTruthy();
 });
 
@@ -28,7 +29,14 @@ it("changes only next-start selection and preserves a package draft across setti
   await user.type(input, "保留这个主题草稿");
   await user.click(screen.getByRole("button", { name: "设置" }));
   await user.click(screen.getByRole("button", { name: "能力" }));
-  expect(await screen.findByText("当前状态：可用")).toBeTruthy();
+  const row = (await screen.findByText("公司研究")).closest("section");
+  expect(row).not.toBeNull();
+  expect(row?.classList.contains("capability-setting")).toBe(true);
+  expect(row?.textContent).toContain("1.0.0");
+  expect(row?.textContent).toContain("研究主题与公司");
+  expect(row?.textContent).toContain("当前状态：可用");
+  expect(row?.textContent).not.toContain("下次启动启用公司研究");
+  expect(row?.querySelector(".capability-setting-description")?.getAttribute("title")).toBe("研究主题与公司");
   await user.click(screen.getByLabelText("下次启动启用公司研究"));
   expect(await screen.findByText("下次启动生效")).toBeTruthy();
   expect((await management.list()).packages[0]?.status).toBe("ready");

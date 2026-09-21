@@ -13,6 +13,49 @@ const css = readFileSync(
 afterEach(cleanup);
 
 describe("Sidebar conversation row layout", () => {
+  it("always shows the capability section and a quiet empty state", () => {
+    render(
+      <Sidebar
+        conversations={[]}
+        activeConversationId={undefined}
+        connectionStatus="connected"
+        active="chat"
+        onNewConversation={() => {}}
+        onOpenConversation={() => {}}
+        onDeleteConversation={() => {}}
+        deletionError={undefined}
+        capabilities={[]}
+        onOpenCapability={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("能力")).toBeTruthy();
+    expect(screen.getByText("暂时未启用任何能力").classList.contains("muted")).toBe(true);
+  });
+
+  it("shows ready capabilities without the empty state", () => {
+    render(
+      <Sidebar
+        conversations={[]}
+        activeConversationId={undefined}
+        connectionStatus="connected"
+        active="chat"
+        onNewConversation={() => {}}
+        onOpenConversation={() => {}}
+        onDeleteConversation={() => {}}
+        deletionError={undefined}
+        capabilities={[{ id: "company-research", title: "研究主题" }]}
+        onOpenCapability={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("能力")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "研究主题" })).toBeTruthy();
+    expect(screen.queryByText("暂时未启用任何能力")).toBeNull();
+  });
+
   it("keeps the delete control compact and truncates a long title on one line", () => {
     const style = document.createElement("style");
     style.textContent = css;

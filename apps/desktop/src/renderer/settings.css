@@ -123,6 +123,15 @@
   padding: 6px 10px;
   background: var(--panel);
 }
-.capability-setting { padding: 16px 0; border-bottom: 1px solid var(--border); }
-.capability-setting label { display: flex; align-items: center; gap: 8px; }
-.capability-setting input[type="checkbox"] { width: auto; }
+.capability-setting { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.capability-setting-row { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.capability-setting input[type="checkbox"] { flex: none; width: auto; }
+.capability-setting-name,
+.capability-setting-version,
+.capability-setting-status { flex: none; white-space: nowrap; }
+.capability-setting-version,
+.capability-setting-description,
+.capability-setting-status { color: var(--muted); }
+.capability-setting-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capability-setting-status { margin-left: auto; }
+.capability-setting > [role="alert"] { margin: 8px 0 0 28px; }
