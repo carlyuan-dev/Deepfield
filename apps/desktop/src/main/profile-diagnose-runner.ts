@@ -1,6 +1,6 @@
 import { Value } from "typebox/value";
-import { CompanyProfileWorkerEventSchema, CompanyProfileWorkerRequestSchema, type CompanyProfileWorkerEvent } from "@deepfield/contracts";
-import { createCompanyProfileAgent, type CompanyProfileAgent } from "../worker/capabilities/company-research/company-profile-agent.js";
+import { CompanyProfileWorkerEventSchema, CompanyProfileWorkerRequestSchema, type CompanyProfileWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
+import { createCompanyProfileAgent, type CompanyProfileAgent } from "../../../../capabilities/company-research/runtime/company-profile-agent.js";
 import { createToolRuntime } from "../worker/tools/tool-runtime.js";
 
 /** Isolated single-attempt harness. No production database/settings/file writes. */

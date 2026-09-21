@@ -11,9 +11,9 @@ import {
 } from "./host-client.js";
 import { createToolRuntime, type UtilityToolRuntime } from "./tools/tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import { createCompanyResearchAgent } from "./capabilities/company-research/company-research-agent.js";
+import { createCompanyResearchAgent } from "../../../../capabilities/company-research/runtime/company-research-agent.js";
 import type { ResearchAgent } from "./message-loop.js";
-import { createCompanyProfileAgent } from "./capabilities/company-research/company-profile-agent.js";
+import { createCompanyProfileAgent } from "../../../../capabilities/company-research/runtime/company-profile-agent.js";
 
 const fakeCompanyResearchAgent: ResearchAgent = {
   async run(request, emit, signal) {

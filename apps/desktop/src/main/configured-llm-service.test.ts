@@ -1,3 +1,5 @@
+import { ConfiguredCompanyRecognizer } from "../../../../capabilities/company-research/application/company-recognizer.js";
+import { withUsageContext } from "../shared/usage-collection.js";
 import { describe, expect, it, vi } from "vitest";
 import type { LlmRuntimeSnapshot } from "@deepfield/contracts";
 import { ModelGatewayError, type ModelGateway } from "../shared/model-gateway.js";
@@ -24,9 +26,9 @@ describe("ConfiguredLlmService", () => {
       throw new Error("unexpected task");
     });
     const gateway = { completeText } as unknown as ModelGateway;
-    const service = new ConfiguredLlmService(resolveActiveLlm, gateway);
+    const service = new ConfiguredCompanyRecognizer(resolveActiveLlm, gateway, withUsageContext);
 
-    await expect(service.generateConversationTitle("首条消息")).resolves.toBe("首条消息测试标题");
+    await expect(new ConfiguredLlmService(resolveActiveLlm, gateway).generateConversationTitle("首条消息")).resolves.toBe("首条消息测试标题");
     await expect(service.recognize("ACME 公司")).resolves.toEqual([{ name: "ACME" }]);
     expect(service).not.toHaveProperty("complete");
 

@@ -1,31 +1,6 @@
-import type {
-  AgentWorkerEvent,
-  CapabilityItem,
-  CapabilityItemId,
-  ChatMessage,
-  ChatRequestOptions,
-  CompanyDraft,
-  Company,
-  CompanyResearchState,
-  CompanyResearchEvent,
-  KeyResearchRun,
-  ResearchRunSummary,
-  CompanyProfileEvent,
-  CompanyId,
-  Conversation,
-  ConversationId,
-  ItemCompanyView,
-  SkillSummary,
-  LlmProfileDraft,
-  SearchProfileDraft,
-  SettingsView,
-  DiagnosticResult,
-  ResearchRun,
-  ResearchRunId,
-  CompanyResearchWordExportResult,
-  StartCompanyResearchInput,
-} from "@deepfield/contracts";
-import { getCompanyResearchTemplate } from "@deepfield/contracts";
+import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, CompanyId, Conversation, ConversationId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult, ResearchRunId, CompanyResearchWordExportResult } from "@deepfield/contracts";
+import type { CapabilityItem, CompanyDraft, Company, CompanyResearchState, CompanyResearchEvent, KeyResearchRun, ResearchRunSummary, CompanyProfileEvent, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
+import { getCompanyResearchTemplate } from "../../../../capabilities/company-research/contracts/index.js";
 import { vi } from "vitest";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {

@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { Value } from "typebox/value";
-import * as contracts from "./index.js";
+import * as contracts from "../../../capabilities/company-research/contracts/index.js";
+import * as ipc from "./ipc.js";
 import type { DesktopApi } from "./ipc.js";
 
 const expectedSections = {
@@ -202,15 +203,15 @@ describe("read-only research JSON contracts", () => {
   });
 
   it("requires exact retry and deletion arguments and exposes only summary history through DesktopApi", () => {
-    expect(contracts.CompanyResearchGetRunArgsSchema).toBeDefined();
-    expect(contracts.CompanyResearchRetryFailedArgsSchema).toBeDefined();
-    expect(contracts.CompanyResearchDeleteRunArgsSchema).toBeDefined();
-    for (const schema of [contracts.CompanyResearchGetRunArgsSchema, contracts.CompanyResearchDeleteRunArgsSchema]) {
+    expect(ipc.CompanyResearchGetRunArgsSchema).toBeDefined();
+    expect(ipc.CompanyResearchRetryFailedArgsSchema).toBeDefined();
+    expect(ipc.CompanyResearchDeleteRunArgsSchema).toBeDefined();
+    for (const schema of [ipc.CompanyResearchGetRunArgsSchema, ipc.CompanyResearchDeleteRunArgsSchema]) {
       expect(Value.Check(schema, ["item", "company", "run"])).toBe(true);
       for (const invalid of [["run"], ["item", "company"], ["item", "company", ""], ["item", "company", "run", "extra"]]) expect(Value.Check(schema, invalid)).toBe(false);
     }
-    expect(Value.Check(contracts.CompanyResearchRetryFailedArgsSchema, ["item", "company", "run", input])).toBe(true);
-    for (const invalid of [["item", "company", "run"], ["item", "company", "run", input, "extra"], ["item", "company", "run", {}]]) expect(Value.Check(contracts.CompanyResearchRetryFailedArgsSchema, invalid)).toBe(false);
+    expect(Value.Check(ipc.CompanyResearchRetryFailedArgsSchema, ["item", "company", "run", input])).toBe(true);
+    for (const invalid of [["item", "company", "run"], ["item", "company", "run", input, "extra"], ["item", "company", "run", {}]]) expect(Value.Check(ipc.CompanyResearchRetryFailedArgsSchema, invalid)).toBe(false);
     expectTypeOf<DesktopApi["companyResearch"]["getRun"]>().parameters.toEqualTypeOf<[string, string, string]>();
     expectTypeOf<DesktopApi["companyResearch"]["retryFailed"]>().parameters.toEqualTypeOf<[string, string, string, contracts.StartCompanyResearchInput]>();
     expectTypeOf<DesktopApi["companyResearch"]["deleteRun"]>().parameters.toEqualTypeOf<[string, string, string]>();

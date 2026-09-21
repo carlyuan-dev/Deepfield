@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Value } from "typebox/value";
-import { AppError, ResearchRunSchema, ResearchRunSummarySchema, type CompanyResearchBatchState } from "@deepfield/contracts";
+import { AppError } from "@deepfield/contracts";
+import { ResearchRunSchema, ResearchRunSummarySchema, type CompanyResearchBatchState } from "../../../../capabilities/company-research/contracts/index.js";
 import type { ConversationId, MessageId } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {

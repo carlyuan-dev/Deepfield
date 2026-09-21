@@ -11,7 +11,7 @@ import { useConversations } from "./state/use-conversations.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ChatPaneHeader } from "./components/ChatPaneHeader.js";
 import { ChatView } from "./components/ChatView.js";
-import { IndustryResearchCapability } from "./features/industry-research/IndustryResearchCapability.js";
+import { IndustryResearchCapability } from "../../../../capabilities/company-research/ui/IndustryResearchCapability.js";
 import { SettingsView } from "./features/settings/SettingsView.js";
 
 export interface AppProps {

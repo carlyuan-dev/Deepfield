@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCompanyResearchTemplate } from "@deepfield/contracts";
+import { getCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
 import { profileResult } from "../../application/src/testing/company-profile-test-fixtures.js";
 import { createRepositories, migrate, openDatabase } from "./index.js";
 
@@ -218,6 +218,7 @@ describe("Capability A persistence", () => {
     const db = openDatabase(":memory:");
     cleanups.push(() => db.close());
     db.exec(`
+      CREATE TABLE conversations(id TEXT PRIMARY KEY);
       CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
       INSERT INTO schema_migrations(version, applied_at) VALUES
         (1, ''), (2, ''), (3, ''), (4, ''), (5, '');
@@ -238,7 +239,9 @@ describe("Capability A persistence", () => {
       );
     `);
 
+    const beforeCompanyIds = db.prepare("SELECT id FROM companies ORDER BY id").all();
     migrate(db);
+    expect(db.prepare("SELECT id FROM companies ORDER BY id").all()).toEqual(beforeCompanyIds);
     const company = createRepositories(db).companies.getById("legacy" as never);
     expect(company).toMatchObject({
       headquarters: "Singapore",
@@ -255,6 +258,7 @@ describe("Capability A persistence", () => {
     const db = openDatabase(":memory:");
     cleanups.push(() => db.close());
     db.exec(`
+      CREATE TABLE conversations(id TEXT PRIMARY KEY);
       CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
       INSERT INTO schema_migrations VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,'');
       CREATE TABLE companies(id TEXT PRIMARY KEY);
@@ -275,8 +279,10 @@ describe("Capability A persistence", () => {
     `);
     const hugeReport = "旧".repeat(1_000_001);
     db.prepare("INSERT INTO company_research_runs VALUES ('large', 'item', 'company', 'completed', '不限时间', NULL, ?, '2026-02-01', '2026-02-02')").run(hugeReport);
+    const beforeReportIds = db.prepare("SELECT id FROM company_research_runs WHERE status = 'completed' ORDER BY id").all();
     migrate(db);
     migrate(db);
+    expect(db.prepare("SELECT id FROM company_research_runs ORDER BY id").all()).toEqual(beforeReportIds);
     const repo = createRepositories(db).companyResearchRuns;
     expect(repo.getByIdForTarget("item" as never, "company" as never, "old" as never)).toMatchObject({
       schemaVersion: "legacy-freeform-v1", status: "completed", searchStatus: "unknown", reportText: "旧报告",
@@ -290,7 +296,7 @@ describe("Capability A persistence", () => {
     expect(repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 0 });
     expect(repo.listRuns("item" as never, "company" as never)).toEqual(summaries);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 19 });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 22 });
     expect(db.prepare("PRAGMA table_info(company_research_model_diagnostics)").all()).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "attempt" }),
       expect.objectContaining({ name: "validation_issues_json" }),

@@ -1,24 +1,8 @@
 import { Value } from "typebox/value";
 import { UsageFlushRequestSchema } from "@deepfield/contracts";
 import { withUsageContext } from "../shared/usage-collection.js";
-import {
-  AgentWorkerEventSchema,
-  CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema,
-  type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent,
-  AgentWorkerRequestSchema,
-  CompanyResearchCancelRequestSchema,
-  CompanyResearchWorkerEventSchema,
-  CompanyResearchWorkerRequestSchema,
-  ToolExecutionEventSchema,
-  ToolRunRequestSchema,
-  type AgentWorkerEvent,
-  type AgentWorkerRequest,
-  type CompanyResearchWorkerEvent,
-  type CompanyResearchWorkerRequest,
-  type CompanyResearchStage,
-  type ToolExecutionEvent,
-  type ToolRunRequest,
-} from "@deepfield/contracts";
+import { AgentWorkerEventSchema, AgentWorkerRequestSchema, ToolExecutionEventSchema, ToolRunRequestSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
+import { CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema, type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent, CompanyResearchCancelRequestSchema, CompanyResearchWorkerEventSchema, CompanyResearchWorkerRequestSchema, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
 import {
   isHostReply,
   researchFailure,
@@ -32,7 +16,7 @@ import {
   type WorkerEndpoint,
   type WorkerLoop,
 } from "./message-loop-types.js";
-import type { CompanyProfileAgent } from "./capabilities/company-research/company-profile-agent.js";
+import type { CompanyProfileAgent } from "../../../../capabilities/company-research/runtime/company-profile-agent.js";
 
 export type { ActiveExecution, ChatAgent, ResearchAgent, ToolRuntime, WorkerEndpoint, WorkerLoop } from "./message-loop-types.js";
 

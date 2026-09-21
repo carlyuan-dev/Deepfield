@@ -1,13 +1,9 @@
 import type { CompanyProfileCompleter } from "@deepfield/application";
-import type { CompanyProfileFields } from "@deepfield/contracts";
+import type { CompanyProfileFields } from "../../../../capabilities/company-research/contracts/index.js";
 import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_DEEPSEEK_MODEL_ID, getCompanyResearchTemplate,
-  type CompanyResearchWorkerRequest,
-  type LlmRuntimeSnapshot,
-  type SearchRuntimeSnapshot,
-} from "@deepfield/contracts";
+import { DEFAULT_DEEPSEEK_MODEL_ID, type LlmRuntimeSnapshot, type SearchRuntimeSnapshot } from "@deepfield/contracts";
+import { getCompanyResearchTemplate, type CompanyResearchWorkerRequest } from "../../../../capabilities/company-research/contracts/index.js";
 import { createApplicationRuntime } from "./application-runtime.js";
 import { AgentWorkerClient } from "./agent-worker-client.js";
 import { FakeEndpoint } from "./agent-worker-client-test-helpers.js";

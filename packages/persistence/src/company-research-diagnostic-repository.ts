@@ -1,9 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Value } from "typebox/value";
-import {
-  CompanyResearchModelDiagnosticSchema,
-  type CompanyResearchModelDiagnostic,
-} from "@deepfield/contracts";
+import { CompanyResearchModelDiagnosticSchema, type CompanyResearchModelDiagnostic } from "./legacy-company-contracts/index.js";
 import type { CompanyResearchDiagnosticRepository } from "./types.js";
 
 interface DiagnosticRow {

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { CapabilityItemId, CompanyId, ItemCompany } from "@deepfield/contracts";
+import type { CapabilityItemId, CompanyId } from "./legacy-company-contracts/index.js";
+import type { ItemCompany } from "./legacy-company-contracts/index.js";
 import { toItemCompany } from "./mappers.js";
 import type { ItemCompanyRepository, ItemCompanyRow } from "./types.js";
 

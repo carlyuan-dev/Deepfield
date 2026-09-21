@@ -32,6 +32,8 @@
     }
   },
   "include": [
+    "capabilities/**/*.ts",
+    "capabilities/**/*.tsx",
     "packages/base/src/**/*.ts",
     "packages/capability-sdk/src/**/*.ts",
     "electron.vite.config.ts",

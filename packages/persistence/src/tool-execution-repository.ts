@@ -8,7 +8,7 @@ import type {
   ToolExecutionStart,
   ToolExecutionSynthetic,
 } from "./types.js";
-import type { ConversationId } from "@deepfield/contracts";
+import type { ConversationId } from "./legacy-company-contracts/index.js";
 import { sanitizeSummary } from "./summary-sanitizer.js";
 import { TOOL_FAILURE_CODES, ToolExecutionError } from "./tool-execution-errors.js";
 import { rowToExecution } from "./tool-execution-row-validation.js";

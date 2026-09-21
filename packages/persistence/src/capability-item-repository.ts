@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type {
-  CapabilityItem,
-  CapabilityItemId,
-  CreateIndustryResearchItemInput,
-  UpdateIndustryResearchItemInput,
-} from "@deepfield/contracts";
+import type { CapabilityItemId } from "./legacy-company-contracts/index.js";
+import type { CapabilityItem, CreateIndustryResearchItemInput, UpdateIndustryResearchItemInput } from "./legacy-company-contracts/index.js";
 import { toCapabilityItem } from "./mappers.js";
 import type { CapabilityItemRepository, CapabilityItemRow } from "./types.js";
 

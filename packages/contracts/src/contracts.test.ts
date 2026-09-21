@@ -3,8 +3,6 @@ import { Value } from "typebox/value";
 import {
   AgentWorkerRequestSchema,
   AgentWorkerEventSchema,
-  CompanyDraftSchema,
-  CreateIndustryResearchItemInputSchema,
   DEFAULT_DEEPSEEK_MODEL_ID,
   HostRequestSchema,
   SkillSummarySchema,
@@ -298,3 +296,5 @@ describe("agent worker request schema", () => {
     });
   });
 });
+
+import { CompanyDraftSchema, CreateIndustryResearchItemInputSchema } from "../../../capabilities/company-research/contracts/index.js";

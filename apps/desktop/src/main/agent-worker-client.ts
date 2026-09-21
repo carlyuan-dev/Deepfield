@@ -1,17 +1,6 @@
 import { Value } from "typebox/value";
-import {
-  AgentWorkerEventSchema,
-  CompanyProfileWorkerEventSchema, type CompanyProfileWorkerEvent, type CompanyProfileWorkerRequest,
-  CompanyResearchWorkerEventSchema,
-  ToolEventEnvelopeSchema,
-  type AgentWorkerEvent,
-  type AgentWorkerRequest,
-  type CompanyResearchWorkerEvent,
-  type CompanyResearchWorkerRequest,
-  type CompanyResearchStage,
-  type ToolExecutionEvent,
-  type ToolRunRequest,
-} from "@deepfield/contracts";
+import { AgentWorkerEventSchema, ToolEventEnvelopeSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
+import { CompanyProfileWorkerEventSchema, type CompanyProfileWorkerEvent, type CompanyProfileWorkerRequest, CompanyResearchWorkerEventSchema, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
 import {
   AgentProtocolError,
   AgentWorkerExitedError,

@@ -2,36 +2,8 @@ import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { UsageDashboardArgsSchema, UsageDashboardSchema } from "@deepfield/contracts";
 import type { UsageDashboard } from "@deepfield/base/usage";
-import {
-  CompanyResearchBatchStateSchema, CompanyProfileProgressSchema, type CompanyResearchBatchState, type CompanyProfileProgress,
-  toPublicError, PublicAppErrorSchema, ResearchRunSchema, DiagnosticResultSchema, CompanyResearchWordExportResultSchema,
-  AgentWorkerEventSchema,
-  CompanyResearchEventSchema,
-  CompanyProfileEventSchema,
-  type AgentWorkerEvent,
-  type CapabilityItem,
-  type Company,
-  type CompanyResearchState,
-  type CompanyResearchEvent,
-  type ChatMessage,
-  type ChatRequestOptions,
-  type ChatSendResult,
-  type CompanyDraft,
-  type CompanyProfileInput,
-  type CompanyProfileIdentityHint,
-  type CompanyProfileEvent,
-  type Conversation,
-  type DesktopApi,
-  type ItemCompanyView,
-  type LlmProfileDraft,
-  type SearchProfileDraft,
-  type SettingsView,
-  type DiagnosticResult,
-  type ResearchRun,
-  type ResearchRunSummary,
-  type CompanyResearchWordExportResult,
-  type SkillSummary,
-} from "@deepfield/contracts";
+import { toPublicError, PublicAppErrorSchema, DiagnosticResultSchema, CompanyResearchWordExportResultSchema, AgentWorkerEventSchema, type AgentWorkerEvent, type ChatMessage, type ChatRequestOptions, type ChatSendResult, type Conversation, type DesktopApi, type LlmProfileDraft, type SearchProfileDraft, type SettingsView, type DiagnosticResult, type CompanyResearchWordExportResult, type SkillSummary } from "@deepfield/contracts";
+import { CompanyResearchBatchStateSchema, CompanyProfileProgressSchema, type CompanyResearchBatchState, type CompanyProfileProgress, ResearchRunSchema, CompanyResearchEventSchema, CompanyProfileEventSchema, type CapabilityItem, type Company, type CompanyResearchState, type CompanyResearchEvent, type CompanyDraft, type CompanyProfileInput, type CompanyProfileIdentityHint, type CompanyProfileEvent, type ItemCompanyView, type ResearchRun, type ResearchRunSummary } from "../../../../capabilities/company-research/contracts/index.js";
 
 export const IPC_CHANNELS = {
   usageGetDashboard: "deepfield:usage:getDashboard",

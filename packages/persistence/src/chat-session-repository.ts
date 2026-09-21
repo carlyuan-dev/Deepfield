@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Value } from "typebox/value";
-import { AgentWorkerEventSchema, ChatTranscriptMessageSchema, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "@deepfield/contracts";
+import { AgentWorkerEventSchema, ChatTranscriptMessageSchema, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "./legacy-company-contracts/index.js";
 
 export interface ChatSessionRecord {
   requestId: string;

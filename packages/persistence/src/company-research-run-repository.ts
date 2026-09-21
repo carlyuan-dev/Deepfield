@@ -1,18 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { Value } from "typebox/value";
-import {
-  ActiveResearchRunSummarySchema,
-  ResearchRunSchema,
-  ResearchRunSummarySchema,
-  StartCompanyResearchInputSchema,
-  type ActiveResearchRunSummary,
-  type KeyResearchRun,
-  type ResearchFailureCode,
-  type ResearchRun,
-  type ResearchRunId,
-  type ResearchRunSummary,
-} from "@deepfield/contracts";
+import { type ResearchRunId } from "./legacy-company-contracts/index.js";
+import { ActiveResearchRunSummarySchema, ResearchRunSchema, ResearchRunSummarySchema, StartCompanyResearchInputSchema, type ActiveResearchRunSummary, type KeyResearchRun, type ResearchFailureCode, type ResearchRun, type ResearchRunSummary } from "./legacy-company-contracts/index.js";
 import type { CompanyResearchRunRepository, CompanyResearchRunRow } from "./types.js";
 
 function invalidRun(): never {

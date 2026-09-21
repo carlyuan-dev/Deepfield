@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase, migrate, createRepositories } from "./index.js";
-import type { CompanyProfileDiagnostic } from "@deepfield/contracts";
+import type { CompanyProfileDiagnostic } from "./legacy-company-contracts/index.js";
 describe("profile diagnostics persistence", () => {
   it("correlates a bounded reason to company/request and rejects untrusted payload fields", () => {
     const db = openDatabase(":memory:"); migrate(db); const repos = createRepositories(db);

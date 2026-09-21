@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCompanyResearchTemplate, type CompanyResearchModelDiagnostic } from "@deepfield/contracts";
+import { getCompanyResearchTemplate, type CompanyResearchModelDiagnostic } from "../../../capabilities/company-research/contracts/index.js";
 import { createRepositories, migrate, openDatabase } from "./index.js";
 
 const cleanups: Array<() => void> = [];

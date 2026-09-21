@@ -1,21 +1,9 @@
+import { createCompanyResearchServices } from "../../../../capabilities/company-research/application/create-services.js";
 import { randomUUID } from "node:crypto";
 import type { Repositories } from "@deepfield/persistence";
-import {
-  ChatService,
-  CompanyResearchService,
-  CompanyResearchBatchService,
-  CompanyProfileEnrichmentService,
-  ContextBuilder,
-  ConversationService,
-  IndustryResearchService,
-  type AgentWorkerPort,
-  type CompanyResearchWorkerPort,
-  type CompanyRecognizer,
-  type CompanyProfileCompleter, type CompanyProfileWorkerPort,
-  type ConversationTitleGenerator,
-  type SecretReader,
-} from "@deepfield/application";
-import { createCompanyProfileCompleter } from "./company-profile-completer.js";
+import { ChatService, ContextBuilder, ConversationService, type AgentWorkerPort, type CompanyResearchWorkerPort, type CompanyRecognizer, type CompanyProfileCompleter, type CompanyProfileWorkerPort, type ConversationTitleGenerator, type SecretReader } from "@deepfield/application";
+import { CompanyResearchService, CompanyResearchBatchService, CompanyProfileEnrichmentService, IndustryResearchService } from "../../../../capabilities/company-research/application/index.js";
+import { createCompanyProfileCompleter } from "../../../../capabilities/company-research/application/company-profile-completer.js";
 
 export interface ApplicationRuntimeDeps {
   repositories: Repositories;
@@ -29,6 +17,7 @@ export interface ApplicationRuntimeDeps {
 }
 
 export interface ApplicationRuntime {
+  dispose(): Promise<void>;
   industryResearch: IndustryResearchService;
   conversationService: ConversationService;
   contextBuilder: ContextBuilder;
@@ -59,38 +48,20 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
     deps.worker,
     titleGenerator === undefined ? {} : { titleGenerator },
   );
-  const companyResearch = new CompanyResearchService(
-    deps.repositories,
-    deps.profiles,
-    deps.worker,
-    { requestIdFactory: randomUUID },
-  );
-  let companyResearchBatch: CompanyResearchBatchService | undefined;
-  const companyProfiles = new CompanyProfileEnrichmentService(
-    deps.repositories.companies,
-    companyCompleter,
-    {
-      isForegroundBusy: () => companyResearch.isRunning() || !!companyResearchBatch?.isReserved(),
-      getTopicCompanyIds: (itemId) => deps.repositories.itemCompanies.listByItem(itemId as import("@deepfield/contracts").CapabilityItemId).map(entry => entry.companyId),
-      getTopicIds: () => deps.repositories.capabilityItems.list().map(item => item.id),
-      getResearchTopics: (companyId) => deps.repositories.capabilityItems.list()
-        .filter((item) => deps.repositories.itemCompanies.listByItem(item.id)
-          .some((membership) => membership.companyId === companyId))
-        .map((item) => item.industry),
+  const services = createCompanyResearchServices({
+    repositories: {
+      capabilityItems: deps.repositories.capabilityItems,
+      companies: deps.repositories.companies,
+      itemCompanies: deps.repositories.itemCompanies,
+      companyResearchRuns: deps.repositories.companyResearchRuns,
+      companyResearchDiagnostics: deps.repositories.companyResearchDiagnostics,
+      companyResearchBatches: deps.repositories.companyResearchBatches,
+      toolExecutions: { deleteByTraceIds: ids => deps.repositories.toolExecutions.deleteByTraceIds(ids) },
+      runInTransaction: work => deps.repositories.runInTransaction(work),
     },
-  );
-  const industryResearch = new IndustryResearchService(
-    deps.repositories,
-    companyRecognizer,
-    companyProfiles,
-  );
-  companyResearchBatch = new CompanyResearchBatchService(deps.repositories, companyResearch, companyProfiles);
-  companyResearch.cleanupAbandoned();
-  companyResearch.subscribe((event) => {
-    if (event.type === "state_changed" && !companyResearch.isRunning()) {
-      companyProfiles.resume();
-    }
+    profiles: deps.profiles,
+    worker: { sendResearch: request => deps.worker.sendResearch(request), cancelResearch: (...args) => deps.worker.cancelResearch(...args) },
+    companyRecognizer, companyCompleter, requestIdFactory: randomUUID,
   });
-  companyProfiles.start();
-  return { industryResearch, conversationService, contextBuilder, chatService, companyResearch, companyResearchBatch, companyProfiles };
+  return { ...services, conversationService, contextBuilder, chatService };
 }

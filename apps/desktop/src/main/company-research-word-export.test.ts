@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { AppError, type ResearchRun } from "@deepfield/contracts";
+import { AppError } from "@deepfield/contracts";
+import { type ResearchRun } from "../../../../capabilities/company-research/contracts/index.js";
 import { createCompanyResearchWordExportService } from "./company-research-word-export.js";
 import { researchRun } from "./ipc-test-helpers.js";
 

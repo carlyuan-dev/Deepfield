@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { CompanyResearchBatchState } from "@deepfield/contracts";
+import type { CompanyResearchBatchState } from "./legacy-company-contracts/index.js";
 export function createCompanyResearchBatchRepository(db: DatabaseSync) {
   const decode = (row: unknown): CompanyResearchBatchState | undefined => row ? JSON.parse((row as { snapshot: string }).snapshot) as CompanyResearchBatchState : undefined;
   return {

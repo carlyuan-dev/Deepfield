@@ -1,11 +1,5 @@
-import type {
-  AgentWorkerEvent,
-  CompanyProfileWorkerEvent,
-  CompanyResearchWorkerEvent,
-  CompanyResearchStage,
-  ToolEventEnvelope,
-  ToolExecutionEvent,
-} from "@deepfield/contracts";
+import type { AgentWorkerEvent, ToolEventEnvelope, ToolExecutionEvent } from "@deepfield/contracts";
+import type { CompanyProfileWorkerEvent, CompanyResearchWorkerEvent, CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
 
 export const MAX_PENDING_CHAT_EVENTS = 1000;
 export const MAX_PENDING_RESEARCH_EVENTS = 1000;

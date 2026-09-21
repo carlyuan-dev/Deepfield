@@ -1,14 +1,5 @@
-import type {
-  AgentWorkerEvent,
-  AgentWorkerRequest,
-  CompanyResearchWorkerEvent,
-  CompanyResearchWorkerRequest,
-  CompanyResearchStage,
-  CompanyDraft,
-  Company, CompanyProfileResult, CompanyProfileWorkerRequest, CompanyProfileWorkerEvent,
-  LlmRuntimeSnapshot,
-  SearchRuntimeSnapshot,
-} from "@deepfield/contracts";
+import type { AgentWorkerEvent, AgentWorkerRequest, LlmRuntimeSnapshot, SearchRuntimeSnapshot } from "@deepfield/contracts";
+import type { CompanyResearchWorkerEvent, CompanyResearchWorkerRequest, CompanyResearchStage, CompanyDraft, Company, CompanyProfileResult, CompanyProfileWorkerRequest, CompanyProfileWorkerEvent } from "../../../capabilities/company-research/contracts/index.js";
 
 export interface SecretReader {
   get(name: string): string | undefined;

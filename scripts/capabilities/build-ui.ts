@@ -20,7 +20,7 @@ export async function buildCapabilityUi(options: CapabilityUiBuildOptions): Prom
   const shims: Record<string, string> = {
     react: 'export const {useCallback,useEffect,useMemo,useRef,useState,useId}=__capabilityRuntime.react;',
     "react/jsx-runtime": 'export const {jsx,jsxs,Fragment}=__capabilityRuntime.jsx;',
-    [resolve(renderer, "features/industry-research/Modal.tsx")]: 'export const {Modal}=__capabilityRuntime;',
+    [resolve(renderer, "components/Modal.tsx")]: 'export const {Modal}=__capabilityRuntime;',
     [resolve(renderer, "components/MarkdownMessage.tsx")]: 'export const {MarkdownMessage}=__capabilityRuntime;',
     [resolve(renderer, "components/UrlPopoverLink.tsx")]: 'export const {UrlPopoverLink,isSafeHttpUrl}=__capabilityRuntime;',
   };

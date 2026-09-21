@@ -20,8 +20,8 @@ it("mounts the independently built real research page with the host React and di
   const output = await realpath(await mkdtemp(join(tmpdir(), "capability-react-")));
   temporaryRoots.push(output);
   const buildOptions: CapabilityUiBuildOptions = {
-    entry: resolve("apps/desktop/src/renderer/features/industry-research/package-ui.tsx"),
-    css: resolve("apps/desktop/src/renderer/capability.css"), capabilityId: "company-research", outDir: join(output, "dist"),
+    entry: resolve("capabilities/company-research/ui/package-ui.tsx"),
+    css: resolve("capabilities/company-research/ui/capability.css"), capabilityId: "company-research", outDir: join(output, "dist"),
   };
   // Vite/esbuild needs a Node realm, not jsdom's different Uint8Array realm.
   const buildScript = pathToFileURL(resolve("scripts/capabilities/build-ui.ts")).href;

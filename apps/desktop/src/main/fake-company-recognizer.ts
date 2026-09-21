@@ -1,4 +1,4 @@
-import type { CompanyDraft } from "@deepfield/contracts";
+import type { CompanyDraft } from "../../../../capabilities/company-research/contracts/index.js";
 import type { CompanyRecognizer } from "@deepfield/application";
 
 export class FakeCompanyRecognizer implements CompanyRecognizer {

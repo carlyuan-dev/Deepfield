@@ -3,7 +3,7 @@ import { Value } from "typebox/value";
 import {
   CompanyProfileDiagnosticSchema,
   CompanyProfileWorkerRequestSchema,
-} from "./company-profile.js";
+} from "../../../capabilities/company-research/contracts/company-profile.js";
 
 const request = {
   kind: "company-profile.enrich" as const,

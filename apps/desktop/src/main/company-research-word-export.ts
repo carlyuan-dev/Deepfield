@@ -1,12 +1,9 @@
 import { dirname, basename, join } from "node:path";
+import type { DocumentSavePort } from "../../../../capabilities/company-research/host-ports.js";
 import { Value } from "typebox/value";
-import {
-  AppError,
-  CompanyResearchWordExportSelectionSchema,
-  type CompanyResearchWordExportSelection,
-  type ResearchRun,
-} from "@deepfield/contracts";
-import { buildCompanyResearchDocx } from "./company-research-word-document.js";
+import { AppError, CompanyResearchWordExportSelectionSchema, type CompanyResearchWordExportSelection } from "@deepfield/contracts";
+import { type ResearchRun } from "../../../../capabilities/company-research/contracts/index.js";
+import { buildCompanyResearchDocx } from "../../../../capabilities/company-research/export/company-research-word-document.js";
 
 export type CompanyResearchWordExportResult = { status: "saved" | "cancelled" };
 
@@ -22,14 +19,10 @@ type SaveDialogOptions = {
   properties: ["createDirectory", "showOverwriteConfirmation"];
 };
 
-type ExportDependencies = {
+type ExportDependencies = DocumentSavePort & {
   getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined;
   showSaveDialog(options: SaveDialogOptions): Promise<{ canceled: boolean; filePath?: string }>;
   buildDocument?(run: ResearchRun, selection: CompanyResearchWordExportSelection): Promise<Buffer>;
-  writeFile(path: string, data: Buffer, options: { flag: "wx" }): Promise<void>;
-  rename(from: string, to: string): Promise<void>;
-  unlink(path: string): Promise<void>;
-  randomToken(): string;
 };
 
 function safeFileNamePart(value: string): string {

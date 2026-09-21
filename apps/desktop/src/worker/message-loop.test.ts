@@ -1,15 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
-import {
-  AgentWorkerEventSchema,
-  CompanyResearchWorkerEventSchema,
-  ToolEventEnvelopeSchema,
-  type AgentWorkerEvent,
-  type CompanyResearchWorkerEvent,
-  type ToolExecutionEvent,
-} from "@deepfield/contracts";
+import { AgentWorkerEventSchema, ToolEventEnvelopeSchema, type AgentWorkerEvent, type ToolExecutionEvent } from "@deepfield/contracts";
+import { CompanyResearchWorkerEventSchema, type CompanyResearchWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
 import { createWorkerMessageLoop, type ChatAgent, type ToolRuntime } from "./message-loop.js";
-import { rawResearchRequest, structureResearchRequest } from "./capabilities/company-research/company-research-test-helpers.js";
+import { rawResearchRequest, structureResearchRequest } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
 import {
   echoAgent,
   echoToolRuntime,

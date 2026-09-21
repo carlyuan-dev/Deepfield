@@ -2,13 +2,13 @@ import { Type, type Static, type TProperties } from "typebox";
 import { UsageAttemptSchema } from "@deepfield/base/usage";
 import { UsageHealthEnvelopeSchema, UsageFlushRequestSchema, UsageFlushReplySchema } from "./usage.js";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
-import { CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "./company-profile.js";
+import { CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "../../../capabilities/company-research/contracts/company-profile.js";
 import {
   CompanyResearchCancelRequestSchema,
   CompanyResearchWorkerEventSchema,
   CompanyResearchRawWorkerRequestSchema,
   CompanyResearchStructureWorkerRequestSchema,
-} from "./research.js";
+} from "../../../capabilities/company-research/contracts/research.js";
 import {
   JsonObjectSchema,
   ToolExecutionEventSchema,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { researchRetryMode } from "./research-retry-policy.js";
-import type { KeyResearchRun } from "./research.js";
+import { researchRetryMode } from "../../../capabilities/company-research/contracts/research-retry-policy.js";
+import type { KeyResearchRun } from "../../../capabilities/company-research/contracts/research.js";
 
 const input = { direction: "product_and_technology", asOfDate: "2026-09-11", focusScope: "重点" } as const;
 describe("research retry policy", () => {

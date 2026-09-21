@@ -1,12 +1,5 @@
-import type {
-  ChatMessage,
-  CapabilityItem,
-  Company,
-  Conversation,
-  ConversationId,
-  ItemCompany,
-  MessageId,
-} from "@deepfield/contracts";
+import type { ChatMessage, Conversation, ConversationId, MessageId } from "./legacy-company-contracts/index.js";
+import type { CapabilityItem, Company, ItemCompany } from "./legacy-company-contracts/index.js";
 import type {
   ConversationRow,
   MessageRow,

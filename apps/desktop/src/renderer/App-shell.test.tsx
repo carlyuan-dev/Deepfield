@@ -2,16 +2,9 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import type {
-  CapabilityItem,
-  CapabilityItemId,
-  CompanyId,
-  ItemCompanyView,
-  ResearchRun,
-  ResearchRunId,
-  CompanyResearchState,
-} from "@deepfield/contracts";
-import { researchRun, researchSummary, activeResearch } from "./features/industry-research/company-research-test-fixtures.js";
+import type { CapabilityItemId, CompanyId, ResearchRunId } from "@deepfield/contracts";
+import type { CapabilityItem, ItemCompanyView, ResearchRun, CompanyResearchState } from "../../../../capabilities/company-research/contracts/index.js";
+import { researchRun, researchSummary, activeResearch } from "../../../../capabilities/company-research/ui/company-research-test-fixtures.js";
 import { App } from "./App.js";
 import { configuredSettings } from "./features/settings/settings-test-fixtures.js";
 import {

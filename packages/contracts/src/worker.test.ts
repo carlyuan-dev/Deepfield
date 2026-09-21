@@ -7,7 +7,7 @@ import {
   CompanyResearchWorkerRequestSchema,
   CompanyResearchEventSchema,
   STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
-} from "./research.js";
+} from "../../../capabilities/company-research/contracts/research.js";
 import { ToolExecutionEventSchema } from "./tools.js";
 import {
   HostReplySchema,

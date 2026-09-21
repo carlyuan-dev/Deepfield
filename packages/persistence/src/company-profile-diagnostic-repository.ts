@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Value } from "typebox/value";
-import { CompanyProfileDiagnosticSchema, type CompanyProfileDiagnostic } from "@deepfield/contracts";
+import { CompanyProfileDiagnosticSchema, type CompanyProfileDiagnostic } from "./legacy-company-contracts/index.js";
 import type { CompanyProfileDiagnosticRepository } from "./types.js";
 function valid(value: unknown): CompanyProfileDiagnostic {
   if (!Value.Check(CompanyProfileDiagnosticSchema, value)) throw new Error("invalid profile diagnostic");

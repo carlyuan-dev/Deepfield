@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type {
-  CompanyResearchWorkerEvent,
-  CompanyResearchWorkerRequest,
-} from "@deepfield/contracts";
+import type { CompanyResearchWorkerEvent, CompanyResearchWorkerRequest } from "../../../../capabilities/company-research/contracts/index.js";
 import { createWorkerMessageLoop } from "../worker/message-loop.js";
-import { rawResearchRequest, structureResearchRequest } from "../worker/capabilities/company-research/company-research-test-helpers.js";
+import { rawResearchRequest, structureResearchRequest } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
 import {
   echoAgent,
   flushPending,

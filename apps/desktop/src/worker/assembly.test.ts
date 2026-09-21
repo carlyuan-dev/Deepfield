@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { HostClient } from "./host-client.js";
 import { createUtilityAssembly } from "./assembly.js";
-import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "@deepfield/contracts";
+import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
 import { Value } from "typebox/value";
-import { rawResearchRequest, structureResearchRequest } from "./capabilities/company-research/company-research-test-helpers.js";
+import { rawResearchRequest, structureResearchRequest } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
 import {
   assistant,
   FakePiAgent,

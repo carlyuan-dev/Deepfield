@@ -1,12 +1,5 @@
-import type {
-  AgentWorkerEvent,
-  AgentWorkerRequest,
-  CompanyResearchWorkerEvent,
-  CompanyResearchWorkerRequest,
-  CompanyResearchStage,
-  ToolExecutionEvent,
-  ToolRunRequest,
-} from "@deepfield/contracts";
+import type { AgentWorkerEvent, AgentWorkerRequest, ToolExecutionEvent, ToolRunRequest } from "@deepfield/contracts";
+import type { CompanyResearchWorkerEvent, CompanyResearchWorkerRequest, CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
 
 export interface ChatAgent {
   run(

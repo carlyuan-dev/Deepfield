@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { ChatMessage, ConversationId, MessageId } from "@deepfield/contracts";
+import type { ChatMessage, ConversationId, MessageId } from "./legacy-company-contracts/index.js";
 import { toMessage } from "./mappers.js";
 import type { MessageRepository, MessageRow } from "./types.js";
 

@@ -1,3 +1,5 @@
+import { ConfiguredCompanyRecognizer } from "../../../../capabilities/company-research/application/company-recognizer.js";
+import { withUsageContext } from "../shared/usage-collection.js";
 import { randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityProcess } from "electron";
@@ -111,7 +113,7 @@ void app.whenReady().then(async () => {
   const companyRecognizer =
     process.env.DEEPFIELD_AGENT_MODE === "fake"
       ? new FakeCompanyRecognizer()
-      : configuredLlm;
+      : new ConfiguredCompanyRecognizer(() => profiles.resolveActiveLlm(), modelGateway, withUsageContext);
 
   const skillsDir = resolveSkillsDir({
     appPath: app.getAppPath(),
@@ -161,8 +163,8 @@ void app.whenReady().then(async () => {
         client.cancelResearch(requestId, runId, stage);
       },
     },
-    llmHelpers: configuredLlm,
-    ...(companyRecognizer === configuredLlm ? {} : { companyRecognizer }),
+    titleGenerator: configuredLlm,
+    companyRecognizer,
   });
   appRuntime.companyResearch.cleanupAbandoned();
   appRuntime.companyProfiles.resume();

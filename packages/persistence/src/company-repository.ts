@@ -1,14 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type {
-  Company,
-  CompanyId,
-  CompanyDraft,
-  CompanyProfileFields,
-  CompanyProfileInput,
-  CompanyProfileIdentityHint,
-  CompanyProfileStatus,
-} from "@deepfield/contracts";
+import type { CompanyId } from "./legacy-company-contracts/index.js";
+import type { Company, CompanyDraft, CompanyProfileFields, CompanyProfileInput, CompanyProfileIdentityHint, CompanyProfileStatus } from "./legacy-company-contracts/index.js";
 import { toCompany } from "./mappers.js";
 import type { CompanyRepository, CompanyRow } from "./types.js";
 

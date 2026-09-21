@@ -4,15 +4,10 @@ import {
   IPC_CHANNELS,
   type IpcBridge,
 } from "./preload-api.js";
-import type {
-  AgentWorkerEvent,
-  ChatRequestOptions,
-  CompanyResearchEvent,
-  CompanyProfileEvent,
-  DesktopApi,
-} from "@deepfield/contracts";
+import type { AgentWorkerEvent, ChatRequestOptions, DesktopApi } from "@deepfield/contracts";
+import type { CompanyResearchEvent, CompanyProfileEvent } from "../../../../capabilities/company-research/contracts/index.js";
 
-import { researchRun } from "../renderer/features/industry-research/company-research-test-fixtures.js";
+import { researchRun } from "../../../../capabilities/company-research/ui/company-research-test-fixtures.js";
 
 const CHAT_OPTIONS: ChatRequestOptions = { webSearch: false, skillName: "structured-brief" };
 

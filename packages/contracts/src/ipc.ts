@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import type { UsageDashboardApi } from "@deepfield/base/usage";
-import type { BatchResearchEntryInput, CompanyResearchBatchState, CompanyProfileProgress } from "./batch-research.js";
-import { CompanyProfileIdentityHintSchema } from "./capability-items.js";
+import type { BatchResearchEntryInput, CompanyResearchBatchState, CompanyProfileProgress } from "../../../capabilities/company-research/contracts/batch-research.js";
+import { CompanyProfileIdentityHintSchema } from "../../../capabilities/company-research/contracts/capability-items.js";
 import type {
   CapabilityItem,
   Company,
@@ -12,7 +12,7 @@ import type {
   CreateIndustryResearchItemInput,
   ItemCompanyView,
   UpdateIndustryResearchItemInput,
-} from "./capability-items.js";
+} from "../../../capabilities/company-research/contracts/capability-items.js";
 import type { Conversation } from "./conversations.js";
 import type { AgentWorkerEvent, ChatMessage, ChatRequestOptions, ChatSendResult } from "./chat.js";
 import type { SkillSummary } from "./skills.js";
@@ -22,8 +22,8 @@ import type {
   ResearchRun,
   ResearchRunSummary,
   StartCompanyResearchInput,
-} from "./research.js";
-import { StartCompanyResearchInputSchema } from "./research.js";
+} from "../../../capabilities/company-research/contracts/research.js";
+import { StartCompanyResearchInputSchema } from "../../../capabilities/company-research/contracts/research.js";
 import { LlmProfileDraftSchema, SearchProfileDraftSchema, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView } from "./settings.js";
 
 export const SettingsGetArgsSchema = Type.Tuple([]);

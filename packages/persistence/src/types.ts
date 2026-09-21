@@ -1,33 +1,5 @@
-import type {
-  ChatMessage,
-  CapabilityItem,
-  CapabilityItemId,
-  Company,
-  CompanyId,
-  CompanyDraft,
-  CompanyProfileInput,
-  CompanyProfileFields,
-  CompanyProfileIdentityHint,
-  CompanyProfileResult, PublicAppError, CompanyProfileDiagnostic,
-  CompanyProfileStatus,
-  Conversation,
-  ConversationId,
-  CreateIndustryResearchItemInput,
-  MessageId,
-  ResearchRun,
-  ActiveResearchRunSummary,
-  CompanyResearchContext,
-  CompanyResearchModelDiagnostic,
-  CompanyResearchTemplateSnapshot,
-  KeyResearchRun,
-  ResearchRunSummary,
-  StructuredResearchContent,
-  ResearchRunId,
-  ResearchFailureCode,
-  StartCompanyResearchInput,
-  ItemCompany,
-  UpdateIndustryResearchItemInput,
-} from "@deepfield/contracts";
+import type { ChatMessage, CapabilityItemId, CompanyId, PublicAppError, Conversation, ConversationId, MessageId, ResearchRunId } from "./legacy-company-contracts/index.js";
+import type { CapabilityItem, Company, CompanyDraft, CompanyProfileInput, CompanyProfileFields, CompanyProfileIdentityHint, CompanyProfileResult, CompanyProfileDiagnostic, CompanyProfileStatus, CreateIndustryResearchItemInput, ResearchRun, ActiveResearchRunSummary, CompanyResearchContext, CompanyResearchModelDiagnostic, CompanyResearchTemplateSnapshot, KeyResearchRun, ResearchRunSummary, StructuredResearchContent, ResearchFailureCode, StartCompanyResearchInput, ItemCompany, UpdateIndustryResearchItemInput } from "./legacy-company-contracts/index.js";
 
 export interface CapabilityItemRepository {
   create(input: CreateIndustryResearchItemInput): CapabilityItem;

@@ -8,7 +8,7 @@ export default defineConfig({
     environment: "node",
     globals: true,
     maxWorkers: 2,
-    include: ["{apps,packages,scripts,tests}/**/*.test.{ts,tsx}"],
+    include: ["{apps,packages,capabilities,scripts,tests}/**/*.test.{ts,tsx}"],
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
