@@ -60,8 +60,10 @@ export async function scanCapabilities(
   for (const directory of directories.filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const packageRoot = join(root, directory.name);
     const manifestPath = join(packageRoot, "capability.json");
+    let canonicalRoot: string;
+    let canonicalManifest: string;
     try {
-      const [canonicalRoot, canonicalManifest] = await Promise.all([
+      [canonicalRoot, canonicalManifest] = await Promise.all([
         fileSystem.realpath(packageRoot),
         fileSystem.realpath(manifestPath),
       ]);
@@ -74,7 +76,7 @@ export async function scanCapabilities(
       continue;
     }
 
-    const file = await readManifestFile(manifestPath, fileSystem);
+    const file = await readManifestFile(canonicalManifest, fileSystem);
     if (!file.ok) {
       issues.push({ packageName: directory.name, code: file.code });
       continue;
@@ -93,7 +95,7 @@ export async function scanCapabilities(
       continue;
     }
 
-    const pathValidation = await validatePackagePaths(packageRoot, {
+    const pathValidation = await validatePackagePaths(canonicalRoot, {
       entries: validation.manifest.entries,
       documentationPaths: validation.manifest.actions.map((action) => action.documentation.path),
     }, fileSystem);
@@ -101,7 +103,7 @@ export async function scanCapabilities(
       issues.push({ packageName: directory.name, code: pathValidation.code });
       continue;
     }
-    entries.push({ root: canonicalizeRoot(packageRoot), manifest: validation.manifest });
+    entries.push({ root: canonicalRoot, manifest: validation.manifest });
   }
 
   const counts = new Map<string, number>();
@@ -113,10 +115,6 @@ export async function scanCapabilities(
   });
   issues.sort((a, b) => a.packageName.localeCompare(b.packageName));
   return { entries: uniqueEntries, issues };
-}
-
-function canonicalizeRoot(root: string): string {
-  return root;
 }
 
 function packageName(root: string): string {

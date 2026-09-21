@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -89,6 +89,24 @@ describe("scanCapabilities", () => {
     await mkdir(join(root, "outer"));
     await makePackage(join(root, "outer"), "nested");
     expect(await scanCapabilities(root)).toEqual({ entries: [], issues: [{ packageName: "outer", code: "manifest_missing" }] });
+  });
+
+  it("stores the same canonical package root when the scan root is a symlink alias", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "deepfield-catalog-"));
+    const root = join(parent, "packages");
+    const alias = join(parent, "packages-alias");
+    await mkdir(root);
+    await makePackage(root, "probe");
+    await symlink(root, alias);
+
+    const [direct, throughAlias, canonicalPackageRoot] = await Promise.all([
+      scanCapabilities(root),
+      scanCapabilities(alias),
+      realpath(join(root, "probe")),
+    ]);
+
+    expect(direct.entries[0]!.root).toBe(canonicalPackageRoot);
+    expect(throughAlias.entries[0]!.root).toBe(canonicalPackageRoot);
   });
 });
 
