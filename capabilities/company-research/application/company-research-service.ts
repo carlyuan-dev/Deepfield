@@ -49,6 +49,7 @@ export const STRUCTURE_RESEARCH_POLICY = { network: "disabled", maxAgentTurns: 1
 type CompanyResearchRepositories = Repositories;
 
 export class CompanyResearchService {
+  private disposed = false;
   private active: ActiveResearch | undefined;
   private starting = false;
   private reservation: string | undefined;
@@ -57,6 +58,13 @@ export class CompanyResearchService {
   reserve(owner: string, onCreated?: (run: KeyResearchRun) => void): void { this.requireAvailable(owner); this.reservation = owner; this.onOwnedRunCreated = onCreated; }
   release(owner: string): void { if (this.reservation === owner) { this.reservation = undefined; this.onOwnedRunCreated = undefined; } }
   async whenSettled(): Promise<void> { await this.settled; }
+  /** Invalidate old continuations without cancelling or deleting durable work. */
+  dispose(): void {
+    this.disposed = true;
+    this.active = undefined;
+    this.onOwnedRunCreated = undefined;
+    this.listeners.clear();
+  }
   isActiveRun(runId: string): boolean { return this.active?.run.id === runId; }
   validateBatchEntry(itemId: string, companyId: string, input: StartCompanyResearchInput): void {
     this.normalizeInput(input);
@@ -75,7 +83,7 @@ export class CompanyResearchService {
     this.now = options.now ?? (() => new Date());
   }
 
-  async start(itemId: string, companyId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean): Promise<KeyResearchRun> {
+  async start(itemId: string, companyId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<KeyResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
     this.requireAvailable(owner);
     const target = this.requireTarget(itemId, companyId);
@@ -84,7 +92,7 @@ export class CompanyResearchService {
       let llm: LlmRuntimeSnapshot; let search: SearchRuntimeSnapshot;
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
       catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
-      if (cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
+      if (this.disposed || interrupted?.() || cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
       const { context, template } = this.buildResearchSnapshots(target, normalized, today);
       try {
         const requestId = this.options.requestIdFactory();
@@ -94,7 +102,7 @@ export class CompanyResearchService {
           return created;
         });
         this.launch(run, requestId, llm, search);
-        if (cancelled?.() && this.isActiveRun(run.id)) void this.cancel(run.id);
+        if (!this.disposed && !interrupted?.() && cancelled?.() && this.isActiveRun(run.id)) void this.cancel(run.id);
         return structuredClone(run);
       } catch {
         throw new CompanyResearchServiceError("company research could not start", "STORAGE.FAILED");
@@ -104,7 +112,7 @@ export class CompanyResearchService {
     }
   }
 
-  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean): Promise<KeyResearchRun> {
+  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<KeyResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
     const target = this.requireTarget(itemId, companyId);
     const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
@@ -121,7 +129,7 @@ export class CompanyResearchService {
         let llm: LlmRuntimeSnapshot;
         try { llm = await this.profiles.resolveActiveLlm(); }
         catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
-        if (cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
+        if (this.disposed || interrupted?.() || cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
         try {
           const requestId = this.options.requestIdFactory();
           const active = this.repositories.runInTransaction(() =>
@@ -137,7 +145,7 @@ export class CompanyResearchService {
       try { [llm, search] = await Promise.all([this.profiles.resolveActiveLlm(), this.profiles.resolveActiveSearch()]); }
       catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
       const { context, template } = this.buildResearchSnapshots(target, normalized, today);
-      if (cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
+      if (this.disposed || interrupted?.() || cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
       try {
         const requestId = this.options.requestIdFactory();
         const active = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryResearching(
@@ -164,6 +172,7 @@ export class CompanyResearchService {
       let llm: LlmRuntimeSnapshot;
       try { llm = await this.profiles.resolveActiveLlm(); }
       catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
+      if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
       try {
         const requestId = this.options.requestIdFactory();
         const active = this.repositories.runInTransaction(() =>
@@ -279,6 +288,7 @@ export class CompanyResearchService {
   }
 
   private requireAvailable(owner?: string): void {
+    if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
     if ((this.reservation !== undefined && this.reservation !== owner) || this.isRunning()) throw new CompanyResearchServiceError("company research is already running", "BUSINESS.CONFLICT");
   }
 

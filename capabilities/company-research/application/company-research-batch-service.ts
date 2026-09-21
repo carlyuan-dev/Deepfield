@@ -15,6 +15,7 @@ export class CompanyResearchBatchService {
   private disposed = false;
   constructor(private readonly repos: Repositories, private readonly research: CompanyResearchService, private readonly profile?: { whenIdle(): Promise<void>; resume(): void }) {
     this.unsubscribe = research.subscribe(event => {
+      if (this.disposed) return;
       if (event.type === "tool_activity" && event.errorCode === "authentication_failed" && this.state) {
         const entry = this.state.entries.find(e => e.runId === event.runId);
         if (entry) {
@@ -57,6 +58,7 @@ export class CompanyResearchBatchService {
     return structuredClone(this.state?.itemId === itemId ? this.state : this.repos.companyResearchBatches.getLatest(itemId) ?? null);
   }
   start(itemId: string, entries: BatchResearchEntryInput[]): CompanyResearchBatchState {
+    if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
     if (this.isReserved() || this.repos.companyResearchBatches.getActive()) throw new AppError("BUSINESS.CONFLICT");
     if (!Array.isArray(entries) || entries.length === 0 || entries.length > 1000 || new Set(entries.map(e => e.companyId)).size !== entries.length) throw new AppError("INPUT.INVALID");
     for (const entry of entries) {
@@ -94,7 +96,7 @@ export class CompanyResearchBatchService {
     const entry = state.entries.find(e => e.status === "running");
     if (entry?.runId && this.research.isActiveRun(entry.runId)) await this.research.cancel(entry.runId);
     await this.task;
-    if (this.state !== state) return; // Another cancellation already settled this owned batch.
+    if (this.disposed || this.state !== state) return; // Another cancellation or disposal settled ownership.
     // A recovered run was changed to failed by single-run startup recovery. Only
     // an entry still marked running is owned unfinished work; completed entries
     // and failures already acknowledged by the queue are never removed.
@@ -116,8 +118,9 @@ export class CompanyResearchBatchService {
     this.save();
   }
   subscribe(listener: (state: CompanyResearchBatchState) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  dispose(): void { this.disposed = true; this.unsubscribe(); this.listeners.clear(); }
+  dispose(): void { this.disposed = true; this.wakeProfileBoundary?.(); this.unsubscribe(); this.listeners.clear(); }
   private require(batchId: string): CompanyResearchBatchState {
+    if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
     if (this.state?.batchId !== batchId) throw new AppError("RESOURCE.NOT_FOUND");
     return this.state;
   }
@@ -125,7 +128,7 @@ export class CompanyResearchBatchService {
     const state = this.state!;
     const cancelledAtBoundary = new Promise<void>(resolve => { this.wakeProfileBoundary = resolve; });
     const task = Promise.resolve().then(() => this.run(cancelledAtBoundary)).catch(error => {
-      if (this.state !== state || this.state.status === "cancelling") return;
+      if (this.disposed || this.state !== state || this.state.status === "cancelling") return;
       this.state.status = "paused";
       this.state.issue = toPublicError(error);
       this.save();
@@ -134,13 +137,14 @@ export class CompanyResearchBatchService {
   }
   private async run(cancelledAtBoundary: Promise<void>): Promise<void> {
     const state = this.state!;
+    if (this.disposed) return;
     await Promise.race([this.profile?.whenIdle(), cancelledAtBoundary]);
-    if (state.status === "cancelling") return;
+    if (this.disposed || state.status === "cancelling") return;
     state.status = "running";
     this.save();
     for (const entry of state.entries) {
       if (entry.status !== "pending" && entry.status !== "running") continue;
-      if (this.cancelled()) return;
+      if (this.disposed || this.cancelled()) return;
       entry.status = "running";
       entry.stage = "raw";
       delete entry.issue;
@@ -157,17 +161,21 @@ export class CompanyResearchBatchService {
         if (saved && this.research.isActiveRun(saved.id)) {
           run = saved;
         } else if (saved) {
-          run = await this.research.retryFailed(state.itemId, entry.companyId, saved.id, entry.input, state.batchId, () => this.cancelled());
+          run = await this.research.retryFailed(state.itemId, entry.companyId, saved.id, entry.input, state.batchId, () => this.cancelled(), () => this.disposed);
         } else {
-          run = await this.research.start(state.itemId, entry.companyId, entry.input, state.batchId, () => this.cancelled());
+          run = await this.research.start(state.itemId, entry.companyId, entry.input, state.batchId, () => this.cancelled(), () => this.disposed);
         }
+        if (this.disposed) return;
         dispatchedRun = run;
         entry.runId = run.id;
         entry.stage = run.status === "structuring" ? "structure" : "raw";
         delete entry.interrupted;
         this.save();
+        if (this.disposed) return;
         if (this.cancelled() && this.research.isActiveRun(run.id)) await this.research.cancel(run.id);
+        if (this.disposed) return;
         await this.research.whenSettled();
+        if (this.disposed) return;
         const final = this.repos.companyResearchRuns.getByIdForTarget(run.itemId, run.companyId, run.id);
         if (final?.status === "completed") entry.status = "completed";
         else if (final?.status === "research_failed" || final?.status === "structure_failed") entry.status = "failed";
@@ -183,11 +191,13 @@ export class CompanyResearchBatchService {
           return;
         }
       } catch (error) {
+        if (this.disposed) return;
         // A failed batch snapshot does not end an already launched research
         // worker. Keep the reservation and reject resume until its iterator has
         // settled (including acknowledgement if cancellation was requested).
         if (dispatchedRun) {
           await this.research.whenSettled();
+          if (this.disposed) return;
           const settled = this.repos.companyResearchRuns.getByIdForTarget(
             dispatchedRun.itemId, dispatchedRun.companyId, dispatchedRun.id,
           );
@@ -208,7 +218,7 @@ export class CompanyResearchBatchService {
         delete entry.stage;
         this.save();
       }
-      if (this.cancelled()) return;
+      if (this.disposed || this.cancelled()) return;
     }
     state.status = "completed";
     this.save();
@@ -216,6 +226,7 @@ export class CompanyResearchBatchService {
   private cancelled(): boolean { return this.state?.status === "cancelling" || this.state?.status === "cancelled"; }
   private reserve(batchId: string): void {
     this.research.reserve(batchId, run => {
+      if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
       const entry = this.state!.entries.find(e => e.status === "running" && e.companyId === run.companyId)!;
       entry.runId = run.id;
       // Called inside the same SQLite transaction that creates this owned run.
@@ -223,6 +234,7 @@ export class CompanyResearchBatchService {
     });
   }
   private save(): void {
+    if (this.disposed) return;
     const state = this.state!;
     state.succeeded = state.entries.filter(e => e.status === "completed").length;
     state.failed = state.entries.filter(e => e.status === "failed").length;

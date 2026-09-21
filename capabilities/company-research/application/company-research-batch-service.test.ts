@@ -4,6 +4,7 @@ import { type CompanyResearchBatchState, type CompanyResearchWorkerRequest } fro
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
 import { CompanyResearchService } from "./company-research-service.js";
 import { CompanyResearchBatchService } from "./company-research-batch-service.js";
+import { createCompanyResearchServices } from "./create-services.js";
 import { IndustryResearchService } from "./industry-research-service.js";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
@@ -13,6 +14,64 @@ const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 const input = { direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
+it.each(["settlement", "admission", "profile"] as const)("interrupts disposal at %s without stale writes or user cancellation", async boundary => {
+  const f = setup();
+  f.batch.dispose();
+  const services = createCompanyResearchServices({
+    repositories: f.db.repos, profiles: f.profiles, worker: f.worker,
+    companyRecognizer: { recognize: async () => [] },
+    companyCompleter: { prepare: async () => async () => profileResult() },
+    requestIdFactory: () => crypto.randomUUID(),
+  }, { deferStart: true });
+  let releaseBoundary!: () => void;
+  const cancel = vi.spyOn(f.worker, "cancelResearch");
+  if (boundary === "admission") {
+    const resolve = f.profiles.resolveActiveLlm;
+    f.profiles.resolveActiveLlm = async () => { await new Promise<void>(r => { releaseBoundary = r; }); return resolve(); };
+  }
+  let batch = services.companyResearchBatch;
+  if (boundary === "profile") {
+    batch.dispose();
+    batch = new CompanyResearchBatchService(f.db.repos, services.companyResearch, {
+      whenIdle: () => new Promise<void>(r => { releaseBoundary = r; }), resume: () => {},
+    });
+  }
+  const initial = batch.start(f.item.id, f.entries);
+  await flush();
+  if (boundary === "profile") batch.dispose();
+  // The owning capability invalidates both coordinators before its first await.
+  const disposing = services.dispose();
+  const replacementResearch = new CompanyResearchService(f.db.repos, f.profiles, f.worker, { requestIdFactory: () => crypto.randomUUID() });
+  const replacement = new CompanyResearchBatchService(f.db.repos, replacementResearch);
+  replacement.recover();
+  await disposing;
+  const recovered = f.db.repos.companyResearchBatches.getById(initial.batchId);
+  const oldRun = recovered?.entries[0]?.runId;
+  expect(recovered?.status).toBe("paused");
+  expect(f.requests).toHaveLength(boundary === "settlement" ? 1 : 0);
+  // Retry the same durable identity before the old transport failure arrives.
+  if (boundary === "settlement") { replacement.resume(initial.batchId); await flush(); }
+  const beforeLateBatch = f.db.repos.companyResearchBatches.getById(initial.batchId);
+  const beforeLateRun = oldRun ? replacementResearch.getRun(f.item.id, f.companies[0]!.id, oldRun) : undefined;
+  if (boundary === "settlement") f.releases.shift()!();
+  else releaseBoundary();
+  await flush();
+  expect(f.db.repos.companyResearchBatches.getById(initial.batchId)).toEqual(beforeLateBatch);
+  if (oldRun) expect(replacementResearch.getRun(f.item.id, f.companies[0]!.id, oldRun)).toEqual(beforeLateRun);
+  expect(f.requests).toHaveLength(boundary === "settlement" ? 2 : 0);
+  expect(cancel).not.toHaveBeenCalled();
+  f.profiles.resolveActiveLlm = setupResolver;
+  if (boundary !== "settlement") replacement.resume(initial.batchId);
+  await flush();
+  expect(f.requests.at(-1)?.context.companyName).toBe("甲");
+  if (oldRun) expect(f.requests.at(-1)?.runId).toBe(oldRun);
+  f.releases.shift()!(); await flush();
+  expect(f.requests.at(-1)?.context.companyName).toBe("乙");
+  f.releases.shift()!(); await flush();
+  expect(replacement.getState(f.item.id)).toBeNull();
+  replacement.dispose(); replacementResearch.dispose();
+});
+const setupResolver = async () => ({ id: "l", name: "l", provider: "custom", protocol: "openai_compatible", baseUrl: "https://a.test", modelId: "m", contextWindow: 32000, apiKey: "s" } as const);
 it("keeps cancellation retryable if terminal cleanup cannot commit", async () => {
   const f = setup();
   const first = f.batch.start(f.item.id, f.entries); await flush();

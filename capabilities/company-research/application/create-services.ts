@@ -29,6 +29,7 @@ export function createCompanyResearchServices(ports: CompanyResearchServicesPort
     const companyResearch = new CompanyResearchService(repositories, ports.profiles, ports.worker, {
       requestIdFactory: ports.requestIdFactory,
     });
+    scope.defer(() => companyResearch.dispose());
     let companyResearchBatch: CompanyResearchBatchService | undefined;
     const companyProfiles = new CompanyProfileEnrichmentService(repositories.companies, ports.companyCompleter, {
       isForegroundBusy: () => companyResearch.isRunning() || !!companyResearchBatch?.isReserved(),
@@ -55,7 +56,13 @@ export function createCompanyResearchServices(ports: CompanyResearchServicesPort
       companyProfiles.start();
     };
     if (!options.deferStart) start();
-    return { industryResearch, companyResearch, companyResearchBatch, companyProfiles, start, dispose: () => { disposed = true; return scope.dispose(); } };
+    return { industryResearch, companyResearch, companyResearchBatch, companyProfiles, start, dispose: () => {
+      disposed = true;
+      // Invalidate both async owners synchronously, before resource-scope awaits.
+      batch.dispose();
+      companyResearch.dispose();
+      return scope.dispose();
+    } };
   } catch (error) {
     void scope.dispose();
     throw error;
