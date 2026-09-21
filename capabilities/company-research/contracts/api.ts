@@ -19,7 +19,7 @@ import type {
 } from "./research.js";
 import type { SettingsView } from "../../../packages/contracts/src/settings.js";
 
-import type { CompanyResearchWordExportSelection, CompanyResearchWordExportResult } from "../../../packages/contracts/src/ipc.js";
+import type { CompanyResearchWordExportSelection, CompanyResearchWordExportResult } from "./ipc.js";
 
 export interface CompanyResearchApi {
   industryResearch: {

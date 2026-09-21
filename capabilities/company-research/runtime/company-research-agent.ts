@@ -1,19 +1,16 @@
-import type { AgentWorkerRequest } from "@deepfield/contracts";
+import type { PiExecutionRequest } from "@deepfield/capability-sdk";
 import type { CompanyResearchModelErrorCategory, CompanyResearchWorkerEvent, CompanyResearchWorkerRequest } from "../contracts/index.js";
 import { StructuredResearchValidationError, validateStructuredResearch } from "../application/index.js";
-import type { ChatAgent } from "../../../apps/desktop/src/worker/message-loop.js";
+import type { CompanyAgent, CompanyAgentRuntime, ExecutionErrorCode, ModelGateway, ModelCompletionResult } from "./ports.js";
 import { buildCompanyResearchPrompt } from "./company-research-prompt.js";
 import { buildCompanyResearchStructuringPrompt } from "./company-research-structuring-prompt.js";
-import { researchFailure } from "../../../apps/desktop/src/worker/message-loop-types.js";
+import { researchFailure } from "./failure.js";
 import { CompanyResearchRawFilter } from "./company-research-raw-filter.js";
-import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "../../../apps/desktop/src/worker/agent/pi-chat-agent.js";
-import { PiModelGateway, type ModelCompletionResult, type ModelGateway } from "../../../apps/desktop/src/shared/model-gateway.js";
 
 export interface CompanyResearchAgentOptions {
-  piRuntime?: PiRuntime;
-  toolSessions?: PiToolSessionProvider;
+  runtime: CompanyAgentRuntime;
   gateway?: ModelGateway;
-  rawAgent?: ChatAgent;
+  rawAgent?: CompanyAgent;
 }
 
 export interface CompanyResearchAgent {
@@ -39,8 +36,8 @@ function validateRawReport(text: string, expectsChinese: boolean): string {
   return filtered;
 }
 
-function mapPiFailure(error: PiChatAgentError): RawFailureCode {
-  switch (error.code) {
+function mapPiFailure(code: ExecutionErrorCode): RawFailureCode {
+  switch (code) {
     case "invalid_final_empty": return "empty_report";
     case "invalid_final_protocol": return "protocol_leak";
     case "invalid_final_language": return "language_validation_failed";
@@ -75,8 +72,8 @@ async function completeStructure(gateway: ModelGateway, request: Extract<Company
   return { text: await gateway.completeText(request.llm, system, prompt, signal), stopReason: "stop" };
 }
 
-export function createCompanyResearchAgent(options: CompanyResearchAgentOptions = {}): CompanyResearchAgent {
-  const gateway = options.gateway ?? new PiModelGateway();
+export function createCompanyResearchAgent(options: CompanyResearchAgentOptions): CompanyResearchAgent {
+  const gateway = options.gateway ?? options.runtime.gateway;
   return {
     async run(request, emit, signal) {
       const identity = { requestId: request.requestId, runId: request.runId, stage: request.stage };
@@ -172,32 +169,17 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
           }
           return;
         }
-        const rawAgent = options.rawAgent ?? createPiChatAgent(
-          options.piRuntime, [], undefined, {}, options.toolSessions, gateway, undefined, "capability",
-          (diagnostic) => emit({ ...identity, type: "model_diagnostic", ...diagnostic }),
-        );
+        const rawAgent = options.rawAgent ?? options.runtime.createAgent({ diagnostic: diagnostic => emit({ ...identity, type: "model_diagnostic", ...diagnostic }) });
         const previewFilter = new CompanyResearchRawFilter();
         let terminalText: string | undefined;
         let terminalSeen = false;
-        const chatRequest: AgentWorkerRequest = {
-          requestId: request.requestId,
-          kind: "chat.prompt",
-          prompt: prompt.input,
-          context: {
-            conversationId: request.runId,
-            systemPrompt: prompt.instructions,
-            ...(prompt.finalizationInstructions === undefined ? {} : {
-              finalizationSystemPrompt: prompt.finalizationInstructions,
-            }),
-            messages: [],
-          },
-          options: { webSearch: true },
-          llm: request.llm,
-          search: request.search,
-          toolAccess: request.toolAccess,
+        const executionRequest: PiExecutionRequest = {
+          requestId: request.requestId, prompt: prompt.input, systemPrompt: prompt.instructions,
+          ...(prompt.finalizationInstructions === undefined ? {} : { finalizationSystemPrompt: prompt.finalizationInstructions }),
+          contextMessages: [], llm: request.llm, search: request.search, toolAccess: request.toolAccess,
         };
         try {
-          await rawAgent.run(chatRequest, (event) => {
+          await rawAgent.run(executionRequest, (event) => {
             if (event.type === "text_delta") {
               const delta = previewFilter.push(event.delta);
               if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });
@@ -221,14 +203,12 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions 
               terminalText = event.text;
               const tail = previewFilter.finish();
               if (tail) emit({ ...identity, stage: "raw", type: "text_delta", delta: tail });
-            } else if (event.type === "failed") {
-              terminalSeen = true;
-              throw new RawResearchFailure("model_failed");
             }
           }, signal);
         } catch (error) {
           if (error instanceof RawResearchFailure) throw error;
-          if (error instanceof PiChatAgentError) throw new RawResearchFailure(mapPiFailure(error));
+          const code = options.runtime.classifyError(error);
+          if (code) throw new RawResearchFailure(mapPiFailure(code));
           throw new RawResearchFailure("model_failed");
         }
         if (!terminalSeen || terminalText === undefined) throw new RawResearchFailure("incomplete_response");

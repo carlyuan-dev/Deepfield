@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
-import { CompanyResearchExportArgsSchema, CompanyResearchWordExportResultSchema } from "./ipc.js";
+import { CompanyResearchExportArgsSchema, CompanyResearchWordExportResultSchema } from "../../../capabilities/company-research/contracts/ipc.js";
 
 describe("company research Word export contract", () => {
   it("accepts only three bounded identifiers plus an explicit bounded selection and a path-free result", () => {

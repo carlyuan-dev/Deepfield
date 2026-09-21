@@ -4,8 +4,8 @@ import { type Company, type CompanyProfileWorkerRequest } from "../contracts/ind
 import { createCompanyProfileCompleter } from "./company-profile-completer.js";
 import { rawResearchRequest } from "../runtime/company-research-test-helpers.js";
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
-import { AgentWorkerClient } from "../../../apps/desktop/src/main/agent-worker-client.js";
-import { createWorkerMessageLoop } from "../../../apps/desktop/src/worker/message-loop.js";
+import { AgentWorkerClient } from "../runtime/test-host-adapter.js";
+import { createWorkerMessageLoop } from "../runtime/test-host-adapter.js";
 import { FakeEndpoint } from "../../../apps/desktop/src/main/agent-worker-client-test-helpers.js";
 import { echoAgent, InMemoryEndpoint } from "../../../apps/desktop/src/worker/message-loop-test-helpers.js";
 

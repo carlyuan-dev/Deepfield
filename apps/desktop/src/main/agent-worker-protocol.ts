@@ -1,5 +1,5 @@
 import type { AgentWorkerEvent, ToolEventEnvelope, ToolExecutionEvent } from "@deepfield/contracts";
-import type { CompanyProfileWorkerEvent, CompanyResearchWorkerEvent, CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
+import type { CapabilityWorkerEvent } from "@deepfield/capability-sdk";
 
 export const MAX_PENDING_CHAT_EVENTS = 1000;
 export const MAX_PENDING_RESEARCH_EVENTS = 1000;
@@ -53,14 +53,14 @@ export class ToolTransportTombstones {
   }
 }
 
-export type StreamEvent = AgentWorkerEvent | CompanyResearchWorkerEvent | ToolExecutionEvent | CompanyProfileWorkerEvent;
+export type StreamEvent = AgentWorkerEvent | CapabilityWorkerEvent | ToolExecutionEvent;
 
 export interface PendingStream {
-  kind: "chat" | "research" | "tool" | "profile";
-  companyId?: string;
+  kind: "chat" | "capability" | "tool";
+  capabilityId?: string;
+  operation?: string;
+  validateCapabilityEvent?: (event: CapabilityWorkerEvent) => boolean | "ignore";
   id: string;
-  runId?: string;
-  stage?: CompanyResearchStage;
   executionId?: string;
   traceId?: string;
   queue: StreamEvent[];

@@ -1,0 +1,12 @@
+{
+  "id": "company-research",
+  "name": "公司调研",
+  "description": "行业主题、公司资料与公司关键调研报告",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "hostApiVersion": 1,
+  "entries": { "main": "dist/main.js", "worker": "dist/worker.js", "ui": "dist/ui.js" },
+  "navigation": { "title": "公司调研", "order": 100, "route": "company-research" },
+  "requirements": ["company-research.repositories", "model.configuration", "model.execution", "tools.retrieval", "usage.context", "document.save"],
+  "actions": []
+}

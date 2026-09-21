@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppError } from "@deepfield/contracts";
 import { type ResearchRun } from "../../../../capabilities/company-research/contracts/index.js";
-import { createCompanyResearchWordExportService } from "./company-research-word-export.js";
+import { createCompanyResearchWordExportService } from "../../../../capabilities/company-research/export/company-research-word-export.js";
 import { researchRun } from "./ipc-test-helpers.js";
 
 const DEFAULT_RUN = researchRun({

@@ -11,6 +11,7 @@ import { useConversations } from "./state/use-conversations.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ChatPaneHeader } from "./components/ChatPaneHeader.js";
 import { ChatView } from "./components/ChatView.js";
+import { createCompanyResearchApi } from "../../../../capabilities/company-research/ui/package-ui.js";
 import { IndustryResearchCapability } from "../../../../capabilities/company-research/ui/IndustryResearchCapability.js";
 import { SettingsView } from "./features/settings/SettingsView.js";
 
@@ -158,7 +159,7 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
           {capabilityOpen && (
             <aside className="capability-pane" aria-label="Capability">
               <IndustryResearchCapability
-                api={api}
+                api={createCompanyResearchApi(api.capabilities)}
                 active={!settingsOpen}
                 onClose={() => dispatchWorkspace({ type: "CLOSE_CAPABILITY" })}
                 onOpenSettings={(module) => { setSettingsModule(module); setSettingsOpen(true); }}

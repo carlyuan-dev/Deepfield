@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runProfileDiagnostic } from "./profile-diagnose-runner.js";
+import { runProfileDiagnostic } from "../../../../capabilities/company-research/runtime/profile-diagnose-runner.js";
 import { rawResearchRequest } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
 import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 describe("isolated diagnostic harness", () => {

@@ -2,13 +2,7 @@ import { Type, type Static, type TProperties } from "typebox";
 import { UsageAttemptSchema } from "@deepfield/base/usage";
 import { UsageHealthEnvelopeSchema, UsageFlushRequestSchema, UsageFlushReplySchema } from "./usage.js";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema } from "./chat.js";
-import { CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "../../../capabilities/company-research/contracts/company-profile.js";
-import {
-  CompanyResearchCancelRequestSchema,
-  CompanyResearchWorkerEventSchema,
-  CompanyResearchRawWorkerRequestSchema,
-  CompanyResearchStructureWorkerRequestSchema,
-} from "../../../capabilities/company-research/contracts/research.js";
+import { CapabilityWorkerRequestSchema, CapabilityWorkerCancelSchema, CapabilityWorkerEventSchema, CapabilityActivationRequestSchema, CapabilityActivationReplySchema, CapabilityDeactivationSchema } from "@deepfield/capability-sdk";
 import {
   JsonObjectSchema,
   ToolExecutionEventSchema,
@@ -73,11 +67,11 @@ export type ToolRunRequest = Static<typeof ToolRunRequestSchema>;
 
 export const UtilityWorkerRequestSchema = Type.Union([
   UsageFlushRequestSchema,
-  CompanyProfileWorkerRequestSchema,
+  CapabilityWorkerRequestSchema,
+  CapabilityWorkerCancelSchema,
+  CapabilityActivationRequestSchema,
+  CapabilityDeactivationSchema,
   AgentWorkerRequestSchema,
-  CompanyResearchRawWorkerRequestSchema,
-  CompanyResearchStructureWorkerRequestSchema,
-  CompanyResearchCancelRequestSchema,
   ToolRunRequestSchema,
 ]);
 export type UtilityWorkerRequest = Static<typeof UtilityWorkerRequestSchema>;
@@ -482,9 +476,9 @@ export type HostReply = Static<typeof HostReplySchema>;
 
 export const UtilityWorkerEventSchema = Type.Union([
   UsageFlushReplySchema,
-  ...CompanyProfileWorkerEventSchema.anyOf,
+  CapabilityWorkerEventSchema,
+  CapabilityActivationReplySchema,
   ...AgentWorkerEventSchema.anyOf,
-  ...CompanyResearchWorkerEventSchema.anyOf,
   ToolEventEnvelopeSchema,
   HostReplySchema,
 ]);

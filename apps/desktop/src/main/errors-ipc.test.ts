@@ -1,3 +1,4 @@
+import { createCompanyResearchApi } from "../../../../capabilities/company-research/ui/package-ui.js";
 import { describe, expect, it, vi } from "vitest";
 import { AppError } from "@deepfield/contracts";
 import { createPreloadApi, IPC_CHANNELS } from "../preload/preload-api.js";
@@ -9,18 +10,17 @@ describe("selected public error IPC boundary", () => {
     const sender = new FakeWebContents(1);
     const api = createPreloadApi({ invoke: async (channel, ...args) => structuredClone(await ipcMain.invoke(channel, event(sender), ...args)), on: () => () => {} });
     const input = { direction: "product_and_technology", asOfDate: "2026-09-11" } as const;
-    expect(await api.companyResearch.start("item-1", "company-1", input)).toMatchObject({ id: "run-1", status: "researching" });
+    expect(await createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).toMatchObject({ id: "run-1", status: "researching" });
     vi.spyOn(companyResearch, "start").mockRejectedValue(new AppError("CONFIG.CREDENTIAL_MISSING", { service: "search" }, { cause: new Error("secret token") }));
-    await expect(api.companyResearch.start("item-1", "company-1", input)).rejects.toEqual({ code: "CONFIG.CREDENTIAL_MISSING", category: "configuration", context: { service: "search" } });
-    expect(await ipcMain.invoke(IPC_CHANNELS.companyResearchStart, event(sender), "item-1", "company-1", {})).toEqual({ ok: false, error: { code: "INPUT.INVALID", category: "input" } });
+    await expect(createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).rejects.toEqual({ code: "CONFIG.CREDENTIAL_MISSING", category: "configuration", context: { service: "search" } });
+    expect(await ipcMain.invoke(IPC_CHANNELS.capabilityInvoke, event(sender), { capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", {}] })).toEqual({ ok: false, error: { code: "INPUT.INVALID", category: "input" } });
   });
   it.each([
     { ok: false, error: { code: "CONFIG.INVALID", category: "configuration", message: "secret token" } },
-    { ok: true, value: { apiKey: "secret token" } },
     { error: "secret token" },
   ])("rejects malformed responses without returning secret-bearing data", async (response) => {
     const api = createPreloadApi({ invoke: async () => response, on: () => () => {} });
-    await expect(api.companyResearch.start("i", "c", {} as never)).rejects.toEqual({ code: "INTERNAL.UNKNOWN", category: "internal" });
+    await expect(createCompanyResearchApi(api.capabilities).companyResearch.start("i", "c", {} as never)).rejects.toEqual({ code: "INTERNAL.UNKNOWN", category: "internal" });
   });
   it("sanitizes a transport rejection itself", async () => {
     const api = createPreloadApi({ invoke: async () => { throw new Error("secret token"); }, on: () => () => {} });

@@ -10,10 +10,7 @@ export { SqliteToolAudit, SqliteToolAuditError } from "./tools/tool-audit.js";
 export type { ChatSendResult, ChatServiceOptions } from "./chat/chat-service.js";
 export type {
   AgentWorkerPort,
-  CompanyResearchWorkerPort,
   ConversationTitleGenerator,
-  CompanyRecognizer,
-  CompanyProfileCompleter, CompanyProfileWorkerPort,
   ProviderKeyReader,
   RequestIdFactory,
   SecretReader,

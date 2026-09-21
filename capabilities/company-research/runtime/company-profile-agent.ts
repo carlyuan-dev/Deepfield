@@ -1,10 +1,8 @@
 import { Value } from "typebox/value";
 import { CompanyProfileCandidateSchema, type CompanyProfileDiagnostic, type ProfileSchemaIssue, type CompanyProfileResult, type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent, type ProfileSource, type ProfileSourceRef } from "../contracts/index.js";
 import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/retrieval";
-import { createPiChatAgent, PiChatAgentError, type PiRuntime, type PiToolSessionProvider } from "../../../apps/desktop/src/worker/agent/pi-chat-agent.js";
-import { successfulToolOutput } from "../../../apps/desktop/src/worker/tools/pi-tool-adapter.js";
+import type { CompanyAgentRuntime } from "./ports.js";
 import { profileSchemaIssues, safeProfilePath } from "./profile-diagnostic.js";
-import { PiModelGateway, type ModelGateway } from "../../../apps/desktop/src/shared/model-gateway.js";
 import {
   buildCompanyProfileRepairPrompt,
   buildCompanyProfileRequestPrompt,
@@ -81,8 +79,8 @@ function repairable(error: unknown): error is ProfileFailure & { reason: "json_p
   return error instanceof ProfileFailure && (error.reason === "json_parse" || error.reason === "schema_invalid");
 }
 
-export function createCompanyProfileAgent(options: { piRuntime?: PiRuntime; toolSessions: PiToolSessionProvider; gateway?: ModelGateway }): CompanyProfileAgent {
-  const gateway = options.gateway ?? new PiModelGateway();
+export function createCompanyProfileAgent(options: { runtime: CompanyAgentRuntime }): CompanyProfileAgent {
+  const gateway = options.runtime.gateway;
   return { async run(request, emit, signal) {
     const identity = { kind: "company-profile.event" as const, requestId: request.requestId, companyId: request.companyId };
     const ledger = new ProfileEvidenceLedger();
@@ -95,36 +93,21 @@ export function createCompanyProfileAgent(options: { piRuntime?: PiRuntime; tool
       emit({ ...identity, type: "diagnostic", phase, code, schemaIssues: error instanceof ProfileFailure ? error.schemaIssues : [],
         ...(error instanceof ProfileFailure && error.path !== undefined ? { path: error.path } : {}),
         ...ledger.counts(), searchToolCalls, readToolCalls, outputChars,
-        ...(error instanceof PiChatAgentError ? { piError: error.code } : {}),
+        ...(options.runtime.classifyError(error) ? { piError: options.runtime.classifyError(error)! } : {}),
         ...(formatRepair === undefined ? {} : { formatRepair }),
         ...(model === undefined ? {} : { model }) });
     };
-    const base = options.toolSessions;
-    const sessions: PiToolSessionProvider = {
-      bindSearchProvider: (...args) => base.bindSearchProvider(...args),
-      budgetSnapshot: (...args) => base.budgetSnapshot(...args),
-      recordSynthetic: (...args) => base.recordSynthetic(...args),
-      releaseTrace: (...args) => base.releaseTrace(...args),
-      createAgentTools: (context) => base.createAgentTools(context)
-        .filter((tool) => ["web_search", "read_webpage", "get_current_datetime"].includes(tool.name))
-        .map((tool) => ({ ...tool, async execute(...args) {
-          if (tool.name === "web_search") searchToolCalls += 1;
-          if (tool.name === "read_webpage") readToolCalls += 1;
-          const result = await tool.execute(...args);
-          ledger.record(tool.name, successfulToolOutput(result));
-          return result;
-        } })),
-    };
     try {
       let text: string | undefined;
-      const agent = createPiChatAgent(options.piRuntime, [], undefined, {}, sessions, gateway, undefined, "capability", (value) => {
-        const { traceId: _traceId, ...safeModel } = value;
-        model = safeModel;
+      const agent = options.runtime.createAgent({
+        diagnostic: value => { const { traceId: _traceId, ...safeModel } = value; model = safeModel; },
+        allowedTools: ["web_search", "read_webpage", "get_current_datetime"],
+        onToolOutput: (name, output) => { if (name === "web_search") searchToolCalls += 1; if (name === "read_webpage") readToolCalls += 1; ledger.record(name, output); },
       });
-      await agent.run({ kind: "chat.prompt", requestId: request.requestId,
+      await agent.run({ requestId: request.requestId,
         prompt: buildCompanyProfileRequestPrompt(request),
-        context: { conversationId: request.requestId, messages: [], systemPrompt: `${outputInstructions}\n必须先搜索真实公开信息，最多3次web_search和2次read_webpage；仅用这些工具及get_current_datetime。优先官网/登记资料。`, finalizationSystemPrompt: `${outputInstructions}\n工具已关闭，只依据本次已收集证据输出最终JSON。` },
-        options: { webSearch: true }, llm: request.llm, search: request.search,
+        contextMessages: [], systemPrompt: `${outputInstructions}\n必须先搜索真实公开信息，最多3次web_search和2次read_webpage；仅用这些工具及get_current_datetime。优先官网/登记资料。`, finalizationSystemPrompt: `${outputInstructions}\n工具已关闭，只依据本次已收集证据输出最终JSON。`,
+        llm: request.llm, search: request.search,
         toolAccess: { network: "enabled", maxAgentTurns: 7, maxSearchCalls: 3, maxFetchCalls: 2 },
       }, (event) => { if (event.type === "completed") text = event.text; }, signal);
       if (signal.aborted || text === undefined) throw new ProfileFailure("agent_failed", "agent_failed", "agent");

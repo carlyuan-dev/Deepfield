@@ -1,5 +1,4 @@
 import type { AgentWorkerEvent, AgentWorkerRequest, ToolExecutionEvent, ToolRunRequest } from "@deepfield/contracts";
-import type { CompanyResearchWorkerEvent, CompanyResearchWorkerRequest, CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
 
 export interface ChatAgent {
   run(
@@ -7,21 +6,6 @@ export interface ChatAgent {
     emit: (event: AgentWorkerEvent) => void,
     signal: AbortSignal,
   ): Promise<void>;
-}
-
-export interface ResearchAgent {
-  run(
-    request: CompanyResearchWorkerRequest,
-    emit: (event: CompanyResearchWorkerEvent) => void,
-    signal: AbortSignal,
-  ): Promise<void>;
-}
-
-/** Keep both failure variants literal so the stage-discriminated contract holds. */
-export function researchFailure(stage: CompanyResearchStage) {
-  return stage === "raw"
-    ? { stage: "raw", code: "research_failed", message: "company research failed" } as const
-    : { stage: "structure", code: "structuring_failed", message: "company research structuring failed" } as const;
 }
 
 /** Tool executions are routed to a trusted Utility-side runtime. */
@@ -44,11 +28,8 @@ export interface WorkerLoop {
 }
 
 export interface ActiveExecution {
-  kind: "chat" | "research" | "tool" | "profile";
-  companyId?: string;
+  kind: "chat" | "tool";
   requestId: string;
-  runId?: string;
-  stage?: CompanyResearchStage;
   executionId?: string;
   traceId?: string;
   tool?: { name: string; version: number };

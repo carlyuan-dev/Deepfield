@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { vi, type Mock } from "vitest";
 import type { UsageDashboard, UsageDashboardApi } from "@deepfield/base/usage";
-import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, ChatSendResult, Conversation, ConversationId, DesktopApi, MessageId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult } from "@deepfield/contracts";
+import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, ChatSendResult, Conversation, ConversationId, DesktopApi as HostDesktopApi, MessageId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult } from "@deepfield/contracts";
 import type { CapabilityItem, Company, CompanyProfileInput, CompanyProfileIdentityHint, CompanyProfileEvent, CompanyDraft, CompanyResearchState, CompanyResearchEvent, ResearchRunSummary, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
+
+type DesktopApi = HostDesktopApi & import("../../../../capabilities/company-research/contracts/api.js").CompanyResearchApi;
 
 export interface FakeDesktopApi extends DesktopApi {
   usage: { getDashboard: Mock<UsageDashboardApi["getDashboard"]> };

@@ -7,7 +7,7 @@ import { CompanyResearchBatchService } from "./company-research-batch-service.js
 import { IndustryResearchService } from "./industry-research-service.js";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
-import type { CompanyResearchWorkerPort } from "../../../packages/application/src/ports.js";
+import type { CompanyResearchWorkerPort } from "../host-ports.js";
 import { getCompanyResearchTemplate } from "../contracts/index.js";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });

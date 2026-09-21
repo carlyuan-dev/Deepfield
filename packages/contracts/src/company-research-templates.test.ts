@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { Value } from "typebox/value";
 import * as contracts from "../../../capabilities/company-research/contracts/index.js";
-import * as ipc from "./ipc.js";
-import type { DesktopApi } from "./ipc.js";
+import * as ipc from "../../../capabilities/company-research/contracts/ipc.js";
+import type { CompanyResearchApi as DesktopApi } from "../../../capabilities/company-research/contracts/api.js";
 
 const expectedSections = {
   product_and_technology: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"],

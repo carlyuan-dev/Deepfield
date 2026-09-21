@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { FakeAuditSink } from "@deepfield/tool-platform";
 import type { CompanyProfileWorkerEvent, CompanyProfileWorkerRequest } from "../contracts/index.js";
-import { createCompanyProfileAgent } from "./company-profile-agent.js";
+import { createCompanyProfileAgent } from "./test-host-adapter.js";
 import { createToolRuntime } from "../../../apps/desktop/src/worker/tools/tool-runtime.js";
 import { assistant, makeRecordingInstalledPiRuntime, stubModel } from "../../../apps/desktop/src/worker/agent/pi-chat-agent-test-helpers.js";
 import { rawResearchRequest } from "./company-research-test-helpers.js";

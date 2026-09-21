@@ -11,49 +11,15 @@ import {
 } from "./host-client.js";
 import { createToolRuntime, type UtilityToolRuntime } from "./tools/tool-runtime.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
-import { createCompanyResearchAgent } from "../../../../capabilities/company-research/runtime/company-research-agent.js";
-import type { ResearchAgent } from "./message-loop.js";
-import { createCompanyProfileAgent } from "../../../../capabilities/company-research/runtime/company-profile-agent.js";
-
-const fakeCompanyResearchAgent: ResearchAgent = {
-  async run(request, emit, signal) {
-    const identity = { requestId: request.requestId, runId: request.runId, stage: request.stage };
-    emit({ ...identity, type: "started" });
-    if (signal.aborted) {
-      emit({ ...identity, type: "cancelled" });
-      return;
-    }
-    // Offline fixture follows the real stage contracts and the empty-evidence
-    // Harness invariant. It never invents sources when structuring a report.
-    const text = request.stage === "raw"
-      ? [
-        "# 公司关键调研原始报告",
-        "", "## 调研任务", "Fake 公司调研报告（离线测试）",
-        `研究主题：${request.context.topicName}`,
-        `目标公司：${request.context.companyName}`,
-        `研究方向：${request.template.title}`,
-        `具体研究范围：${request.context.focusScope || "未填写"}`,
-        `调研截止日期：${request.context.asOfDate}`,
-        ...request.template.sections.map((section, index) => [
-          "", `## ${index + 1}. ${section.title} \`${section.sectionId}\``,
-          "", "### 关键事实", "暂未找到可靠公开信息。",
-          "", "### 模块缺口", "缺少可靠公开信息。",
-        ].join("\n")),
-        "", "## 信息冲突", "未发现影响核心判断的未解决冲突。",
-        "", "## 未找到或明确未披露的信息", "五个模块均暂未找到，不表示事实不存在或明确未披露。",
-      ].join("\n")
-      : JSON.stringify({
-        coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
-        sections: request.template.sections.map((section) => ({
-          sectionId: section.sectionId, status: "not_found", summary: null, facts: [],
-        })),
-      });
-    if (request.stage === "raw") emit({ ...identity, stage: "raw", type: "text_delta", delta: text });
-    emit({ ...identity, type: "completed", text });
-  },
-};
+import { activate as activateCompanyResearch } from "../../../../capabilities/company-research/worker.js";
+import { createCapabilityAgentRuntime } from "./capabilities/agent-runtime.js";
+import { WorkerCapabilityRegistry, type CapabilityWorkerLoader } from "./capabilities/registry.js";
+import { withUsageContext } from "../shared/usage-collection.js";
 
 export interface UtilityAssemblyDeps {
+  capabilityLoader?: CapabilityWorkerLoader;
+  /** Temporary first-party compatibility activation; Task4 supplies the snapshot loader. */
+  activateBundledCapability?: boolean;
   flushUsage?: () => Promise<void>;
   endpoint: WorkerEndpoint;
   agentMode: string | undefined;
@@ -69,6 +35,7 @@ export interface UtilityAssemblyDeps {
 export interface UtilityAssembly {
   loop: WorkerLoop;
   toolRuntime: UtilityToolRuntime;
+  capabilities: WorkerCapabilityRegistry;
 }
 
 function cachedSkillCatalogProvider(skillsDir: string): SkillCatalogProvider {
@@ -99,20 +66,18 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
     pi: () =>
       createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
   });
+  // Temporary first-party loader. It activates only after Main requests the fixed trusted entry.
+  const bundledLoader: CapabilityWorkerLoader | undefined = deps.activateBundledCapability === false ? undefined : async (request, activation) => {
+    if (request.capabilityId !== "company-research" || request.entry !== "builtin:company-research") throw new Error("capability_unavailable");
+    activateCompanyResearch(activation, { runtime: createCapabilityAgentRuntime({ ...(deps.piRuntime ? { runtime: deps.piRuntime } : {}), toolSessions: toolRuntime }), ...(deps.agentMode ? { mode: deps.agentMode } : {}), withUsage: withUsageContext });
+  };
+  const capabilities = new WorkerCapabilityRegistry(value => deps.endpoint.postMessage(value), deps.capabilityLoader ?? bundledLoader);
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     ...(deps.flushUsage ? { flushUsage: deps.flushUsage } : {}),
     toolRuntime,
-    profileAgent: deps.agentMode === "fake" ? {
-      async run(request, emit) { emit({ kind: "company-profile.event", requestId: request.requestId, companyId: request.companyId, type: "failed", code: "search_unavailable" }); },
-    } : createCompanyProfileAgent({ ...(deps.piRuntime === undefined ? {} : { piRuntime: deps.piRuntime }), toolSessions: toolRuntime }),
-    researchAgent: deps.agentMode === "fake"
-      ? fakeCompanyResearchAgent
-      : createCompanyResearchAgent({
-          ...(deps.piRuntime === undefined ? {} : { piRuntime: deps.piRuntime }),
-          toolSessions: toolRuntime,
-        }),
+    capabilities,
     hostReplyHandler: (reply) => deps.hostClient.handleReply(reply),
     onDispose: () => deps.hostClient.dispose(),
   });
-  return { loop, toolRuntime };
+  return { loop, toolRuntime, capabilities };
 }

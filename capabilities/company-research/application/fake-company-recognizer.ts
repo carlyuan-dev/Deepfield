@@ -1,5 +1,5 @@
-import type { CompanyDraft } from "../../../../capabilities/company-research/contracts/index.js";
-import type { CompanyRecognizer } from "@deepfield/application";
+import type { CompanyDraft } from "../contracts/index.js";
+import type { CompanyRecognizer } from "../host-ports.js";
 
 export class FakeCompanyRecognizer implements CompanyRecognizer {
   async recognize(text: string): Promise<CompanyDraft[]> {

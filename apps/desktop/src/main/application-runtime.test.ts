@@ -1,11 +1,11 @@
-import type { CompanyProfileCompleter } from "@deepfield/application";
+import type { CompanyProfileCompleter } from "../../../../capabilities/company-research/host-ports.js";
 import type { CompanyProfileFields } from "../../../../capabilities/company-research/contracts/index.js";
 import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_DEEPSEEK_MODEL_ID, type LlmRuntimeSnapshot, type SearchRuntimeSnapshot } from "@deepfield/contracts";
 import { getCompanyResearchTemplate, type CompanyResearchWorkerRequest } from "../../../../capabilities/company-research/contracts/index.js";
-import { createApplicationRuntime } from "./application-runtime.js";
-import { AgentWorkerClient } from "./agent-worker-client.js";
+import { createApplicationRuntime } from "../../../../capabilities/company-research/runtime/test-application-runtime.js";
+import { AgentWorkerClient } from "../../../../capabilities/company-research/runtime/test-host-adapter.js";
 import { FakeEndpoint } from "./agent-worker-client-test-helpers.js";
 import { openTestDb, type TestDb } from "../../../../packages/application/src/testing/application-test-helpers.js";
 
@@ -65,11 +65,11 @@ describe("application runtime composition", () => {
       const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
       await flush();
       if (stage === "structure") {
-        const request = endpoint.posted[0] as CompanyResearchWorkerRequest;
+        const request = (endpoint.posted[0] as { input: CompanyResearchWorkerRequest }).input;
         endpoint.emit({ requestId: request.requestId, runId: run.id, stage: "raw", type: "completed", text: "原始报告" });
         await flush();
       }
-      const request = endpoint.posted.at(-1) as CompanyResearchWorkerRequest;
+      const request = (endpoint.posted.at(-1) as { input: CompanyResearchWorkerRequest }).input;
       runtime.industryResearch.removeCompany(item.id, company.id);
       expect(db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, run.id)).toBeUndefined();
       const during = runtime.companyResearch.getState(item.id, survivor.id);
@@ -115,10 +115,10 @@ describe("application runtime composition", () => {
     try {
       const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
       await flush();
-      const rawRequest = endpoint.posted[0] as CompanyResearchWorkerRequest;
+      const rawRequest = (endpoint.posted[0] as { input: CompanyResearchWorkerRequest }).input;
       expect(rawRequest.stage).toBe("raw");
       if (stage === "structure") { emitCompletion(rawRequest, "原始报告"); await flush(); }
-      const current = endpoint.posted.at(-1) as CompanyResearchWorkerRequest;
+      const current = (endpoint.posted.at(-1) as { input: CompanyResearchWorkerRequest }).input;
       expect(current.stage).toBe(stage);
       for (const identity of [{ requestId: "foreign-request" }, { runId: "foreign-run" }, { stage: stage === "raw" ? "structure" : "raw" }]) {
         endpoint.emit({ requestId: current.requestId, runId: run.id, stage, type: "completed", text: "foreign candidate", ...identity });
@@ -128,7 +128,7 @@ describe("application runtime composition", () => {
       expect(runtime.companyResearch.isRunning()).toBe(true);
       expect(client.pendingCount()).toBe(1);
       if (stage === "raw") { emitCompletion(rawRequest, "原始报告"); await flush(); }
-      const structureRequest = endpoint.posted[1] as CompanyResearchWorkerRequest;
+      const structureRequest = (endpoint.posted[1] as { input: CompanyResearchWorkerRequest }).input;
       expect(structureRequest.stage).toBe("structure");
       const valid = {
         coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],

@@ -22,7 +22,7 @@ export interface CompanyResearchServicesPorts {
 }
 
 /** Owns business startup and subscriptions; disposal preserves persisted work for recovery. */
-export function createCompanyResearchServices(ports: CompanyResearchServicesPorts) {
+export function createCompanyResearchServices(ports: CompanyResearchServicesPorts, options: { deferStart?: boolean } = {}) {
   const scope = createResourceScope();
   try {
     const repositories = ports.repositories;
@@ -43,12 +43,19 @@ export function createCompanyResearchServices(ports: CompanyResearchServicesPort
     companyResearchBatch = new CompanyResearchBatchService(repositories, companyResearch, companyProfiles);
     const batch = companyResearchBatch;
     scope.defer(() => batch.dispose());
-    companyResearch.cleanupAbandoned();
     scope.defer(companyResearch.subscribe(event => {
       if (event.type === "state_changed" && !companyResearch.isRunning()) companyProfiles.resume();
     }));
-    companyProfiles.start();
-    return { industryResearch, companyResearch, companyResearchBatch, companyProfiles, dispose: () => scope.dispose() };
+    let started = false;
+    let disposed = false;
+    const start = () => {
+      if (disposed || started) return;
+      started = true;
+      companyResearch.cleanupAbandoned();
+      companyProfiles.start();
+    };
+    if (!options.deferStart) start();
+    return { industryResearch, companyResearch, companyResearchBatch, companyProfiles, start, dispose: () => { disposed = true; return scope.dispose(); } };
   } catch (error) {
     void scope.dispose();
     throw error;

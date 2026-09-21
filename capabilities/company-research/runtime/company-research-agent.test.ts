@@ -5,9 +5,9 @@ import type { AgentWorkerRequest } from "@deepfield/contracts";
 import type { CompanyResearchWorkerEvent } from "../contracts/index.js";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform";
 import type { ChatAgent } from "../../../apps/desktop/src/worker/message-loop.js";
-import { createWorkerMessageLoop } from "../../../apps/desktop/src/worker/message-loop.js";
+import { createWorkerMessageLoop } from "./test-host-adapter.js";
 import { echoAgent, InMemoryEndpoint } from "../../../apps/desktop/src/worker/message-loop-test-helpers.js";
-import { createCompanyResearchAgent } from "./company-research-agent.js";
+import { createCompanyResearchAgent } from "./test-host-adapter.js";
 import { PiChatAgentError } from "../../../apps/desktop/src/worker/agent/pi-chat-agent.js";
 import { rawResearchRequest, structureResearchRequest } from "./company-research-test-helpers.js";
 import {

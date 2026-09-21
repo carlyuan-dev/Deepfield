@@ -1,9 +1,10 @@
 import { dirname, basename, join } from "node:path";
-import type { DocumentSavePort } from "../../../../capabilities/company-research/host-ports.js";
+import type { DocumentSavePort } from "../host-ports.js";
 import { Value } from "typebox/value";
-import { AppError, CompanyResearchWordExportSelectionSchema, type CompanyResearchWordExportSelection } from "@deepfield/contracts";
-import { type ResearchRun } from "../../../../capabilities/company-research/contracts/index.js";
-import { buildCompanyResearchDocx } from "../../../../capabilities/company-research/export/company-research-word-document.js";
+import { AppError } from "@deepfield/contracts";
+import { CompanyResearchWordExportSelectionSchema, type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
+import { type ResearchRun } from "../contracts/index.js";
+import { buildCompanyResearchDocx } from "./company-research-word-document.js";
 
 export type CompanyResearchWordExportResult = { status: "saved" | "cancelled" };
 
@@ -19,7 +20,7 @@ type SaveDialogOptions = {
   properties: ["createDirectory", "showOverwriteConfirmation"];
 };
 
-type ExportDependencies = DocumentSavePort & {
+export type ExportDependencies = DocumentSavePort & {
   getRun(itemId: string, companyId: string, runId: string): ResearchRun | undefined;
   showSaveDialog(options: SaveDialogOptions): Promise<{ canceled: boolean; filePath?: string }>;
   buildDocument?(run: ResearchRun, selection: CompanyResearchWordExportSelection): Promise<Buffer>;

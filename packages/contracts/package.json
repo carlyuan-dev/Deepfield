@@ -7,5 +7,5 @@
     "./model-config": "./src/model-config.ts",
     "./tools": "./src/tools.ts"
   },
-  "dependencies": { "@deepfield/base": "*" }
+  "dependencies": { "@deepfield/base": "*", "@deepfield/capability-sdk": "*" }
 }

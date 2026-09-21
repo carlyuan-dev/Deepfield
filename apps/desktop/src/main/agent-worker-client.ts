@@ -1,6 +1,6 @@
 import { Value } from "typebox/value";
 import { AgentWorkerEventSchema, ToolEventEnvelopeSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
-import { CompanyProfileWorkerEventSchema, type CompanyProfileWorkerEvent, type CompanyProfileWorkerRequest, CompanyResearchWorkerEventSchema, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type CompanyResearchStage } from "../../../../capabilities/company-research/contracts/index.js";
+import { CapabilityWorkerEventSchema, CapabilityActivationReplySchema, type CapabilityWorkerRequest, type CapabilityWorkerEvent } from "@deepfield/capability-sdk";
 import {
   AgentProtocolError,
   AgentWorkerExitedError,
@@ -8,7 +8,6 @@ import {
   AgentWorkerTransportReuseError,
   isChatTerminal,
   isHostRequest,
-  isResearchTerminal,
   isToolEventEnvelope,
   isToolTerminal,
   MAX_PENDING_CHAT_EVENTS,
@@ -39,6 +38,7 @@ export interface MessageEndpoint {
 export interface AgentWorkerClientOptions {
   /** Central host-request router: the single listener never competes. */
   hostHandler?: (message: unknown) => void;
+  onUnavailable?: () => void;
 }
 
 export class AgentWorkerClient {
@@ -50,12 +50,17 @@ export class AgentWorkerClient {
   private disposed = false;
   private exited = false;
   private exitCode = 0;
+  private readonly activations = new Map<string, { capabilityId: string; finish(ok: boolean): void }>();
+  private readonly onUnavailable: (() => void) | undefined;
+  private readonly unavailableListeners = new Set<() => void>();
+  private readonly activated = new Map<string, string>();
 
   constructor(
     private readonly endpoint: MessageEndpoint,
     options: AgentWorkerClientOptions = {},
   ) {
     this.hostHandler = options.hostHandler;
+    this.onUnavailable = options.onUnavailable;
     this.unsubscribeMessage = endpoint.onMessage((value) => this.handleMessage(value));
     this.unsubscribeExit = endpoint.onExit((code) => this.handleExit(code));
   }
@@ -66,6 +71,41 @@ export class AgentWorkerClient {
       id: request.requestId,
       request,
     });
+  }
+
+  activateCapability(capabilityId: string, entry: string, requestId: string, timeoutMs = 10_000): Promise<void> {
+    if (this.disposed || this.exited || this.activations.has(requestId) || this.pending.has(requestId) || this.tombstones.has(requestId)) return Promise.reject(new AgentProtocolError());
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      const finish = (ok: boolean) => {
+        if (!this.activations.delete(requestId)) return;
+        clearTimeout(timer); this.tombstones.record(requestId);
+        if (ok) { this.activated.set(capabilityId, requestId); resolve(); }
+        else {
+          if (!this.disposed && !this.exited) { try { this.endpoint.postMessage({ kind: "capability.deactivate", capabilityId, requestId }); } catch { /* dead transport */ } }
+          reject(new AgentProtocolError());
+        }
+      };
+      this.activations.set(requestId, { capabilityId, finish });
+      try { this.endpoint.postMessage({ kind: "capability.activate", capabilityId, entry, requestId }); }
+      catch { finish(false); }
+    });
+  }
+
+  subscribeUnavailable(listener: () => void): () => void {
+    if (this.disposed || this.exited) { listener(); return () => {}; }
+    this.unavailableListeners.add(listener);
+    return () => { this.unavailableListeners.delete(listener); };
+  }
+  deactivateCapability(capabilityId: string): void {
+    const requestId = this.activated.get(capabilityId);
+    this.activated.delete(capabilityId);
+    if (requestId !== undefined && !this.disposed && !this.exited) this.endpoint.postMessage({ kind: "capability.deactivate", capabilityId, requestId });
+  }
+  private notifyUnavailable(): void {
+    this.onUnavailable?.();
+    for (const listener of this.unavailableListeners) { try { listener(); } catch { /* isolate owners */ } }
+    this.unavailableListeners.clear();
   }
 
   sendTool(request: ToolRunRequest): AsyncIterable<ToolExecutionEvent> {
@@ -84,32 +124,23 @@ export class AgentWorkerClient {
     });
   }
 
-  sendResearch(request: CompanyResearchWorkerRequest): AsyncIterable<CompanyResearchWorkerEvent> {
-    return this.sendStream<CompanyResearchWorkerEvent>({
-      kind: "research",
-      id: request.requestId,
-      runId: request.runId,
-      stage: request.stage,
-      request,
-    });
+  sendCapability(request: CapabilityWorkerRequest, validateCapabilityEvent?: (event: CapabilityWorkerEvent) => boolean | "ignore"): AsyncIterable<CapabilityWorkerEvent> {
+    if (this.tombstones.has(request.requestId)) throw new AgentWorkerTransportReuseError();
+    return this.sendStream<CapabilityWorkerEvent>({ kind: "capability", id: request.requestId, capabilityId: request.capabilityId, operation: request.operation, request, ...(validateCapabilityEvent ? { validateCapabilityEvent } : {}) });
   }
 
-  sendProfile(request: CompanyProfileWorkerRequest): AsyncIterable<CompanyProfileWorkerEvent> {
-    return this.sendStream<CompanyProfileWorkerEvent>({ kind: "profile", id: request.requestId, companyId: request.companyId, request });
-  }
-
-  cancelResearch(requestId: string, runId: string, stage: CompanyResearchStage): void {
+  cancelCapability(requestId: string, capabilityId: string, operation: string): void {
     if (this.disposed) throw new Error("agent worker client is disposed");
     if (this.exited) throw new AgentWorkerExitedError(this.exitCode);
-    this.endpoint.postMessage({ requestId, kind: "company-research.cancel", runId, stage });
+    this.endpoint.postMessage({ requestId, kind: "capability.cancel", capabilityId, operation });
   }
 
   private sendStream<T extends StreamEvent>(spec: {
-    kind: "chat" | "research" | "tool" | "profile";
-    companyId?: string;
+    kind: "chat" | "capability" | "tool";
+    capabilityId?: string;
+    operation?: string;
+    validateCapabilityEvent?: (event: CapabilityWorkerEvent) => boolean | "ignore";
     id: string;
-    runId?: string;
-    stage?: CompanyResearchStage;
     executionId?: string;
     traceId?: string;
     request: unknown;
@@ -120,16 +151,16 @@ export class AgentWorkerClient {
     if (this.exited) {
       throw new AgentWorkerExitedError(this.exitCode);
     }
-    if (this.pending.has(spec.id)) {
+    if (this.pending.has(spec.id) || this.activations.has(spec.id)) {
       throw new Error(`duplicate request id: ${spec.id}`);
     }
     const stream: PendingStream = {
       kind: spec.kind,
       id: spec.id,
-      ...(spec.companyId === undefined ? {} : { companyId: spec.companyId }),
+      ...(spec.capabilityId === undefined ? {} : { capabilityId: spec.capabilityId }),
+      ...(spec.operation === undefined ? {} : { operation: spec.operation }),
+      ...(spec.validateCapabilityEvent ? { validateCapabilityEvent: spec.validateCapabilityEvent } : {}),
       ...(spec.executionId !== undefined ? { executionId: spec.executionId } : {}),
-      ...(spec.runId !== undefined ? { runId: spec.runId } : {}),
-      ...(spec.stage !== undefined ? { stage: spec.stage } : {}),
       ...(spec.traceId !== undefined ? { traceId: spec.traceId } : {}),
       queue: [],
       waiters: [],
@@ -145,7 +176,7 @@ export class AgentWorkerClient {
       // threw. Safe semantics: treat a tool transport id as possibly-sent and
       // tombstone it so a late envelope can never be mistaken for a newer
       // stream (chat ids stay reusable, preserving P1 semantics).
-      if (spec.kind === "tool") {
+      if (spec.kind !== "chat") {
         this.tombstones.record(spec.id);
       }
       throw error;
@@ -174,6 +205,8 @@ export class AgentWorkerClient {
       return;
     }
     this.disposed = true;
+    for (const activation of [...this.activations.values()]) activation.finish(false);
+    this.notifyUnavailable();
     this.unsubscribeMessage();
     this.unsubscribeExit();
     const error = new Error("agent worker client disposed");
@@ -190,19 +223,25 @@ export class AgentWorkerClient {
       this.hostHandler?.(value);
       return;
     }
-    if (Value.Check(CompanyProfileWorkerEventSchema, value)) {
+    if (Value.Check(CapabilityActivationReplySchema, value)) {
+      const activation = this.activations.get(value.requestId);
+      activation?.finish(activation.capabilityId === value.capabilityId && value.ok);
+      return;
+    }
+    if (Value.Check(CapabilityWorkerEventSchema, value)) {
       const stream = this.pending.get(value.requestId);
       if (!stream) return;
-      if (stream.kind !== "profile" || stream.companyId !== value.companyId) this.close(stream.id, stream, new AgentProtocolError());
-      else this.push(stream.id, stream, value);
+      if (stream.kind !== "capability" || stream.capabilityId !== value.capabilityId || stream.operation !== value.operation) this.close(stream.id, stream, new AgentProtocolError());
+      else {
+        let valid: boolean | "ignore" = true;
+        try { valid = stream.validateCapabilityEvent?.(value) ?? true; } catch { valid = false; }
+        if (valid === false) this.close(stream.id, stream, new AgentProtocolError());
+        else if (valid !== "ignore") this.push(stream.id, stream, value);
+      }
       return;
     }
     if (Value.Check(AgentWorkerEventSchema, value)) {
       this.routeChat(value);
-      return;
-    }
-    if (Value.Check(CompanyResearchWorkerEventSchema, value)) {
-      this.routeResearch(value);
       return;
     }
     if (isToolEventEnvelope(value) && Value.Check(ToolEventEnvelopeSchema, value)) {
@@ -229,18 +268,6 @@ export class AgentWorkerClient {
     }
     this.push(stream.id, stream, event);
   }
-  private routeResearch(event: CompanyResearchWorkerEvent): void {
-    const stream = this.pending.get(event.requestId);
-    if (!stream) return;
-    if (stream.kind !== "research") {
-      this.close(stream.id, stream, new AgentProtocolError());
-      return;
-    }
-    // Schema-valid foreign research identities do not terminate the live stage.
-    // Malformed envelopes still fail in handleMessage before reaching this route.
-    if (stream.runId !== event.runId || stream.stage !== event.stage) return;
-    this.push(stream.id, stream, event);
-  }
   private routeToolEnvelope(envelope: { requestId: string; event: ToolExecutionEvent }): void {
     const stream = this.pending.get(envelope.requestId);
     if (!stream) {
@@ -262,9 +289,7 @@ export class AgentWorkerClient {
     }
     const terminal = stream.kind === "chat"
       ? isChatTerminal(event)
-      : stream.kind === "research"
-        ? isResearchTerminal(event)
-        : isToolTerminal(event);
+      : isToolTerminal(event);
     const waiter = stream.waiters.shift();
     if (waiter) {
       waiter.resolve({ value: event, done: false });
@@ -279,7 +304,7 @@ export class AgentWorkerClient {
     }
     const max = stream.kind === "chat"
       ? MAX_PENDING_CHAT_EVENTS
-      : stream.kind === "research"
+      : stream.kind === "capability"
         ? MAX_PENDING_RESEARCH_EVENTS
         : MAX_PENDING_TOOL_EVENTS;
     if (stream.queue.length >= max) {
@@ -322,7 +347,7 @@ export class AgentWorkerClient {
   }
 
   private recordToolTombstoneFor(stream: PendingStream): void {
-    if (stream.kind === "tool") {
+    if (stream.kind !== "chat") {
       this.tombstones.record(stream.id);
     }
   }
@@ -342,6 +367,8 @@ export class AgentWorkerClient {
       return;
     }
     this.exited = true;
+    for (const activation of [...this.activations.values()]) activation.finish(false);
+    this.notifyUnavailable();
     this.exitCode = code;
     this.unsubscribeMessage();
     this.unsubscribeExit();

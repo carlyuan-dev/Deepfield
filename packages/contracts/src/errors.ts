@@ -2,6 +2,7 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
 export const APP_ERROR_CATEGORIES = {
+  "capability_unavailable": "resource",
   "CONFIG.CREDENTIAL_MISSING": "configuration", "CONFIG.PROFILE_MISSING": "configuration", "CONFIG.INVALID": "configuration",
   "EXTERNAL.AUTHENTICATION_FAILED": "external", "EXTERNAL.TIMEOUT": "external", "EXTERNAL.RATE_LIMITED": "external", "EXTERNAL.UNAVAILABLE": "external", "EXTERNAL.INVALID_RESPONSE": "external",
   "INPUT.INVALID": "input", "BUSINESS.CONFLICT": "business", "RESOURCE.NOT_FOUND": "resource", "STORAGE.FAILED": "storage", "INTERNAL.UNKNOWN": "internal",

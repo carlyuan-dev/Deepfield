@@ -1,3 +1,6 @@
+import { CapabilityRegistry, activateRegisteredCapability } from "./capabilities/registry.js";
+import { activate as activateCompanyResearch } from "../../../../capabilities/company-research/main.js";
+import { createCompanyResearchWorkerClient } from "../../../../capabilities/company-research/worker-client.js";
 import { ConfiguredCompanyRecognizer } from "../../../../capabilities/company-research/application/company-recognizer.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { randomUUID } from "node:crypto";
@@ -25,17 +28,19 @@ import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
 import { ProfileStore } from "./profile-store.js";
 import { ConfiguredLlmService } from "./configured-llm-service.js";
-import { FakeCompanyRecognizer } from "./fake-company-recognizer.js";
+import { FakeCompanyRecognizer } from "../../../../capabilities/company-research/application/fake-company-recognizer.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { PiModelGateway } from "../shared/model-gateway.js";
 import { listSearchProviderManifests } from "@deepfield/retrieval";
 import { ConfigurationService } from "./configuration-service.js";
-import { createCompanyResearchWordExportService } from "./company-research-word-export.js";
+import { createCompanyProfileCompleter } from "../../../../capabilities/company-research/application/company-profile-completer.js";
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
 let toolHost: ToolWorkerHost | undefined;
 let appRuntime: ApplicationRuntime | undefined;
+const capabilities = new CapabilityRegistry();
+const configurationListeners = new Set<() => void>();
 let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
 let mainSkillCatalog: PiSkillCatalog | undefined;
@@ -137,7 +142,6 @@ void app.whenReady().then(async () => {
   }
   appRuntime = createApplicationRuntime({
     repositories,
-    secrets,
     profiles,
     worker: {
       send: (request) => {
@@ -147,53 +151,44 @@ void app.whenReady().then(async () => {
         }
         return client.send(request);
       },
-      sendProfile: (request) => {
-        const client = agentRuntime?.client;
-        if (!client) throw new Error("agent worker unavailable");
-        return client.sendProfile(request);
-      },
-      sendResearch: (request) => {
-        const client = agentRuntime?.client;
-        if (!client) throw new Error("agent worker is not available");
-        return client.sendResearch(request);
-      },
-      cancelResearch: (requestId, runId, stage) => {
-        const client = agentRuntime?.client;
-        if (!client) throw new Error("agent worker is not available");
-        client.cancelResearch(requestId, runId, stage);
-      },
     },
     titleGenerator: configuredLlm,
-    companyRecognizer,
   });
-  appRuntime.companyResearch.cleanupAbandoned();
-  appRuntime.companyProfiles.resume();
-  const companyResearchWordExport = createCompanyResearchWordExportService({
-    getRun: (itemId, companyId, runId) => appRuntime!.companyResearch.getRun(itemId, companyId, runId),
-    showSaveDialog: (options) => {
-      const window = mainWindow;
-      return window && !window.isDestroyed()
-        ? dialog.showSaveDialog(window, options)
-        : dialog.showSaveDialog(options);
-    },
-    writeFile,
-    rename,
-    unlink,
-    randomToken: randomUUID,
-  });
+  // Temporary explicit built-in snapshot; Task4 replaces this with the package loader.
+  const companyWorker = createCompanyResearchWorkerClient(agentRuntime.client);
+  await activateRegisteredCapability({
+    registry: capabilities, capabilityId: "company-research",
+    activateMain: registrar => activateCompanyResearch(registrar, {
+      repositories: {
+        capabilityItems: repositories.capabilityItems, companies: repositories.companies,
+        itemCompanies: repositories.itemCompanies, companyResearchRuns: repositories.companyResearchRuns,
+        companyResearchDiagnostics: repositories.companyResearchDiagnostics, companyResearchBatches: repositories.companyResearchBatches,
+        toolExecutions: { deleteByTraceIds: ids => repositories.toolExecutions.deleteByTraceIds(ids) },
+        runInTransaction: work => repositories.runInTransaction(work),
+      },
+      profiles, worker: companyWorker, companyRecognizer,
+      companyCompleter: createCompanyProfileCompleter(profiles, companyWorker, diagnostic => repositories.companyProfileDiagnostics.record(diagnostic)),
+      requestIdFactory: randomUUID, settings: configuration,
+      onConfigurationChanged: listener => { configurationListeners.add(listener); return () => { configurationListeners.delete(listener); }; },
+      documentSave: {
+        showSaveDialog: options => mainWindow && !mainWindow.isDestroyed() ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options),
+        writeFile, rename, unlink, randomToken: randomUUID,
+      },
+    }),
+    activateWorker: () => agentRuntime!.client.activateCapability("company-research", "builtin:company-research", randomUUID()),
+    deactivateWorker: () => agentRuntime?.client.deactivateCapability("company-research"),
+    onWorkerUnavailable: listener => agentRuntime!.client.subscribeUnavailable(listener),
+  }).catch(() => { /* Chat remains available if the optional package fails. */ });
   ipcDispose = registerIpcHandlers({
+    capabilities,
+    onConfigurationChanged: () => { for (const listener of configurationListeners) listener(); },
     usage: usageRuntime.query,
     ipcMain: ipcMainAdapter,
     clipboard: { writeText: (text) => clipboard.writeText(text) },
     conversations: appRuntime.conversationService,
-    industryResearch: appRuntime.industryResearch,
     settings: configuration,
     skills: { list: () => mainSkillCatalog?.list() ?? [] },
     chat: appRuntime.chatService,
-    companyResearch: appRuntime.companyResearch,
-    companyResearchBatch: appRuntime.companyResearchBatch,
-    companyResearchWordExport,
-    companyProfiles: appRuntime.companyProfiles,
   });
 
   mainWindow = createWindow();
@@ -219,7 +214,7 @@ app.on("before-quit", (event) => {
     if (!usageShutdownStarted) {
       usageShutdownStarted = true;
       ipcDispose?.(); ipcDispose = undefined;
-      appRuntime?.companyProfiles.dispose(); appRuntime?.companyResearchBatch.dispose();
+      void capabilities.dispose();
       void (async () => {
         // Pass the current Worker into the bounded shutdown orchestration so
         // an unacknowledged flush remains visible even if it exits meanwhile.
@@ -235,8 +230,7 @@ app.on("before-quit", (event) => {
   toolHost = undefined;
   agentRuntime?.dispose();
   agentRuntime = undefined;
-  appRuntime?.companyProfiles.dispose();
-  appRuntime?.companyResearchBatch.dispose();
+  void capabilities.dispose();
   appRuntime = undefined;
   if (database) {
     try {

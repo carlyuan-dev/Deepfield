@@ -23,7 +23,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { Value } from "typebox/value";
-import { CompanyResearchWordExportSelectionSchema, type CompanyResearchWordExportSelection } from "@deepfield/contracts";
+import { CompanyResearchWordExportSelectionSchema, type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
 import { RESEARCH_SECTION_STATUS_LABELS, type KeyResearchRun, type ResearchRun } from "../contracts/index.js";
 
 type MdNode = {

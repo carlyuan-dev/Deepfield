@@ -1,7 +1,9 @@
-import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, CompanyId, Conversation, ConversationId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult, ResearchRunId, CompanyResearchWordExportResult } from "@deepfield/contracts";
-import type { CapabilityItem, CompanyDraft, Company, CompanyResearchState, CompanyResearchEvent, KeyResearchRun, ResearchRunSummary, CompanyProfileEvent, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
+import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, CompanyId, Conversation, ConversationId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult, ResearchRunId } from "@deepfield/contracts";
+import type { CompanyResearchWordExportResult, CapabilityItem, CompanyDraft, Company, CompanyResearchState, CompanyResearchEvent, KeyResearchRun, ResearchRunSummary, CompanyProfileEvent, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
 import { getCompanyResearchTemplate } from "../../../../capabilities/company-research/contracts/index.js";
 import { vi } from "vitest";
+import { CapabilityRegistry } from "./capabilities/registry.js";
+import { registerCompanyResearchOperations, type CompanyResearchOperationServices } from "../../../../capabilities/company-research/main.js";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
 import {
   registerIpcHandlers,
@@ -425,6 +427,7 @@ export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearc
 }
 
 export class FakeCompanyProfileEventSource {
+  subscribeProgress() { return () => {}; }
   configurationChangeCalls = 0;
   configurationChanged(): void { this.configurationChangeCalls += 1; }
   listeners = new Set<(event: CompanyProfileEvent) => void>();
@@ -458,21 +461,24 @@ export function makeDeps(overrides: Partial<IpcServiceDeps> = {}) {
   const companyResearchWordExport = new FakeCompanyResearchWordExportService();
   const companyProfiles = new FakeCompanyProfileEventSource();
   const clipboard = new FakeClipboardWriter();
+  const capabilities = new CapabilityRegistry();
+  const activation = capabilities.begin("company-research");
+  registerCompanyResearchOperations(activation, { industryResearch, companyResearch, companyResearchWordExport, companyProfiles, companyResearchBatch: { subscribe: () => () => {} }, settings } as unknown as CompanyResearchOperationServices);
+  void activation.ready();
   const deps: IpcServiceDeps = {
+    capabilities,
+    onConfigurationChanged: () => companyProfiles.configurationChanged(),
     ipcMain,
     conversations,
-    industryResearch,
     settings,
     skills,
     chat,
-    companyResearch,
-    companyResearchWordExport,
-    companyProfiles,
     clipboard,
     ...overrides,
   };
-  const dispose = registerIpcHandlers(deps);
-  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyResearchWordExport, companyProfiles, clipboard, dispose };
+  const disposeIpc = registerIpcHandlers(deps);
+  const dispose = () => { disposeIpc(); void capabilities.dispose(); };
+  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyResearchWordExport, companyProfiles, clipboard, capabilities, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

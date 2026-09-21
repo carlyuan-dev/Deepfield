@@ -18,7 +18,7 @@ class RendererSender extends FakeWebContents {
 
 function setup(expectedUrl = LOCAL_URL) {
   const services = makeDeps();
-  services.dispose();
+
   const handlers = new Map<string, (event: RendererIpcEventLike, ...args: unknown[]) => unknown>();
   const sender = new RendererSender(1);
   sender.mainFrame.url = expectedUrl;
@@ -46,12 +46,12 @@ describe("trusted renderer IPC adapter", () => {
   ])("dispatches the known main frame at %s (%s)", async (expected, actual) => {
     const { sender, invoke, companyResearch, companyResearchWordExport, dispose, handlers } = setup(expected);
     sender.mainFrame.url = actual;
-    expect(handlers.has(IPC_CHANNELS.companyResearchRetryFailed)).toBe(true);
-    expect(handlers.has(IPC_CHANNELS.companyResearchDeleteRun)).toBe(true);
-    await expect(invoke(IPC_CHANNELS.companyResearchStart, "item-1", "company-1", RESEARCH_INPUT)).resolves.toMatchObject({ ok: true, value: { status: "researching" } });
-    await expect(invoke(IPC_CHANNELS.companyResearchRetryFailed, "item-1", "company-1", "run-1", RESEARCH_INPUT)).resolves.toMatchObject({ ok: true, value: { id: "run-1" } });
-    await expect(invoke(IPC_CHANNELS.companyResearchDeleteRun, "item-1", "company-1", "run-1")).resolves.toBeUndefined();
-    await expect(invoke(IPC_CHANNELS.companyResearchExportWord, "item-1", "company-1", "run-1", { raw: false, structured: true })).resolves.toEqual({ ok: true, value: { status: "cancelled" } });
+    expect(handlers.has(IPC_CHANNELS.capabilityInvoke)).toBe(true);
+    await invoke(IPC_CHANNELS.capabilitySubscribe);
+    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", RESEARCH_INPUT] })).resolves.toMatchObject({ ok: true, value: { status: "researching" } });
+    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.retryFailed", requestId: "r", input: ["item-1", "company-1", "run-1", RESEARCH_INPUT] })).resolves.toMatchObject({ ok: true, value: { id: "run-1" } });
+    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.deleteRun", requestId: "r", input: ["item-1", "company-1", "run-1"] })).resolves.toMatchObject({ ok: true });
+    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.exportWord", requestId: "r", input: ["item-1", "company-1", "run-1", { raw: false, structured: true }] })).resolves.toEqual({ ok: true, value: { status: "cancelled" } });
     expect(companyResearch.startCalls).toHaveLength(1);
     expect(companyResearch.retryFailedCalls).toHaveLength(1);
     expect(companyResearch.deleteRunCalls).toHaveLength(1);
@@ -59,8 +59,7 @@ describe("trusted renderer IPC adapter", () => {
     expect(sender.destroyedListenerCount).toBe(1);
     dispose();
     expect(handlers.size).toBe(0);
-    expect(handlers.has(IPC_CHANNELS.companyResearchRetryFailed)).toBe(false);
-    expect(handlers.has(IPC_CHANNELS.companyResearchDeleteRun)).toBe(false);
+    expect(handlers.has(IPC_CHANNELS.capabilityInvoke)).toBe(false);
     expect(sender.destroyedListenerCount).toBe(0);
   });
 
@@ -92,9 +91,9 @@ describe("trusted renderer IPC adapter", () => {
       case "dev wrong scheme": sender.mainFrame.url = "https://localhost:5173/"; break;
     }
     for (const [channel, args] of [
-      [IPC_CHANNELS.companyResearchSubscribe, []],
-      [IPC_CHANNELS.companyResearchStart, ["item-1", "company-1", RESEARCH_INPUT]],
-      [IPC_CHANNELS.companyResearchExportWord, ["item-1", "company-1", "run-1", { raw: false, structured: true }]],
+      [IPC_CHANNELS.capabilitySubscribe, []],
+      [IPC_CHANNELS.capabilityInvoke, [{ capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", RESEARCH_INPUT] }]],
+      [IPC_CHANNELS.capabilityInvoke, [{ capabilityId: "company-research", operation: "companyResearch.exportWord", requestId: "r", input: ["item-1", "company-1", "run-1", { raw: false, structured: true }] }]],
     ] as const) {
       const error = await invoke(channel, ...args).catch((error: Error) => error);
       expect(error).toBeInstanceOf(Error);
@@ -111,11 +110,11 @@ describe("trusted renderer IPC adapter", () => {
     const { sender, event, invoke, setTrusted, companyResearch } = setup();
     const replacement = new RendererSender(2);
     setTrusted(replacement);
-    await expect(invoke(IPC_CHANNELS.companyResearchSubscribe)).rejects.toThrow("untrusted IPC sender");
+    await expect(invoke(IPC_CHANNELS.capabilitySubscribe)).rejects.toThrow("untrusted IPC sender");
     expect(sender.destroyedListenerCount).toBe(0);
     event.sender = replacement;
     event.senderFrame = replacement.mainFrame;
-    await invoke(IPC_CHANNELS.companyResearchSubscribe);
+    await invoke(IPC_CHANNELS.capabilitySubscribe);
     companyResearch.emit({ type: "state_changed", itemId: "item-1", companyId: "company-1", runId: "run-1" });
     expect(replacement.sent).toHaveLength(1);
     expect(sender.sent).toEqual([]);

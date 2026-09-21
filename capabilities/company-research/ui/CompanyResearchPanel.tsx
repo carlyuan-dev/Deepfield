@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { type CompanyResearchWordExportSelection } from "@deepfield/contracts";
+import { type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import { researchRetryMode, COMPANY_RESEARCH_TEMPLATES, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
 import { MarkdownMessage } from "../../../apps/desktop/src/renderer/components/MarkdownMessage.js";

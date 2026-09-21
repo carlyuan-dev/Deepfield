@@ -2,49 +2,16 @@ import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { UsageDashboardArgsSchema, UsageDashboardSchema } from "@deepfield/contracts";
 import type { UsageDashboard } from "@deepfield/base/usage";
-import { toPublicError, PublicAppErrorSchema, DiagnosticResultSchema, CompanyResearchWordExportResultSchema, AgentWorkerEventSchema, type AgentWorkerEvent, type ChatMessage, type ChatRequestOptions, type ChatSendResult, type Conversation, type DesktopApi, type LlmProfileDraft, type SearchProfileDraft, type SettingsView, type DiagnosticResult, type CompanyResearchWordExportResult, type SkillSummary } from "@deepfield/contracts";
-import { CompanyResearchBatchStateSchema, CompanyProfileProgressSchema, type CompanyResearchBatchState, type CompanyProfileProgress, ResearchRunSchema, CompanyResearchEventSchema, CompanyProfileEventSchema, type CapabilityItem, type Company, type CompanyResearchState, type CompanyResearchEvent, type CompanyDraft, type CompanyProfileInput, type CompanyProfileIdentityHint, type CompanyProfileEvent, type ItemCompanyView, type ResearchRun, type ResearchRunSummary } from "../../../../capabilities/company-research/contracts/index.js";
+import { toPublicError, PublicAppErrorSchema, DiagnosticResultSchema, AgentWorkerEventSchema, type AgentWorkerEvent, type ChatMessage, type ChatRequestOptions, type ChatSendResult, type Conversation, type DesktopApi, type LlmProfileDraft, type SearchProfileDraft, type SettingsView, type DiagnosticResult, type SkillSummary } from "@deepfield/contracts";
+import { CapabilityCallSchema, CapabilityEventSchema } from "@deepfield/capability-sdk";
 
 export const IPC_CHANNELS = {
+  capabilityInvoke: "deepfield:capability:invoke",
+  capabilitySubscribe: "deepfield:capability:subscribe",
+  capabilityUnsubscribe: "deepfield:capability:unsubscribe",
+  capabilityEvents: "deepfield:capability:events",
   usageGetDashboard: "deepfield:usage:getDashboard",
-  companyResearchBatchStart: "deepfield:companyResearchBatch:start",
-  companyResearchBatchGetState: "deepfield:companyResearchBatch:getState",
-  companyResearchBatchCancel: "deepfield:companyResearchBatch:cancel",
-  companyResearchBatchResume: "deepfield:companyResearchBatch:resume",
-  companyResearchBatchSubscribe: "deepfield:companyResearchBatch:subscribe",
-  companyResearchBatchEvents: "deepfield:companyResearchBatch:events",
-  companyProfileProgressGet: "deepfield:companyProfiles:progress",
-  companyProfileProgressSubscribe: "deepfield:companyProfiles:subscribeProgress",
-  companyProfileProgressEvents: "deepfield:companyProfiles:progressEvents",
   copyText: "deepfield:clipboard:copyText",
-  industryResearchCreateItem: "deepfield:industryResearch:createItem",
-  industryResearchUpdateItem: "deepfield:industryResearch:updateItem",
-  industryResearchDeleteItem: "deepfield:industryResearch:deleteItem",
-  industryResearchDeleteItems: "deepfield:industryResearch:deleteItems",
-  industryResearchListItems: "deepfield:industryResearch:listItems",
-  industryResearchGetItem: "deepfield:industryResearch:getItem",
-  industryResearchListCompanies: "deepfield:industryResearch:listCompanies",
-  industryResearchUpdateCompany: "deepfield:industryResearch:updateCompany",
-  industryResearchAddCompany: "deepfield:industryResearch:addCompany",
-  industryResearchAddCompanies: "deepfield:industryResearch:addCompanies",
-  industryResearchRemoveCompany: "deepfield:industryResearch:removeCompany",
-  industryResearchRemoveCompanies: "deepfield:industryResearch:removeCompanies",
-  industryResearchRecognizeCompanies: "deepfield:industryResearch:recognizeCompanies",
-  industryResearchRetryCompanyProfile: "deepfield:industryResearch:retryCompanyProfile",
-  industryResearchConfirmCompanyProfileIdentity: "deepfield:industryResearch:confirmCompanyProfileIdentity",
-  industryResearchSubscribeCompanyProfiles: "deepfield:industryResearch:subscribeCompanyProfiles",
-  industryResearchCompanyProfileEvents: "deepfield:industryResearch:companyProfileEvents",
-  companyResearchStart: "deepfield:companyResearch:start",
-  companyResearchCancel: "deepfield:companyResearch:cancel",
-  companyResearchGetState: "deepfield:companyResearch:getState",
-  companyResearchListRuns: "deepfield:companyResearch:listRuns",
-  companyResearchGetRun: "deepfield:companyResearch:getRun",
-  companyResearchExportWord: "deepfield:companyResearch:exportWord",
-  companyResearchRetryFailed: "deepfield:companyResearch:retryFailed",
-  companyResearchRetryStructuring: "deepfield:companyResearch:retryStructuring",
-  companyResearchDeleteRun: "deepfield:companyResearch:deleteRun",
-  companyResearchSubscribe: "deepfield:companyResearch:subscribe",
-  companyResearchEvents: "deepfield:companyResearch:events",
   conversationsCreate: "deepfield:conversations:create",
   conversationsSetWebSearchEnabled: "deepfield:conversations:setWebSearchEnabled",
   conversationsDelete: "deepfield:conversations:delete",
@@ -88,7 +55,20 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
     }
     return result.value as T;
   };
+  let subscribers = 0;
   return {
+    capabilities: {
+      invoke: call => {
+        if (!Value.Check(CapabilityCallSchema, call)) return Promise.reject(toPublicError(undefined));
+        return invokeResult(IPC_CHANNELS.capabilityInvoke, Type.Unknown(), call);
+      },
+      subscribe: listener => {
+        const dispose = ipc.on(IPC_CHANNELS.capabilityEvents, (_event, value) => { if (Value.Check(CapabilityEventSchema, value)) listener(value); });
+        if (++subscribers === 1) void ipc.invoke(IPC_CHANNELS.capabilitySubscribe).catch(() => {});
+        let active = true;
+        return () => { if (!active) return; active = false; dispose(); if (--subscribers === 0) void ipc.invoke(IPC_CHANNELS.capabilityUnsubscribe).catch(() => {}); };
+      },
+    },
     usage: { getDashboard: (query) => {
       if (!Value.Check(UsageDashboardArgsSchema, [query])) return Promise.reject(toPublicError(undefined));
       return invokeResult<UsageDashboard>(IPC_CHANNELS.usageGetDashboard, UsageDashboardSchema, query);
@@ -114,95 +94,6 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
         }, { additionalProperties: false });
         if (Value.Check(schema, value)) listener(value as Conversation);
       }),
-    },
-    industryResearch: {
-      getCompanyProfileProgress: (itemId) => invokeResult<CompanyProfileProgress>(IPC_CHANNELS.companyProfileProgressGet, CompanyProfileProgressSchema, itemId),
-      subscribeCompanyProfileProgress: (listener) => {
-        void ipc.invoke(IPC_CHANNELS.companyProfileProgressSubscribe).catch(() => {});
-        return ipc.on(IPC_CHANNELS.companyProfileProgressEvents, (_event, value) => { if (Value.Check(CompanyProfileProgressSchema, value)) listener(value); });
-      },
-      createItem: (input) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchCreateItem, input) as Promise<CapabilityItem>,
-      updateItem: (itemId, input) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchUpdateItem, itemId, input) as Promise<CapabilityItem>,
-      deleteItem: (itemId) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchDeleteItem, itemId) as Promise<void>,
-      deleteItems: (itemIds) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchDeleteItems, itemIds) as Promise<void>,
-      listItems: () =>
-        ipc.invoke(IPC_CHANNELS.industryResearchListItems) as Promise<CapabilityItem[]>,
-      getItem: (itemId) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchGetItem, itemId) as Promise<
-          CapabilityItem | undefined
-        >,
-      listCompanies: (itemId) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchListCompanies, itemId) as Promise<
-          ItemCompanyView[]
-        >,
-      updateCompany: (companyId, input: CompanyProfileInput) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchUpdateCompany, companyId, input) as Promise<Company>,
-      addCompany: (itemId, draft: CompanyDraft) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchAddCompany, itemId, draft) as Promise<
-          ItemCompanyView
-        >,
-      addCompanies: (itemId, drafts: CompanyDraft[]) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchAddCompanies, itemId, drafts) as Promise<
-          ItemCompanyView[]
-        >,
-      removeCompany: (itemId, companyId) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchRemoveCompany, itemId, companyId) as Promise<void>,
-      removeCompanies: (itemId, companyIds) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchRemoveCompanies, itemId, companyIds) as Promise<void>,
-      recognizeCompanies: (itemId, text) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchRecognizeCompanies, itemId, text) as Promise<
-          CompanyDraft[]
-        >,
-      retryCompanyProfile: (companyId) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchRetryCompanyProfile, companyId) as Promise<boolean>,
-      confirmCompanyProfileIdentity: (companyId, hint: CompanyProfileIdentityHint) =>
-        ipc.invoke(IPC_CHANNELS.industryResearchConfirmCompanyProfileIdentity, companyId, hint) as Promise<boolean>,
-      subscribeCompanyProfiles: (listener: (event: CompanyProfileEvent) => void) => {
-        void ipc.invoke(IPC_CHANNELS.industryResearchSubscribeCompanyProfiles).catch(() => {});
-        return ipc.on(IPC_CHANNELS.industryResearchCompanyProfileEvents, (_event, value) => {
-          if (Value.Check(CompanyProfileEventSchema, value)) listener(value);
-        });
-      },
-    },
-    companyResearch: {
-      start: (itemId, companyId, input) =>
-        invokeResult<ResearchRun>(IPC_CHANNELS.companyResearchStart, ResearchRunSchema, itemId, companyId, input) as Promise<ResearchRun>,
-      cancel: (runId) =>
-        ipc.invoke(IPC_CHANNELS.companyResearchCancel, runId) as Promise<void>,
-      getState: (itemId, companyId) =>
-        ipc.invoke(IPC_CHANNELS.companyResearchGetState, itemId, companyId) as Promise<CompanyResearchState>,
-      listRuns: (itemId, companyId) =>
-        ipc.invoke(IPC_CHANNELS.companyResearchListRuns, itemId, companyId) as Promise<ResearchRunSummary[]>,
-      getRun: (itemId, companyId, runId) =>
-        ipc.invoke(IPC_CHANNELS.companyResearchGetRun, itemId, companyId, runId) as Promise<ResearchRun | undefined>,
-      exportWord: (itemId, companyId, runId, selection) =>
-        invokeResult<CompanyResearchWordExportResult>(IPC_CHANNELS.companyResearchExportWord, CompanyResearchWordExportResultSchema, itemId, companyId, runId, selection),
-      retryStructuring: (itemId, companyId, runId) =>
-        invokeResult<ResearchRun>(IPC_CHANNELS.companyResearchRetryStructuring, ResearchRunSchema, itemId, companyId, runId) as Promise<ResearchRun>,
-      retryFailed: (itemId, companyId, runId, input) =>
-        invokeResult<ResearchRun>(IPC_CHANNELS.companyResearchRetryFailed, ResearchRunSchema, itemId, companyId, runId, input) as Promise<ResearchRun>,
-      deleteRun: (itemId, companyId, runId) =>
-        ipc.invoke(IPC_CHANNELS.companyResearchDeleteRun, itemId, companyId, runId) as Promise<void>,
-      subscribe: (listener: (event: CompanyResearchEvent) => void) => {
-        void ipc.invoke(IPC_CHANNELS.companyResearchSubscribe).catch(() => {});
-        return ipc.on(IPC_CHANNELS.companyResearchEvents, (_event, value) => {
-          if (Value.Check(CompanyResearchEventSchema, value)) listener(value);
-        });
-      },
-    },
-    companyResearchBatch: {
-      start: (itemId, entries) => invokeResult<CompanyResearchBatchState>(IPC_CHANNELS.companyResearchBatchStart, CompanyResearchBatchStateSchema, itemId, entries),
-      getState: (itemId) => invokeResult<CompanyResearchBatchState | null>(IPC_CHANNELS.companyResearchBatchGetState, Type.Union([CompanyResearchBatchStateSchema, Type.Null()]), itemId),
-      cancel: async (batchId) => { await invokeResult(IPC_CHANNELS.companyResearchBatchCancel, Type.Null(), batchId); },
-      resume: (batchId) => invokeResult<CompanyResearchBatchState>(IPC_CHANNELS.companyResearchBatchResume, CompanyResearchBatchStateSchema, batchId),
-      subscribe: (listener) => {
-        void ipc.invoke(IPC_CHANNELS.companyResearchBatchSubscribe).catch(() => {});
-        return ipc.on(IPC_CHANNELS.companyResearchBatchEvents, (_event, value) => { if (Value.Check(CompanyResearchBatchStateSchema, value)) listener(value); });
-      },
     },
     settings: {
       get: () => ipc.invoke(IPC_CHANNELS.settingsGet) as Promise<SettingsView>,

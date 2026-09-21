@@ -4,3 +4,5 @@ export * from "./company-profile.js";
 export * from "./batch-research.js";
 export * from "./company-research-templates.js";
 export * from "./research-retry-policy.js";
+
+export * from "./ipc.js";

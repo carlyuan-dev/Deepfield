@@ -3,7 +3,7 @@ import { type LlmRuntimeSnapshot, type ResearchRunId, type SearchRuntimeSnapshot
 import { getCompanyResearchTemplate, type CompanyResearchEvent, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type StartCompanyResearchInput } from "../contracts/index.js";
 import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY } from "./company-research-service.js";
 import { AppError } from "@deepfield/contracts";
-import type { CompanyResearchWorkerPort } from "../../../packages/application/src/ports.js";
+import type { CompanyResearchWorkerPort } from "../host-ports.js";
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
 
 const dbs: TestDb[] = []; afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });

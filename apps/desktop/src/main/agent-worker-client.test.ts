@@ -28,145 +28,32 @@ import {
 } from "./agent-worker-client-test-helpers.js";
 
 describe("agent worker client", () => {
-  it("routes research tool activity as a non-terminal research event", async () => {
-    const endpoint = new FakeEndpoint();
-    const client = new AgentWorkerClient(endpoint);
-    const req = rawResearchRequest();
-    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
-    const activity: CompanyResearchWorkerEvent = {
-      requestId: req.requestId, runId: req.runId, stage: "raw", type: "tool_activity",
-      callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running",
-    };
-    endpoint.emit(activity);
-    endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: "raw", type: "completed", text: "报告" });
-    expect((await iterator.next()).value).toEqual(activity);
-    expect((await iterator.next()).value).toMatchObject({ type: "completed", text: "报告" });
-    expect((await iterator.next()).done).toBe(true);
-    client.dispose();
+  it("isolates generic package queues and validates package payloads before closing terminal streams", async () => {
+    const endpoint = new FakeEndpoint(); const client = new AgentWorkerClient(endpoint);
+    const call = { kind: "capability.run" as const, capabilityId: "example", operation: "echo", requestId: "cap", input: null };
+    const stream = client.sendCapability(call, event => event.payload === "foreign" ? "ignore" : typeof event.payload === "string")[Symbol.asyncIterator]();
+    const chat = client.send(request("chat"));
+    endpoint.emit({ kind: "capability.event", capabilityId: "example", operation: "echo", requestId: "cap", type: "completed", payload: "foreign" });
+    expect(client.pendingCount()).toBe(2);
+    endpoint.emit({ kind: "capability.event", capabilityId: "example", operation: "echo", requestId: "cap", type: "progress", payload: "first" });
+    endpoint.emit({ kind: "capability.event", capabilityId: "example", operation: "echo", requestId: "cap", type: "completed", payload: "last" });
+    endpoint.emit({ requestId: "unknown", type: "bad" });
+    endpoint.emit(event("chat", "completed", "chat result"));
+    expect((await stream.next()).value).toMatchObject({ payload: "first" });
+    expect((await stream.next()).value).toMatchObject({ payload: "last" });
+    expect((await stream.next()).done).toBe(true);
+    expect(await collect(chat)).toEqual(["completed:chat result"]);
+    expect(() => client.sendCapability(call)).toThrow(); client.dispose();
   });
-
-  it("posts the explicit cancellation stage", () => {
-    const endpoint = new FakeEndpoint();
-    const client = new AgentWorkerClient(endpoint);
-    client.cancelResearch("structure-1", "run-1", "structure");
-    expect(endpoint.posted).toEqual([{ requestId: "structure-1", runId: "run-1", kind: "company-research.cancel", stage: "structure" }]);
-    client.dispose();
-  });
-
-  it.each(["raw", "structure"] as const)("ignores foreign research identities for %s and accepts a later matching event", async (stage) => {
-    const endpoint = new FakeEndpoint();
-    const client = new AgentWorkerClient(endpoint);
-    const req = stage === "raw" ? rawResearchRequest() : structureResearchRequest();
-    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
-    endpoint.emit({ requestId: "foreign-request", runId: req.runId, stage, type: "completed", text: "wrong request" });
-    endpoint.emit({ requestId: req.requestId, runId: "foreign-run", stage, type: "completed", text: "wrong run" });
-    endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: stage === "raw" ? "structure" : "raw", type: "completed", text: "wrong stage" });
+  it("rejects cross-package envelopes without closing unrelated streams", async () => {
+    const endpoint = new FakeEndpoint(); const client = new AgentWorkerClient(endpoint);
+    const stream = client.sendCapability({ kind: "capability.run", capabilityId: "example", operation: "echo", requestId: "cap", input: null })[Symbol.asyncIterator]();
+    const chat = client.send(request("chat"));
+    endpoint.emit({ kind: "capability.event", capabilityId: "foreign", operation: "echo", requestId: "cap", type: "completed", payload: null });
+    await expect(stream.next()).rejects.toBeInstanceOf(AgentProtocolError);
     expect(client.pendingCount()).toBe(1);
-    const matching = { requestId: req.requestId, runId: req.runId, stage, type: "completed", text: "matching result" };
-    endpoint.emit(matching);
-    expect(await iterator.next()).toEqual({ value: matching, done: false });
-    expect((await iterator.next()).done).toBe(true);
-    expect(client.pendingCount()).toBe(0);
-    client.dispose();
+    endpoint.emit(event("chat", "completed", "ok")); expect(await collect(chat)).toEqual(["completed:ok"]); client.dispose();
   });
-
-  it.each(["raw", "structure"] as const)("still fails malformed research events for %s even with foreign identities", async (stage) => {
-    const endpoint = new FakeEndpoint();
-    const client = new AgentWorkerClient(endpoint);
-    const req = stage === "raw" ? rawResearchRequest() : structureResearchRequest();
-    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
-    endpoint.emit({ requestId: req.requestId, runId: "foreign-run", stage, type: "completed", text: 42 });
-    await expect(iterator.next()).rejects.toBeInstanceOf(AgentProtocolError);
-    expect(client.pendingCount()).toBe(0);
-    client.dispose();
-  });
-
-  it.each(["chat", "tool"] as const)("still fails a research event sent to a %s stream", async (kind) => {
-    const endpoint = new FakeEndpoint();
-    const client = new AgentWorkerClient(endpoint);
-    const stream = kind === "chat" ? client.send(request("shared")) : client.sendTool(toolRequest("shared"));
-    const iterator = stream[Symbol.asyncIterator]();
-    endpoint.emit({ requestId: "shared", runId: "foreign-run", stage: "raw", type: "completed", text: "wrong stream kind" });
-    await expect(iterator.next()).rejects.toBeInstanceOf(AgentProtocolError);
-    expect(client.pendingCount()).toBe(0);
-    client.dispose();
-  });
-
-  it("delivers structure candidates and ignores late raw events from a different request", async () => {
-    const endpoint = new FakeEndpoint();
-    const client = new AgentWorkerClient(endpoint);
-    const req = structureResearchRequest();
-    const iterator = client.sendResearch(req)[Symbol.asyncIterator]();
-    endpoint.emit({ requestId: "research-1", runId: req.runId, stage: "raw", type: "completed", text: "late raw" });
-    endpoint.emit({ requestId: req.requestId, runId: req.runId, stage: "structure", type: "completed", text: "{}" });
-    expect((await iterator.next()).value).toMatchObject({ stage: "structure", text: "{}" });
-    expect((await iterator.next()).done).toBe(true);
-    client.dispose();
-  });
-
-  it("cancels only the matching research while chat stays usable and drops late research events", async () => {
-    const clientEndpoint = new FakeEndpoint();
-    const workerEndpoint = new InMemoryEndpoint();
-    clientEndpoint.postMessage = (value) => workerEndpoint.emit(value);
-    workerEndpoint.postMessage = (value) => clientEndpoint.emit(value);
-    let aborted = false;
-    const loop = createWorkerMessageLoop(workerEndpoint, echoAgent, {
-      researchAgent: {
-        async run(workerRequest, emit, signal) {
-          emit({
-            requestId: workerRequest.requestId,
-            runId: workerRequest.runId,
-            stage: workerRequest.stage,
-            type: "started",
-          });
-          await new Promise<void>((resolve) => {
-            signal.addEventListener("abort", () => {
-              aborted = true;
-              resolve();
-            });
-          });
-          emit({
-            requestId: workerRequest.requestId,
-            runId: workerRequest.runId,
-            stage: workerRequest.stage,
-            type: "cancelled",
-          });
-          emit({
-            requestId: workerRequest.requestId,
-            runId: workerRequest.runId,
-            stage: "raw",
-            type: "text_delta",
-            delta: "late",
-          });
-        },
-      },
-    });
-    const client = new AgentWorkerClient(clientEndpoint);
-    const researchRequest: CompanyResearchWorkerRequest = rawResearchRequest();
-    const research = client.sendResearch(researchRequest);
-    await flushPending();
-    client.cancelResearch("other-request", "run-1", "raw");
-    client.cancelResearch("research-1", "run-1", "structure");
-    await flushPending();
-    expect(aborted).toBe(false);
-
-    const chat = client.send(request("chat-during-research"));
-    await flushPending();
-    client.cancelResearch("research-1", "run-1", "raw");
-
-    const researchTypes: string[] = [];
-    for await (const event of research as AsyncIterable<CompanyResearchWorkerEvent>) {
-      researchTypes.push(event.type);
-    }
-    expect(await collect(chat)).toEqual(["started", "你好", "completed:你好"]);
-    expect({ aborted, researchTypes, pending: client.pendingCount(), active: loop.activeCount() }).toEqual({
-      aborted: true,
-      researchTypes: ["started", "cancelled"],
-      pending: 0,
-      active: 0,
-    });
-  });
-
   it("delivers interleaved streams in per-request order and consumes terminal events", async () => {
     const endpoint = new FakeEndpoint();
     const client = new AgentWorkerClient(endpoint);
