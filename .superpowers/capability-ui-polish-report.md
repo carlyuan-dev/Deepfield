@@ -3,7 +3,7 @@
 ## Scope
 
 - Base: `d16974a43ec851fbc637360a39e75bcbc8d991c8`
-- Head: `HEAD_TO_BE_RECORDED_AFTER_COMMIT`
+- Implementation head: `de2285e5fa14a77792e81045a1fb8a3a9054d54f`
 - Branch: `develop`
 - No worktree, GUI, live API, full-suite, merge, push, or userData changes.
 - Existing evaluation changes and untracked evaluation/material files were preserved and excluded from staging.
