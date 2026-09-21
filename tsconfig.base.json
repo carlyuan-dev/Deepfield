@@ -43,6 +43,7 @@
     "packages/retrieval/src/**/*.ts",
     "apps/desktop/src/**/*.ts",
     "apps/desktop/src/**/*.tsx",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "tests/**/*.tsx"
   ]
 }

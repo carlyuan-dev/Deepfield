@@ -47,6 +47,19 @@ function isContained(root: string, candidate: string): boolean {
   return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
 }
 
+/** Resolve and return the canonical regular file, never a path containing a symlink. */
+export async function resolvePackageFile(packageRoot: string, path: string): Promise<string | undefined> {
+  if (!isSafeRelativePath(path)) return undefined;
+  try {
+    const root = await realpath(packageRoot);
+    const candidate = await realpath(resolve(root, path));
+    if (!isContained(root, candidate) || !(await stat(candidate)).isFile()) return undefined;
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function validatePackagePaths(
   packageRoot: string,
   paths: {

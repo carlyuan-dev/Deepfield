@@ -11,3 +11,4 @@ export {
   type ResourceScope,
   type ResourceScopeIssue,
 } from "./lifecycle.js";
+export type { CapabilityBridge, CapabilityCall, CapabilityEvent, CapabilityUiRuntime, CapabilityUiProps, CapabilityUiModule } from "./ui.js";
