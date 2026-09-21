@@ -29,10 +29,11 @@ export class AppError extends Error {
   }
 }
 
-/** Strict structural validation also works after Electron drops object prototypes. */
+/** Packages bundle their own Error constructors; validate only the public fields. */
 export function toPublicError(value: unknown): PublicAppError {
-  const candidate = value instanceof AppError
-    ? { code: value.code, category: value.category, ...(value.context === undefined ? {} : { context: value.context }) }
+  const exception = value instanceof Error ? value as Error & { code?: unknown; category?: unknown; context?: unknown } : undefined;
+  const candidate = exception
+    ? { code: exception.code, category: exception.category, ...(exception.context === undefined ? {} : { context: exception.context }) }
     : value;
   if (!Value.Check(PublicAppErrorSchema, candidate)) return { code: "INTERNAL.UNKNOWN", category: "internal" };
   return { code: candidate.code, category: candidate.category, ...(candidate.context === undefined ? {} : { context: { ...candidate.context } }) } as PublicAppError;

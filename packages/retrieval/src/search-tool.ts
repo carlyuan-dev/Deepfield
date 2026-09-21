@@ -1,4 +1,6 @@
 import { Type, type Static } from "typebox";
+import { SearchWebOutputSchema, type SearchWebOutput } from "./output-contracts.js";
+export { SearchWebResultSchema, SearchWebOutputSchema, type SearchWebOutput } from "./output-contracts.js";
 import {
   ToolExecutionError,
   type ToolDefinition,
@@ -29,30 +31,6 @@ export const SearchWebInputSchema = Type.Object(
   { additionalProperties: false },
 );
 export type SearchWebInput = Static<typeof SearchWebInputSchema>;
-
-export const SearchWebResultSchema = Type.Object(
-  {
-    title: Type.String({ maxLength: 2000 }),
-    url: Type.String({ minLength: 1, maxLength: 2048 }),
-    snippet: Type.String({ maxLength: 8000 }),
-    rank: Type.Integer({ minimum: 1, maximum: MAX_RESULTS }),
-    provider: Type.String({ minLength: 1, maxLength: 64 }),
-    date: Type.Optional(Type.String({ maxLength: 40 })),
-    publishedAt: Type.Optional(Type.String({ maxLength: 40 })),
-    sourceName: Type.Optional(Type.String({ maxLength: 2000 })),
-  },
-  { additionalProperties: false },
-);
-
-export const SearchWebOutputSchema = Type.Object(
-  {
-    query: Type.String({ minLength: 1, maxLength: MAX_QUERY_LENGTH }),
-    provider: Type.String({ minLength: 1, maxLength: 64 }),
-    results: Type.Array(SearchWebResultSchema, { maxItems: MAX_RESULTS }),
-  },
-  { additionalProperties: false },
-);
-export type SearchWebOutput = Static<typeof SearchWebOutputSchema>;
 
 const MAX_MODEL_SEARCH_OUTPUT_BYTES = 12_000;
 const MAX_MODEL_SEARCH_RESULTS = 8;

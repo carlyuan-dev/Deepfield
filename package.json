@@ -13,7 +13,8 @@
   ],
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && npm run build:capabilities",
+    "build:capabilities": "node scripts/capabilities/build.ts",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "test": "vitest run",
     "test:watch": "vitest",

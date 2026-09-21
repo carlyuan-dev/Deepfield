@@ -15,6 +15,7 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
       "@deepfield/base/usage": ["./packages/base/src/usage/index.ts"],
@@ -28,10 +29,12 @@
       "@deepfield/application": ["./packages/application/src/index.ts"],
       "@deepfield/capability-sdk": ["./packages/capability-sdk/src/index.ts"],
       "@deepfield/retrieval": ["./packages/retrieval/src/index.ts"],
+      "@deepfield/retrieval/output-contracts": ["./packages/retrieval/src/output-contracts.ts"],
       "@deepfield/retrieval/search-provider": ["./packages/retrieval/src/search-provider.ts"]
     }
   },
   "include": [
+    "scripts/capabilities/**/*.ts",
     "capabilities/**/*.ts",
     "capabilities/**/*.tsx",
     "packages/base/src/**/*.ts",

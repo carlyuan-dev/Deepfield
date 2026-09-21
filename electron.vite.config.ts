@@ -6,7 +6,6 @@ export default defineConfig({
   main: { build: { rollupOptions: { input: {
     index: resolve("apps/desktop/src/main/index.ts"),
     "agent-worker": resolve("apps/desktop/src/worker/index.ts"),
-    "profile-diagnose-cli": resolve("apps/desktop/src/main/profile-diagnose-cli.ts"),
   } } } },
   preload: { build: {
     // The preload runs sandboxed (sandbox: true) and cannot require

@@ -1,4 +1,5 @@
-import { Type, type Static } from "typebox";
+import { MAX_READ_WEBPAGE_TEXT_CHARS, ReadWebpageOutputSchema, type ReadWebpageOutput } from "./output-contracts.js";
+export { MAX_READ_WEBPAGE_TEXT_CHARS, ReadWebpageOutputSchema, type ReadWebpageOutput } from "./output-contracts.js";
 import type { ToolDefinition } from "@deepfield/tool-platform";
 import {
   createFetchUrlDefinition,
@@ -10,20 +11,6 @@ import {
   createParseHtmlDefinition,
   type ParseHtmlOutput,
 } from "./html-tool.js";
-
-export const MAX_READ_WEBPAGE_TEXT_CHARS = 12_000;
-
-export const ReadWebpageOutputSchema = Type.Object(
-  {
-    title: Type.String({ maxLength: 2000 }),
-    url: Type.String({ minLength: 1, maxLength: 2048 }),
-    text: Type.String({ maxLength: MAX_READ_WEBPAGE_TEXT_CHARS }),
-    truncated: Type.Boolean(),
-    characterCount: Type.Integer({ minimum: 0, maximum: MAX_READ_WEBPAGE_TEXT_CHARS }),
-  },
-  { additionalProperties: false },
-);
-export type ReadWebpageOutput = Static<typeof ReadWebpageOutputSchema>;
 
 /**
  * Model-facing webpage reader. The internal resource hand-off stays scoped to

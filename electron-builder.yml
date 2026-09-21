@@ -5,6 +5,7 @@ directories:
   output: release
 files:
   - out/**
+  - "!out/capabilities/**"
   - package.json
 # node_modules (production deps only: @earendil-works/pi-*, typebox) are
 # included automatically by electron-builder from package.json dependencies.
@@ -18,6 +19,10 @@ mac:
       arch: [arm64]
 artifactName: Deepfield-${version}-${arch}.${ext}
 extraResources:
+  - from: out/capabilities
+    to: capabilities
+    filter:
+      - "**/*"
   - from: skills
     to: skills
     filter:

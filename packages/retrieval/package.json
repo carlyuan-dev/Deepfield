@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./output-contracts": "./src/output-contracts.ts",
     "./search-provider": "./src/search-provider.ts"
   },
   "dependencies": {

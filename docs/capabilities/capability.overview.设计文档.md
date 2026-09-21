@@ -1,7 +1,7 @@
 # Capability 架构设计文档
 
-日期：2026-09-20  
-状态：架构已批准；第一批基础机制已实现，尚未接入生产启动。真实 Capability A 拆包、管理界面与 Chat 调用仍待后续批次。
+日期：2026-09-21
+状态：第二批已接入可选包生产启动、独立构建和能力管理；离线验收完成后交付独立测试包，Electron 桌面交互由用户手测。Chat 目录/describe/invoke 属于第三批，尚未实现。
 首个落点：Capability A，公司研究，稳定 ID 为 `company-research`。
 
 ## 1. 目标与范围
@@ -12,20 +12,20 @@
 
 本文描述目标架构，具体落地状态以实施计划为准。首版只接纳自己编写、审核并发布的可信包；管理界面改变下次启动配置，不做运行时热插拔。禁用不是隐藏页面，也不是删除数据。
 
-第一批已提供 `packages/capability-sdk/` 清单协议与资源回收容器、宿主侧无执行扫描/不可变选择快照/失败隔离装配协调器，以及独立 main/worker/ui 构建探针。探针 UI 是纯 DOM，不代表真实 React 包加载已经验证；依赖检查使用真实宿主源码入口的独立 Vite 构建，不代表生产配置已完成包化。现有生产入口尚未调用这些模块，**当前仍不能删除真实 Capability A 代码**。验收记录见[第一批实施计划](../superpowers/plans/2026-09-20-capability-packages-phase-1.md)。
+第一批提供 SDK、无执行扫描、不可变启动快照和失败隔离；第二批将真实 A 的 main/worker/ui 接入这些机制。`npm run build` 输出独立 `out/capabilities/company-research/`，Node 入口自带依赖和 ESM 标记；UI 使用宿主 React/公共组件并加载包内作用域 CSS。安装副本放在 `resources/capabilities/`，仅首次初始化复制到 `userData/capabilities/`。已初始化后的删除不会自动恢复。生产 main/worker/preload/renderer 图以及不含 `capabilities/` 源码的临时构建夹具验证宿主可独立构建；没有删除真实源码或用户数据。验收记录见[第二批实施计划](../superpowers/plans/2026-09-21-capability-packages-phase-2.md)。
 
 不包含：插件市场、任意第三方代码沙箱、在线安装更新、Capability 相互依赖、全量 Base 迁移、通用长任务调度平台。
 
-## 2. 当前事实与拆包障碍
+## 2. 当前实现与保留边界
 
-- `apps/desktop/src/main/application-runtime.ts` 同时创建 Chat、研究主题、调研、批量队列与资料补全；创建后会清理中断调研并启动补全。
-- `apps/desktop/src/main/index.ts` 固定接线研究 IPC、导出及退出清理。
-- `apps/desktop/src/worker/assembly.ts` 静态导入并装配公司调研和公司资料 Agent。
-- `packages/application/src/index.ts`、contracts 与 persistence 总入口混合导出业务和公共内容，禁用时可能仍间接加载业务实现。
-- `apps/desktop/src/renderer/features/industry-research/` 已聚合大部分页面，应用服务和 Worker 专属代码也已分目录，但没有包注册协议。
+- 宿主 application-runtime 只创建 Chat；main 注入选定旧仓储、配置、执行器、Usage 和保存适配，包入口创建公司业务服务，Worker 确认后才运行恢复。
+- Main/Worker 经通用注册表和可信启动快照加载包；preload 只传通用调用/事件。诊断 CLI 源码保留，但不再是默认生产构建入口。
+- Sidebar 从 ready 包元数据产生导航，管理页勾选仅在下次启动生效。包失败或 Worker 退出会撤销 ready、注册项和资源访问。
+- 完整业务代码位于 `capabilities/company-research/`；React 注入、协议资源处理与 CSS 挂载已有离线验证，真实 Electron 页面尚待用户手测。
+- persistence 保留自足的旧表迁移、仓储和冻结验证类型，不反向引用可选包。retrieval 通过纯输出契约子路径共享验证 Schema，包不打入其工具/PDF 实现。
 - 当前 Base 只有 Usage。通用 Agent 仍在 Worker，已具备独立执行契约和注入边界，尚不是 Base.Agent。
 
-所以当前是职责模块化，不是可选启动模块。迁移必须同时处理主进程、Worker、界面及静态转导出，而非只添加一个开关。
+禁用包不会导入入口、创建公司业务实例或运行恢复；报告保存在原数据库，重新启用可读。当前不提供第三方沙箱、热卸载、自动更新或 Chat 能力调用。
 
 ## 3. 包边界与目录
 
@@ -146,7 +146,7 @@ Capability 需要的通用能力优先使用 Base 公开接口，没有的业务
 
 ## 9. Capability A 拆分映射
 
-| 当前内容 | 目标归属 |
+| 迁移前内容 | 已实现归属 |
 | --- | --- |
 | application/capabilities/company-research | 包内 application；包含主题、公司补全、调研与批量服务 |
 | worker/capabilities/company-research | 包内 runtime；保留专属提示词、校验、诊断 |
@@ -192,4 +192,4 @@ Cap A 对外动作分组：主题/公司列表读取、导入与补全、单公�
 
 ## 11. 仍需用户审阅的设计选择
 
-本文将完整公司研究作为首个包；可信本地预构建包作为交付单位；v1 统一 invoke 而非大量动态工具；保留 A 的旧 SQLite 迁移与仓储作为过渡；Chat 首个贯通范围限定为已有公司的单次调研。上述为建议设计，批准后再写实施计划，不在本阶段修改产品。
+完整公司研究作为首个可信本地包、通用调用信封和保留旧 SQLite 适配已获批准并实施。Chat 的目录、说明复用与调用、Base.Storage/Agent 迁移及网络安装更新仍未实施；上方相关条目是后续验收目标，不代表本批已完成。独立测试包的用户手测顺序：启用后正常两阶段调研与导出 → 勾选禁用 → 重启确认无研究入口且 Chat/设置/Usage 可用 → 重新启用并重启确认历史报告仍在。目录删除只在隔离夹具中验证，不要求使用真实资料冒险。
