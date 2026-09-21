@@ -6,6 +6,7 @@ import type { CapabilityItemId, CompanyId, ResearchRunId } from "@deepfield/cont
 import type { CapabilityItem, ItemCompanyView, ResearchRun, CompanyResearchState } from "../../../../capabilities/company-research/contracts/index.js";
 import { researchRun, researchSummary, activeResearch } from "../../../../capabilities/company-research/ui/company-research-test-fixtures.js";
 import { App } from "./App.js";
+import { companyManagementFixture, loadCompanyFixture } from "./capabilities/company-test-fixture.js";
 import { configuredSettings } from "./features/settings/settings-test-fixtures.js";
 import {
   capabilityItem,
@@ -18,8 +19,9 @@ import {
 const REQUEST_ID = "fixed-req";
 
 async function renderApp(fake: FakeDesktopApi) {
+  fake.capabilityManagement = companyManagementFixture();
   const user = userEvent.setup();
-  const utils = render(<App api={fake} requestIdFactory={() => REQUEST_ID} />);
+  const utils = render(<App api={fake} loadCapabilityModule={loadCompanyFixture} requestIdFactory={() => REQUEST_ID} />);
   return { user, ...utils };
 }
 

@@ -1,5 +1,11 @@
 export type ChatPaneState = "expanded" | "collapsed";
-export type CapabilityId = "industry-research";
+export type CapabilityId = string;
+
+/** Apply only when restoring legacy state, never to new navigation IDs. */
+export function restoreWorkspace(state: WorkspaceState, readyIds: readonly string[]): WorkspaceState {
+  const id = state.activeCapability === "industry-research" ? "company-research" : state.activeCapability;
+  return id && readyIds.includes(id) ? { ...state, activeCapability: id } : initialWorkspaceState;
+}
 
 export interface WorkspaceState {
   activeCapability: CapabilityId | undefined;

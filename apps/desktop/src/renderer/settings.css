@@ -123,3 +123,6 @@
   padding: 6px 10px;
   background: var(--panel);
 }
+.capability-setting { padding: 16px 0; border-bottom: 1px solid var(--border); }
+.capability-setting label { display: flex; align-items: center; gap: 8px; }
+.capability-setting input[type="checkbox"] { width: auto; }

@@ -335,7 +335,7 @@ export function makeFakeApi(): FakeDesktopApi {
     },
     nextRequestId: (): string => `req-${++sendSeq}`,
   };
-  return Object.assign(api, { capabilities: {
+  return Object.assign(api, { capabilityManagement: { list: async () => ({ packages: [], issues: [] }), subscribe: () => () => {}, setEnabled: async () => {} }, capabilities: {
     invoke: async (call: import("@deepfield/capability-sdk").CapabilityCall) => {
       const [namespace, method] = call.operation.split(".");
       const target = Reflect.get(api, namespace!) as Record<string, (...args: unknown[]) => unknown>;

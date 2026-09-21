@@ -4,8 +4,14 @@ import { UsageDashboardArgsSchema, UsageDashboardSchema } from "@deepfield/contr
 import type { UsageDashboard } from "@deepfield/base/usage";
 import { toPublicError, PublicAppErrorSchema, DiagnosticResultSchema, AgentWorkerEventSchema, type AgentWorkerEvent, type ChatMessage, type ChatRequestOptions, type ChatSendResult, type Conversation, type DesktopApi, type LlmProfileDraft, type SearchProfileDraft, type SettingsView, type DiagnosticResult, type SkillSummary } from "@deepfield/contracts";
 import { CapabilityCallSchema, CapabilityEventSchema } from "@deepfield/capability-sdk";
+import { CapabilitySnapshotSchema, CapabilitySetEnabledArgsSchema, type CapabilitySnapshot } from "@deepfield/contracts";
 
 export const IPC_CHANNELS = {
+  capabilityManagementList: "deepfield:capability-management:list",
+  capabilityManagementSetEnabled: "deepfield:capability-management:setEnabled",
+  capabilityManagementSubscribe: "deepfield:capability-management:subscribe",
+  capabilityManagementUnsubscribe: "deepfield:capability-management:unsubscribe",
+  capabilityManagementEvents: "deepfield:capability-management:events",
   capabilityInvoke: "deepfield:capability:invoke",
   capabilitySubscribe: "deepfield:capability:subscribe",
   capabilityUnsubscribe: "deepfield:capability:unsubscribe",
@@ -56,7 +62,23 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
     return result.value as T;
   };
   let subscribers = 0;
+  let managementSubscribers = 0;
   return {
+    capabilityManagement: {
+      list: () => invokeResult<CapabilitySnapshot>(IPC_CHANNELS.capabilityManagementList, CapabilitySnapshotSchema),
+      setEnabled: async (id, enabled) => {
+        if (!Value.Check(CapabilitySetEnabledArgsSchema, [id, enabled])) throw toPublicError(undefined);
+        await invokeResult(IPC_CHANNELS.capabilityManagementSetEnabled, Type.Null(), id, enabled);
+      },
+      subscribe: listener => {
+        const remove = ipc.on(IPC_CHANNELS.capabilityManagementEvents, (_event, snapshot) => {
+          if (Value.Check(CapabilitySnapshotSchema, snapshot)) listener(snapshot as CapabilitySnapshot);
+        });
+        if (++managementSubscribers === 1) void ipc.invoke(IPC_CHANNELS.capabilityManagementSubscribe).catch(() => {});
+        let active = true;
+        return () => { if (!active) return; active = false; remove(); if (--managementSubscribers === 0) void ipc.invoke(IPC_CHANNELS.capabilityManagementUnsubscribe).catch(() => {}); };
+      },
+    },
     capabilities: {
       invoke: call => {
         if (!Value.Check(CapabilityCallSchema, call)) return Promise.reject(toPublicError(undefined));

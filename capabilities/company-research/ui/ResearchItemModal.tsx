@@ -5,6 +5,7 @@ import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
 
 export interface ResearchItemModalProps {
   api: DesktopApi;
+  active?: boolean;
   item?: CapabilityItem;
   onClose(): void;
   onSaved(item: CapabilityItem): void;
@@ -15,7 +16,7 @@ function optionalValue(value: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function ResearchItemModal({ api, item, onClose, onSaved }: ResearchItemModalProps) {
+export function ResearchItemModal({ api, item, active = true, onClose, onSaved }: ResearchItemModalProps) {
   const editing = item !== undefined;
   const [industry, setIndustry] = useState(item?.industry ?? "");
   const [researchScope, setResearchScope] = useState(item?.researchScope ?? "");
@@ -52,7 +53,7 @@ export function ResearchItemModal({ api, item, onClose, onSaved }: ResearchItemM
   };
 
   return (
-    <Modal title={editing ? "编辑主题" : "新建主题"} onClose={onClose}>
+    <Modal title={editing ? "编辑主题" : "新建主题"} active={active} onClose={onClose}>
       <form className="modal-form" onSubmit={handleSubmit}>
         {error !== undefined && <p className="error" role="alert">{error}</p>}
         <label>主题名称<input value={industry} onChange={(event) => setIndustry(event.target.value)} required /></label>

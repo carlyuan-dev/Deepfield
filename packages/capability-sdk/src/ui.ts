@@ -30,11 +30,13 @@ export interface CapabilityUiRuntime {
 }
 
 export interface CapabilityUiProps {
+  active?: boolean;
   bridge: CapabilityBridge;
   onClose(): void;
   onOpenSettings(module: "llm" | "search"): void;
 }
 
 export interface CapabilityUiModule {
+  cssPaths?: readonly string[];
   createView(runtime: CapabilityUiRuntime): React.ComponentType<CapabilityUiProps>;
 }

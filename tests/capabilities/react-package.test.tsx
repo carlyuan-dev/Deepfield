@@ -51,7 +51,9 @@ it("mounts the independently built real research page with the host React and di
     },
     subscribe(listener) { subscriptions.add(listener); return () => { subscriptions.delete(listener); }; },
   };
-  const { unmount } = render(<CapabilityHost capabilityId="company-research" module={ui} cssUrls={["deepfield-capability://company-research/dist/ui.css"]} bridge={bridge} onClose={() => {}} onOpenSettings={() => {}} />);
+  const { unmount } = render(<CapabilityHost capabilityId="company-research" uiEntry="deepfield-capability://company-research/dist/ui.js" loadModule={async () => ui} bridge={bridge} onClose={() => {}} onOpenSettings={() => {}} />);
+  await waitFor(() => expect(document.querySelector('link[data-capability-style="company-research"]')).not.toBeNull());
+  fireEvent.load(document.querySelector('link[data-capability-style="company-research"]')!);
   expect(await screen.findByText("研究主题")).toBeTruthy();
   await screen.findByText("还没有研究主题");
   fireEvent.click(screen.getByRole("button", { name: "新建主题" }));

@@ -18,6 +18,7 @@ export type LlmConnectionStatus = "connected" | "disconnected";
 import type { CapabilityBridge } from "@deepfield/capability-sdk";
 
 export interface DesktopApi {
+  capabilityManagement: import("./capability-management.js").CapabilityManagementApi;
   capabilities: CapabilityBridge;
   usage: UsageDashboardApi;
   copyText(text: string): Promise<void>;

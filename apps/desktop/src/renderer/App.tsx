@@ -6,25 +6,42 @@ import {
   initialWorkspaceState,
   workspaceReducer,
   type ChatPaneState,
+  type WorkspaceState,
+  restoreWorkspace,
 } from "./state/workspace.js";
 import { useConversations } from "./state/use-conversations.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ChatPaneHeader } from "./components/ChatPaneHeader.js";
 import { ChatView } from "./components/ChatView.js";
-import { createCompanyResearchApi } from "../../../../capabilities/company-research/ui/package-ui.js";
-import { IndustryResearchCapability } from "../../../../capabilities/company-research/ui/IndustryResearchCapability.js";
+import { CapabilityHost, type CapabilityModuleLoader } from "./capabilities/CapabilityHost.js";
+import { useCapabilities } from "./capabilities/use-capabilities.js";
 import { SettingsView } from "./features/settings/SettingsView.js";
 
 export interface AppProps {
   api: DesktopApi;
   requestIdFactory?: () => string;
+  loadCapabilityModule?: CapabilityModuleLoader;
+  initialWorkspace?: WorkspaceState;
 }
 type SettingsModule = "llm" | "search";
 
-export function App({ api, requestIdFactory = createRequestId }: AppProps) {
-  const companyResearchApi = useMemo(() => createCompanyResearchApi(api.capabilities), [api.capabilities]);
+export function App({ api, requestIdFactory = createRequestId, loadCapabilityModule, initialWorkspace = initialWorkspaceState }: AppProps) {
+  const { snapshot } = useCapabilities(api.capabilityManagement);
   const conversations = useConversations(api);
-  const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspaceState);
+  const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspace);
+  const restored = useRef(false);
+  const ready = snapshot?.packages.filter(item => item.status === "ready" && item.navigation && item.uiEntry).sort((a, b) => a.navigation!.order - b.navigation!.order || a.id.localeCompare(b.id)) ?? [];
+  const selected = ready.find(item => item.id === workspace.activeCapability);
+  useEffect(() => {
+    if (!snapshot) return;
+    if (!restored.current) {
+      restored.current = true;
+      const next = restoreWorkspace(workspace, ready.map(item => item.id));
+      if (next.activeCapability !== workspace.activeCapability) {
+        dispatchWorkspace(next.activeCapability ? { type: workspace.chatPane === "collapsed" ? "OPEN_CAPABILITY_DIRECT" : "OPEN_CAPABILITY_FROM_CHAT", capabilityId: next.activeCapability } : { type: "CLOSE_CAPABILITY" });
+      }
+    } else if (workspace.activeCapability && !selected) dispatchWorkspace({ type: "CLOSE_CAPABILITY" });
+  }, [snapshot, workspace, selected]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModule, setSettingsModule] = useState<SettingsModule>("llm");
   const [generationDeleteError, setGenerationDeleteError] = useState<string | undefined>(undefined);
@@ -67,7 +84,7 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
   }, [api, eventHub]);
 
   const chatPane: ChatPaneState = workspace.chatPane;
-  const capabilityOpen = workspace.activeCapability !== undefined;
+  const capabilityOpen = selected !== undefined;
 
   const toggleChatPane = (): void => {
     dispatchWorkspace({ type: chatPane === "expanded" ? "COLLAPSE_CHAT" : "EXPAND_CHAT" });
@@ -111,9 +128,11 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
             void conversations.deleteConversation(conversationId);
           }
         }}
-        onOpenResearch={() => {
+        capabilities={ready.map(item => ({ id: item.id, title: item.navigation!.title }))}
+        activeCapability={selected?.id}
+        onOpenCapability={(capabilityId) => {
           setSettingsOpen(false);
-          dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId: "industry-research" });
+          dispatchWorkspace({ type: "OPEN_CAPABILITY_DIRECT", capabilityId });
         }}
         onOpenSettings={() => { setSettingsModule("llm"); setSettingsOpen(true); }}
       />
@@ -157,10 +176,14 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
               />
             ) : null}
           </section>
-          {capabilityOpen && (
+          {selected && (
             <aside className="capability-pane" aria-label="Capability">
-              <IndustryResearchCapability
-                api={companyResearchApi}
+              <CapabilityHost
+                key={selected.id}
+                capabilityId={selected.id}
+                uiEntry={selected.uiEntry!}
+                {...(loadCapabilityModule ? { loadModule: loadCapabilityModule } : {})}
+                bridge={api.capabilities}
                 active={!settingsOpen}
                 onClose={() => dispatchWorkspace({ type: "CLOSE_CAPABILITY" })}
                 onOpenSettings={(module) => { setSettingsModule(module); setSettingsOpen(true); }}

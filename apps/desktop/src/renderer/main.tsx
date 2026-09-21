@@ -4,7 +4,6 @@ import { api } from "./api.js";
 import "./app.css";
 import "./chat.css";
 import "./rail.css";
-import "../../../../capabilities/company-research/ui/capability.css";
 import "./settings.css";
 
 const root = document.getElementById("root");

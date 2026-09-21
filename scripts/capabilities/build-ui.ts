@@ -43,7 +43,7 @@ export async function buildCapabilityUi(options: CapabilityUiBuildOptions): Prom
     generateBundle(_options, bundle) {
       // Wrap only after Vite's render/minify hooks have finalized the IIFE.
       for (const output of Object.values(bundle)) {
-        if (output.type === "chunk") output.code = `export function createView(__capabilityRuntime) {\n${output.code}\nreturn CapabilityViewBundle.View;\n}`;
+        if (output.type === "chunk") output.code = `export const cssPaths = ["ui.css"];\nexport function createView(__capabilityRuntime) {\n${output.code}\nreturn CapabilityViewBundle.View;\n}`;
       }
     },
   };

@@ -36,7 +36,8 @@ describe("Sidebar conversation row layout", () => {
         onOpenConversation={() => {}}
         onDeleteConversation={() => {}}
         deletionError={undefined}
-        onOpenResearch={() => {}}
+        capabilities={[]}
+        onOpenCapability={() => {}}
         onOpenSettings={() => {}}
       />,
     );

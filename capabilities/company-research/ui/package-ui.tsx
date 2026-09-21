@@ -20,7 +20,7 @@ export function createCompanyResearchApi(bridge: CapabilityBridge): DesktopApi {
   }))])) as unknown as DesktopApi;
 }
 
-export function View({ bridge, onClose, onOpenSettings }: CapabilityUiProps) {
+export function View({ bridge, onClose, onOpenSettings, active = true }: CapabilityUiProps) {
   const api = useMemo(() => createCompanyResearchApi(bridge), [bridge]);
-  return <IndustryResearchCapability api={api} onClose={onClose} onOpenSettings={onOpenSettings} />;
+  return <IndustryResearchCapability api={api} active={active} onClose={onClose} onOpenSettings={onOpenSettings} />;
 }

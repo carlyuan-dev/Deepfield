@@ -2,13 +2,16 @@
 import { expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { App } from "./App.js";
+import { App as HostApp, type AppProps } from "./App.js";
+import { companyManagementFixture, loadCompanyFixture } from "./capabilities/company-test-fixture.js";
+function App(props: AppProps) { return <HostApp {...props} loadCapabilityModule={loadCompanyFixture} />; }
 import { conversation, makeFakeApi } from "./renderer-test-helpers.js";
 
 it("keeps the research API stable across unrelated App renders", async () => {
   const fake = makeFakeApi();
+  fake.capabilityManagement = companyManagementFixture();
   const view = render(<App api={fake} />);
-  await userEvent.setup().click(screen.getByRole("button", { name: "研究主题" }));
+  await userEvent.setup().click(await screen.findByRole("button", { name: "研究主题" }));
   await screen.findByRole("heading", { name: "研究主题" });
   await waitFor(() => expect(fake.industryResearch.listItems).toHaveBeenCalledTimes(1));
   view.rerender(<App api={fake} requestIdFactory={() => "another-chat-request"} />);
@@ -17,6 +20,7 @@ it("keeps the research API stable across unrelated App renders", async () => {
 
 it("opens the modular settings surface", async () => {
   const fake = makeFakeApi();
+  fake.capabilityManagement = companyManagementFixture();
   render(<App api={fake} />);
   await userEvent.setup().click(screen.getByRole("button", { name: "设置" }));
   expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
@@ -48,6 +52,7 @@ it("preserves an unsent chat draft when returning from settings", async () => {
 
 it("leaves settings immediately for every primary navigation destination", async () => {
   const fake = makeFakeApi();
+  fake.capabilityManagement = companyManagementFixture();
   const first = conversation("settings-first", "第一条对话", true);
   const second = conversation("settings-second", "第二条对话", true);
   fake.conversations.openInitial.mockResolvedValue({ active: first, recent: [first, second] });

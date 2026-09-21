@@ -6,7 +6,9 @@ import type { TrustedCapabilityEntry } from "../shared/capability-entry.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityProcess, protocol } from "electron";
+import { registerCapabilityManagementIpc } from "./capabilities/management-ipc.js";
+import { createCapabilityResourceHandler } from "./capabilities/resource-handler.js";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
@@ -33,6 +35,8 @@ import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-cata
 import { PiModelGateway } from "../shared/model-gateway.js";
 import { listSearchProviderManifests } from "@deepfield/retrieval";
 import { ConfigurationService } from "./configuration-service.js";
+
+protocol.registerSchemesAsPrivileged([{ scheme: "deepfield-capability", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
@@ -181,7 +185,9 @@ void app.whenReady().then(async () => {
     },
   });
   await capabilityRuntime.start(agentRuntime.client, services);
-  ipcDispose = registerIpcHandlers({
+  const disposeManagement = registerCapabilityManagementIpc(ipcMainAdapter, capabilityRuntime);
+  protocol.handle("deepfield-capability", createCapabilityResourceHandler(() => capabilityRuntime?.readyEntries().map(entry => ({ id: entry.manifest.id, root: entry.root, state: "ready" })) ?? []));
+  const disposeApp = registerIpcHandlers({
     capabilities,
     onConfigurationChanged: () => { for (const listener of configurationListeners) listener(); },
     usage: usageRuntime.query,
@@ -193,6 +199,7 @@ void app.whenReady().then(async () => {
     chat: appRuntime.chatService,
   });
 
+  ipcDispose = () => { disposeManagement(); disposeApp(); protocol.unhandle("deepfield-capability"); };
   mainWindow = createWindow();
 
   app.on("activate", () => {

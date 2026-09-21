@@ -10,3 +10,4 @@ export * from "./skills.js";
 export * from "./settings.js";
 export * from "./errors.js";
 export * from "./usage.js";
+export * from "./capability-management.js";

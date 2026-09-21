@@ -12,7 +12,9 @@ export interface SidebarProps {
   onOpenConversation(conversationId: string): void;
   onDeleteConversation(conversationId: string): void;
   deletionError: string | undefined;
-  onOpenResearch(): void;
+  capabilities: readonly { id: string; title: string }[];
+  activeCapability?: string | undefined;
+  onOpenCapability(id: string): void;
   onOpenSettings(): void;
 }
 
@@ -25,7 +27,9 @@ export function Sidebar({
   onOpenConversation,
   onDeleteConversation,
   deletionError,
-  onOpenResearch,
+  capabilities,
+  activeCapability,
+  onOpenCapability,
   onOpenSettings,
 }: SidebarProps) {
   return (
@@ -83,13 +87,13 @@ export function Sidebar({
         {conversations.length === 0 && <li className="muted">暂无对话</li>}
       </ul>
       {deletionError !== undefined && <p className="nav-error" role="alert">{deletionError}</p>}
-      <div className="nav-section-title">工作流</div>
+      {capabilities.length > 0 && <div className="nav-section-title">工作流</div>}
       <ul className="nav-primary">
-        <li>
-          <button className={active === "capability" ? "active" : ""} onClick={onOpenResearch}>
-            研究主题
+        {capabilities.map(item => <li key={item.id}>
+          <button className={active === "capability" && activeCapability === item.id ? "active" : ""} onClick={() => onOpenCapability(item.id)}>
+            {item.title}
           </button>
-        </li>
+        </li>)}
       </ul>
       <div className="nav-footer">
         <button className={active === "settings" ? "active" : ""} onClick={onOpenSettings}>

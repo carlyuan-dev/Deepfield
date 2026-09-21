@@ -405,8 +405,8 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
         </div>
       </div>
 
-      {openModal === "create" && <ResearchItemModal api={api} onClose={() => setOpenModal(undefined)} onSaved={handleSaved} />}
-      {openModal === "edit" && editingItem !== undefined && <ResearchItemModal api={api} item={editingItem} onClose={() => { setOpenModal(undefined); setEditingItem(undefined); }} onSaved={handleSaved} />}
+      {openModal === "create" && <ResearchItemModal api={api} active={active} onClose={() => setOpenModal(undefined)} onSaved={handleSaved} />}
+      {openModal === "edit" && editingItem !== undefined && <ResearchItemModal api={api} active={active} item={editingItem} onClose={() => { setOpenModal(undefined); setEditingItem(undefined); }} onSaved={handleSaved} />}
       {openModal === "add" && selectedItem !== undefined && <AddCompaniesModal api={api} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
       {openModal === "import" && selectedItem !== undefined && <ImportCompaniesModal api={api} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
       {openModal === "batch" && selectedItem !== undefined && <BatchCompanyResearchModal api={api} item={selectedItem} companies={companies} active={active} onClose={() => setOpenModal(undefined)} onStarted={() => {}} {...(onOpenSettings ? { onOpenSettings } : {})} />}
