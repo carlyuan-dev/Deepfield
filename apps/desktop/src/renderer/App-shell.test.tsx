@@ -187,6 +187,7 @@ describe("app three-pane shell", () => {
     await chatReady();
 
     await user.click(screen.getByRole("button", { name: "研究主题" }));
+    expect(document.querySelector(".breadcrumb")?.textContent).toBe("能力 / 公司调研 / 研究主题");
     const navigation = document.querySelector(".capability-navigation");
     const body = document.querySelector(".capability-body");
     const close = screen.getByRole("button", { name: "关闭 Capability" });
@@ -197,11 +198,13 @@ describe("app three-pane shell", () => {
     expect(screen.getAllByRole("button", { name: "关闭 Capability" })).toHaveLength(1);
 
     await user.click(await screen.findByRole("button", { name: /^一个很长的研究主题名称/ }));
+    expect(document.querySelector(".breadcrumb")?.textContent).toBe(`能力 / 公司调研 / 研究主题 / ${item.industry}`);
     const itemBack = screen.getByRole("button", { name: /返回调研列表/ });
     expect(navigation?.contains(itemBack)).toBe(true);
     expect(body?.contains(itemBack)).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "查看 导航公司" }));
+    expect(document.querySelector(".breadcrumb")?.textContent).toBe(`能力 / 公司调研 / 研究主题 / ${item.industry} / 导航公司`);
     const companyBack = screen.getByRole("button", { name: /返回公司列表/ });
     expect(navigation?.contains(companyBack)).toBe(true);
     expect(body?.contains(companyBack)).toBe(false);

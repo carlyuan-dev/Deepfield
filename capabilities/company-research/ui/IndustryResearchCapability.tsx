@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import capabilityManifest from "../capability.json" with { type: "json" };
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import type { CapabilityItem, ItemCompanyView } from "../contracts/index.js";
 import { AddCompaniesModal } from "./AddCompaniesModal.js";
@@ -251,7 +252,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
         ? { title: "移除公司", message: `确认从“${selectedItem?.industry ?? ""}”主题移除“${confirmation.company.name}”吗？`, confirmLabel: "确认移除" }
         : { title: "批量移除公司", message: `确认从“${selectedItem?.industry ?? ""}”主题移除已选的 ${selectedCompanyIds.size} 家公司吗？`, confirmLabel: `确认移除 ${selectedCompanyIds.size} 家公司` };
 
-  const breadcrumb = `能力 / 研究主题${selectedItem !== undefined ? ` / ${selectedItem.industry}` : ""}${selectedCompany !== undefined ? ` / ${selectedCompany.name}` : ""}`;
+  const breadcrumb = `能力 / ${capabilityManifest.name} / 研究主题${selectedItem !== undefined ? ` / ${selectedItem.industry}` : ""}${selectedCompany !== undefined ? ` / ${selectedCompany.name}` : ""}`;
   const contextualReturn = selectedCompany !== undefined
     ? { label: "‹ 返回公司列表", onClick: () => setSelectedCompanyId(undefined) }
     : selectedItem !== undefined
