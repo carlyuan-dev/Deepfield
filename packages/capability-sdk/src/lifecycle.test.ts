@@ -45,4 +45,15 @@ describe("createResourceScope", () => {
 
     expect(calls).toEqual(["second", "first"]);
   });
+
+  it("returns defensive issue snapshots instead of exposing mutable scope state", async () => {
+    const scope = createResourceScope();
+    scope.defer(() => { throw new Error("private detail"); });
+    await scope.dispose();
+
+    const snapshot = scope.issues as Array<{ code: "cleanup_failed" }>;
+    snapshot.length = 0;
+
+    expect(scope.issues).toEqual([{ code: "cleanup_failed" }]);
+  });
 });
