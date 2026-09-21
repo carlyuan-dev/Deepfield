@@ -57,13 +57,33 @@ describe("optional capability startup", () => {
     let release!: () => void; let entered!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const loading = new Promise<void>(resolve => { entered = resolve; });
-    const load = vi.fn(async () => { entered(); await gate; return { bootstrap(registrar: CapabilityRegistrar) { registrar.defer(cleaned); registrar.onReady(started); } }; });
+    const bootstrap = vi.fn((registrar: CapabilityRegistrar) => { registrar.defer(cleaned); registrar.onReady(started); });
+    const load = vi.fn(async () => { entered(); await gate; return { bootstrap }; });
     const runtime = createCapabilityRuntime(prepared, registry, load); const client = worker();
     const pending = runtime.start(client, services); await loading;
     if (interruption === "dispose") await runtime.dispose(); else client.exit();
     release(); await pending;
     expect(load).toHaveBeenCalledOnce(); expect(started).not.toHaveBeenCalled();
+    expect(bootstrap).not.toHaveBeenCalled(); expect(client.activateCapability).not.toHaveBeenCalled();
     expect(registry.readyIds()).toEqual([]); expect(runtime.list().every(entry => entry.status === "failed" && !entry.navigation)).toBe(true);
+  });
+  it("awaits cleanup already started by Worker exit before replacement recovery", async () => {
+    const { prepared } = await fixture(); const registry = new CapabilityRegistry();
+    let release!: () => void; let cleanupEntered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const cleaning = new Promise<void>(resolve => { cleanupEntered = resolve; });
+    const started = vi.fn(); let bootstraps = 0;
+    const runtime = createCapabilityRuntime(prepared, registry, async () => ({ bootstrap(registrar: CapabilityRegistrar) {
+      if (++bootstraps === 1) registrar.defer(async () => { cleanupEntered(); await gate; });
+      registrar.onReady(started);
+    } }));
+    const old = worker(); await runtime.start(old, services); old.exit(); await cleaning;
+    const replacement = worker(); const pending = runtime.start(replacement, services);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(runtime.list()[0]?.status).toBe("failed");
+    expect(bootstraps).toBe(1); expect(started).toHaveBeenCalledOnce(); expect(replacement.activateCapability).not.toHaveBeenCalled();
+    release(); await pending;
+    expect(bootstraps).toBe(2); expect(started).toHaveBeenCalledTimes(2); await runtime.dispose();
   });
   it("rejects unknown requirements before import and rejects forged Worker paths", async () => {
     const { prepared } = await fixture(["unknown.adapter"]); const load = vi.fn();

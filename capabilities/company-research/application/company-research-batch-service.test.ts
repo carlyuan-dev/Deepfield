@@ -54,6 +54,7 @@ it.each(["waiting_profile", "running", "paused", "cancelling"] as const)("startu
   f.db.repos.companyResearchBatches.save({ ...base, batchId: "old-cancel", status: "cancelled" });
   f.db.repos.companyResearchBatches.save({ ...base, batchId: "unfinished", status });
   const recovered = new CompanyResearchBatchService(f.db.repos, f.research);
+  recovered.recover();
   expect(f.db.repos.companyResearchBatches.getById("old-complete")).toBeUndefined();
   expect(f.db.repos.companyResearchBatches.getById("old-cancel")).toBeUndefined();
   expect(recovered.getState(f.item.id)).toMatchObject({ batchId: "unfinished", status: "paused" });
@@ -116,6 +117,7 @@ function setup() {
   const worker: CompanyResearchWorkerPort = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(request); return (async function* () { await new Promise<void>(resolve => releases.push(resolve)); yield { type: "failed", requestId: request.requestId, runId: request.runId, stage: "raw", code: "model_failed", message: "company research failed" } as const; })(); }, cancelResearch() { releases.shift()?.(); } };
   const research = new CompanyResearchService(db.repos, profiles, worker, { requestIdFactory: () => crypto.randomUUID() });
   const batch = new CompanyResearchBatchService(db.repos, research);
+  batch.recover();
   const snapshots: CompanyResearchBatchState[] = [];
   batch.subscribe(state => snapshots.push(state));
   return { db, item, companies, profiles, research, batch, worker, requests, releases, snapshots, entries: companies.map(c => ({ companyId: c.id, input })) };
@@ -161,10 +163,11 @@ it.each(["raw", "structure"] as const)("recovers %s as paused and resumes the ap
   const run = f.db.repos.companyResearchRuns.createResearching(f.item.id, f.companies[0]!.id, input, { ...input, currentDate: input.asOfDate, companyName: "甲", topicName: "测试" }, getCompanyResearchTemplate(input.direction));
   if (stage === "structure") { f.db.repos.companyResearchRuns.markSearchSucceeded(run.id); f.db.repos.companyResearchRuns.completeRaw(run.id, "原始报告"); }
   f.db.repos.companyResearchBatches.save({ batchId: "recover", itemId: f.item.id, status: "running", entries: [{ ...f.entries[0]!, runId: run.id, status: "running", stage }, f.entries[1]! && { ...f.entries[1]!, status: "pending" }], processed: 0, succeeded: 0, failed: 0, total: 2 });
-  const recovered = new CompanyResearchBatchService(f.db.repos, f.research); await flush();
+  const recovered = new CompanyResearchBatchService(f.db.repos, f.research); recovered.recover(); await flush();
   expect(recovered.getState(f.item.id)?.status).toBe("paused"); expect(f.requests).toEqual([]);
   recovered.dispose();
   const again = new CompanyResearchBatchService(f.db.repos, f.research);
+  again.recover();
   expect(again.getState(f.item.id)?.entries[0]?.status).toBe("running");
   again.resume("recover"); await flush(); expect(f.requests[0]?.stage).toBe(stage); expect(f.requests[0]?.runId).toBe(run.id);
   await again.cancel("recover");
@@ -220,6 +223,7 @@ it("cancels recovered unfinished work while preserving an already terminal owned
   const unfinished = create(1); f.db.repos.companyResearchRuns.completeRaw(unfinished.id, "待完成原文");
   f.db.repos.companyResearchBatches.save({ batchId: "recover-cancel", itemId: f.item.id, status: "running", entries: [{ ...f.entries[0]!, runId: terminal.id, status: "failed" }, { ...f.entries[1]!, runId: unfinished.id, status: "running", stage: "structure" }], processed: 1, failed: 1, succeeded: 0, total: 2 });
   const recovered = new CompanyResearchBatchService(f.db.repos, f.research);
+  recovered.recover();
   recovered.subscribe(state => f.snapshots.push(state));
   await Promise.all([recovered.cancel("recover-cancel"), recovered.cancel("recover-cancel")]);
   expect(f.research.getRun(f.item.id, f.companies[0]!.id, terminal.id)?.status).toBe("research_failed");

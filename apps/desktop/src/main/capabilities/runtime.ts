@@ -46,9 +46,14 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
   let disposed = false;
   let generation = 0;
   const activations = new Set<CapabilityActivation>();
+  const disposals = new Set<Promise<void>>();
   const disposeActivations = async () => {
-    const pending = [...activations].map(activation => activation.dispose());
-    activations.clear(); await Promise.all(pending);
+    for (const activation of activations) {
+      const pending = activation.dispose();
+      disposals.add(pending);
+      void pending.then(() => disposals.delete(pending));
+    }
+    activations.clear(); await Promise.all(disposals);
   };
   for (const entry of prepared.catalog.entries) states.set(entry.manifest.id, { status: prepared.enabled.includes(entry.manifest.id) ? "loading" : "disabled" });
   const readyEntries = (): readonly CatalogEntry[] => prepared.selected.filter(entry => registry.readyIds().includes(entry.manifest.id));
@@ -81,6 +86,7 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
     async start(client: Pick<AgentWorkerClient, "activateCapability" | "deactivateCapability" | "subscribeUnavailable">, services: CapabilityHostServices) {
       if (disposed) throw new Error("capability_runtime_disposed");
       const currentGeneration = ++generation;
+      const assertCurrent = () => { if (disposed || generation !== currentGeneration) throw new Error("capability_start_interrupted"); };
       unsubscribeWorker?.();
       // Recreating a Worker reuses prepared.selected; next-start preferences never enter here.
       await disposeActivations();
@@ -99,10 +105,15 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
           if (entry.manifest.requirements.some(name => !services.has(name))) throw new Error("missing_host_service");
           const trusted = prepared.workerSnapshot.find(candidate => candidate.id === id)!;
           const workerEntry = await resolvePackageFile(entry.root, entry.manifest.entries.worker);
+          assertCurrent();
           if (!workerEntry) throw new Error("entry_missing");
           const activation = await activateRegisteredCapability({ registry, capabilityId: id,
-            activateMain: async registrar => (await load(trusted, "main")).bootstrap(registrar, services),
-            activateWorker: () => client.activateCapability(id, workerEntry, randomUUID()),
+            activateMain: async registrar => {
+              const module = await load(trusted, "main");
+              assertCurrent();
+              await module.bootstrap(registrar, services);
+            },
+            activateWorker: () => { assertCurrent(); return client.activateCapability(id, workerEntry, randomUUID()); },
             deactivateWorker: () => client.deactivateCapability(id),
             onWorkerUnavailable: listener => client.subscribeUnavailable(listener),
           });

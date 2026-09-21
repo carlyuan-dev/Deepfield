@@ -51,7 +51,7 @@ export function createCompanyResearchServices(ports: CompanyResearchServicesPort
     const start = () => {
       if (disposed || started) return;
       started = true;
-      companyResearch.cleanupAbandoned();
+      batch.recover();
       companyProfiles.start();
     };
     if (!options.deferStart) start();

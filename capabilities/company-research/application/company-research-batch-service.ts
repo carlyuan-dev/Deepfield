@@ -11,22 +11,9 @@ export class CompanyResearchBatchService {
   private wakeProfileBoundary: (() => void) | undefined;
   private listeners = new Set<(state: CompanyResearchBatchState) => void>();
   private unsubscribe: () => void;
+  private recovered = false;
+  private disposed = false;
   constructor(private readonly repos: Repositories, private readonly research: CompanyResearchService, private readonly profile?: { whenIdle(): Promise<void>; resume(): void }) {
-    repos.companyResearchBatches.deleteAllTerminal();
-    this.state = repos.companyResearchBatches.getActive();
-    if (this.state) {
-      for (const entry of this.state.entries) {
-        if (entry.status !== "running" || !entry.runId) continue;
-        const run = repos.companyResearchRuns.getByIdForTarget(this.state.itemId as CapabilityItemId, entry.companyId as CompanyId, entry.runId as ResearchRunId);
-        if (run?.status === "completed") entry.status = "completed";
-        else if ((run?.status === "research_failed" || run?.status === "structure_failed") && !entry.interrupted && entry.issue?.code !== "EXTERNAL.AUTHENTICATION_FAILED") entry.status = "failed";
-        else if (run?.status === "researching" || run?.status === "structuring") entry.interrupted = true;
-      }
-      research.cleanupAbandoned();
-      this.state.status = "paused";
-      this.reserve(this.state.batchId);
-      this.save();
-    }
     this.unsubscribe = research.subscribe(event => {
       if (event.type === "tool_activity" && event.errorCode === "authentication_failed" && this.state) {
         const entry = this.state.entries.find(e => e.runId === event.runId);
@@ -41,6 +28,28 @@ export class CompanyResearchBatchService {
       const run = this.repos.companyResearchRuns.getByIdForTarget(event.itemId as CapabilityItemId, event.companyId as CompanyId, event.runId as ResearchRunId);
       if (run?.status === "structuring") { entry.stage = "structure"; this.save(); }
     });
+  }
+  /** Reconcile persisted queue identities before single-run recovery changes their status. */
+  recover(): void {
+    if (this.recovered || this.disposed) return;
+    this.recovered = true;
+    this.repos.companyResearchBatches.deleteAllTerminal();
+    this.state = this.repos.companyResearchBatches.getActive();
+    if (this.state) {
+      for (const entry of this.state.entries) {
+        if (entry.status !== "running" || !entry.runId) continue;
+        const run = this.repos.companyResearchRuns.getByIdForTarget(this.state.itemId as CapabilityItemId, entry.companyId as CompanyId, entry.runId as ResearchRunId);
+        if (run?.status === "completed") entry.status = "completed";
+        else if ((run?.status === "research_failed" || run?.status === "structure_failed") && !entry.interrupted && entry.issue?.code !== "EXTERNAL.AUTHENTICATION_FAILED") entry.status = "failed";
+        else if (run?.status === "researching" || run?.status === "structuring") entry.interrupted = true;
+      }
+    }
+    this.research.cleanupAbandoned();
+    if (this.state) {
+      this.state.status = "paused";
+      this.reserve(this.state.batchId);
+      this.save();
+    }
   }
   isReserved(): boolean { return !!this.state && !["completed", "cancelled"].includes(this.state.status); }
   getState(itemId: string): CompanyResearchBatchState | null {
@@ -107,7 +116,7 @@ export class CompanyResearchBatchService {
     this.save();
   }
   subscribe(listener: (state: CompanyResearchBatchState) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  dispose(): void { this.unsubscribe(); this.listeners.clear(); }
+  dispose(): void { this.disposed = true; this.unsubscribe(); this.listeners.clear(); }
   private require(batchId: string): CompanyResearchBatchState {
     if (this.state?.batchId !== batchId) throw new AppError("RESOURCE.NOT_FOUND");
     return this.state;
