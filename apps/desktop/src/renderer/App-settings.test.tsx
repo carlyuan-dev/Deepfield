@@ -5,6 +5,16 @@ import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
 import { conversation, makeFakeApi } from "./renderer-test-helpers.js";
 
+it("keeps the research API stable across unrelated App renders", async () => {
+  const fake = makeFakeApi();
+  const view = render(<App api={fake} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "研究主题" }));
+  await screen.findByRole("heading", { name: "研究主题" });
+  await waitFor(() => expect(fake.industryResearch.listItems).toHaveBeenCalledTimes(1));
+  view.rerender(<App api={fake} requestIdFactory={() => "another-chat-request"} />);
+  expect(fake.industryResearch.listItems).toHaveBeenCalledTimes(1);
+});
+
 it("opens the modular settings surface", async () => {
   const fake = makeFakeApi();
   render(<App api={fake} />);

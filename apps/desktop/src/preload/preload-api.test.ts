@@ -39,6 +39,29 @@ function makeFakeIpc(): FakeIpc {
 }
 
 describe("preload api", () => {
+  it("validates worker events before forwarding and supports unsubscribe", () => {
+    const { ipc, listeners } = makeFakeIpc();
+    const api = createPreloadApi(ipc);
+    const received: AgentWorkerEvent[] = [];
+    const unsubscribe = api.chat.subscribe((event) => {
+      received.push(event);
+    });
+    const set = listeners.get(IPC_CHANNELS.chatEvents);
+    expect(set?.size).toBe(1);
+
+    const valid: AgentWorkerEvent = { requestId: "r", type: "text_delta", delta: "你好" };
+    const invalid = { requestId: "r", type: "text_delta" };
+    for (const listener of [...(set ?? [])]) {
+      listener({}, valid);
+      listener({}, invalid);
+    }
+    expect(received).toEqual([valid]);
+
+    unsubscribe();
+    expect(set?.size).toBe(0);
+
+  });
+
   it("exposes only a controlled capability bridge and scopes event listener lifetime", async () => {
     const { ipc, invokes, listeners } = makeFakeIpc();
     const api = createPreloadApi(ipc);

@@ -6,6 +6,30 @@ import { echoAgent, InMemoryEndpoint, flushPending, request } from "../message-l
 
 const call = { kind: "capability.run", capabilityId: "example", operation: "echo", requestId: "r", input: "x" };
 describe("Worker capability registry", () => {
+  it("does not let a disposed pending loader abort an active replacement when it resolves late", async () => {
+    let releaseOld!: () => void;
+    let completeReplacement!: () => void;
+    let replacementAborted = false;
+    const post = vi.fn();
+    const registry = new WorkerCapabilityRegistry(post, async (request, registrar) => {
+      if (request.requestId === "old") await new Promise<void>(resolve => { releaseOld = resolve; });
+      else registrar.register("echo", Type.String(), Type.String(), async (input, emit, signal) => {
+        signal.addEventListener("abort", () => { replacementAborted = true; });
+        await new Promise<void>(resolve => { completeReplacement = resolve; });
+        emit(input, "completed");
+      });
+    });
+    registry.handle({ kind: "capability.activate", capabilityId: "example", requestId: "old", entry: "/trusted/worker.js" });
+    registry.handle({ kind: "capability.deactivate", capabilityId: "example", requestId: "old" });
+    registry.handle({ kind: "capability.activate", capabilityId: "example", requestId: "new", entry: "/trusted/worker.js" });
+    await flushPending(); registry.handle(call); await flushPending();
+    releaseOld(); await flushPending();
+    expect(replacementAborted).toBe(false);
+    expect(registry.activeCount()).toBe(1);
+    completeReplacement(); await flushPending();
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ requestId: "r", type: "completed", payload: "x" });
+    await registry.dispose();
+  });
   it("keeps Chat available with an empty registry and safely rejects unknown packages", async () => {
     const endpoint = new InMemoryEndpoint();
     const registry = new WorkerCapabilityRegistry(event => endpoint.postMessage(event));

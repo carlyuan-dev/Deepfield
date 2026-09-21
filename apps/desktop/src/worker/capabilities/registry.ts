@@ -16,6 +16,7 @@ export class WorkerCapabilityRegistry {
     const scope = createResourceScope();
     let disposed = false;
     const entry = { handlers: new Map<string, Handler>(), ready: false, dispose: async () => {
+      if (disposed) { await scope.dispose(); return; }
       disposed = true;
       entry.ready = false;
       if (this.packages.get(capabilityId) === entry) this.packages.delete(capabilityId);

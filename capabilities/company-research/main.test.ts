@@ -3,6 +3,42 @@ import { makeDeps, RESEARCH_INPUT } from "../../apps/desktop/src/main/ipc-test-h
 
 describe("package-owned operation boundary", () => {
   it.each([
+    ["start", "startCalls", ["item-1", "company-1", RESEARCH_INPUT]],
+    ["cancel", "cancelCalls", ["run-1"]],
+    ["getState", "getStateCalls", ["item-1", "company-1"]],
+    ["listRuns", "listRunsCalls", ["item-1", "company-1"]],
+    ["getRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
+    ["exportWord", "exportCalls", ["item-1", "company-1", "run-1", { raw: false, structured: true }]],
+    ["retryFailed", "retryFailedCalls", ["item-1", "company-1", "run-1", RESEARCH_INPUT]],
+    ["retryStructuring", "retryStructuringCalls", ["item-1", "company-1", "run-1"]],
+    ["deleteRun", "deleteRunCalls", ["item-1", "company-1", "run-1"]],
+  ] as const)("validates exact arity and every field of %s before calling service", async (channel, calls, valid) => {
+    const { capabilities, companyResearch, companyResearchWordExport, dispose } = makeDeps();
+    const serviceCalls = () => channel === "exportWord"
+      ? companyResearchWordExport.exportCalls
+      : Reflect.get(companyResearch, calls) as unknown[];
+    const invalid: unknown[][] = [[], valid.slice(0, -1), [...valid, "extra"]];
+    valid.forEach((value, index) => {
+      const replacements = typeof value === "string" ? ["", "x".repeat(201), null, 1, {}] : channel === "exportWord"
+        ? [null, {}, { raw: true }, { raw: "yes", structured: false }, { raw: true, structured: false, extra: true }]
+        : [null, {}, { ...RESEARCH_INPUT, extra: true }, { ...RESEARCH_INPUT, direction: "unknown" }, { ...RESEARCH_INPUT, asOfDate: "today" }, { ...RESEARCH_INPUT, focusScope: "x".repeat(1001) }];
+      for (const replacement of replacements) {
+        const args: unknown[] = [...valid];
+        args[index] = replacement;
+        invalid.push(args);
+      }
+    });
+    for (const args of invalid) {
+      await expect(capabilities.call({ capabilityId: "company-research", operation: `companyResearch.${channel}`, requestId: "r", input: args })).rejects.toMatchObject({ code: "INPUT.INVALID" });
+    }
+    expect(serviceCalls()).toHaveLength(0);
+    await capabilities.call({ capabilityId: "company-research", operation: `companyResearch.${channel}`, requestId: "r", input: [...valid] });
+    expect(serviceCalls()).toHaveLength(1);
+    dispose();
+  });
+
+
+  it.each([
     "industryResearch.createItem", "industryResearch.updateCompany", "industryResearch.addCompanies", "industryResearch.removeCompanies",
     "companyResearch.start", "companyResearch.cancel", "companyResearch.getRun", "companyResearch.retryFailed", "companyResearch.retryStructuring", "companyResearch.deleteRun", "companyResearch.exportWord",
     "companyResearchBatch.start", "companyResearchBatch.cancel", "settings.get",

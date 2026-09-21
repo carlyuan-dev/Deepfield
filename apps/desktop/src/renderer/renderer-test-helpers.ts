@@ -335,7 +335,22 @@ export function makeFakeApi(): FakeDesktopApi {
     },
     nextRequestId: (): string => `req-${++sendSeq}`,
   };
-  return api as unknown as FakeDesktopApi;
+  return Object.assign(api, { capabilities: {
+    invoke: async (call: import("@deepfield/capability-sdk").CapabilityCall) => {
+      const [namespace, method] = call.operation.split(".");
+      const target = Reflect.get(api, namespace!) as Record<string, (...args: unknown[]) => unknown>;
+      return target[method!]!(...call.input as unknown[]);
+    },
+    subscribe: (listener: (event: import("@deepfield/capability-sdk").CapabilityEvent) => void) => {
+      const cleanups = [
+        api.companyResearch.subscribe(payload => listener({ capabilityId: "company-research", topic: "companyResearch.subscribe", payload })),
+        (api as unknown as DesktopApi).companyResearchBatch.subscribe(payload => listener({ capabilityId: "company-research", topic: "companyResearchBatch.subscribe", payload })),
+        api.industryResearch.subscribeCompanyProfiles(payload => listener({ capabilityId: "company-research", topic: "industryResearch.subscribeCompanyProfiles", payload })),
+        (api as unknown as DesktopApi).industryResearch.subscribeCompanyProfileProgress(payload => listener({ capabilityId: "company-research", topic: "industryResearch.subscribeCompanyProfileProgress", payload })),
+      ];
+      return () => { for (const cleanup of cleanups) cleanup(); };
+    },
+  } }) as unknown as FakeDesktopApi;
 }
 
 export function capabilityItem(

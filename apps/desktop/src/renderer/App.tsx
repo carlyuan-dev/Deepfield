@@ -22,6 +22,7 @@ export interface AppProps {
 type SettingsModule = "llm" | "search";
 
 export function App({ api, requestIdFactory = createRequestId }: AppProps) {
+  const companyResearchApi = useMemo(() => createCompanyResearchApi(api.capabilities), [api.capabilities]);
   const conversations = useConversations(api);
   const [workspace, dispatchWorkspace] = useReducer(workspaceReducer, initialWorkspaceState);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -159,7 +160,7 @@ export function App({ api, requestIdFactory = createRequestId }: AppProps) {
           {capabilityOpen && (
             <aside className="capability-pane" aria-label="Capability">
               <IndustryResearchCapability
-                api={createCompanyResearchApi(api.capabilities)}
+                api={companyResearchApi}
                 active={!settingsOpen}
                 onClose={() => dispatchWorkspace({ type: "CLOSE_CAPABILITY" })}
                 onOpenSettings={(module) => { setSettingsModule(module); setSettingsOpen(true); }}
