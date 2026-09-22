@@ -311,3 +311,67 @@ it("cancels during asynchronous admission and never dispatches the next entry", 
   expect(f.research.listRuns(f.item.id, f.companies[0]!.id)).toEqual([]);
   expect(f.requests).toHaveLength(0);
 });
+
+it("appends cross-topic work in FIFO order, rejects an occupied company, and assigns a fresh entry identity after completion", async () => {
+  const f = setup();
+  const otherItem = f.db.repos.capabilityItems.create({ industry: "另一主题" });
+  for (const company of f.companies) f.db.repos.itemCompanies.add(otherItem.id, company.id);
+
+  const initial = f.batch.start(f.item.id, [f.entries[0]!]);
+  await flush();
+  const appended = f.batch.start(otherItem.id, [{ companyId: f.companies[1]!.id, input }]);
+  expect(appended.batchId).toBe(initial.batchId);
+  expect(appended.entries.map((entry) => [entry.itemId, entry.companyId])).toEqual([
+    [f.item.id, f.companies[0]!.id],
+    [otherItem.id, f.companies[1]!.id],
+  ]);
+  expect(new Set(appended.entries.map((entry) => entry.entryId)).size).toBe(2);
+  expect(() => f.batch.start(otherItem.id, [{ companyId: f.companies[0]!.id, input }])).toThrowError(expect.objectContaining({ code: "BUSINESS.CONFLICT" }));
+
+  f.releases.shift()!(); await flush();
+  expect(f.requests.map((request) => request.context.topicName)).toEqual(["测试", "另一主题"]);
+
+  const afterFirstCompleted = f.batch.start(otherItem.id, [{ companyId: f.companies[0]!.id, input }]);
+  expect(afterFirstCompleted.entries.at(-1)?.companyId).toBe(f.companies[0]!.id);
+  expect(afterFirstCompleted.entries.at(-1)?.entryId).not.toBe(afterFirstCompleted.entries[0]?.entryId);
+  f.releases.shift()!(); await flush();
+  f.releases.shift()!(); await flush();
+  expect(f.requests.map((request) => request.context.companyName)).toEqual(["甲", "乙", "甲"]);
+});
+
+it("cancels only a pending retry entry without deleting its failed report or stopping another company", async () => {
+  const f = setup();
+  const failed = f.db.repos.companyResearchRuns.createResearching(
+    f.item.id, f.companies[1]!.id, input,
+    { ...input, currentDate: input.asOfDate, companyName: "乙", topicName: "测试" },
+    getCompanyResearchTemplate(input.direction),
+  );
+  f.db.repos.companyResearchRuns.failResearching(failed.id, "model_failed");
+  f.batch.start(f.item.id, [f.entries[0]!]); await flush();
+  const queued = f.batch.enqueueRetryFailed(f.item.id, f.companies[1]!.id, failed.id, input);
+  const retryEntry = queued.entries.at(-1)!;
+
+  await f.batch.cancelEntry(retryEntry.entryId!);
+  expect(f.research.getRun(f.item.id, f.companies[1]!.id, failed.id)?.status).toBe("research_failed");
+  expect(f.batch.getState(f.item.id)?.entries.find((entry) => entry.entryId === retryEntry.entryId)?.status).toBe("cancelled");
+  expect(f.requests).toHaveLength(1);
+  f.releases.shift()!(); await flush();
+  expect(f.requests).toHaveLength(1);
+});
+
+it("runs a structure-only retry directly in the structure stage", async () => {
+  const f = setup();
+  const failed = f.db.repos.companyResearchRuns.createResearching(
+    f.item.id, f.companies[0]!.id, input,
+    { ...input, currentDate: input.asOfDate, companyName: "甲", topicName: "测试" },
+    getCompanyResearchTemplate(input.direction),
+  );
+  f.db.repos.companyResearchRuns.markSearchSucceeded(failed.id);
+  f.db.repos.companyResearchRuns.completeRaw(failed.id, "原始报告");
+  f.db.repos.companyResearchRuns.failStructuring(failed.id);
+
+  f.batch.enqueueRetryStructuring(f.item.id, f.companies[0]!.id, failed.id);
+  await flush();
+  expect(f.requests.map((request) => request.stage)).toEqual(["structure"]);
+  f.releases.shift()!(); await flush();
+});

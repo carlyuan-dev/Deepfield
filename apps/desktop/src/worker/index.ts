@@ -54,6 +54,7 @@ function startWorker(parentPort: ParentPortLike): void {
   createUtilityAssembly({
     capabilitySnapshot: resolveCapabilitySnapshot(process.argv),
     flushUsage: () => usage.flush(),
+    retryUsage: () => usage.retry(),
     endpoint,
     agentMode: process.env.DEEPFIELD_AGENT_MODE,
     hostClient,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
-import { researchRetryMode, COMPANY_RESEARCH_TEMPLATES, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
+import { researchRetryMode, COMPANY_RESEARCH_TEMPLATES, type BatchResearchEntry, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
 import { MarkdownMessage } from "../../../apps/desktop/src/renderer/components/MarkdownMessage.js";
 import { CompanyResearchModal, type ResearchContextProps } from "./CompanyResearchModal.js";
 import { ConfirmModal } from "./ConfirmModal.js";
@@ -14,6 +14,7 @@ export interface CompanyResearchPanelProps extends ResearchContextProps {
   api: DesktopApi;
   itemId: string;
   companyId: string;
+  queueEntry?: BatchResearchEntry;
   active?: boolean;
   onOpenSettings?(module: "llm" | "search"): void;
 }
@@ -109,12 +110,14 @@ function activityLabel(activity: ResearchActivity): string {
 export function CompanyResearchPanel(props: CompanyResearchPanelProps) {
   return <ResearchTarget key={`${props.itemId}:${props.companyId}`} {...props} />;
 }
-function ResearchTarget({ api, itemId, companyId, active: panelActive = true, onOpenSettings, ...context }: CompanyResearchPanelProps) {
+function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActive = true, onOpenSettings, ...context }: CompanyResearchPanelProps) {
   const research = useCompanyResearch(api, itemId, companyId);
   const [newReportModalOpen, setNewReportModalOpen] = useState(false);
   const [retryModalOpen, setRetryModalOpen] = useState(false);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string>();
+  const [queueCancelPending, setQueueCancelPending] = useState(false);
+  const [queueCancelError, setQueueCancelError] = useState<string>();
   const [exporting, setExporting] = useState(false);
   const [exportChoiceOpen, setExportChoiceOpen] = useState(false);
   const [exportSelection, setExportSelection] = useState<CompanyResearchWordExportSelection>({ raw: false, structured: false });
@@ -124,8 +127,7 @@ function ResearchTarget({ api, itemId, companyId, active: panelActive = true, on
   const active = research.state.active;
   const run = research.selectedRun;
   const latest = research.state.runs.find((entry) => entry.schemaVersion === "company-research-report-v1");
-  const occupied = research.state.globalActiveRun !== null;
-  const otherActive = occupied && (research.state.globalActiveRun!.itemId !== itemId || research.state.globalActiveRun!.companyId !== companyId);
+  const occupied = queueEntry?.status === "pending" || queueEntry?.status === "running";
   const summary = research.state.runs.find((entry) => entry.id === research.selectedRunId);
   const selectionKey = `${itemId}:${companyId}:${research.selectedRunId ?? ""}`;
   const currentSelectionKey = useRef(selectionKey);
@@ -136,6 +138,13 @@ function ResearchTarget({ api, itemId, companyId, active: panelActive = true, on
   const reportSearchStatus = run?.searchStatus ?? summary?.searchStatus ?? active?.run.searchStatus ?? "unknown";
   const modalOpen = newReportModalOpen || retryModalOpen;
   const displayedError = research.error;
+  const cancelQueueEntry = async (): Promise<void> => {
+    if (!queueEntry?.entryId || queueCancelPending) return;
+    setQueueCancelPending(true); setQueueCancelError(undefined);
+    try { await api.companyResearchBatch.cancelEntry(queueEntry.entryId); }
+    catch { setQueueCancelError("取消调研失败，请重试"); }
+    finally { setQueueCancelPending(false); }
+  };
   const rawText = run?.schemaVersion === "company-research-report-v1"
     ? run.rawReportText ?? (active?.draftText || research.rawDraftText)
     : active?.draftText || research.rawDraftText;
@@ -208,7 +217,7 @@ function ResearchTarget({ api, itemId, companyId, active: panelActive = true, on
         <button className="primary-button" disabled={research.loading || research.pending || occupied} onClick={() => setNewReportModalOpen(true)}>{research.state.runs.length ? "新的调研" : "开始调研"}</button>
       </div>}
     </div>
-    {otherActive && <p role="status">其他公司正在调研，请稍后再试。</p>}
+    {!active && occupied && <div className="company-research-status" role="status"><div><strong>{queueEntry?.itemId && queueEntry.itemId !== itemId ? "已在其他主题的调研队列中" : queueEntry?.status === "pending" ? "等待调研" : queueEntry?.stage === "structure" ? "正在整理调研结果" : "正在收集调研资料"}</strong>{queueCancelError && <span className="error" role="alert">{queueCancelError}</span>}</div><button disabled={queueCancelPending || !queueEntry?.entryId} onClick={() => void cancelQueueEntry()}>{queueCancelPending ? "正在取消…" : "取消此项调研"}</button></div>}
     {displayedError && !modalOpen && <p className="error" role="alert">{displayedError.message} {(displayedError.kind === "state-load" || displayedError.kind === "detail-load")
       ? <button onClick={research.reload}>重新加载</button>
       : displayedError.kind === "configuration" && onOpenSettings

@@ -29,5 +29,5 @@ export function createWorkerUsageRuntime(host: HostClient) {
     latest = value;
     if (!publishing) publishing = publish().finally(() => { publishing = undefined; });
   } });
-  return { recorder, async flush() { await recorder.flush(1500); await publishing; } };
+  return { recorder, retry: () => recorder.retry(), async flush() { await recorder.flush(1500); await publishing; } };
 }

@@ -8,12 +8,13 @@ export function createUsageService(repository: UsageRepository): UsageRecorder {
       if ((attempt.outcome === "running") !== start) throw new Error("invalid_usage_event");
       errorCode = "write_failed";
       repository.upsert(attempt);
+      repository.setDeliveryHealth({ currentFailure: false, lastErrorCode: null });
       return true;
     } catch {
       // Health may fail with the same unavailable store. Keep the business path non-fatal;
       // the transport retains its own pending queue and can report it after recovery.
       try {
-        repository.setDeliveryHealth({ failedRecords: repository.getHealth().failedRecords + 1, lastErrorCode: errorCode });
+        repository.setDeliveryHealth({ failedRecords: repository.getHealth().failedRecords + 1, currentFailure: true, lastErrorCode: errorCode });
       } catch { /* best effort; false is the explicit negative acknowledgement */ }
       return false;
     }

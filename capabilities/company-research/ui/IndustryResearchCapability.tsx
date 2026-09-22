@@ -337,6 +337,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
             topicName={selectedItem.industry}
             companyName={selectedCompany.name}
             active={active}
+            {...(() => { const queueEntry = operation.queue?.entries.find((entry) => (entry.status === "pending" || entry.status === "running") && entry.companyId === selectedCompany.id); return queueEntry ? { queueEntry } : {}; })()}
             {...(onOpenSettings ? { onOpenSettings } : {})}
             {...(selectedItem.researchScope !== undefined ? { topicScope: selectedItem.researchScope } : {})}
             {...(selectedCompany.note !== undefined ? { companyNote: selectedCompany.note } : {})}
@@ -365,7 +366,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
                   (company.profileProvenance?.identity.disposition !== undefined && company.profileProvenance.identity.disposition !== "matched")
                 );
                 const formatFailure = company.profileStatus === "failed" && company.profileIssue?.code === "EXTERNAL.INVALID_RESPONSE";
-                const batchEntry = operation.batch?.entries.find((entry) => entry.companyId === company.id);
+                const batchEntry = operation.batch?.entries.find((entry) => (entry.status === "pending" || entry.status === "running") && entry.companyId === company.id);
                 const batchEntryActive = batchEntry?.status === "running" && operation.batch?.status === "running";
                 const batchEntryStatus = batchEntry?.status === "pending" ? "等待调研"
                   : batchEntry?.status === "running" && operation.batch?.status === "paused" ? "已暂停"
@@ -410,7 +411,14 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
       {openModal === "edit" && editingItem !== undefined && <ResearchItemModal api={api} active={active} item={editingItem} onClose={() => { setOpenModal(undefined); setEditingItem(undefined); }} onSaved={handleSaved} />}
       {openModal === "add" && selectedItem !== undefined && <AddCompaniesModal api={api} active={active} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
       {openModal === "import" && selectedItem !== undefined && <ImportCompaniesModal api={api} active={active} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
-      {openModal === "batch" && selectedItem !== undefined && <BatchCompanyResearchModal api={api} item={selectedItem} companies={companies} active={active} onClose={() => setOpenModal(undefined)} onStarted={() => {}} {...(onOpenSettings ? { onOpenSettings } : {})} />}
+      {openModal === "batch" && selectedItem !== undefined && <BatchCompanyResearchModal api={api} item={selectedItem} companies={companies} companyResearchStatuses={new Map(operation.queue?.entries.flatMap((entry) => {
+        if (entry.status === "pending") return [[entry.companyId, "等待调研"]];
+        if (entry.status !== "running") return [];
+        const status = operation.queue?.status === "paused" ? "已暂停"
+          : operation.queue?.status === "cancelling" ? "正在取消"
+            : entry.stage === "structure" ? "正在整理调研结果" : "正在收集调研资料";
+        return [[entry.companyId, status]];
+      }) ?? [])} active={active} onClose={() => setOpenModal(undefined)} onStarted={() => {}} {...(onOpenSettings ? { onOpenSettings } : {})} />}
       {confirmingIdentity !== undefined && <CompanyIdentityConfirmationModal api={api} company={confirmingIdentity} active={active} onClose={() => setConfirmingIdentity(undefined)} onConfirmed={handleIdentityConfirmed} />}
       {confirmationProps !== undefined && <ConfirmModal {...confirmationProps} active={active} busy={deleting} error={deleteError} onClose={() => { if (!deleting) { setConfirmation(undefined); setDeleteError(undefined); } }} onConfirm={() => void confirmDeletion()} />}
     </section>

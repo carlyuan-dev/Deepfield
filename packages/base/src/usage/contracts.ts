@@ -114,7 +114,10 @@ export interface UsageTrend {
 }
 export interface UsageModelBreakdown extends UsageSummary { modelId: string }
 export interface UsageProviderBreakdown extends UsageSummary { providerId: string; models: UsageModelBreakdown[] }
-export interface UsageDeliveryHealth { pendingRecords: number; failedRecords: number; droppedRecords: number; lastErrorCode: string | null }
+export interface UsageDeliveryHealth {
+  pendingRecords: number; recoverableRecords: number; failedRecords: number; droppedRecords: number;
+  currentFailure: boolean; lastErrorCode: string | null;
+}
 export interface UsageHealth extends UsageDeliveryHealth {
   collectionStartedAt: string; lastInitializedAt: string; cleanShutdown: boolean;
   previousUncleanShutdown: boolean; interruptedRequests: number; degraded: boolean;
@@ -122,9 +125,25 @@ export interface UsageHealth extends UsageDeliveryHealth {
 export interface UsageDashboard {
   summary: UsageSummary; daily: UsageDailyPoint[]; providers: UsageProviderBreakdown[]; health: UsageHealth;
   trend: UsageTrend;
+  inFlightRequests: number;
+  historicalNotice: { droppedRecords: number; interruptedRequests: number; fingerprint: string | null };
   from: string; to: string; timeZone: string;
+  unknownUsage: UsageUnknownNotice;
 }
-export interface UsageDashboardApi { getDashboard(query: UsageDashboardQuery): Promise<UsageDashboard> }
+export interface UsageDeletionRef { attemptId: string; revision: number }
+export interface UsageUnknownNotice {
+  dismissibleCount: number; networkFailureCount: number; otherFailureCount: number; nonDismissibleCount: number;
+  partialCount: number; incompleteAttemptCount: number;
+  snapshot: UsageDeletionRef[];
+  acknowledgeSnapshot: string[];
+}
+export interface UsageDashboardApi {
+  getDashboard(query: UsageDashboardQuery): Promise<UsageDashboard>;
+  deleteUnknownFailures(snapshot: UsageDeletionRef[]): Promise<number>;
+  acknowledgeUnknownUsage(attemptIds: string[]): Promise<number>;
+  acknowledgeHistoricalIssues(fingerprint: string): Promise<boolean>;
+  repair(): Promise<{ repaired: boolean; recoveredRecords: number; errorCode: string | null }>;
+}
 export interface UsageRecorder { recordStart(start: UsageStart): Promise<boolean>; recordFinish(finish: UsageFinish): Promise<boolean> }
 export interface UsageRepository {
   initialize(now: string): UsageHealth;
@@ -133,6 +152,10 @@ export interface UsageRepository {
   getHealth(): UsageHealth;
   setDeliveryHealth(health: Partial<UsageDeliveryHealth>): void;
   markCleanShutdown(): void;
+  probeStorage(): void;
+  isNoticeAcknowledged?(kind: "unknown_usage" | "historical_gap", key: string): boolean;
+  acknowledgeNotices?(kind: "unknown_usage" | "historical_gap", keys: string[]): number;
+  deleteUnknownFailures(snapshot: UsageDeletionRef[]): number;
 }
 export interface UsageQueryService extends UsageDashboardApi {
   getSummary(query: UsageQuery): Promise<UsageSummary>;
@@ -149,6 +172,6 @@ export function assertSameUsageIdentity(previous: UsageAttempt, next: UsageAttem
 }
 
 export function validateDeliveryHealth(health: Partial<UsageDeliveryHealth>): void {
-  const schema = Type.Partial(Type.Object({ pendingRecords: Counter, failedRecords: Counter, droppedRecords: Counter, lastErrorCode: SafeError }, { additionalProperties: false }));
+  const schema = Type.Partial(Type.Object({ pendingRecords: Counter, recoverableRecords: Counter, failedRecords: Counter, droppedRecords: Counter, currentFailure: Type.Boolean(), lastErrorCode: SafeError }, { additionalProperties: false }));
   if (!Value.Check(schema, health)) throw new Error("invalid_usage_health");
 }

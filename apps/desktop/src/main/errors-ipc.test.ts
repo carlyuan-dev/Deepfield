@@ -6,12 +6,12 @@ import { makeDeps, FakeWebContents, event } from "./ipc-test-helpers.js";
 
 describe("selected public error IPC boundary", () => {
   it("round trips typed errors and successful research through cloned result envelopes", async () => {
-    const { ipcMain, companyResearch } = makeDeps();
+    const { ipcMain, companyResearchBatch } = makeDeps();
     const sender = new FakeWebContents(1);
     const api = createPreloadApi({ invoke: async (channel, ...args) => structuredClone(await ipcMain.invoke(channel, event(sender), ...args)), on: () => () => {} });
     const input = { direction: "product_and_technology", asOfDate: "2026-09-11" } as const;
-    expect(await createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).toMatchObject({ id: "run-1", status: "researching" });
-    vi.spyOn(companyResearch, "start").mockRejectedValue(new AppError("CONFIG.CREDENTIAL_MISSING", { service: "search" }, { cause: new Error("secret token") }));
+    expect(await createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).toMatchObject({ batchId: "batch-1", status: "running" });
+    vi.spyOn(companyResearchBatch, "start").mockImplementation(() => { throw new AppError("CONFIG.CREDENTIAL_MISSING", { service: "search" }, { cause: new Error("secret token") }); });
     await expect(createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).rejects.toEqual({ code: "CONFIG.CREDENTIAL_MISSING", category: "configuration", context: { service: "search" } });
     expect(await ipcMain.invoke(IPC_CHANNELS.capabilityInvoke, event(sender), { capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", {}] })).toEqual({ ok: false, error: { code: "INPUT.INVALID", category: "input" } });
   });

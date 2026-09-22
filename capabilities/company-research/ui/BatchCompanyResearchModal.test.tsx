@@ -55,7 +55,7 @@ describe("batch company research UI", () => {
     const view = render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     await screen.findByRole("button", { name: "查看 A公司" });
-    emit(); expect(screen.getByText("批量调研已完成")).toBeTruthy();
+    emit(); expect(screen.getByText("调研队列已完成")).toBeTruthy();
     // A late snapshot is never a reason to restore a finished notice.
     fake.companyResearchBatch.getState.mockResolvedValue(terminal);
     if (destination === "detail") await user.click(screen.getByRole("button", { name: "查看 A公司" }));
@@ -70,7 +70,7 @@ describe("batch company research UI", () => {
       if (destination === "chat-only") await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     }
     await screen.findByRole("button", { name: "查看 A公司" });
-    expect(screen.queryByText("批量调研已完成")).toBeNull();
+    expect(screen.queryByText("调研队列已完成")).toBeNull();
   });
 
   it("refreshes report metadata after generation and after returning from a report deletion", async () => {
@@ -128,6 +128,51 @@ describe("batch company research UI", () => {
     }
     expect(screen.getByRole("button", { name: "查看 无报告公司" }).parentElement?.querySelector(".company-report-summary")).toBeNull();
   });
+
+  it("keeps batch actions outside the scrolling body and shows one-line queue and report metadata", async () => {
+    const fake = makeFakeApi(); const date = new Date(2026, 8, 17, 14, 5).toISOString();
+    fake.industryResearch.listItems.mockResolvedValue([capabilityItem({ id: "topic", industry: "机器人" })]);
+    fake.industryResearch.listCompanies.mockResolvedValue([
+      { ...company("a", "名字很长但应当保持单行显示的公司"), reportSummary: { count: 3, latestCreatedAt: date } },
+      company("b", "等待中的公司"),
+      company("c", "可选择的公司"),
+    ]);
+    const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-17" };
+    fake.companyResearchBatch.getState.mockResolvedValue({
+      batchId: "batch", itemId: "other-topic", status: "running",
+      entries: [
+        { entryId: "running", itemId: "other-topic", companyId: "a", input, status: "running", stage: "structure" },
+        { entryId: "pending", itemId: "other-topic", companyId: "b", input, status: "pending" },
+      ],
+      processed: 0, succeeded: 0, failed: 0, total: 2,
+    });
+    const user = userEvent.setup(); const view = render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: /^机器人/ }));
+    await user.click(screen.getByRole("button", { name: "批量调研公司" }));
+
+    const dialog = screen.getByRole("dialog", { name: "批量调研公司" });
+    const body = dialog.querySelector<HTMLElement>(".batch-research-modal")!;
+    const footer = within(dialog).getByRole("button", { name: "下一步" }).parentElement!;
+    expect(footer).toHaveProperty("className", expect.stringContaining("modal-footer"));
+    expect(footer.parentElement).toBe(dialog);
+    expect(body.contains(footer)).toBe(false);
+    expect(within(dialog).getByText("正在整理调研结果")).toBeTruthy();
+    expect(within(dialog).getByText("等待调研")).toBeTruthy();
+    expect(within(dialog).getByLabelText("报告 3 份 最新创建于 2026-09-17")).toBeTruthy();
+    const longName = within(dialog).getByText("名字很长但应当保持单行显示的公司");
+    expect(longName).toHaveProperty("title", "名字很长但应当保持单行显示的公司");
+
+    await user.click(screen.getByRole("checkbox", { name: "选择 可选择的公司" }));
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    const confirmDialog = screen.getByRole("dialog", { name: "批量调研公司" });
+    const confirmBody = confirmDialog.querySelector<HTMLElement>(".batch-research-modal")!;
+    const confirmFooter = within(confirmDialog).getByRole("button", { name: "开始调研" }).parentElement!;
+    expect(confirmFooter.parentElement).toBe(confirmDialog);
+    expect(confirmBody.contains(confirmFooter)).toBe(false);
+    view.unmount();
+  });
+
   it("keeps shared defaults and company overrides while moving backward and reselecting", async () => {
     const fake = makeFakeApi();
     fake.industryResearch.listItems.mockResolvedValue([capabilityItem({ id: "topic", industry: "机器人" })]);
@@ -182,14 +227,14 @@ describe("batch company research UI", () => {
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     act(() => { for (const listener of listeners) listener(running); });
     resolveSnapshot({ ...running, status: "paused", processed: 0 });
-    expect(await screen.findByText("正在批量进行公司调研")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: "批量调研进度" }).textContent).toContain("1/2");
-    expect(screen.getByRole("status", { name: "批量调研进行中" })).toBeTruthy();
+    expect(await screen.findByText("正在进行公司调研")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "调研队列进度" }).textContent).toContain("0/1");
+    expect(screen.getByRole("status", { name: "调研队列进行中" })).toBeTruthy();
     expect(screen.getByText("正在收集调研资料")).toHaveProperty("className", "company-research-active-status");
     await user.click(screen.getByRole("button", { name: "查看 A公司" }));
     expect(await screen.findByRole("heading", { name: "A公司" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "‹ 返回公司列表" }));
-    await user.dblClick(screen.getByRole("button", { name: "取消批量调研" }));
+    await user.dblClick(screen.getByRole("button", { name: "取消整个调研队列" }));
     await waitFor(() => expect(fake.companyResearchBatch.cancel).toHaveBeenCalledTimes(1));
     expect(fake.companyResearchBatch.cancel).toHaveBeenCalledWith("batch");
     finishCancel();
@@ -202,8 +247,8 @@ describe("batch company research UI", () => {
     fake.companyResearchBatch.getState.mockResolvedValue({ batchId: "b", itemId: "topic", status: "paused", entries: [], processed: 0, succeeded: 0, failed: 0, total: 1, issue: { code: "CONFIG.CREDENTIAL_MISSING", category: "configuration", context: { service: "search" } } });
     const settings = vi.fn(); const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} onOpenSettings={settings} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
-    expect(await screen.findByText(/批量调研已暂停/)).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "批量调研进行中" })).toBeNull();
+    expect(await screen.findByText(/调研队列已暂停/)).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "调研队列进行中" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "前往设置" })); expect(settings).toHaveBeenCalledWith("search");
     await user.click(screen.getByRole("button", { name: "继续调研" })); expect(fake.companyResearchBatch.resume).toHaveBeenCalledWith("b");
   });

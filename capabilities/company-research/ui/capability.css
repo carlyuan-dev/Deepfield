@@ -93,13 +93,18 @@
 .operation-link { flex: none; padding: 2px 0; border: 0; box-shadow: none; background: transparent; color: var(--muted); font-size: 12px; text-decoration: underline; }
 .operation-link:hover:not(:disabled) { color: var(--accent-strong); background: transparent; }
 .operation-error { flex: 1 0 100%; color: var(--danger); font-size: 12px; }
-.batch-research-modal { min-width: min(560px, 100%); }
+.batch-research-modal { min-width: min(580px, 100%); }
+.modal-card:has(.batch-research-modal) { width: min(820px, 100%); }
 .batch-select-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .batch-company-list, .batch-confirm-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.batch-company-list li { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
-.batch-company-list label { display: flex; flex-direction: row; align-items: center; gap: 9px; }
-.batch-company-list input { width: auto; }
-.batch-company-list small { padding-left: 25px; color: var(--muted); }
+.batch-company-list { overflow-x: auto; }
+.batch-company-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content max-content; align-items: center; gap: 12px; min-width: 700px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.modal-body.batch-research-modal .batch-company-select { display: flex; flex-direction: row; align-items: center; gap: 9px; min-width: 0; }
+.modal-body.batch-research-modal .batch-company-select input { flex: none; width: auto; margin: 0; padding: 0; }
+.batch-company-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-company-status { grid-column: 2; color: var(--accent-strong); white-space: nowrap; }
+.batch-company-report { grid-column: 3; display: flex; gap: 8px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.batch-research-footer { justify-content: flex-end; }
 .batch-confirm-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .batch-confirm-list li > span { display: flex; align-items: center; gap: 8px; }
 .batch-confirm-list small { color: var(--accent-strong); }

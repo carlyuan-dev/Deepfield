@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Value } from "typebox/value";
 import { AppError, toPublicError, type ResearchRunId, type CapabilityItemId, type CompanyId } from "@deepfield/contracts";
-import { BatchResearchEntryInputSchema, type BatchResearchEntryInput, type CompanyResearchBatchState } from "../contracts/index.js";
+import { BatchResearchEntryInputSchema, researchRetryMode, type BatchResearchEntry, type BatchResearchEntryInput, type CompanyResearchBatchState, type KeyResearchRun, type StartCompanyResearchInput } from "../contracts/index.js";
 import type { CompanyResearchBatchServiceRepositories as Repositories } from "../host-ports.js";
 import type { CompanyResearchService } from "./company-research-service.js";
 
@@ -10,6 +10,7 @@ export class CompanyResearchBatchService {
   private task: Promise<void> | undefined;
   private wakeProfileBoundary: (() => void) | undefined;
   private listeners = new Set<(state: CompanyResearchBatchState) => void>();
+  private entryWaiters = new Map<string, Set<() => void>>();
   private unsubscribe: () => void;
   private recovered = false;
   private disposed = false;
@@ -17,14 +18,14 @@ export class CompanyResearchBatchService {
     this.unsubscribe = research.subscribe(event => {
       if (this.disposed) return;
       if (event.type === "tool_activity" && event.errorCode === "authentication_failed" && this.state) {
-        const entry = this.state.entries.find(e => e.runId === event.runId);
+        const entry = this.state.entries.find(e => e.status === "running" && e.runId === event.runId);
         if (entry) {
           entry.issue = toPublicError(new AppError("EXTERNAL.AUTHENTICATION_FAILED", { service: "search" }));
           this.save();
         }
       }
-      if (event.type !== "state_changed" || !this.state || this.state.itemId !== event.itemId) return;
-      const entry = this.state.entries.find(e => e.runId === event.runId);
+      if (event.type !== "state_changed" || !this.state) return;
+      const entry = this.state.entries.find(e => e.status === "running" && e.runId === event.runId);
       if (!entry) return;
       const run = this.repos.companyResearchRuns.getByIdForTarget(event.itemId as CapabilityItemId, event.companyId as CompanyId, event.runId as ResearchRunId);
       if (run?.status === "structuring") { entry.stage = "structure"; this.save(); }
@@ -37,9 +38,10 @@ export class CompanyResearchBatchService {
     this.repos.companyResearchBatches.deleteAllTerminal();
     this.state = this.repos.companyResearchBatches.getActive();
     if (this.state) {
+      this.normalize(this.state);
       for (const entry of this.state.entries) {
         if (entry.status !== "running" || !entry.runId) continue;
-        const run = this.repos.companyResearchRuns.getByIdForTarget(this.state.itemId as CapabilityItemId, entry.companyId as CompanyId, entry.runId as ResearchRunId);
+        const run = this.repos.companyResearchRuns.getByIdForTarget(entry.itemId! as CapabilityItemId, entry.companyId as CompanyId, entry.runId as ResearchRunId);
         if (run?.status === "completed") entry.status = "completed";
         else if ((run?.status === "research_failed" || run?.status === "structure_failed") && !entry.interrupted && entry.issue?.code !== "EXTERNAL.AUTHENTICATION_FAILED") entry.status = "failed";
         else if (run?.status === "researching" || run?.status === "structuring") entry.interrupted = true;
@@ -55,19 +57,20 @@ export class CompanyResearchBatchService {
   isReserved(): boolean { return !!this.state && !["completed", "cancelled"].includes(this.state.status); }
   getState(itemId: string): CompanyResearchBatchState | null {
     if (!this.repos.capabilityItems.getById(itemId as CapabilityItemId)) throw new AppError("RESOURCE.NOT_FOUND");
-    return structuredClone(this.state?.itemId === itemId ? this.state : this.repos.companyResearchBatches.getLatest(itemId) ?? null);
+    return structuredClone(this.state ?? null);
   }
   start(itemId: string, entries: BatchResearchEntryInput[]): CompanyResearchBatchState {
     if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
-    if (this.isReserved() || this.repos.companyResearchBatches.getActive()) throw new AppError("BUSINESS.CONFLICT");
     if (!Array.isArray(entries) || entries.length === 0 || entries.length > 1000 || new Set(entries.map(e => e.companyId)).size !== entries.length) throw new AppError("INPUT.INVALID");
     for (const entry of entries) {
       if (!Value.Check(BatchResearchEntryInputSchema, entry)) throw new AppError("INPUT.INVALID");
       this.research.validateBatchEntry(itemId, entry.companyId, entry.input);
     }
+    if (this.state) return this.append(itemId, entries.map(entry => ({ ...entry, mode: "new" as const })));
+    if (this.repos.companyResearchBatches.getActive()) throw new AppError("BUSINESS.CONFLICT");
     const batchId = randomUUID();
     this.reserve(batchId);
-    this.state = { batchId, itemId, status: "waiting_profile", entries: structuredClone(entries).map(e => ({ ...e, status: "pending" })), processed: 0, succeeded: 0, failed: 0, total: entries.length };
+    this.state = { batchId, itemId, status: "waiting_profile", entries: structuredClone(entries).map(e => this.createEntry(itemId, e, "new")), processed: 0, succeeded: 0, failed: 0, total: entries.length };
     try {
       this.save();
     } catch (error) {
@@ -77,6 +80,60 @@ export class CompanyResearchBatchService {
     }
     this.launch();
     return structuredClone(this.state);
+  }
+  enqueueRetryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): CompanyResearchBatchState {
+    this.research.validateBatchEntry(itemId, companyId, input);
+    const run = this.research.getRun(itemId, companyId, runId);
+    if (run?.schemaVersion !== "company-research-report-v1" || researchRetryMode(run, input) === "unavailable") throw new AppError("BUSINESS.CONFLICT");
+    return this.enqueue(itemId, companyId, input, "retry_failed", runId);
+  }
+  enqueueRetryStructuring(itemId: string, companyId: string, runId: string): CompanyResearchBatchState {
+    const run = this.research.getRun(itemId, companyId, runId);
+    if (run?.schemaVersion !== "company-research-report-v1" || run.status !== "structure_failed") throw new AppError("BUSINESS.CONFLICT");
+    const input: StartCompanyResearchInput = { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) };
+    this.research.validateBatchEntry(itemId, companyId, input);
+    return this.enqueue(itemId, companyId, input, "retry_structure", runId);
+  }
+  async cancelByRunId(runId: string): Promise<void> {
+    const entry = this.state?.entries.find(candidate => candidate.status === "running" && candidate.runId === runId);
+    if (!entry?.entryId) throw new AppError("BUSINESS.CONFLICT");
+    await this.cancelEntry(entry.entryId);
+  }
+  async cancelEntry(entryId: string): Promise<void> {
+    const state = this.state;
+    const entry = state?.entries.find(candidate => candidate.entryId === entryId);
+    if (!state || !entry || (entry.status !== "pending" && entry.status !== "running")) throw new AppError("BUSINESS.CONFLICT");
+    const previous = { status: entry.status, cancelRequested: entry.cancelRequested, stage: entry.stage };
+    entry.cancelRequested = true;
+    if (entry.status === "pending") {
+      entry.status = "cancelled";
+      delete entry.stage;
+      try { this.save(); } catch (error) { this.restoreCancelledEntry(entry, previous); throw error; }
+      return;
+    }
+    if (!this.task) {
+      let deleteRun: (() => void) | undefined;
+      if (entry.runId) {
+        const saved = this.repos.companyResearchRuns.getByIdForTarget(entry.itemId! as CapabilityItemId, entry.companyId as CompanyId, entry.runId as ResearchRunId);
+        if (saved?.status === "completed") entry.status = "completed";
+        else {
+          if (saved && (saved.status === "researching" || saved.status === "structuring")) deleteRun = () => this.repos.companyResearchRuns.deleteActive(saved.id);
+          else if (saved && entry.interrupted && entry.mode === "new") deleteRun = () => this.repos.companyResearchRuns.deleteTerminal(saved.itemId, saved.companyId, saved.id);
+          entry.status = "cancelled";
+        }
+      } else entry.status = "cancelled";
+      delete entry.stage;
+      try { this.save(deleteRun); } catch (error) { this.restoreCancelledEntry(entry, previous); throw error; }
+      return;
+    }
+    try { this.save(); } catch (error) { this.restoreCancelledEntry(entry, previous); throw error; }
+    const settled = new Promise<void>(resolve => {
+      const waiters = this.entryWaiters.get(entryId) ?? new Set<() => void>();
+      waiters.add(resolve);
+      this.entryWaiters.set(entryId, waiters);
+    });
+    if (entry.runId && this.research.isActiveRun(entry.runId)) await this.research.cancel(entry.runId);
+    await settled;
   }
   resume(batchId: string): CompanyResearchBatchState {
     const state = this.require(batchId);
@@ -102,7 +159,7 @@ export class CompanyResearchBatchService {
     // and failures already acknowledged by the queue are never removed.
     for (const pending of state.entries.filter(e => e.status === "pending" || e.status === "running")) {
       if (pending.runId) {
-        const run = this.repos.companyResearchRuns.getByIdForTarget(state.itemId as CapabilityItemId, pending.companyId as CompanyId, pending.runId as ResearchRunId);
+        const run = this.repos.companyResearchRuns.getByIdForTarget(pending.itemId! as CapabilityItemId, pending.companyId as CompanyId, pending.runId as ResearchRunId);
         if (run?.status === "completed") {
           pending.status = "completed";
           continue;
@@ -151,8 +208,10 @@ export class CompanyResearchBatchService {
       this.save();
       let dispatchedRun: import("../contracts/index.js").ResearchRun | undefined;
       try {
-        const saved = entry.runId ? this.repos.companyResearchRuns.getByIdForTarget(state.itemId as CapabilityItemId, entry.companyId as CompanyId, entry.runId as ResearchRunId) : undefined;
-        if (saved?.status === "completed") {
+        const itemId = entry.itemId!;
+        const savedId = entry.runId ?? entry.originalRunId;
+        const saved = savedId ? this.repos.companyResearchRuns.getByIdForTarget(itemId as CapabilityItemId, entry.companyId as CompanyId, savedId as ResearchRunId) : undefined;
+        if (entry.runId && saved?.status === "completed") {
           entry.status = "completed";
           this.save();
           continue;
@@ -161,9 +220,12 @@ export class CompanyResearchBatchService {
         if (saved && this.research.isActiveRun(saved.id)) {
           run = saved;
         } else if (saved) {
-          run = await this.research.retryFailed(state.itemId, entry.companyId, saved.id, entry.input, state.batchId, () => this.cancelled(), () => this.disposed);
+          run = entry.mode === "retry_structure"
+            ? await this.research.retryStructuring(itemId, entry.companyId, saved.id, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed)
+            : await this.research.retryFailed(itemId, entry.companyId, saved.id, entry.input, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed);
         } else {
-          run = await this.research.start(state.itemId, entry.companyId, entry.input, state.batchId, () => this.cancelled(), () => this.disposed);
+          if (entry.mode !== "new") throw new AppError("RESOURCE.NOT_FOUND");
+          run = await this.research.start(itemId, entry.companyId, entry.input, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed);
         }
         if (this.disposed) return;
         dispatchedRun = run;
@@ -172,17 +234,18 @@ export class CompanyResearchBatchService {
         delete entry.interrupted;
         this.save();
         if (this.disposed) return;
-        if (this.cancelled() && this.research.isActiveRun(run.id)) await this.research.cancel(run.id);
+        if ((this.cancelled() || entry.cancelRequested) && this.research.isActiveRun(run.id)) await this.research.cancel(run.id);
         if (this.disposed) return;
         await this.research.whenSettled();
         if (this.disposed) return;
         const final = this.repos.companyResearchRuns.getByIdForTarget(run.itemId, run.companyId, run.id);
         if (final?.status === "completed") entry.status = "completed";
+        else if (entry.cancelRequested) entry.status = "cancelled";
         else if (final?.status === "research_failed" || final?.status === "structure_failed") entry.status = "failed";
         else if (!this.cancelled()) throw new AppError("STORAGE.FAILED");
         delete entry.stage;
         this.save();
-        const terminalIssue = this.state!.entries.find(e => e.runId === run.id)?.issue;
+        const terminalIssue = this.issueFor(entry);
         if (!this.cancelled() && terminalIssue?.code === "EXTERNAL.AUTHENTICATION_FAILED") {
           if (entry.status === "failed") entry.status = "running";
           state.status = "paused";
@@ -204,6 +267,12 @@ export class CompanyResearchBatchService {
           if (settled?.status === "completed") entry.status = "completed";
           else if (settled?.status === "research_failed" || settled?.status === "structure_failed") entry.status = "failed";
           delete entry.stage;
+        }
+        if (entry.cancelRequested) {
+          entry.status = "cancelled";
+          delete entry.stage;
+          this.save();
+          continue;
         }
         if (this.cancelled()) return;
         const issue = toPublicError(error);
@@ -227,13 +296,15 @@ export class CompanyResearchBatchService {
   private reserve(batchId: string): void {
     this.research.reserve(batchId, run => {
       if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
-      const entry = this.state!.entries.find(e => e.status === "running" && e.companyId === run.companyId)!;
+      const entry = this.state!.entries.find(e => e.status === "running" && e.itemId === run.itemId && e.companyId === run.companyId)!;
+      const previousRunId = entry.runId;
       entry.runId = run.id;
       // Called inside the same SQLite transaction that creates this owned run.
-      this.repos.companyResearchBatches.save(this.state!);
+      try { this.repos.companyResearchBatches.save(this.state!); }
+      catch (error) { if (previousRunId === undefined) delete entry.runId; else entry.runId = previousRunId; throw error; }
     });
   }
-  private save(): void {
+  private save(transactionalWork?: () => void): void {
     if (this.disposed) return;
     const state = this.state!;
     state.succeeded = state.entries.filter(e => e.status === "completed").length;
@@ -241,6 +312,7 @@ export class CompanyResearchBatchService {
     state.processed = state.succeeded + state.failed;
     try {
       this.repos.runInTransaction(() => {
+        transactionalWork?.();
         this.repos.companyResearchBatches.save(state);
         if (state.status === "completed" || state.status === "cancelled") this.repos.companyResearchBatches.deleteTerminal(state.batchId);
       });
@@ -258,6 +330,58 @@ export class CompanyResearchBatchService {
       this.research.release(state.batchId);
       this.profile?.resume();
     }
+    for (const entry of state.entries) {
+      if ((entry.status !== "completed" && entry.status !== "failed" && entry.status !== "cancelled") || !entry.entryId) continue;
+      const waiters = this.entryWaiters.get(entry.entryId);
+      if (!waiters) continue;
+      this.entryWaiters.delete(entry.entryId);
+      for (const resolve of waiters) resolve();
+    }
     for (const listener of this.listeners) { try { listener(structuredClone(state)); } catch { /* closed renderer */ } }
+  }
+  private enqueue(itemId: string, companyId: string, input: StartCompanyResearchInput, mode: "retry_failed" | "retry_structure", originalRunId: string): CompanyResearchBatchState {
+    if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
+    const entry = { companyId, input, mode, originalRunId };
+    if (this.state) return this.append(itemId, [entry]);
+    if (this.repos.companyResearchBatches.getActive()) throw new AppError("BUSINESS.CONFLICT");
+    const batchId = randomUUID();
+    this.reserve(batchId);
+    this.state = { batchId, itemId, status: "waiting_profile", entries: [this.createEntry(itemId, entry, mode, originalRunId)], processed: 0, succeeded: 0, failed: 0, total: 1 };
+    try { this.save(); } catch (error) { this.state = undefined; this.research.release(batchId); throw error; }
+    this.launch();
+    return structuredClone(this.state);
+  }
+  private append(itemId: string, entries: Array<BatchResearchEntryInput & { mode: "new" | "retry_failed" | "retry_structure"; originalRunId?: string }>): CompanyResearchBatchState {
+    const state = this.state!;
+    if (state.status === "cancelling" || state.status === "cancelled" || state.status === "completed") throw new AppError("BUSINESS.CONFLICT");
+    const activeCompanies = new Set(state.entries.filter(entry => entry.status === "pending" || entry.status === "running").map(entry => entry.companyId));
+    if (entries.some(entry => activeCompanies.has(entry.companyId))) throw new AppError("BUSINESS.CONFLICT");
+    const previousLength = state.entries.length;
+    const previousTotal = state.total;
+    state.entries.push(...entries.map(entry => this.createEntry(itemId, entry, entry.mode, entry.originalRunId)));
+    state.total = state.entries.length;
+    try { this.save(); } catch (error) {
+      state.entries.splice(previousLength);
+      state.total = previousTotal;
+      throw error;
+    }
+    return structuredClone(state);
+  }
+  private createEntry(itemId: string, entry: BatchResearchEntryInput, mode: "new" | "retry_failed" | "retry_structure", originalRunId?: string): BatchResearchEntry {
+    return { ...structuredClone(entry), entryId: randomUUID(), itemId, mode, ...(originalRunId ? { originalRunId } : {}), status: "pending" };
+  }
+  private normalize(state: CompanyResearchBatchState): void {
+    for (const entry of state.entries) {
+      entry.entryId ??= randomUUID();
+      entry.itemId ??= state.itemId;
+      entry.mode ??= "new";
+    }
+    state.total = state.entries.length;
+  }
+  private issueFor(entry: BatchResearchEntry): import("@deepfield/contracts").PublicAppError | undefined { return entry.issue; }
+  private restoreCancelledEntry(entry: BatchResearchEntry, previous: { status: BatchResearchEntry["status"]; cancelRequested: boolean | undefined; stage: BatchResearchEntry["stage"] | undefined }): void {
+    entry.status = previous.status;
+    if (previous.cancelRequested === undefined) delete entry.cancelRequested; else entry.cancelRequested = previous.cancelRequested;
+    if (previous.stage === undefined) delete entry.stage; else entry.stage = previous.stage;
   }
 }

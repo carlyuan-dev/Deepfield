@@ -39,6 +39,14 @@ function makeFakeIpc(): FakeIpc {
 }
 
 describe("preload api", () => {
+  it("exposes only a validated unknown-usage deletion snapshot call", async () => {
+    const invokes: Array<{ channel: string; args: unknown[] }> = [];
+    const api = createPreloadApi({ invoke: async (channel, ...args) => { invokes.push({ channel, args }); return { ok: true, value: 1 }; }, on: () => () => {} });
+    await expect(api.usage.deleteUnknownFailures([{ attemptId: "attempt-1", revision: 2 }])).resolves.toBe(1);
+    expect(invokes).toEqual([{ channel: IPC_CHANNELS.usageDeleteUnknownFailures, args: [[{ attemptId: "attempt-1", revision: 2 }]] }]);
+    await expect(api.usage.deleteUnknownFailures([{ attemptId: "bad id", revision: 2 }])).rejects.toBeDefined();
+    expect(invokes).toHaveLength(1);
+  });
   it("validates worker events before forwarding and supports unsubscribe", () => {
     const { ipc, listeners } = makeFakeIpc();
     const api = createPreloadApi(ipc);

@@ -4,7 +4,7 @@ import { makeDeps, RESEARCH_INPUT } from "../../apps/desktop/src/main/ipc-test-h
 describe("package-owned operation boundary", () => {
   it.each([
     ["start", "startCalls", ["item-1", "company-1", RESEARCH_INPUT]],
-    ["cancel", "cancelCalls", ["run-1"]],
+    ["cancel", "cancelByRunIdCalls", ["run-1"]],
     ["getState", "getStateCalls", ["item-1", "company-1"]],
     ["listRuns", "listRunsCalls", ["item-1", "company-1"]],
     ["getRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
@@ -13,10 +13,10 @@ describe("package-owned operation boundary", () => {
     ["retryStructuring", "retryStructuringCalls", ["item-1", "company-1", "run-1"]],
     ["deleteRun", "deleteRunCalls", ["item-1", "company-1", "run-1"]],
   ] as const)("validates exact arity and every field of %s before calling service", async (channel, calls, valid) => {
-    const { capabilities, companyResearch, companyResearchWordExport, dispose } = makeDeps();
+    const { capabilities, companyResearch, companyResearchBatch, companyResearchWordExport, dispose } = makeDeps();
     const serviceCalls = () => channel === "exportWord"
       ? companyResearchWordExport.exportCalls
-      : Reflect.get(companyResearch, calls) as unknown[];
+      : Reflect.get(["start", "cancel", "retryFailed", "retryStructuring"].includes(channel) ? companyResearchBatch : companyResearch, calls) as unknown[];
     const invalid: unknown[][] = [[], valid.slice(0, -1), [...valid, "extra"]];
     valid.forEach((value, index) => {
       const replacements = typeof value === "string" ? ["", "x".repeat(201), null, 1, {}] : channel === "exportWord"
@@ -48,10 +48,10 @@ describe("package-owned operation boundary", () => {
     dispose();
   });
   it("validates successful business results and rejects unknown operations", async () => {
-    const { capabilities, companyResearch, dispose } = makeDeps();
+    const { capabilities, companyResearchBatch, dispose } = makeDeps();
     const call = { capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", RESEARCH_INPUT] };
-    expect(await capabilities.call(call)).toMatchObject({ id: "run-1", status: "researching" });
-    vi.spyOn(companyResearch, "start").mockResolvedValue({ apiKey: "secret" } as never);
+    expect(await capabilities.call(call)).toMatchObject({ batchId: "batch-1", status: "running" });
+    vi.spyOn(companyResearchBatch, "start").mockReturnValue({ apiKey: "secret" } as never);
     await expect(capabilities.call(call)).rejects.toMatchObject({ code: "INTERNAL.UNKNOWN" });
     await expect(capabilities.call({ ...call, operation: "arbitrary.channel" })).rejects.toMatchObject({ code: "capability_unavailable" });
     dispose();

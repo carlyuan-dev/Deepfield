@@ -150,7 +150,9 @@ export class IndustryResearchService {
     try {
       this.repositories.runInTransaction(() => {
         const batch = this.repositories.companyResearchBatches.getActive();
-        if (batch && uniqueItemIds.includes(batch.itemId as CapabilityItemId)) {
+        if (batch && batch.entries.some(entry =>
+          (entry.status === "pending" || entry.status === "running") && uniqueItemIds.includes((entry.itemId ?? batch.itemId) as CapabilityItemId),
+        )) {
           throw new AppError("BUSINESS.CONFLICT");
         }
         const companyIds = new Set(
@@ -256,7 +258,9 @@ export class IndustryResearchService {
     try {
       this.repositories.runInTransaction(() => {
         const batch = this.repositories.companyResearchBatches.getActive();
-        if (batch?.itemId === itemId && batch.entries.some(entry => uniqueIds.includes(entry.companyId as Company["id"]))) {
+        if (batch?.entries.some(entry =>
+          (entry.status === "pending" || entry.status === "running") && (entry.itemId ?? batch.itemId) === itemId && uniqueIds.includes(entry.companyId as Company["id"]),
+        )) {
           throw new AppError("BUSINESS.CONFLICT");
         }
         for (const companyId of uniqueIds) {

@@ -3,6 +3,7 @@ import { getCompanyResearchTemplate, RESEARCH_DIRECTIONS, type StructuredResearc
 import {
   extractMarkdownSources,
   parseStructuredCandidate,
+  validateStructuredResearchContent,
   validateStructuredResearch,
 } from "./company-research-harness.js";
 
@@ -102,6 +103,19 @@ describe("Markdown source inheritance", () => {
       .toEqual(new Set(["inner\u0000https://example.com/b"]));
     expect(extractMarkdownSources('[<https://example.com/b>](https://example.com/a)'))
       .toEqual(new Set(["https://example.com/b\u0000https://example.com/b"]));
+  });
+});
+
+describe("shared structured validation", () => {
+  it("keeps T source membership while S accepts a structurally legal http source", () => {
+    const candidate = content();
+    candidate.sections[0]!.facts[0]!.source = {
+      title: "另一来源",
+      url: "https://example.com/other",
+    };
+    const text = JSON.stringify(candidate);
+    expect(() => validateStructuredResearch(text, raw, template)).toThrowError("source_mismatch");
+    expect(validateStructuredResearchContent(text, template)).toEqual(candidate);
   });
 });
 

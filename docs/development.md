@@ -172,6 +172,8 @@ code points 的文本，确认在发出任何识别请求前显示长度错误�
 
 ## 本地打包（arm64）
 
+默认交付约定：每轮功能开发完成并通过必要检查后，直接打包交给用户手测，无需再次询问是否打包。仅在应用仍运行、权限受限或其他明确阻碍时说明原因。打包前确认目标应用已退出；独立安装的 Capability 有更新时，同步更新测试所需能力包并保留可恢复备份，不改动用户数据库、报告、配置和密钥。Capability 更新的暂存目录必须位于扫描根目录之外，成功或失败后都清理空暂存目录，并确认 Capability catalog 没有因暂存产生额外条目。无需为打包扩大无关测试范围。
+
 ```bash
 npm run dist:dir     # build + electron-builder --mac --arm64 --dir → release/mac-arm64/Deepfield.app
 npm run dist:local   # build + electron-builder --mac dmg zip --arm64（identity=null）

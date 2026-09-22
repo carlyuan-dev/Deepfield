@@ -331,10 +331,10 @@ function requireNonblank(text: string): void {
   if (!text.trim()) throw new StructuredResearchValidationError("shape_invalid", [{ path: "", expected: "nonblank", actual: "string" }]);
 }
 
-export function validateStructuredResearch(
+function validateStructuredResearchCandidate(
   candidateText: string,
-  rawMarkdown: string,
   template: CompanyResearchTemplateSnapshot,
+  rawSources?: Set<string>,
 ): StructuredResearchContent {
   const candidate = parseStructuredCandidate(candidateText);
   if (!Value.Check(StructuredResearchContentSchema, candidate)) {
@@ -343,7 +343,6 @@ export function validateStructuredResearch(
   if (candidate.sections.length !== template.sections.length) {
     throw new StructuredResearchValidationError("shape_invalid", [{ path: "/sections", expected: "template_sections", actual: "array" }]);
   }
-  const sources = extractMarkdownSources(rawMarkdown);
   candidate.coreSummary.forEach(requireNonblank);
   for (const [index, section] of candidate.sections.entries()) {
     if (section.sectionId !== template.sections[index]!.sectionId) {
@@ -362,7 +361,10 @@ export function validateStructuredResearch(
       if (fact.timeContext !== null) requireNonblank(fact.timeContext);
       requireNonblank(fact.source.title);
       requireNonblank(fact.source.url);
-      if (!sources.has(sourceKey(fact.source.title, fact.source.url))) {
+      if (!isHttpUrl(fact.source.url)) {
+        throw new StructuredResearchValidationError(rawSources === undefined ? "shape_invalid" : "source_mismatch", [{ path: `/sections/${index}/facts`, expected: rawSources === undefined ? "http_source_url" : "raw_source_pair", actual: "array" }]);
+      }
+      if (rawSources !== undefined && !rawSources.has(sourceKey(fact.source.title, fact.source.url))) {
         throw new StructuredResearchValidationError("source_mismatch", [{ path: `/sections/${index}/facts`, expected: "raw_source_pair", actual: "array" }]);
       }
     }
@@ -374,4 +376,20 @@ export function validateStructuredResearch(
     throw new StructuredResearchValidationError("shape_invalid", [{ path: "/coreSummary", expected: "facts_fallback_pairing", actual: "array" }]);
   }
   return candidate;
+}
+
+/** Structure-only validation shared by evaluation arm S and production arm T. */
+export function validateStructuredResearchContent(
+  candidateText: string,
+  template: CompanyResearchTemplateSnapshot,
+): StructuredResearchContent {
+  return validateStructuredResearchCandidate(candidateText, template);
+}
+
+export function validateStructuredResearch(
+  candidateText: string,
+  rawMarkdown: string,
+  template: CompanyResearchTemplateSnapshot,
+): StructuredResearchContent {
+  return validateStructuredResearchCandidate(candidateText, template, extractMarkdownSources(rawMarkdown));
 }

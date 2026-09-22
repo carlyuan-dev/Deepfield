@@ -121,13 +121,13 @@ describe("agent worker runtime", () => {
       }
       if (mode === "acknowledged") child.emitMessage({ kind: "usage.flushed", requestId: flush?.requestId });
       await vi.advanceTimersByTimeAsync(2500); await shutdown;
-      // The later expected child exit must retain an earlier flush warning.
+      // Unconfirmed flush with no known pending record is diagnostic only, not a current outage.
       child.emitExit(0);
-      expect(repository.getHealth()).toMatchObject({ cleanShutdown: true, failedRecords: 0, droppedRecords: 0, pendingRecords: 0, degraded: mode !== "acknowledged", lastErrorCode: mode === "acknowledged" ? null : "worker_flush_unconfirmed" });
+      expect(repository.getHealth()).toMatchObject({ cleanShutdown: true, failedRecords: 0, droppedRecords: 0, pendingRecords: 0, degraded: false, lastErrorCode: null });
       const restarted = createMainUsageRuntime(repository);
       const dashboard = await restarted.query.getDashboard({ serviceKind: "llm", range: "month", timeZone: "UTC" });
       expect(dashboard.summary.requests).toBe(0);
-      expect(dashboard.health).toMatchObject({ previousUncleanShutdown: false, degraded: mode !== "acknowledged", failedRecords: 0, droppedRecords: 0, lastErrorCode: mode === "acknowledged" ? null : "worker_flush_unconfirmed" });
+      expect(dashboard.health).toMatchObject({ previousUncleanShutdown: false, degraded: false, failedRecords: 0, droppedRecords: 0, lastErrorCode: null });
       await restarted.shutdown();
     } finally { runtime.dispose(); db.close(); vi.useRealTimers(); }
   });

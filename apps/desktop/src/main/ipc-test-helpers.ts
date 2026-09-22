@@ -1,5 +1,5 @@
 import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, CompanyId, Conversation, ConversationId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult, ResearchRunId } from "@deepfield/contracts";
-import type { CompanyResearchWordExportResult, CapabilityItem, CompanyDraft, Company, CompanyResearchState, CompanyResearchEvent, KeyResearchRun, ResearchRunSummary, CompanyProfileEvent, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
+import type { CompanyResearchWordExportResult, CapabilityItem, CompanyDraft, Company, CompanyResearchState, CompanyResearchEvent, CompanyResearchBatchState, KeyResearchRun, ResearchRunSummary, CompanyProfileEvent, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
 import { getCompanyResearchTemplate } from "../../../../capabilities/company-research/contracts/index.js";
 import { vi } from "vitest";
 import { CapabilityRegistry } from "./capabilities/registry.js";
@@ -440,6 +440,25 @@ export class FakeCompanyProfileEventSource {
   }
 }
 
+export class FakeCompanyResearchBatchService {
+  startCalls: Array<{ itemId: string; entries: Array<{ companyId: string; input: StartCompanyResearchInput }> }> = [];
+  cancelByRunIdCalls: string[] = [];
+  retryFailedCalls: Array<{ itemId: string; companyId: string; runId: string; input: StartCompanyResearchInput }> = [];
+  retryStructuringCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
+  private state(itemId: string, companyId: string, input: StartCompanyResearchInput): CompanyResearchBatchState {
+    return { batchId: "batch-1", itemId, status: "running", entries: [{ entryId: "entry-1", itemId, companyId, mode: "new", input, status: "pending" }], processed: 0, succeeded: 0, failed: 0, total: 1 };
+  }
+  start(itemId: string, entries: Array<{ companyId: string; input: StartCompanyResearchInput }>): CompanyResearchBatchState { this.startCalls.push({ itemId, entries }); return this.state(itemId, entries[0]!.companyId, entries[0]!.input); }
+  cancelByRunId(runId: string): void { this.cancelByRunIdCalls.push(runId); }
+  enqueueRetryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): CompanyResearchBatchState { this.retryFailedCalls.push({ itemId, companyId, runId, input }); return this.state(itemId, companyId, input); }
+  enqueueRetryStructuring(itemId: string, companyId: string, runId: string): CompanyResearchBatchState { this.retryStructuringCalls.push({ itemId, companyId, runId }); return this.state(itemId, companyId, RESEARCH_INPUT); }
+  getState(): null { return null; }
+  cancel(): void {}
+  cancelEntry(): void {}
+  resume(): CompanyResearchBatchState { return this.state("item-1", "company-1", RESEARCH_INPUT); }
+  subscribe(): () => void { return () => {}; }
+}
+
 export class FakeClipboardWriter {
   writeTextCalls: string[] = [];
   writeError: Error | undefined;
@@ -459,11 +478,12 @@ export function makeDeps(overrides: Partial<IpcServiceDeps> = {}) {
   const chat = new FakeChatService();
   const companyResearch = new FakeCompanyResearchService();
   const companyResearchWordExport = new FakeCompanyResearchWordExportService();
+  const companyResearchBatch = new FakeCompanyResearchBatchService();
   const companyProfiles = new FakeCompanyProfileEventSource();
   const clipboard = new FakeClipboardWriter();
   const capabilities = new CapabilityRegistry();
   const activation = capabilities.begin("company-research");
-  registerCompanyResearchOperations(activation, { industryResearch, companyResearch, companyResearchWordExport, companyProfiles, companyResearchBatch: { subscribe: () => () => {} }, settings } as unknown as CompanyResearchOperationServices);
+  registerCompanyResearchOperations(activation, { industryResearch, companyResearch, companyResearchWordExport, companyProfiles, companyResearchBatch, settings } as unknown as CompanyResearchOperationServices);
   void activation.ready();
   const deps: IpcServiceDeps = {
     capabilities,
@@ -478,7 +498,7 @@ export function makeDeps(overrides: Partial<IpcServiceDeps> = {}) {
   };
   const disposeIpc = registerIpcHandlers(deps);
   const dispose = () => { disposeIpc(); void capabilities.dispose(); };
-  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyResearchWordExport, companyProfiles, clipboard, capabilities, dispose };
+  return { ipcMain, conversations, industryResearch, settings, skills, chat, companyResearch, companyResearchBatch, companyResearchWordExport, companyProfiles, clipboard, capabilities, dispose };
 }
 
 export const event = (sender: WebContentsLike): { sender: WebContentsLike } => ({ sender });

@@ -17,7 +17,7 @@ function settingsTarget(issue: PublicAppError | undefined): "llm" | "search" | u
 }
 function pausedCause(issue: PublicAppError | undefined): string {
   if (!issue) return "应用重新启动后已暂停，请确认设置后继续调研。";
-  return configurationErrorText(issue, "research") ?? "批量调研遇到问题并已暂停，请检查后继续。";
+  return configurationErrorText(issue, "research") ?? "调研队列遇到问题并已暂停，请检查后继续。";
 }
 export function OperationProgress({ batch: batchState, profile, onCancel, onResume, onOpenSettings }: Props) {
   const [busy, setBusy] = useState(false);
@@ -36,14 +36,14 @@ export function OperationProgress({ batch: batchState, profile, onCancel, onResu
   if (batch) {
     const active = batch.status === "running" || batch.status === "waiting_profile" || batch.status === "cancelling";
     const terminal = batch.status === "completed" || batch.status === "cancelled";
-    const label = batch.status === "waiting_profile" ? "等待当前公司资料补全完成" : batch.status === "paused" ? "批量调研已暂停" : batch.status === "completed" ? "批量调研已完成" : batch.status === "cancelled" ? "批量调研已取消" : "正在批量进行公司调研";
+    const label = batch.status === "waiting_profile" ? "等待当前公司资料补全完成" : batch.status === "paused" ? "调研队列已暂停" : batch.status === "completed" ? "调研队列已完成" : batch.status === "cancelled" ? "调研队列已取消" : "正在进行公司调研";
     const target = settingsTarget(batch.issue);
     return <div className="operation-progress" aria-live="polite">
       <div className="operation-progress-summary"><span className={batch.status === "running" ? "operation-progress-active" : undefined}>{label}</span>{batch.status === "paused" && <small>{pausedCause(batch.issue)}</small>}{terminal && <small>成功 {batch.succeeded} · 失败 {batch.failed}</small>}{!terminal && batch.failed > 0 && <small>失败 {batch.failed}</small>}</div>
-      {!terminal && <div className="operation-progress-bar" role="progressbar" aria-label="批量调研进度" aria-valuemin={0} aria-valuemax={batch.total} aria-valuenow={batch.processed}><span style={{ width: `${batch.total ? Math.min(100, batch.processed / batch.total * 100) : 0}%` }} /><strong>{batch.processed}/{batch.total}</strong></div>}
-      {active && <span className="company-profile-spinner" role="status" aria-label="批量调研进行中" />}
+      {!terminal && <div className="operation-progress-bar" role="progressbar" aria-label="调研队列进度" aria-valuemin={0} aria-valuemax={batch.total} aria-valuenow={batch.processed}><span style={{ width: `${batch.total ? Math.min(100, batch.processed / batch.total * 100) : 0}%` }} /><strong>{batch.processed}/{batch.total}</strong></div>}
+      {active && <span className="company-profile-spinner" role="status" aria-label="调研队列进行中" />}
       {batch.status === "paused" && <><button className="operation-link" disabled={busy} onClick={() => void act(() => onResume(batch.batchId))}>继续调研</button>{target && onOpenSettings && <button className="operation-link" onClick={() => onOpenSettings(target)}>前往设置</button>}</>}
-      {!terminal && <button className="operation-link" disabled={busy || (batch.status === "cancelling" && !actionError)} onClick={() => void act(() => onCancel(batch.batchId))}>取消批量调研</button>}
+      {!terminal && <button className="operation-link" disabled={busy || (batch.status === "cancelling" && !actionError)} onClick={() => void act(() => onCancel(batch.batchId))}>取消整个调研队列</button>}
       {actionError && <span className="operation-error" role="alert">{actionError}</span>}
     </div>;
   }

@@ -1,5 +1,5 @@
 import { Value } from "typebox/value";
-import { UsageFlushRequestSchema } from "@deepfield/contracts";
+import { UsageFlushRequestSchema, UsageRepairRequestSchema } from "@deepfield/contracts";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema, ToolExecutionEventSchema, ToolRunRequestSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
 import type { WorkerCapabilityRegistry } from "./capabilities/registry.js";
@@ -19,6 +19,7 @@ export type { ActiveExecution, ChatAgent, ToolRuntime, WorkerEndpoint, WorkerLoo
 
 export interface WorkerMessageLoopOptions {
   flushUsage?: () => Promise<void>;
+  retryUsage?: () => Promise<boolean>;
   toolRuntime?: ToolRuntime;
   capabilities?: WorkerCapabilityRegistry;
   hostReplyHandler?: (reply: unknown) => void;
@@ -45,6 +46,12 @@ export function createWorkerMessageLoop(
       options.capabilities?.abortAll();
       void Promise.resolve().then(() => options.flushUsage?.()).catch(() => {}).then(() => {
         endpoint.postMessage({ kind: "usage.flushed", requestId: value.requestId });
+      });
+      return;
+    }
+    if (Value.Check(UsageRepairRequestSchema, value)) {
+      void Promise.resolve().then(() => options.retryUsage?.() ?? true).catch(() => false).then((repaired) => {
+        endpoint.postMessage({ kind: "usage.repaired", requestId: value.requestId, repaired });
       });
       return;
     }

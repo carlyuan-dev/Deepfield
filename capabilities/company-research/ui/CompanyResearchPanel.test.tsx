@@ -92,7 +92,7 @@ describe("two-stage company research", () => {
     await screen.findByText("还没有调研报告。");
     const failure = { type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: "failed-run", outcome: "web_search_failed" } as const;
     act(() => fake.emitResearch({ ...failure, companyId: "other-company" }));
-    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("alert")).toBeNull();
     act(() => fake.emitResearch(failure));
     expect(await screen.findByText("联网搜索未成功，请检查 Search 配置或稍后重试")).toBeTruthy();
@@ -240,7 +240,7 @@ describe("two-stage company research", () => {
     render(<CompanyResearchPanel api={fake} {...context} />);
     await screen.findByText("还没有调研报告。");
     act(() => fake.emitResearch({ type: "state_changed", itemId: "other-item", companyId: context.companyId, runId: "other-run", outcome: "research_failed" }));
-    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("alert")).toBeNull();
     act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: "early-run", outcome: "research_failed" }));
     expect(await screen.findByText("调研未完成，请稍后重试")).toBeTruthy();
@@ -481,7 +481,7 @@ describe("two-stage company research", () => {
     expect(screen.queryByText("迟到的已删除报告正文")).toBeNull();
   });
 
-  it("disables report deletion while any company research is active", async () => {
+  it("disables report deletion while the same company is queued", async () => {
     const fake = makeFakeApi();
     const run = researchRun();
     fake.companyResearch.getState.mockResolvedValue({
@@ -489,24 +489,20 @@ describe("two-stage company research", () => {
       globalActiveRun: { runId: "other-run" as ResearchRun["id"], itemId: run.itemId, companyId: "other-company" as ResearchRun["companyId"], stage: "raw" },
     });
     fake.companyResearch.getRun.mockResolvedValue(run);
-    render(<CompanyResearchPanel api={fake} {...context} />);
+    render(<CompanyResearchPanel api={fake} {...context} queueEntry={{ entryId: "entry", itemId: context.itemId, companyId: context.companyId, mode: "new", input: { direction: "product_and_technology", asOfDate: "2026-09-09" }, status: "pending" }} />);
     expect((await screen.findByRole("button", { name: "删除" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("disables an open deletion confirmation when another research run becomes active", async () => {
+  it("disables an open deletion confirmation when the same company enters the queue", async () => {
     const fake = makeFakeApi(); const user = userEvent.setup();
     const run = researchRun();
     let state: CompanyResearchState = { runs: [researchSummary(run)], globalActiveRun: null };
     fake.companyResearch.getState.mockImplementation(async () => state);
     fake.companyResearch.getRun.mockResolvedValue(run);
-    render(<CompanyResearchPanel api={fake} {...context} />);
+    const view = render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "删除" }));
     const confirmation = within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }) as HTMLButtonElement;
-    state = {
-      ...state,
-      globalActiveRun: { runId: "other-run" as ResearchRun["id"], itemId: run.itemId, companyId: "other-company" as ResearchRun["companyId"], stage: "raw" },
-    };
-    act(() => fake.emitResearch({ type: "state_changed", runId: "other-run", itemId: run.itemId, companyId: "other-company" }));
+    view.rerender(<CompanyResearchPanel api={fake} {...context} queueEntry={{ entryId: "entry", itemId: context.itemId, companyId: context.companyId, mode: "new", input: { direction: "product_and_technology", asOfDate: "2026-09-09" }, status: "pending" }} />);
     await waitFor(() => expect(confirmation.disabled).toBe(true));
     expect(fake.companyResearch.deleteRun).not.toHaveBeenCalled();
   });
@@ -652,16 +648,17 @@ describe("two-stage company research", () => {
     expect(screen.getByRole("option").textContent).not.toContain("截至");
   });
 
-  it("refreshes global occupancy from events for other companies", async () => {
+  it("does not refresh or block this company for events from other companies", async () => {
     const fake = makeFakeApi();
     const other = { runId: researchRun().id, itemId: researchRun().itemId, companyId: "other" as ResearchRun["companyId"], stage: "raw" as const };
     fake.companyResearch.getState.mockResolvedValue({ runs: [], globalActiveRun: other });
     render(<CompanyResearchPanel api={fake} {...context} />);
-    expect(await screen.findByText("其他公司正在调研，请稍后再试。")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "开始调研" }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByText("还没有调研报告。");
+    expect(screen.queryByText("其他公司正在调研，请稍后再试。")).toBeNull();
+    expect((screen.getByRole("button", { name: "开始调研" }) as HTMLButtonElement).disabled).toBe(false);
     fake.companyResearch.getState.mockResolvedValue({ runs: [], globalActiveRun: null });
     act(() => fake.emitResearch({ type: "state_changed", ...other }));
-    await waitFor(() => expect((screen.getByRole("button", { name: "开始调研" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(1));
   });
 
   it("discards a stale initial snapshot when deltas arrive during subscription", async () => {
@@ -712,7 +709,8 @@ describe("two-stage company research", () => {
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "新的调研" }));
     await user.click(screen.getByRole("button", { name: "开始调研" }));
-    await user.click(await screen.findByRole("tab", { name: "原始调研报告" }));
+    await waitFor(() => expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(newest.id));
+    await user.click(screen.getByRole("tab", { name: "原始调研报告" }));
     expect(await screen.findByText("本次新报告")).toBeTruthy();
     expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(newest.id);
   });

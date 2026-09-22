@@ -18,34 +18,34 @@ describe("OperationProgress", () => {
     let reject!: (reason: unknown) => void;
     const cancel = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
     const view = render(<OperationProgress batch={batch()} profile={null} onCancel={cancel} onResume={async () => {}} />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "取消批量调研" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "取消整个调研队列" }));
     view.rerender(<OperationProgress batch={batch({ status: "cancelling" })} profile={null} onCancel={cancel} onResume={async () => {}} />);
     reject({ code: "STORAGE.FAILED", category: "storage" });
     await screen.findByRole("alert");
-    expect((screen.getByRole("button", { name: "取消批量调研" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "取消整个调研队列" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("lets current profile work replace a stale terminal batch, then lets a new active batch replace the profile notice", () => {
     const { rerender } = render(<OperationProgress batch={batch({ status: "completed" })} profile={profile()} onCancel={async () => {}} onResume={async () => {}} />);
     expect(screen.getByText("正在自动补全公司信息")).toBeTruthy();
-    expect(screen.queryByText("批量调研已完成")).toBeNull();
+    expect(screen.queryByText("调研队列已完成")).toBeNull();
     rerender(<OperationProgress batch={batch({ status: "completed" })} profile={profile({ status: "completed", processed: 3, failed: 1 })} onCancel={async () => {}} onResume={async () => {}} />);
     expect(screen.getByText("公司资料补全已完成")).toBeTruthy();
     expect(screen.getByText("成功 2 · 失败 1")).toBeTruthy();
-    expect(screen.queryByText("批量调研已完成")).toBeNull();
+    expect(screen.queryByText("调研队列已完成")).toBeNull();
     expect(screen.queryByText("正在自动补全公司信息")).toBeNull();
     expect(screen.queryByRole("progressbar", { name: "公司资料补全进度" })).toBeNull();
     expect(screen.queryByRole("status", { name: "公司资料补全进行中" })).toBeNull();
     rerender(<OperationProgress batch={batch()} profile={profile({ status: "completed", processed: 3, failed: 1 })} onCancel={async () => {}} onResume={async () => {}} />);
-    expect(screen.getByText("正在批量进行公司调研")).toBeTruthy();
+    expect(screen.getByText("正在进行公司调研")).toBeTruthy();
     expect(screen.queryByText("公司资料补全已完成")).toBeNull();
   });
 
   it("catches rejected cancel and resume actions, shows safe feedback, and remains retryable", async () => {
     const cancel = vi.fn().mockRejectedValueOnce({ code: "STORAGE.FAILED", category: "storage" }).mockResolvedValue(undefined);
     const user = userEvent.setup(); const { rerender } = render(<OperationProgress batch={batch()} profile={null} onCancel={cancel} onResume={async () => {}} />);
-    await user.click(screen.getByRole("button", { name: "取消批量调研" }));
+    await user.click(screen.getByRole("button", { name: "取消整个调研队列" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "无法保存调研状态，请稍后重试。");
-    await user.click(screen.getByRole("button", { name: "取消批量调研" })); expect(cancel).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "取消整个调研队列" })); expect(cancel).toHaveBeenCalledTimes(2);
     const resume = vi.fn().mockRejectedValue({ code: "BUSINESS.CONFLICT", category: "business" });
     rerender(<OperationProgress batch={batch({ status: "paused" })} profile={null} onCancel={async () => {}} onResume={resume} />);
     await user.click(screen.getByRole("button", { name: "继续调研" }));
@@ -67,7 +67,7 @@ describe("OperationProgress", () => {
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
     rerender(<OperationProgress batch={batch()} profile={null} onCancel={async () => {}} onResume={async () => {}} />);
-    expect(screen.getByText("正在批量进行公司调研")).toHaveProperty("className", "operation-progress-active");
+    expect(screen.getByText("正在进行公司调研")).toHaveProperty("className", "operation-progress-active");
     const progress = container.querySelector(".operation-progress")!;
     expect([...progress.children].map((node) => node.className)).toEqual(["operation-progress-summary", "operation-progress-bar", "company-profile-spinner", "operation-link"]);
   });

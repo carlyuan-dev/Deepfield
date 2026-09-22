@@ -103,7 +103,7 @@ void app.whenReady().then(async () => {
   const paths = createAppPaths(userDataRoot);
   database = openDatabase(paths.database);
   migrate(database);
-  usageRuntime = createMainUsageRuntime(createUsageRepository(database));
+  usageRuntime = createMainUsageRuntime(createUsageRepository(database), () => agentRuntime);
   configureUsageRecorder(usageRuntime.recorder);
   const repositories = createRepositories(database);
   const secrets = new SecretStore(paths.secretsFile, {

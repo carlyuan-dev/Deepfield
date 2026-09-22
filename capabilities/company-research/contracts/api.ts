@@ -47,19 +47,19 @@ export interface CompanyResearchApi {
       itemId: string,
       companyId: string,
       input: StartCompanyResearchInput,
-    ): Promise<ResearchRun>;
+    ): Promise<CompanyResearchBatchState | ResearchRun>;
     cancel(runId: string): Promise<void>;
     getState(itemId: string, companyId: string): Promise<CompanyResearchState>;
     listRuns(itemId: string, companyId: string): Promise<ResearchRunSummary[]>;
     getRun(itemId: string, companyId: string, runId: string): Promise<ResearchRun | undefined>;
     exportWord(itemId: string, companyId: string, runId: string, selection: CompanyResearchWordExportSelection): Promise<CompanyResearchWordExportResult>;
-    retryStructuring(itemId: string, companyId: string, runId: string): Promise<ResearchRun>;
+    retryStructuring(itemId: string, companyId: string, runId: string): Promise<CompanyResearchBatchState | ResearchRun>;
     retryFailed(
       itemId: string,
       companyId: string,
       runId: string,
       input: StartCompanyResearchInput,
-    ): Promise<ResearchRun>;
+    ): Promise<CompanyResearchBatchState | ResearchRun>;
     deleteRun(itemId: string, companyId: string, runId: string): Promise<void>;
     subscribe(listener: (event: CompanyResearchEvent) => void): () => void;
   };
@@ -67,6 +67,7 @@ export interface CompanyResearchApi {
     start(itemId: string, entries: BatchResearchEntryInput[]): Promise<CompanyResearchBatchState>;
     getState(itemId: string): Promise<CompanyResearchBatchState | null>;
     cancel(batchId: string): Promise<void>;
+    cancelEntry(entryId: string): Promise<void>;
     resume(batchId: string): Promise<CompanyResearchBatchState>;
     subscribe(listener: (state: CompanyResearchBatchState) => void): () => void;
   };

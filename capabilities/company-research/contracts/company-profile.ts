@@ -48,11 +48,22 @@ export const ProfileSchemaIssueSchema = Type.Object({
   actual: actualType,
 }, { additionalProperties: false });
 export type ProfileSchemaIssue = Static<typeof ProfileSchemaIssueSchema>;
+const diagnosticUrl = Type.String({ minLength: 1, maxLength: 500, pattern: "^https?://" });
+const evidenceRef = Type.Object({ url: diagnosticUrl, urlFingerprint: Type.String({ pattern: "^[a-f0-9]{16}$" }), kind: ProfileSourceRefSchema.properties.kind }, { additionalProperties: false });
+export const ProfileEvidenceDetailSchema = Type.Object({
+  reason: Type.Union([Type.Literal("empty_refs"), Type.Literal("url_absent"), Type.Literal("kind_mismatch")]),
+  path: diagnosticPath,
+  modelRef: Type.Optional(evidenceRef),
+  actualSources: Type.Array(evidenceRef, { maxItems: 40 }),
+  totalSourceCount: Type.Integer({ minimum: 0, maximum: 1000 }),
+  truncated: Type.Boolean(),
+}, { additionalProperties: false });
 export const CompanyProfileDiagnosticSchema = Type.Object({
   ...identity, type: Type.Literal("diagnostic"),
   phase: Type.Union([Type.Literal("agent"), Type.Literal("json_parse"), Type.Literal("schema"), Type.Literal("evidence"), Type.Literal("complete")]),
   code: ProfileDiagnosticCodeSchema,
   path: Type.Optional(diagnosticPath),
+  evidenceDetail: Type.Optional(ProfileEvidenceDetailSchema),
   schemaIssues: Type.Array(ProfileSchemaIssueSchema, { maxItems: 20 }),
   searchSourceCount: Type.Integer({ minimum: 0, maximum: 1000 }),
   openedSourceCount: Type.Integer({ minimum: 0, maximum: 1000 }),

@@ -8,7 +8,7 @@ export function createCompanyResearchApi(bridge: CapabilityBridge): DesktopApi {
   const methods = {
     industryResearch: ["getCompanyProfileProgress", "subscribeCompanyProfileProgress", "createItem", "updateItem", "deleteItem", "deleteItems", "listItems", "getItem", "listCompanies", "updateCompany", "addCompany", "addCompanies", "removeCompany", "removeCompanies", "recognizeCompanies", "retryCompanyProfile", "confirmCompanyProfileIdentity", "subscribeCompanyProfiles"],
     companyResearch: ["start", "cancel", "getState", "listRuns", "getRun", "exportWord", "retryStructuring", "retryFailed", "deleteRun", "subscribe"],
-    companyResearchBatch: ["start", "getState", "cancel", "resume", "subscribe"],
+    companyResearchBatch: ["start", "getState", "cancel", "cancelEntry", "resume", "subscribe"],
     settings: ["get"],
   } as const;
   return Object.fromEntries(Object.entries(methods).map(([namespace, names]) => [namespace, Object.fromEntries(names.map(method => {

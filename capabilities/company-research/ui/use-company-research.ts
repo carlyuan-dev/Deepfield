@@ -133,13 +133,11 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     const unsubscribe = api.companyResearch.subscribe((event: CompanyResearchEvent) => {
       if (!alive) return;
       if (event.type === "state_changed") {
+        if (event.itemId !== itemId || event.companyId !== companyId) return;
         ++revision;
-        // Occupancy is global, including events for other targets.
-        if (event.itemId === itemId && event.companyId === companyId) {
-          ++detailTicket;
-          if (event.outcome && event.outcome !== "cancelled") publish({ error: { kind: "execution", message: RESEARCH_FAILURE_MESSAGES[event.outcome] ?? "调研未完成，请稍后重试" } });
-          else if (current.error?.kind === "execution") publish({ error: undefined });
-        }
+        ++detailTicket;
+        if (event.outcome && event.outcome !== "cancelled") publish({ error: { kind: "execution", message: RESEARCH_FAILURE_MESSAGES[event.outcome] ?? "调研未完成，请稍后重试" } });
+        else if (current.error?.kind === "execution") publish({ error: undefined });
         void refresh();
       } else if (event.type === "tool_activity" && event.stage === "raw") {
         const active = current.state.active;
@@ -150,13 +148,13 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
             ...(event.errorCode === undefined ? {} : { errorCode: event.errorCode }),
           } } } });
         }
-        if (refreshing || !active) { ++revision; void refresh(); }
+        if (active?.run.id === event.runId && refreshing) { ++revision; void refresh(); }
       } else if (event.type === "text_delta" && event.stage === "raw") {
         const active = current.state.active;
         if (active?.run.id === event.runId && active.run.status === "researching") {
           publish({ state: { ...current.state, active: { ...active, draftText: active.draftText + event.delta } } });
         }
-        if (refreshing || !active) {
+        if (active?.run.id === event.runId && refreshing) {
           ++revision;
           void refresh();
         }
@@ -169,14 +167,10 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         try {
           await assertResearchReady(api, { search: true });
           if (!alive) return;
-          const started = await api.companyResearch.start(itemId, companyId, input);
+          await api.companyResearch.start(itemId, companyId, input);
           if (!alive) return;
-          // A fast run can finish before any active snapshot is observed.
-          // Use only its identity; its returned stage may already be stale.
-          if (started.itemId === itemId && started.companyId === companyId && current.selectedRunId !== started.id) {
-            ++detailTicket;
-            publish({ selectedRunId: started.id, selectedRun: undefined, streamedRaw: undefined });
-          }
+          ++detailTicket;
+          publish({ selectedRunId: undefined, selectedRun: undefined, streamedRaw: undefined });
           ++revision;
           await refresh();
         } catch (error) {
@@ -204,7 +198,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
       },
       async retry(input) {
         const run = current.state.runs.find((entry) => entry.id === current.selectedRunId);
-        if (!alive || current.pending || current.state.globalActiveRun || !run || researchRetryMode(run, input) === "unavailable") return;
+        if (!alive || current.pending || !run || researchRetryMode(run, input) === "unavailable") return;
         publish({ pending: true, error: undefined });
         try {
           await assertResearchReady(api, { search: researchRetryMode(run, input) === "raw" });
@@ -226,7 +220,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
       },
       async retryStructuring() {
         const run = current.state.runs.find((entry) => entry.id === current.selectedRunId);
-        if (!alive || current.pending || current.state.globalActiveRun || run?.status !== "structure_failed") return;
+        if (!alive || current.pending || run?.status !== "structure_failed") return;
         publish({ pending: true, error: undefined });
         try {
           await assertResearchReady(api, { search: false });
@@ -248,7 +242,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
       async deleteSelected() {
         const deletedId = current.selectedRunId;
         const deletedIndex = current.state.runs.findIndex((run) => run.id === deletedId);
-        if (!alive || current.pending || current.state.globalActiveRun || deletedId === undefined || deletedIndex < 0) return;
+        if (!alive || current.pending || deletedId === undefined || deletedIndex < 0) return;
         publish({ pending: true, error: undefined });
         try {
           await api.companyResearch.deleteRun(itemId, companyId, deletedId);

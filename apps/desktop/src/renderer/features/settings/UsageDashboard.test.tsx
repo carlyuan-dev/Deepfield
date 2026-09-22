@@ -44,6 +44,7 @@ const trendPoint = (overrides: Partial<UsageTrendPoint> & Pick<UsageTrendPoint, 
 });
 
 const dashboard = (overrides: Partial<UsageDashboard> = {}): UsageDashboard => ({
+  inFlightRequests: 0,
   summary: summary(),
   daily: [],
   trend: {
@@ -54,6 +55,8 @@ const dashboard = (overrides: Partial<UsageDashboard> = {}): UsageDashboard => (
     selectedModel: null,
   },
   providers: [],
+  unknownUsage: { dismissibleCount: 0, networkFailureCount: 0, otherFailureCount: 0, nonDismissibleCount: 0, partialCount: 0, incompleteAttemptCount: 0, snapshot: [], acknowledgeSnapshot: [] },
+  historicalNotice: { droppedRecords: 0, interruptedRequests: 0, fingerprint: null },
   health: {
     collectionStartedAt: "2026-09-01T16:00:00.000Z",
     lastInitializedAt: "2026-09-18T00:00:00.000Z",
@@ -61,8 +64,10 @@ const dashboard = (overrides: Partial<UsageDashboard> = {}): UsageDashboard => (
     previousUncleanShutdown: false,
     interruptedRequests: 0,
     pendingRecords: 0,
+    recoverableRecords: 0,
     failedRecords: 0,
     droppedRecords: 0,
+    currentFailure: false,
     lastErrorCode: null,
     degraded: false,
   },
@@ -73,6 +78,7 @@ const dashboard = (overrides: Partial<UsageDashboard> = {}): UsageDashboard => (
 });
 
 const llmDashboard = (): UsageDashboard => dashboard({
+  unknownUsage: { dismissibleCount: 0, networkFailureCount: 0, otherFailureCount: 0, nonDismissibleCount: 1, partialCount: 3, incompleteAttemptCount: 1, snapshot: [], acknowledgeSnapshot: ["success@unknown.complete.success"] },
   summary: summary({
     requests: 4,
     succeeded: 3,
@@ -143,6 +149,41 @@ afterEach(() => {
 });
 
 describe("UsageDashboardView", () => {
+  it("explains network-only unknown usage and deletes exactly the displayed snapshot", async () => {
+    const api = makeFakeApi();
+    const first = dashboard({ summary: summary({ requests: 4, failed: 2, unknownUsageRequests: 2, totalTokens: 120 }), unknownUsage: {
+      dismissibleCount: 2, networkFailureCount: 2, otherFailureCount: 0, nonDismissibleCount: 0,
+      partialCount: 0, incompleteAttemptCount: 0, snapshot: [{ attemptId: "a", revision: 2 }, { attemptId: "b", revision: 3 }], acknowledgeSnapshot: [],
+    } });
+    const after = dashboard({ summary: summary({ requests: 2, totalTokens: 120 }) });
+    api.usage.getDashboard.mockResolvedValueOnce(first).mockResolvedValue(after);
+    api.usage.deleteUnknownFailures.mockResolvedValue(2);
+    render(<UsageDashboardView api={api} />);
+    expect(await screen.findByText("2 次网络失败请求未返回 Token 用量")).toBeTruthy();
+    const dismiss = screen.getByRole("button", { name: "永久删除这 2 条失败记录" });
+    expect(dismiss.getAttribute("title")).toContain("永久删除");
+    await userEvent.click(dismiss);
+    expect(api.usage.deleteUnknownFailures).toHaveBeenCalledWith(first.unknownUsage.snapshot);
+    await waitFor(() => expect(api.usage.getDashboard).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("2 次网络失败请求未返回 Token 用量")).toBeNull();
+    expect(screen.getByText("120")).toBeTruthy();
+  });
+  it("refreshes the current filter after a pending deletion instead of restoring stale LLM data", async () => {
+    const api = makeFakeApi();
+    let finishDelete!: () => void;
+    api.usage.deleteUnknownFailures.mockImplementation(() => new Promise<number>((resolve) => { finishDelete = () => resolve(1); }));
+    const llm = dashboard({ summary: summary({ requests: 1, failed: 1, unknownUsageRequests: 1 }), unknownUsage: { dismissibleCount: 1, networkFailureCount: 1, otherFailureCount: 0, nonDismissibleCount: 0, partialCount: 0, incompleteAttemptCount: 0, snapshot: [{ attemptId: "a", revision: 2 }], acknowledgeSnapshot: [] } });
+    api.usage.getDashboard.mockImplementation(async ({ serviceKind }) => serviceKind === "search" ? searchDashboard() : llm);
+    render(<UsageDashboardView api={api} />);
+    await screen.findByText("1 次网络失败请求未返回 Token 用量");
+    await userEvent.click(screen.getByRole("button", { name: "永久删除这 1 条失败记录" }));
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(api.usage.getDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ serviceKind: "search" })));
+    await act(async () => { finishDelete(); });
+    await waitFor(() => expect(api.usage.getDashboard).toHaveBeenCalledTimes(3));
+    expect(api.usage.getDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ serviceKind: "search" }));
+    expect(within(screen.getByLabelText("用量概览")).getByText("Search 请求次数")).toBeTruthy();
+  });
   it("shows all-model totals plus fixed request and truthful token charts for the selected model", async () => {
     const api = makeFakeApi();
     api.usage.getDashboard.mockResolvedValue(llmDashboard());
@@ -154,7 +195,7 @@ describe("UsageDashboardView", () => {
     expect(within(screen.getByLabelText("已记录输入 Token")).getByText("120")).toBeTruthy();
     expect(within(screen.getByLabelText("已记录输出 Token")).getByText("未知")).toBeTruthy();
     expect(screen.getByText("全部模型的全局用量")).toBeTruthy();
-    expect(screen.getByText("1 次请求用量未知")).toBeTruthy();
+    expect(screen.getByText("1 次请求用量未知，记录不可删除")).toBeTruthy();
     expect(screen.getByText("3 次请求仅部分上报")).toBeTruthy();
     expect(screen.getByText("1 次请求的实际尝试数可能不完整")).toBeTruthy();
     expect(screen.getByText("仅统计本应用可观测用量，不代表服务商账单或剩余额度。")).toBeTruthy();
@@ -482,6 +523,7 @@ describe("UsageDashboardView", () => {
       health: {
         ...dashboard().health,
         degraded: true,
+        currentFailure: true,
         previousUncleanShutdown: true,
         interruptedRequests: 2,
         pendingRecords: 3,
@@ -492,11 +534,10 @@ describe("UsageDashboardView", () => {
     }));
     render(<UsageDashboardView api={api} />);
 
-    expect(await screen.findByText("统计记录可能不完整")).toBeTruthy();
-    expect(screen.getByText(/待写入 3.*写入失败 4.*已丢弃 1.*中断 2/)).toBeTruthy();
-    expect(screen.getByText(/write_failed/)).toBeTruthy();
+    expect(await screen.findByText("用量记录当前不可用")).toBeTruthy();
+    expect(screen.getByText(/待重试 0 条/)).toBeTruthy();
+    expect(screen.getByText("部分用量记录尚未写入")).toBeTruthy();
     expect(screen.queryByText(/统计启用时间/)).toBeNull();
-    expect(screen.getByText(/上次退出异常/)).toBeTruthy();
   });
 
   it("does not invent a model identity when the ledger is empty", async () => {

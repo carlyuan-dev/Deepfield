@@ -5,6 +5,8 @@ export {
 export {
   CompanyResearchService,
   CompanyResearchServiceError,
+  RAW_RESEARCH_POLICY,
+  STRUCTURE_RESEARCH_POLICY,
 } from "./company-research-service.js";
 export { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 export {
@@ -12,6 +14,7 @@ export {
   StructuredResearchValidationError,
   extractMarkdownSources,
   parseStructuredCandidate,
+  validateStructuredResearchContent,
   validateStructuredResearch,
 } from "./company-research-harness.js";
 export type {

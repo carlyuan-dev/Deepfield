@@ -19,6 +19,15 @@ const SKILL_OPTIONS = { webSearch: false, skillName: "structured-brief" };
 const CONVERSATION_ID = "conv-1";
 
 describe("ipc handlers", () => {
+  it("validates and delegates the bounded unknown-usage deletion snapshot", async () => {
+    const deleteUnknownFailures = vi.fn(async () => 1);
+    const { ipcMain } = makeDeps({ usage: { getDashboard: vi.fn(), deleteUnknownFailures, repair: vi.fn(), acknowledgeUnknownUsage: vi.fn(), acknowledgeHistoricalIssues: vi.fn() } });
+    const snapshot = [{ attemptId: "attempt-1", revision: 2 }];
+    await expect(ipcMain.invoke(IPC_CHANNELS.usageDeleteUnknownFailures, event(new FakeWebContents(1)), snapshot)).resolves.toEqual({ ok: true, value: 1 });
+    expect(deleteUnknownFailures).toHaveBeenCalledWith(snapshot);
+    await expect(ipcMain.invoke(IPC_CHANNELS.usageDeleteUnknownFailures, event(new FakeWebContents(1)), [{ attemptId: "bad id", revision: 2 }])).resolves.toMatchObject({ ok: false });
+    expect(deleteUnknownFailures).toHaveBeenCalledTimes(1);
+  });
   it("resumes profile queue after real Settings activation, not reads or diagnostics", async () => {
     const { ipcMain, companyProfiles } = makeDeps(); const sender = new FakeWebContents(1);
     await ipcMain.invoke(IPC_CHANNELS.settingsGet, event(sender));

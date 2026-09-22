@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { createHash } from "node:crypto";
 import { CompanyProfileCandidateSchema, type CompanyProfileDiagnostic, type ProfileSchemaIssue, type CompanyProfileResult, type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent, type ProfileSource, type ProfileSourceRef } from "../contracts/index.js";
 import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/retrieval/output-contracts";
 import type { CompanyAgentRuntime } from "./ports.js";
@@ -12,11 +13,21 @@ import {
 
 const key = (ref: ProfileSourceRef): string => `${ref.kind}:${ref.url}`;
 const publicUrl = (url: string): boolean => { try { return ["https:", "http:"].includes(new URL(url).protocol); } catch { return false; } };
+type EvidenceDetail = NonNullable<CompanyProfileDiagnostic["evidenceDetail"]>;
+const diagnosticUrl = (raw: string): string => {
+  try {
+    const url = new URL(raw);
+    if (!publicUrl(raw)) return "https://invalid.invalid/";
+    url.username = ""; url.password = ""; url.search = ""; url.hash = "";
+    return url.toString().slice(0, 500);
+  } catch { return "https://invalid.invalid/"; }
+};
+const diagnosticRef = (ref: ProfileSourceRef) => ({ url: diagnosticUrl(ref.url), urlFingerprint: createHash("sha256").update(ref.url).digest("hex").slice(0, 16), kind: ref.kind });
 class ProfileFailure extends Error {
   constructor(readonly code: "search_unavailable" | "invalid_evidence" | "agent_failed",
     readonly reason: CompanyProfileDiagnostic["code"] = code === "invalid_evidence" ? "schema_invalid" : code,
     readonly phase: CompanyProfileDiagnostic["phase"] = "evidence",
-    readonly path?: string, readonly schemaIssues: ProfileSchemaIssue[] = []) { super(code); }
+    readonly path?: string, readonly schemaIssues: ProfileSchemaIssue[] = [], readonly detail?: EvidenceDetail) { super(code); }
 }
 
 /** Only called with successful registry outputs, never model text or progress events. */
@@ -42,12 +53,24 @@ export class ProfileEvidenceLedger {
   }
   validate(value: unknown): CompanyProfileResult {
     this.requireSearch();
-    if (!Value.Check(CompanyProfileCandidateSchema, value)) throw new ProfileFailure("invalid_evidence", "schema_invalid", "schema", undefined, profileSchemaIssues(value));
+    if (!Value.Check(CompanyProfileCandidateSchema, value)) {
+      const record = value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+      const identity = record?.identity && typeof record.identity === "object" ? record.identity as Record<string, unknown> : undefined;
+      const emptyIdentity = Array.isArray(identity?.sources) && identity.sources.length === 0 ? "/identity/sources" : undefined;
+      const fieldEvidence = record?.fieldEvidence && typeof record.fieldEvidence === "object" ? record.fieldEvidence as Record<string, unknown> : undefined;
+      const emptyField = Object.entries(fieldEvidence ?? {}).find(([, refs]) => Array.isArray(refs) && refs.length === 0)?.[0];
+      const emptyPath = emptyIdentity ?? (emptyField ? safeProfilePath(`/fieldEvidence/${emptyField}`) : undefined);
+      const detail = emptyPath ? this.detail("empty_refs", emptyPath) : undefined;
+      throw new ProfileFailure("invalid_evidence", "schema_invalid", "schema", undefined, profileSchemaIssues(value), detail);
+    }
     const referenced = new Set<string>();
     const verify = (refs: ProfileSourceRef[], path: string): void => {
-      if (!refs.length) throw new ProfileFailure("invalid_evidence", "source_missing", "evidence", path);
+      if (!refs.length) throw new ProfileFailure("invalid_evidence", "source_missing", "evidence", path, [], this.detail("empty_refs", path));
       for (const ref of refs) {
-        if (!this.sources.has(key(ref))) throw new ProfileFailure("invalid_evidence", [...this.sources.values()].some((source) => source.url === ref.url) ? "kind_mismatch" : "source_missing", "evidence", path);
+        if (!this.sources.has(key(ref))) {
+          const mismatch = [...this.sources.values()].some((source) => source.url === ref.url);
+          throw new ProfileFailure("invalid_evidence", mismatch ? "kind_mismatch" : "source_missing", "evidence", path, [], this.detail(mismatch ? "kind_mismatch" : "url_absent", path, ref));
+        }
         referenced.add(key(ref));
       }
     };
@@ -64,6 +87,12 @@ export class ProfileEvidenceLedger {
       throw new ProfileFailure("invalid_evidence", "identity", "evidence", "/identity");
     }
     return { ...value, sources: [...referenced].map((id) => this.sources.get(id)!) };
+  }
+  private detail(reason: EvidenceDetail["reason"], path: string, modelRef?: ProfileSourceRef): EvidenceDetail {
+    const allCandidates = [...this.sources.values()].filter((source) => reason !== "kind_mismatch" || source.url === modelRef?.url);
+    const candidates = allCandidates.slice(0, 40);
+    return { reason, path, ...(modelRef ? { modelRef: diagnosticRef(modelRef) } : {}),
+      actualSources: candidates.map(diagnosticRef), totalSourceCount: allCandidates.length, truncated: allCandidates.length > candidates.length };
   }
 }
 
@@ -92,6 +121,7 @@ export function createCompanyProfileAgent(options: { runtime: CompanyAgentRuntim
     const diagnostic = (phase: CompanyProfileDiagnostic["phase"], code: CompanyProfileDiagnostic["code"], error?: unknown): void => {
       emit({ ...identity, type: "diagnostic", phase, code, schemaIssues: error instanceof ProfileFailure ? error.schemaIssues : [],
         ...(error instanceof ProfileFailure && error.path !== undefined ? { path: error.path } : {}),
+        ...(error instanceof ProfileFailure && error.detail !== undefined ? { evidenceDetail: error.detail } : {}),
         ...ledger.counts(), searchToolCalls, readToolCalls, outputChars,
         ...(options.runtime.classifyError(error) ? { piError: options.runtime.classifyError(error)! } : {}),
         ...(formatRepair === undefined ? {} : { formatRepair }),

@@ -132,8 +132,11 @@ export class CompanyResearchService {
         if (this.disposed || interrupted?.() || cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
         try {
           const requestId = this.options.requestIdFactory();
-          const active = this.repositories.runInTransaction(() =>
-            this.repositories.companyResearchRuns.retryStructuring(saved.id, this.now().toISOString()));
+          const active = this.repositories.runInTransaction(() => {
+            const retried = this.repositories.companyResearchRuns.retryStructuring(saved.id, this.now().toISOString());
+            this.onOwnedRunCreated?.(retried);
+            return retried;
+          });
           this.launch(active, requestId, llm);
           return structuredClone(active);
         } catch {
@@ -148,9 +151,13 @@ export class CompanyResearchService {
       if (this.disposed || interrupted?.() || cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
       try {
         const requestId = this.options.requestIdFactory();
-        const active = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.retryResearching(
-          saved.id, normalized, context, template, this.now().toISOString(),
-        ));
+        const active = this.repositories.runInTransaction(() => {
+          const retried = this.repositories.companyResearchRuns.retryResearching(
+            saved.id, normalized, context, template, this.now().toISOString(),
+          );
+          this.onOwnedRunCreated?.(retried);
+          return retried;
+        });
         this.launch(active, requestId, llm, search);
         return structuredClone(active);
       } catch {
@@ -161,8 +168,8 @@ export class CompanyResearchService {
     }
   }
 
-  async retryStructuring(itemId: string, companyId: string, runId: string): Promise<KeyResearchRun> {
-    this.requireAvailable();
+  async retryStructuring(itemId: string, companyId: string, runId: string, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<KeyResearchRun> {
+    this.requireAvailable(owner);
     const saved = this.getRun(itemId, companyId, runId);
     if (saved?.schemaVersion !== "company-research-report-v1" || saved.status !== "structure_failed") {
       throw new CompanyResearchServiceError("company research cannot be restructured", "BUSINESS.CONFLICT");
@@ -172,12 +179,16 @@ export class CompanyResearchService {
       let llm: LlmRuntimeSnapshot;
       try { llm = await this.profiles.resolveActiveLlm(); }
       catch (error) { throw new AppError(toPublicError(error).code, toPublicError(error).context, { cause: error }); }
-      if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
+      if (this.disposed || interrupted?.() || cancelled?.()) throw new AppError("BUSINESS.CONFLICT");
       try {
         const requestId = this.options.requestIdFactory();
-        const active = this.repositories.runInTransaction(() =>
-          this.repositories.companyResearchRuns.retryStructuring(saved.id, this.now().toISOString()));
+        const active = this.repositories.runInTransaction(() => {
+          const retried = this.repositories.companyResearchRuns.retryStructuring(saved.id, this.now().toISOString());
+          this.onOwnedRunCreated?.(retried);
+          return retried;
+        });
         this.launch(active, requestId, llm);
+        if (!this.disposed && !interrupted?.() && cancelled?.() && this.isActiveRun(active.id)) void this.cancel(active.id);
         return structuredClone(active);
       } catch {
         throw new CompanyResearchServiceError("company research could not retry", "STORAGE.FAILED");
@@ -261,7 +272,6 @@ export class CompanyResearchService {
     if (saved === undefined || saved.status === "researching" || saved.status === "structuring") {
       throw new CompanyResearchServiceError("company research cannot be deleted");
     }
-    this.requireAvailable();
     try {
       this.repositories.runInTransaction(() => {
         const traceIds = this.repositories.companyResearchDiagnostics.deleteByRunId(runId);

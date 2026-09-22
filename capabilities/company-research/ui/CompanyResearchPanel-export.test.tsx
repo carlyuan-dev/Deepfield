@@ -114,4 +114,25 @@ describe("company research Word export", () => {
     view.rerender(<CompanyResearchPanel api={api} {...context} itemId="item-two" companyId="company-two" companyName="第二家公司" />); await screen.findByText("第二家公司正文");
     await act(async () => saving.resolve({ status: "saved" })); expect(screen.queryByText("Word 报告已保存。")).toBeNull();
   });
+
+  it("keeps an open export choice stable when another company streams tool and text events", async () => {
+    const api = makeFakeApi(); const user = userEvent.setup(); const run = researchRun();
+    api.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    api.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={api} {...context} />);
+    await user.click(await screen.findByRole("button", { name: "导出 Word" }));
+    expect(api.companyResearch.getState).toHaveBeenCalledTimes(1);
+    expect(api.companyResearch.getRun).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      api.emitResearch({ type: "tool_activity", requestId: "foreign-request", runId: "foreign-run", stage: "raw", callKey: "call-1", name: "web_search", status: "running" });
+      api.emitResearch({ type: "text_delta", requestId: "foreign-request", runId: "foreign-run", stage: "raw", delta: "foreign text" });
+      api.emitResearch({ type: "state_changed", itemId: "other-item", companyId: "other-company", runId: "foreign-run" });
+    });
+
+    expect(screen.getByRole("dialog", { name: "选择导出内容" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "确认导出" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(api.companyResearch.getState).toHaveBeenCalledTimes(1);
+    expect(api.companyResearch.getRun).toHaveBeenCalledTimes(1);
+  });
 });

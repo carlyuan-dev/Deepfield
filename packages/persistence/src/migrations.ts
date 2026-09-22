@@ -552,6 +552,17 @@ MIGRATIONS.push({ version: 22, up(db) {
   );`);
 } });
 
+MIGRATIONS.push({ version: 23, up(db) {
+  db.exec(`CREATE TABLE usage_attempt_acknowledgements(
+    attempt_id TEXT NOT NULL REFERENCES usage_attempts(attempt_id) ON DELETE CASCADE,
+    signature TEXT NOT NULL, acknowledged_at TEXT NOT NULL,
+    PRIMARY KEY(attempt_id, signature)
+  );
+  CREATE TABLE usage_history_acknowledgement(
+    id INTEGER PRIMARY KEY CHECK(id = 1), dropped_records INTEGER NOT NULL, interrupted_requests INTEGER NOT NULL
+  );`);
+} });
+
 export function migrate(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {

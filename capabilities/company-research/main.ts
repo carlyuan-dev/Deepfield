@@ -79,20 +79,24 @@ export function registerCompanyResearchOperations(registrar: CapabilityRegistrar
     if (!services.industryResearch.getItem(itemId as import("@deepfield/contracts").CapabilityItemId)) throw new AppError("RESOURCE.NOT_FOUND");
     return services.companyProfiles.getProgress(itemId as import("@deepfield/contracts").CapabilityItemId);
   });
+  register("companyResearch", "start", C.CompanyResearchStartArgsSchema, C.CompanyResearchBatchStateSchema,
+    (itemId: string, companyId: string, input: C.StartCompanyResearchInput) => services.companyResearchBatch.start(itemId, [{ companyId, input }]));
+  register("companyResearch", "cancel", one, Type.Undefined(), (runId: string) => services.companyResearchBatch.cancelByRunId(runId));
   for (const [method, input, output] of [
-    ["start", C.CompanyResearchStartArgsSchema, C.ResearchRunSchema],
-    ["cancel", one, Type.Undefined()], ["getState", two, C.CompanyResearchStateSchema],
+    ["getState", two, C.CompanyResearchStateSchema],
     ["listRuns", two, Type.Array(C.ResearchRunSummarySchema)],
     ["getRun", C.CompanyResearchGetRunArgsSchema, optional(C.ResearchRunSchema)],
-    ["retryStructuring", C.CompanyResearchRetryStructuringArgsSchema, C.ResearchRunSchema],
-    ["retryFailed", C.CompanyResearchRetryFailedArgsSchema, C.ResearchRunSchema],
     ["deleteRun", C.CompanyResearchDeleteRunArgsSchema, Type.Undefined()],
   ] as const) register("companyResearch", method, input, output);
+  register("companyResearch", "retryStructuring", C.CompanyResearchRetryStructuringArgsSchema, C.CompanyResearchBatchStateSchema,
+    (itemId: string, companyId: string, runId: string) => services.companyResearchBatch.enqueueRetryStructuring(itemId, companyId, runId));
+  register("companyResearch", "retryFailed", C.CompanyResearchRetryFailedArgsSchema, C.CompanyResearchBatchStateSchema,
+    (itemId: string, companyId: string, runId: string, input: C.StartCompanyResearchInput) => services.companyResearchBatch.enqueueRetryFailed(itemId, companyId, runId, input));
   register("companyResearch", "exportWord", C.CompanyResearchExportArgsSchema, C.CompanyResearchWordExportResultSchema, (...args: Parameters<typeof services.companyResearchWordExport.export>) => services.companyResearchWordExport.export(...args));
   for (const [method, input, output] of [
     ["start", C.CompanyResearchBatchStartArgsSchema, C.CompanyResearchBatchStateSchema],
     ["getState", one, Type.Union([C.CompanyResearchBatchStateSchema, Type.Null()])],
-    ["cancel", one, Type.Undefined()], ["resume", one, C.CompanyResearchBatchStateSchema],
+    ["cancel", one, Type.Undefined()], ["cancelEntry", C.CompanyResearchQueueCancelEntryArgsSchema, Type.Undefined()], ["resume", one, C.CompanyResearchBatchStateSchema],
   ] as const) register("companyResearchBatch", method, input, output);
   register("settings", "get", empty, SettingsViewSchema);
   for (const [topic, schema, subscribe] of [

@@ -2,12 +2,12 @@
 import { vi, type Mock } from "vitest";
 import type { UsageDashboard, UsageDashboardApi } from "@deepfield/base/usage";
 import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, ChatSendResult, Conversation, ConversationId, DesktopApi as HostDesktopApi, MessageId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult } from "@deepfield/contracts";
-import type { CapabilityItem, Company, CompanyProfileInput, CompanyProfileIdentityHint, CompanyProfileEvent, CompanyDraft, CompanyResearchState, CompanyResearchEvent, ResearchRunSummary, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
+import type { CapabilityItem, Company, CompanyProfileInput, CompanyProfileIdentityHint, CompanyProfileEvent, CompanyDraft, CompanyResearchState, CompanyResearchEvent, CompanyResearchBatchState, ResearchRunSummary, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
 
 type DesktopApi = HostDesktopApi & import("../../../../capabilities/company-research/contracts/api.js").CompanyResearchApi;
 
 export interface FakeDesktopApi extends DesktopApi {
-  usage: { getDashboard: Mock<UsageDashboardApi["getDashboard"]> };
+  usage: { getDashboard: Mock<UsageDashboardApi["getDashboard"]>; deleteUnknownFailures: Mock<UsageDashboardApi["deleteUnknownFailures"]>; repair: Mock<UsageDashboardApi["repair"]>; acknowledgeUnknownUsage: Mock<UsageDashboardApi["acknowledgeUnknownUsage"]>; acknowledgeHistoricalIssues: Mock<UsageDashboardApi["acknowledgeHistoricalIssues"]> };
   companyResearchBatch: { [K in keyof DesktopApi["companyResearchBatch"]]: Mock<DesktopApi["companyResearchBatch"][K]> };
   conversations: {
     setWebSearchEnabled: Mock<DesktopApi["conversations"]["setWebSearchEnabled"]>;
@@ -129,7 +129,11 @@ export function makeFakeApi(): FakeDesktopApi {
   const profileListeners = new Set<(event: CompanyProfileEvent) => void>();
   const api = {
     usage: {
+      repair: vi.fn(async () => ({ repaired: true, recoveredRecords: 0, errorCode: null })),
+      acknowledgeUnknownUsage: vi.fn(async () => 0),
+      acknowledgeHistoricalIssues: vi.fn(async () => true),
       getDashboard: vi.fn(async (): Promise<UsageDashboard> => ({
+        inFlightRequests: 0,
         summary: {
           requests: 0,
           running: 0,
@@ -178,6 +182,8 @@ export function makeFakeApi(): FakeDesktopApi {
           selectedModel: null,
         },
         providers: [],
+        unknownUsage: { dismissibleCount: 0, networkFailureCount: 0, otherFailureCount: 0, nonDismissibleCount: 0, partialCount: 0, incompleteAttemptCount: 0, snapshot: [], acknowledgeSnapshot: [] },
+        historicalNotice: { droppedRecords: 0, interruptedRequests: 0, fingerprint: null },
         health: {
           collectionStartedAt: "2026-09-01T00:00:00.000Z",
           lastInitializedAt: "2026-09-01T00:00:00.000Z",
@@ -185,8 +191,10 @@ export function makeFakeApi(): FakeDesktopApi {
           previousUncleanShutdown: false,
           interruptedRequests: 0,
           pendingRecords: 0,
+          recoverableRecords: 0,
           failedRecords: 0,
           droppedRecords: 0,
+          currentFailure: false,
           lastErrorCode: null,
           degraded: false,
         },
@@ -194,6 +202,7 @@ export function makeFakeApi(): FakeDesktopApi {
         to: "2026-10-01T00:00:00.000Z",
         timeZone: "Asia/Shanghai",
       })),
+      deleteUnknownFailures: vi.fn(async () => 0),
     },
     copyText: vi.fn(async (): Promise<void> => {}),
     conversations: {
@@ -258,7 +267,7 @@ export function makeFakeApi(): FakeDesktopApi {
       }),
     },
     companyResearchBatch: {
-      start: vi.fn(async () => { throw new Error("batch start not configured"); }), getState: vi.fn(async () => null), cancel: vi.fn(async () => {}), resume: vi.fn(async () => { throw new Error("batch resume not configured"); }), subscribe: vi.fn(() => () => {}),
+      start: vi.fn(async () => { throw new Error("batch start not configured"); }), getState: vi.fn(async () => null), cancel: vi.fn(async () => {}), cancelEntry: vi.fn(async () => {}), resume: vi.fn(async () => { throw new Error("batch resume not configured"); }), subscribe: vi.fn(() => () => {}),
     },
     companyResearch: {
       start: vi.fn(async (): Promise<ResearchRun> => {

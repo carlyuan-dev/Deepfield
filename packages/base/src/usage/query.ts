@@ -1,15 +1,13 @@
-import type { UsageAttempt, UsageSummary, UsageQuery, UsageDailyPoint, UsageProviderBreakdown, UsageHealth, UsageRepository, UsageQueryService, UsageDashboardQuery, UsageTrendSummary, UsageTrend, UsageTrendPoint, UsageModelIdentity } from "./contracts.js";
+import type { UsageAttempt, UsageSummary, UsageQuery, UsageDailyPoint, UsageProviderBreakdown, UsageHealth, UsageRepository, UsageQueryService, UsageDashboardQuery, UsageTrendSummary, UsageTrend, UsageTrendPoint, UsageModelIdentity, UsageUnknownNotice } from "./contracts.js";
 import { dateAt, shiftDate, startOfDate, resolveDashboardQuery, validateUsageQuery } from "./dates.js";
 
 const metrics = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "resultCount"] as const;
 const tokenMetrics = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens"] as const;
-const rejectedRequestCodes = new Set(["http_400", "http_401", "http_403", "http_404", "http_422"]);
 function isUsageRecord(record: UsageAttempt): boolean {
-  // Keep the raw ledger intact; only omit definite pre-inference rejections
-  // without token evidence from the usage projection.
-  return record.serviceKind !== "llm" || record.outcome !== "failed"
-    || !rejectedRequestCodes.has(record.errorCode ?? "")
-    || tokenMetrics.some((key) => (record[key] ?? 0) > 0);
+  if (record.serviceKind !== "llm") return true;
+  if (record.outcome === "running") return false;
+  if (record.outcome === "succeeded") return true;
+  return tokenMetrics.some((key) => record[key] !== null);
 }
 function summarize(records: UsageAttempt[]): UsageSummary {
   const summary: UsageSummary = {
@@ -34,6 +32,23 @@ function summarize(records: UsageAttempt[]): UsageSummary {
     if (record.attemptCountStatus === "incomplete") summary.incompleteAttemptCountRequests++;
   }
   return summary;
+}
+const hasNoTokenMetrics = (record: UsageAttempt): boolean => tokenMetrics.every((key) => record[key] === null);
+const deletableUnknown = (record: UsageAttempt): boolean => record.serviceKind === "llm" && record.outcome !== "running" && record.outcome !== "succeeded" && hasNoTokenMetrics(record);
+function unknownUsageNotice(records: UsageAttempt[], repository: UsageRepository): UsageUnknownNotice {
+  const unknown = records.filter((record) => record.serviceKind === "llm" && record.usageStatus === "unknown");
+  const eligible = unknown.filter(deletableUnknown).slice(0, 1000);
+  const signature = (record: UsageAttempt) => `${record.usageStatus}.${record.attemptCountStatus}.${record.outcome === "succeeded" ? "success" : "terminal"}`;
+  const acknowledgeable = records.filter((record) => record.outcome !== "running" && !deletableUnknown(record)
+    && ((record.serviceKind === "llm" && record.usageStatus !== "reported") || record.attemptCountStatus === "incomplete")
+    && !repository.isNoticeAcknowledged?.("unknown_usage", `${record.attemptId}@${signature(record)}`)).slice(0, 1000);
+  const networkFailureCount = eligible.filter((record) => record.errorCode === "network_failed").length;
+  return { dismissibleCount: eligible.length, networkFailureCount, otherFailureCount: eligible.length - networkFailureCount,
+    nonDismissibleCount: acknowledgeable.filter((record) => record.usageStatus === "unknown").length,
+    partialCount: acknowledgeable.filter((record) => record.usageStatus === "partial").length,
+    incompleteAttemptCount: acknowledgeable.filter((record) => record.attemptCountStatus === "incomplete").length,
+    snapshot: eligible.map(({ attemptId, revision }) => ({ attemptId, revision })),
+    acknowledgeSnapshot: acknowledgeable.map((record) => `${record.attemptId}@${signature(record)}`) };
 }
 function summarizeTrend(records: UsageAttempt[]): UsageTrendSummary {
   const result: UsageTrendSummary = { ...summarize(records), inputCacheHitTokens: null, inputCacheMissTokens: null, inputCacheUnknownTokens: null, cacheSplitUnknownRequests: 0 };
@@ -89,14 +104,12 @@ function breakdown(records: UsageAttempt[]): UsageProviderBreakdown[] {
   }).sort((a, b) => b.requests - a.requests || a.providerId.localeCompare(b.providerId));
 }
 
-function trendSeries(records: UsageAttempt[], rawRecords: UsageAttempt[], input: UsageDashboardQuery, query: UsageQuery, health: UsageHealth, now: Date): UsageTrend {
+function trendSeries(records: UsageAttempt[], input: UsageDashboardQuery, query: UsageQuery, health: UsageHealth, now: Date): UsageTrend {
   const identities = new Map<string, UsageModelIdentity>();
   for (const record of records) {
     if (record.serviceKind === "llm") identities.set(JSON.stringify([record.providerId, record.modelId]), { providerId: record.providerId, modelId: record.modelId! });
   }
   let requested = input.serviceKind === "llm" ? input.model : undefined;
-  if (requested && !identities.has(JSON.stringify([requested.providerId, requested.modelId]))
-    && rawRecords.some((record) => record.serviceKind === "llm" && record.providerId === requested!.providerId && record.modelId === requested!.modelId)) requested = undefined;
   if (requested) identities.set(JSON.stringify([requested.providerId, requested.modelId]), { ...requested });
   const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   const models = [...identities.values()].sort((a, b) => compare(a.providerId, b.providerId) || compare(a.modelId, b.modelId));
@@ -147,7 +160,17 @@ export function createUsageQueryService(repository: UsageRepository, clock: () =
       const now = clock();
       const query = resolveDashboardQuery(input, now);
       const { records, rawRecords } = read(query); const health = repository.getHealth();
-      return { summary: summarize(records), daily: dailySeries(records, query, health), providers: breakdown(records), trend: trendSeries(records, rawRecords, input, query, health, now), health, from: query.from, to: query.to, timeZone: query.timeZone };
+      const historyKey = `${health.droppedRecords}:${health.interruptedRequests}`;
+      const historicalNotice = health.droppedRecords + health.interruptedRequests > 0 && !repository.isNoticeAcknowledged?.("historical_gap", historyKey)
+        ? { droppedRecords: health.droppedRecords, interruptedRequests: health.interruptedRequests, fingerprint: historyKey }
+        : { droppedRecords: 0, interruptedRequests: 0, fingerprint: null };
+      return { summary: summarize(records), daily: dailySeries(records, query, health), providers: breakdown(records), trend: trendSeries(records, input, query, health, now),
+        inFlightRequests: rawRecords.filter((record) => record.serviceKind === "llm" && record.outcome === "running").length,
+        historicalNotice, unknownUsage: unknownUsageNotice(rawRecords, repository), health, from: query.from, to: query.to, timeZone: query.timeZone };
     },
+    async deleteUnknownFailures(snapshot) { return repository.deleteUnknownFailures(snapshot); },
+    async acknowledgeUnknownUsage(attemptIds) { return repository.acknowledgeNotices?.("unknown_usage", attemptIds) ?? 0; },
+    async acknowledgeHistoricalIssues(fingerprint) { return (repository.acknowledgeNotices?.("historical_gap", [fingerprint]) ?? 0) > 0; },
+    async repair() { repository.probeStorage(); return { repaired: true, recoveredRecords: 0, errorCode: null }; },
   };
 }

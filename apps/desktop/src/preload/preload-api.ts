@@ -1,6 +1,6 @@
 import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { UsageDashboardArgsSchema, UsageDashboardSchema } from "@deepfield/contracts";
+import { UsageDashboardArgsSchema, UsageDashboardSchema, UsageDeleteUnknownFailuresArgsSchema, UsageRepairArgsSchema, UsageRepairResultSchema, UsageAcknowledgeUnknownArgsSchema, UsageAcknowledgeHistoryArgsSchema } from "@deepfield/contracts";
 import type { UsageDashboard } from "@deepfield/base/usage";
 import { toPublicError, PublicAppErrorSchema, DiagnosticResultSchema, AgentWorkerEventSchema, type AgentWorkerEvent, type ChatMessage, type ChatRequestOptions, type ChatSendResult, type Conversation, type DesktopApi, type LlmProfileDraft, type SearchProfileDraft, type SettingsView, type DiagnosticResult, type SkillSummary } from "@deepfield/contracts";
 import { CapabilityCallSchema, CapabilityEventSchema } from "@deepfield/capability-sdk";
@@ -17,6 +17,10 @@ export const IPC_CHANNELS = {
   capabilityUnsubscribe: "deepfield:capability:unsubscribe",
   capabilityEvents: "deepfield:capability:events",
   usageGetDashboard: "deepfield:usage:getDashboard",
+  usageDeleteUnknownFailures: "deepfield:usage:deleteUnknownFailures",
+  usageRepair: "deepfield:usage:repair",
+  usageAcknowledgeUnknown: "deepfield:usage:acknowledgeUnknown",
+  usageAcknowledgeHistory: "deepfield:usage:acknowledgeHistory",
   copyText: "deepfield:clipboard:copyText",
   conversationsCreate: "deepfield:conversations:create",
   conversationsSetWebSearchEnabled: "deepfield:conversations:setWebSearchEnabled",
@@ -94,6 +98,18 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
     usage: { getDashboard: (query) => {
       if (!Value.Check(UsageDashboardArgsSchema, [query])) return Promise.reject(toPublicError(undefined));
       return invokeResult<UsageDashboard>(IPC_CHANNELS.usageGetDashboard, UsageDashboardSchema, query);
+    }, deleteUnknownFailures: (snapshot) => {
+      if (!Value.Check(UsageDeleteUnknownFailuresArgsSchema, [snapshot])) return Promise.reject(toPublicError(undefined));
+      return invokeResult<number>(IPC_CHANNELS.usageDeleteUnknownFailures, Type.Integer({ minimum: 0 }), snapshot);
+    }, repair: () => {
+      if (!Value.Check(UsageRepairArgsSchema, [])) return Promise.reject(toPublicError(undefined));
+      return invokeResult(IPC_CHANNELS.usageRepair, UsageRepairResultSchema);
+    }, acknowledgeUnknownUsage: (attemptIds) => {
+      if (!Value.Check(UsageAcknowledgeUnknownArgsSchema, [attemptIds])) return Promise.reject(toPublicError(undefined));
+      return invokeResult<number>(IPC_CHANNELS.usageAcknowledgeUnknown, Type.Integer({ minimum: 0 }), attemptIds);
+    }, acknowledgeHistoricalIssues: (fingerprint) => {
+      if (!Value.Check(UsageAcknowledgeHistoryArgsSchema, [fingerprint])) return Promise.reject(toPublicError(undefined));
+      return invokeResult<boolean>(IPC_CHANNELS.usageAcknowledgeHistory, Type.Boolean(), fingerprint);
     } },
     copyText: (text) => ipc.invoke(IPC_CHANNELS.copyText, text) as Promise<void>,
     conversations: {

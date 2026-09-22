@@ -2,7 +2,7 @@ import { registerCapabilityIpc } from "./capabilities/ipc.js";
 import type { CapabilityRegistry } from "./capabilities/registry.js";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { UsageDashboardArgsSchema } from "@deepfield/contracts";
+import { UsageDashboardArgsSchema, UsageDeleteUnknownFailuresArgsSchema } from "@deepfield/contracts";
 import type { UsageDashboardApi } from "@deepfield/base/usage";
 import { AppError, appResult, ChatRequestOptionsSchema, CopyTextArgsSchema, ConversationDeleteArgsSchema, SettingsGetArgsSchema, SettingsLlmDraftArgsSchema, SettingsSearchDraftArgsSchema, SettingsProfileIdArgsSchema, SettingsDeleteProfileArgsSchema, type AgentWorkerEvent, type ChatMessage, type ChatRequestOptions, type ChatSendResult, type Conversation, type SkillSummary, type LlmProfileDraft, type SearchProfileDraft, type SettingsView, type DiagnosticResult,  } from "@deepfield/contracts";
 import { IPC_CHANNELS } from "../preload/preload-api.js";
@@ -80,6 +80,10 @@ export interface IpcServiceDeps {
 
 const INVOKE_CHANNELS = [
   IPC_CHANNELS.usageGetDashboard,
+  IPC_CHANNELS.usageDeleteUnknownFailures,
+  IPC_CHANNELS.usageRepair,
+  IPC_CHANNELS.usageAcknowledgeUnknown,
+  IPC_CHANNELS.usageAcknowledgeHistory,
   IPC_CHANNELS.copyText,
   IPC_CHANNELS.conversationsCreate,
   IPC_CHANNELS.conversationsSetWebSearchEnabled,
@@ -107,6 +111,27 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     try { new Intl.DateTimeFormat("en", { timeZone: args[0].timeZone }).format(); } catch { throw new AppError("INPUT.INVALID"); }
     if (!deps.usage) throw new AppError("INTERNAL.UNKNOWN");
     return deps.usage.getDashboard(args[0]);
+  }));
+  deps.ipcMain.handle(IPC_CHANNELS.usageDeleteUnknownFailures, async (_event, ...args) => appResult(async () => {
+    if (!Value.Check(UsageDeleteUnknownFailuresArgsSchema, args)) throw new AppError("INPUT.INVALID");
+    if (!deps.usage) throw new AppError("INTERNAL.UNKNOWN");
+    return deps.usage.deleteUnknownFailures(args[0]);
+  }));
+  deps.ipcMain.handle(IPC_CHANNELS.usageRepair, async (_event, ...args) => appResult(async () => {
+    if (args.length !== 0) throw new AppError("INPUT.INVALID");
+    if (!deps.usage) throw new AppError("INTERNAL.UNKNOWN");
+    return deps.usage.repair();
+  }));
+  deps.ipcMain.handle(IPC_CHANNELS.usageAcknowledgeUnknown, async (_event, ...args) => appResult(async () => {
+    const value = args[0];
+    if (args.length !== 1 || !Array.isArray(value) || value.length > 1000 || value.some((id) => typeof id !== "string" || id.length > 300 || !/^[A-Za-z0-9][A-Za-z0-9_.:/@+~-]*$/.test(id))) throw new AppError("INPUT.INVALID");
+    if (!deps.usage) throw new AppError("INTERNAL.UNKNOWN");
+    return deps.usage.acknowledgeUnknownUsage(value as string[]);
+  }));
+  deps.ipcMain.handle(IPC_CHANNELS.usageAcknowledgeHistory, async (_event, ...args) => appResult(async () => {
+    if (args.length !== 1 || typeof args[0] !== "string" || !/^\d+:\d+$/.test(args[0])) throw new AppError("INPUT.INVALID");
+    if (!deps.usage) throw new AppError("INTERNAL.UNKNOWN");
+    return deps.usage.acknowledgeHistoricalIssues(args[0]);
   }));
   const senders = new Map<number, WebContentsLike>();
   const destroyedListeners = new Map<number, () => void>();

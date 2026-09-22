@@ -1,4 +1,4 @@
-import { getCompanyResearchTemplate, type KeyResearchRun, type ResearchRun, type ResearchRunSummary, type CompanyResearchState } from "../contracts/index.js";
+import { getCompanyResearchTemplate, type KeyResearchRun, type ResearchRun, type ResearchRunSummary, type CompanyResearchState, type CompanyResearchBatchState } from "../contracts/index.js";
 
 export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearchRun {
   const template = getCompanyResearchTemplate("product_and_technology");
@@ -48,4 +48,12 @@ export function activeResearch(run: KeyResearchRun, draftText = ""): CompanyRese
   if (run.status !== "researching" && run.status !== "structuring") throw new Error("active only");
   const { rawReportText: _raw, structuredContent: _content, researchContext: _context, template: _template, harnessVersion: _version, ...summary } = run;
   return { runs: [], globalActiveRun: { runId: run.id, itemId: run.itemId, companyId: run.companyId, stage: run.status === "researching" ? "raw" : "structure" }, active: { run: { ...summary, status: run.status }, draftText } };
+}
+
+export function researchQueue(run: KeyResearchRun): CompanyResearchBatchState {
+  return {
+    batchId: "queue-1", itemId: run.itemId, status: "running",
+    entries: [{ entryId: "entry-1", itemId: run.itemId, companyId: run.companyId, mode: "new", input: { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) }, status: "running", runId: run.id, stage: run.status === "structuring" ? "structure" : "raw" }],
+    processed: 0, succeeded: 0, failed: 0, total: 1,
+  };
 }

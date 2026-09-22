@@ -10,6 +10,9 @@ describe("profile diagnostics persistence", () => {
       repos.companyProfileDiagnostics.record(diagnostic);
       expect(repos.companyProfileDiagnostics.getByRequestId("trace-1")).toEqual(diagnostic);
       expect(repos.companyProfileDiagnostics.listByCompanyId(company.id)).toEqual([diagnostic]);
+      const withDetail: CompanyProfileDiagnostic = { ...diagnostic, requestId: "trace-2", phase: "evidence", code: "kind_mismatch", path: "/fieldEvidence/legalName", evidenceDetail: { reason: "kind_mismatch", path: "/fieldEvidence/legalName", modelRef: { url: "https://example.com/a", urlFingerprint: "0123456789abcdef", kind: "opened_page" }, actualSources: [{ url: "https://example.com/a", urlFingerprint: "fedcba9876543210", kind: "search_snippet" }], totalSourceCount: 1, truncated: false } };
+      repos.companyProfileDiagnostics.record(withDetail);
+      expect(repos.companyProfileDiagnostics.getByRequestId("trace-2")).toEqual(withDetail);
       expect(() => repos.companyProfileDiagnostics.record({ ...diagnostic, requestId: "other", message: "sk-secret" } as CompanyProfileDiagnostic)).toThrow("invalid profile diagnostic");
       repos.companies.deleteIfUnreferenced(company.id);
       expect(repos.companyProfileDiagnostics.listByCompanyId(company.id)).toEqual([]);

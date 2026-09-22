@@ -96,3 +96,31 @@ describe("Word export choice layout", () => {
     style.remove();
   });
 });
+
+describe("batch research modal layout", () => {
+  it("keeps selection rows on one line without inheriting stacked modal field styles", () => {
+    const style = document.createElement("style"); style.textContent = css; document.head.append(style);
+    const body = document.createElement("div"); body.className = "modal-body batch-research-modal";
+    const list = document.createElement("ul"); list.className = "batch-company-list";
+    const row = document.createElement("li"); row.className = "batch-company-row";
+    const label = document.createElement("label"); label.className = "batch-company-select";
+    const checkbox = document.createElement("input"); checkbox.type = "checkbox";
+    const name = document.createElement("span"); name.className = "batch-company-name"; name.textContent = "很长的公司名称";
+    const status = document.createElement("small"); status.className = "batch-company-status"; status.textContent = "等待调研";
+    const report = document.createElement("small"); report.className = "batch-company-report"; report.textContent = "报告 3 份 最新创建于 2026-09-17";
+    label.append(checkbox, name); row.append(label, status, report); list.append(row); body.append(list); document.body.append(body);
+
+    expect(getComputedStyle(row).display).toBe("grid");
+    expect(getComputedStyle(row).gridTemplateColumns).toBe("minmax(0, 1fr) max-content max-content");
+    expect(getComputedStyle(label).flexDirection).toBe("row");
+    expect(getComputedStyle(checkbox).width).toBe("auto");
+    expect(getComputedStyle(name).textOverflow).toBe("ellipsis");
+    expect(getComputedStyle(name).whiteSpace).toBe("nowrap");
+    expect(getComputedStyle(status).whiteSpace).toBe("nowrap");
+    expect(getComputedStyle(status).gridColumn).toBe("2");
+    expect(getComputedStyle(report).gridColumn).toBe("3");
+    expect(getComputedStyle(report).fontVariantNumeric).toBe("tabular-nums");
+
+    body.remove(); style.remove();
+  });
+});

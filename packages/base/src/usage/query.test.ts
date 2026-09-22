@@ -3,7 +3,7 @@ import { Value } from "typebox/value";
 import { UsageDashboardQuerySchema, normalizeUsageMetrics, type UsageAttempt, type UsageDashboardQuery, type UsageHealth, type UsageRepository } from "./contracts.js";
 import { createUsageQueryService } from "./query.js";
 
-const health: UsageHealth = { collectionStartedAt: "2026-09-18T01:30:00.000Z", lastInitializedAt: "2026-09-18T01:30:00.000Z", cleanShutdown: false, previousUncleanShutdown: false, interruptedRequests: 0, pendingRecords: 0, failedRecords: 0, droppedRecords: 0, lastErrorCode: null, degraded: false };
+const health: UsageHealth = { collectionStartedAt: "2026-09-18T01:30:00.000Z", lastInitializedAt: "2026-09-18T01:30:00.000Z", cleanShutdown: false, previousUncleanShutdown: false, interruptedRequests: 0, pendingRecords: 0, recoverableRecords: 0, failedRecords: 0, droppedRecords: 0, currentFailure: false, lastErrorCode: null, degraded: false };
 function attempt(attemptId: string, change: Partial<UsageAttempt> = {}): UsageAttempt {
   return { attemptId, operationId: "operation", serviceKind: "llm", profileName: "Profile", providerId: "alpha", modelId: "model", configRevisionId: "revision", startedAt: "2026-09-18T02:00:00.000Z", finishedAt: "2026-09-18T02:00:01.000Z", durationMs: 1000, outcome: "succeeded", revision: 2, attemptCountStatus: "complete", errorCode: null, resultCount: null, ...normalizeUsageMetrics({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 10 }), ...change } as UsageAttempt;
 }
@@ -12,25 +12,29 @@ function setup(records: UsageAttempt[] = [], now = "2026-09-18T02:30:00.000Z") {
     initialize: () => health, getHealth: () => health, upsert: () => { throw Error("read_only"); },
     readRange: ({ serviceKind, from, to }) => records.filter((record) => record.serviceKind === serviceKind && record.startedAt >= from && record.startedAt < to),
     setDeliveryHealth: () => { throw Error("read_only"); }, markCleanShutdown: () => { throw Error("read_only"); },
+    probeStorage: () => {},
+    deleteUnknownFailures: () => 0,
   };
   return createUsageQueryService(repository, () => new Date(now));
 }
 const today = { serviceKind: "llm", range: "today", timeZone: "UTC" } as const;
 
 describe("usage chart projection", () => {
-  it.each(["http_400", "http_401", "http_403", "http_404", "http_422"])("omits rejected LLM requests (%s) from every usage projection, even when selected", async (errorCode) => {
+  it.each(["http_400", "timeout", "network_failed", "cancelled"])("omits running and terminal abnormal LLM requests with no token evidence (%s) from every usage projection", async (errorCode) => {
     const model = { providerId: "deepseek", modelId: "deepseek-v4-" };
-    const records = [attempt("rejected", { ...model, outcome: "failed", errorCode, ...normalizeUsageMetrics({}) }),
+    const records = [attempt("abnormal", { ...model, outcome: errorCode === "cancelled" ? "cancelled" : "failed", errorCode, ...normalizeUsageMetrics({}) }),
+      attempt("running", { ...model, outcome: "running", finishedAt: null, durationMs: null, errorCode: null, ...normalizeUsageMetrics({}) }),
       attempt("zero", { ...model, outcome: "failed", errorCode, ...normalizeUsageMetrics({ inputTokens: 0, outputTokens: 0 }) })];
     const service = setup(records);
     const range = { serviceKind: "llm", from: "2026-09-18T00:00:00.000Z", to: "2026-09-19T00:00:00.000Z", timeZone: "UTC" } as const;
-    expect(await service.getSummary(range)).toMatchObject({ requests: 0, failed: 0 });
-    expect(await service.getBreakdown(range)).toEqual([]);
-    expect((await service.getDailySeries(range)).every((point) => point.requests === 0)).toBe(true);
+    expect(await service.getSummary(range)).toMatchObject({ requests: 1, failed: 1, totalTokens: 0 });
+    expect(await service.getBreakdown(range)).toHaveLength(1);
+    expect((await service.getDailySeries(range)).reduce((sum, point) => sum + point.requests, 0)).toBe(1);
     const dashboard = await service.getDashboard({ ...today, model });
-    expect(dashboard).toMatchObject({ summary: { requests: 0 }, providers: [], trend: { models: [], selectedModel: null, summary: { requests: 0 } } });
-    expect(dashboard.trend.points.every((point) => point.requests === 0)).toBe(true);
-    expect(records).toHaveLength(2);
+    expect(dashboard).toMatchObject({ summary: { requests: 1 }, trend: { models: [model], selectedModel: model, summary: { requests: 1 } } });
+    expect(dashboard.trend.points.reduce((sum, point) => sum + point.requests, 0)).toBe(1);
+    expect(dashboard.unknownUsage.dismissibleCount).toBe(1);
+    expect(records).toHaveLength(3);
     const emptyRange = await service.getDashboard({ ...today, range: "custom", startDate: "2026-09-17", endDate: "2026-09-17", model });
     expect(emptyRange.trend.selectedModel).toEqual(model);
   });
@@ -41,15 +45,39 @@ describe("usage chart projection", () => {
     expect(dashboard.trend.models).toEqual([{ providerId: "alpha", modelId: "model" }]);
   });
 
-  it("retains uncertain failures, successes, running attempts, and rejected Search requests", async () => {
+  it("retains unknown successes and rejected Search requests while reporting LLM activity separately", async () => {
     const records = ["timeout", "network_error", "http_429"].map((errorCode) => attempt(errorCode, { outcome: "failed", errorCode, ...normalizeUsageMetrics({}) }));
     const search = attempt("search", { serviceKind: "search", outcome: "failed", errorCode: "http_400", ...normalizeUsageMetrics({}) });
     delete search.modelId;
     records.push(attempt("success", normalizeUsageMetrics({})), attempt("running", { ...normalizeUsageMetrics({}), outcome: "running", finishedAt: null, durationMs: null }),
       search);
     const service = setup(records);
-    expect((await service.getDashboard(today)).summary).toMatchObject({ requests: 5, failed: 3, succeeded: 1, running: 1 });
+    expect((await service.getDashboard(today)).summary).toMatchObject({ requests: 1, failed: 0, succeeded: 1, running: 0 });
+    expect((await service.getDashboard(today)).inFlightRequests).toBe(1);
     expect((await service.getDashboard({ ...today, serviceKind: "search" })).summary).toMatchObject({ requests: 1, failed: 1 });
+  });
+
+  it("returns a bounded revision snapshot and reason counts only for deletable abnormal unknown records", async () => {
+    const records = [
+      attempt("network", { outcome: "failed", errorCode: "network_failed", revision: 4, ...normalizeUsageMetrics({}) }),
+      attempt("timeout", { outcome: "failed", errorCode: "timeout", revision: 3, ...normalizeUsageMetrics({}) }),
+      attempt("success", normalizeUsageMetrics({})),
+      attempt("known", { outcome: "failed", errorCode: "network_error", ...normalizeUsageMetrics({ totalTokens: 7 }) }),
+      attempt("running", { outcome: "running", finishedAt: null, durationMs: null, ...normalizeUsageMetrics({}) }),
+    ];
+    const dashboard = await setup(records).getDashboard(today);
+    expect(dashboard.unknownUsage).toEqual({
+      dismissibleCount: 2, networkFailureCount: 1, otherFailureCount: 1, nonDismissibleCount: 1,
+      partialCount: 1, incompleteAttemptCount: 0,
+      snapshot: [{ attemptId: "network", revision: 4 }, { attemptId: "timeout", revision: 3 }], acknowledgeSnapshot: ["success@unknown.complete.success", "known@partial.complete.terminal"],
+    });
+  });
+
+  it("offers persisted acknowledgement for incomplete Search attempt counts", async () => {
+    const search = attempt("search-incomplete", { serviceKind: "search", attemptCountStatus: "incomplete", resultCount: 2, ...normalizeUsageMetrics({}) });
+    delete search.modelId;
+    const dashboard = await setup([search]).getDashboard({ serviceKind: "search", range: "today", timeZone: "UTC" });
+    expect(dashboard.unknownUsage).toMatchObject({ incompleteAttemptCount: 1, acknowledgeSnapshot: ["search-incomplete@unknown.incomplete.success"] });
   });
 
   it("returns 24 local-hour columns with half-open membership, coverage and future markers", async () => {

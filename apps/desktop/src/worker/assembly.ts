@@ -21,6 +21,7 @@ export interface UtilityAssemblyDeps {
   capabilityLoader?: CapabilityWorkerLoader;
   capabilitySnapshot?: readonly TrustedCapabilityEntry[];
   flushUsage?: () => Promise<void>;
+  retryUsage?: () => Promise<boolean>;
   endpoint: WorkerEndpoint;
   agentMode: string | undefined;
   hostClient: HostClient;
@@ -74,6 +75,7 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
     deps.capabilityLoader ?? createSnapshotWorkerLoader(deps.capabilitySnapshot ?? [], services));
   const loop = createWorkerMessageLoop(deps.endpoint, agent, {
     ...(deps.flushUsage ? { flushUsage: deps.flushUsage } : {}),
+    ...(deps.retryUsage ? { retryUsage: deps.retryUsage } : {}),
     toolRuntime,
     capabilities,
     hostReplyHandler: (reply) => deps.hostClient.handleReply(reply),

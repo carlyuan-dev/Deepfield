@@ -11,13 +11,13 @@ it("persists queue health across owners and turns a worker's unfinished attempt 
   const db = new DatabaseSync(":memory:"); migrate(db);
   try {
     const repository = createUsageRepository(db); const runtime = createMainUsageRuntime(repository);
-    runtime.worker.health("worker-1", { pendingRecords: 2, failedRecords: 1, droppedRecords: 0, lastErrorCode: "write_failed" });
+    runtime.worker.health("worker-1", { pendingRecords: 2, recoverableRecords: 0, failedRecords: 1, droppedRecords: 0, currentFailure: true, lastErrorCode: "write_failed" });
     const record: UsageStart = { attemptId: "attempt", operationId: "operation", profileId: "profile", profileName: "Profile", providerId: "openai", modelId: "model", configRevisionId: "rev", serviceKind: "llm", startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, outcome: "running", revision: 2, attemptCountStatus: "complete", errorCode: null, resultCount: null, ...normalizeUsageMetrics({ inputTokens: 20, outputTokens: 1 }) };
     expect(await runtime.worker.record(record)).toBe(true);
     await runtime.workerExited();
     const dashboard = await runtime.query.getDashboard({ serviceKind: "llm", range: "month", timeZone: "UTC" });
     expect(dashboard.summary).toMatchObject({ requests: 1, interrupted: 1, inputTokens: 20 });
-    expect(dashboard.health).toMatchObject({ pendingRecords: 0, droppedRecords: 2, failedRecords: 1, degraded: true });
+    expect(dashboard.health).toMatchObject({ pendingRecords: 0, droppedRecords: 2, failedRecords: 1, degraded: false });
     const finishedAt = new Date().toISOString();
     await runtime.worker.record({ ...record, attemptId: "terminal-first", revision: 2, outcome: "succeeded", finishedAt, durationMs: 0 });
     await runtime.worker.record({ ...record, attemptId: "terminal-first", revision: 99 });
@@ -29,7 +29,7 @@ it("persists queue health across owners and turns a worker's unfinished attempt 
 });
 it("usage initialization/storage failure does not abort startup and exposes degraded health", async () => {
   const fail = () => { throw Error("private sqlite path"); };
-  const repository: UsageRepository = { initialize: fail, upsert: fail, readRange: fail, getHealth: fail, setDeliveryHealth: fail, markCleanShutdown: fail };
+  const repository: UsageRepository = { initialize: fail, upsert: fail, readRange: fail, getHealth: fail, setDeliveryHealth: fail, markCleanShutdown: fail, probeStorage: fail, deleteUnknownFailures: fail };
   const runtime = createMainUsageRuntime(repository);
   const dashboard = await runtime.query.getDashboard({ serviceKind: "llm", range: "month", timeZone: "UTC" });
   expect(dashboard.health).toMatchObject({ degraded: true, lastErrorCode: "usage_unavailable" });
@@ -56,7 +56,7 @@ it("overlays retained failure/drop health when reads succeed but all writes fail
     expect(await runtime.recorder.recordStart(fixtureRecord())).toBe(false);
     expect(backing.getHealth().failedRecords).toBe(0);
     const dashboard = await runtime.query.getDashboard({ serviceKind: "llm", range: "month", timeZone: "UTC" });
-    expect(dashboard.health).toMatchObject({ degraded: true, failedRecords: 3, droppedRecords: 1, pendingRecords: 0, lastErrorCode: "health_write_failed" });
+    expect(dashboard.health).toMatchObject({ degraded: true, failedRecords: 3, droppedRecords: 0, recoverableRecords: 1, pendingRecords: 0, lastErrorCode: "health_write_failed" });
     readOnly = false;
     expect((await runtime.query.getDashboard({ serviceKind: "llm", range: "month", timeZone: "UTC" })).health.failedRecords).toBe(3);
     expect(backing.getHealth().failedRecords).toBe(3);
@@ -73,12 +73,13 @@ it.each(["main", "worker"])("retains one durable-write failure after %s retries 
     else {
       expect(await runtime.worker.record(record)).toBe(false);
       expect(await runtime.worker.record(record)).toBe(true);
-      runtime.worker.health("worker-1", { pendingRecords: 0, failedRecords: 0, droppedRecords: 0, lastErrorCode: null });
+      runtime.worker.health("worker-1", { pendingRecords: 0, recoverableRecords: 0, failedRecords: 0, droppedRecords: 0, currentFailure: false, lastErrorCode: null });
     }
     for (let index = 0; index < 2; index++) {
       const dashboard = await runtime.query.getDashboard({ serviceKind: "llm", range: "month", timeZone: "UTC" });
-      expect(dashboard.summary.requests).toBe(1);
-      expect(dashboard.health).toMatchObject({ degraded: true, failedRecords: 1, droppedRecords: 0, pendingRecords: 0, lastErrorCode: "write_failed" });
+      expect(dashboard.inFlightRequests).toBe(1);
+      expect(dashboard.summary.requests).toBe(0);
+      expect(dashboard.health).toMatchObject({ degraded: false, failedRecords: 1, droppedRecords: 0, pendingRecords: 0, lastErrorCode: null });
     }
   } finally { await runtime.shutdown(); db.close(); }
 });

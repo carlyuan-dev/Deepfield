@@ -44,16 +44,16 @@ describe("trusted renderer IPC adapter", () => {
     [DEV_URL, `${DEV_URL}reports?run=1`],
     ["https://localhost:5173/", "https://localhost:5173/reports"],
   ])("dispatches the known main frame at %s (%s)", async (expected, actual) => {
-    const { sender, invoke, companyResearch, companyResearchWordExport, dispose, handlers } = setup(expected);
+    const { sender, invoke, companyResearch, companyResearchBatch, companyResearchWordExport, dispose, handlers } = setup(expected);
     sender.mainFrame.url = actual;
     expect(handlers.has(IPC_CHANNELS.capabilityInvoke)).toBe(true);
     await invoke(IPC_CHANNELS.capabilitySubscribe);
-    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", RESEARCH_INPUT] })).resolves.toMatchObject({ ok: true, value: { status: "researching" } });
-    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.retryFailed", requestId: "r", input: ["item-1", "company-1", "run-1", RESEARCH_INPUT] })).resolves.toMatchObject({ ok: true, value: { id: "run-1" } });
+    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.start", requestId: "r", input: ["item-1", "company-1", RESEARCH_INPUT] })).resolves.toMatchObject({ ok: true, value: { status: "running" } });
+    await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.retryFailed", requestId: "r", input: ["item-1", "company-1", "run-1", RESEARCH_INPUT] })).resolves.toMatchObject({ ok: true, value: { batchId: "batch-1" } });
     await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.deleteRun", requestId: "r", input: ["item-1", "company-1", "run-1"] })).resolves.toMatchObject({ ok: true });
     await expect(invoke(IPC_CHANNELS.capabilityInvoke, { capabilityId: "company-research", operation: "companyResearch.exportWord", requestId: "r", input: ["item-1", "company-1", "run-1", { raw: false, structured: true }] })).resolves.toEqual({ ok: true, value: { status: "cancelled" } });
-    expect(companyResearch.startCalls).toHaveLength(1);
-    expect(companyResearch.retryFailedCalls).toHaveLength(1);
+    expect(companyResearchBatch.startCalls).toHaveLength(1);
+    expect(companyResearchBatch.retryFailedCalls).toHaveLength(1);
     expect(companyResearch.deleteRunCalls).toHaveLength(1);
     expect(companyResearchWordExport.exportCalls).toHaveLength(1);
     expect(sender.destroyedListenerCount).toBe(1);
