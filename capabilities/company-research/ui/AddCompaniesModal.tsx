@@ -2,8 +2,10 @@ import { useState } from "react";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import type { CompanyDraft, ItemCompanyView } from "../contracts/index.js";
 import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
+import { useFormField, type FormControl } from "./form-control.js";
 
 export interface AddCompaniesModalProps {
+  control?: FormControl;
   api: DesktopApi;
   itemId: string;
   active?: boolean;
@@ -11,9 +13,9 @@ export interface AddCompaniesModalProps {
   onCompaniesAdded(companies: ItemCompanyView[]): void;
 }
 
-export function AddCompaniesModal({ api, itemId, active = true, onClose, onCompaniesAdded }: AddCompaniesModalProps) {
+export function AddCompaniesModal({ api, itemId, control, active = true, onClose, onCompaniesAdded }: AddCompaniesModalProps) {
   const [name, setName] = useState("");
-  const [drafts, setDrafts] = useState<CompanyDraft[]>([]);
+  const [drafts, setDrafts] = useFormField<CompanyDraft[]>(control, "companies", []);
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -33,6 +35,7 @@ export function AddCompaniesModal({ api, itemId, active = true, onClose, onCompa
     setSubmitting(true);
     setError(undefined);
     try {
+      if (control) { await control.confirm(); return; }
       onCompaniesAdded(await api.industryResearch.addCompanies(itemId, drafts));
       onClose();
     } catch {

@@ -67,6 +67,7 @@ export interface ClipboardWriterLike {
 }
 
 export interface IpcServiceDeps {
+  beforeConversationDelete?: (conversationId: string) => Promise<void>;
   usage?: UsageDashboardApi;
   capabilities?: CapabilityRegistry;
   onConfigurationChanged?: () => void;
@@ -188,6 +189,7 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     if (!Value.Check(ConversationDeleteArgsSchema, args)) {
       throw new Error("invalid conversation input");
     }
+    await deps.beforeConversationDelete?.(args[0]);
     deps.conversations.delete(args[0]);
   });
 

@@ -34,6 +34,48 @@ describe("structured candidate framing", () => {
   ])("rejects nonobjects, repair, prose and multiple candidates: %s", (text) => {
     expect(() => parseStructuredCandidate(text)).toThrow();
   });
+
+  it.each(["newline", "concatenated", "reversed"] as const)("losslessly combines the Honor two-object shape when %s", (variant) => {
+    const candidate = content();
+    candidate.coreSummary = ['产品名称包含 }{ 和 "引号"，内容不变。'];
+    const summary = JSON.stringify({ coreSummary: candidate.coreSummary });
+    const sections = JSON.stringify({ sections: candidate.sections });
+    const text = variant === "newline" ? `${summary}\n${sections}`
+      : variant === "concatenated" ? `${summary}${sections}` : `${sections}\n${summary}`;
+
+    expect(parseStructuredCandidate(text)).toEqual(candidate);
+    expect(validateStructuredResearch(text, raw, template)).toEqual(candidate);
+  });
+
+  it.each([
+    '{"coreSummary":["first"],"coreSummary":["second"]}\n{"sections":[]}',
+    '{"coreSummary":[],"extra":true}\n{"sections":[]}',
+    '{"coreSummary":[]}\n{"sections":[]}\n{}',
+    'before {"coreSummary":[]}\n{"sections":[]}',
+    '{"coreSummary":[]}\n{"sections":[]} after',
+    '{"coreSummary":[]}\n{"coreSummary":[]}',
+  ])("does not normalize ambiguous two-object variants: %s", (text) => {
+    expect(() => parseStructuredCandidate(text)).toThrowError("json_parse");
+  });
+
+  it("reports bounded safe syntax location and two-object guidance", () => {
+    try {
+      parseStructuredCandidate('{"coreSummary": [}');
+      throw new Error("expected malformed JSON to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ category: "json_parse", repairHint: {
+        kind: "json_syntax", position: 17,
+      }, issues: [{ path: "", expected: "valid_json_syntax", actual: "string" }] });
+    }
+    try {
+      parseStructuredCandidate('{"coreSummary":[]}\n{"unknown":[]}');
+      throw new Error("expected ambiguous split JSON to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ category: "json_parse", repairHint: {
+        kind: "multiple_top_level_objects", count: 2,
+      }, issues: [{ path: "", expected: "single_json_object", actual: "string" }] });
+    }
+  });
 });
 
 describe("Markdown source inheritance", () => {
@@ -116,6 +158,14 @@ describe("shared structured validation", () => {
     const text = JSON.stringify(candidate);
     expect(() => validateStructuredResearch(text, raw, template)).toThrowError("source_mismatch");
     expect(validateStructuredResearchContent(text, template)).toEqual(candidate);
+  });
+
+  it("keeps source membership validation after two-object normalization", () => {
+    const candidate = content();
+    candidate.sections[0]!.facts[0]!.source = { title: "另一来源", url: "https://example.com/other" };
+    const text = `${JSON.stringify({ coreSummary: candidate.coreSummary })}\n${JSON.stringify({ sections: candidate.sections })}`;
+
+    expect(() => validateStructuredResearch(text, raw, template)).toThrowError("source_mismatch");
   });
 });
 

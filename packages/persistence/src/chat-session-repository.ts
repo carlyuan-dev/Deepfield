@@ -7,6 +7,7 @@ export interface ChatSessionRecord {
   network: "enabled" | "disabled";
   completed: boolean;
   failed?: boolean;
+  awaitingUser?: boolean;
   messages: ChatTranscriptMessage[];
   activities: ChatToolExecution[];
 }
@@ -42,6 +43,10 @@ export function createChatSessionRepository(db: DatabaseSync) {
     complete(conversationId: ConversationId, requestId: string) {
       const record = read(conversationId, requestId);
       if (record) update(conversationId, requestId, record.network, current => { current.completed = true; });
+    },
+    awaitUser(conversationId: ConversationId, requestId: string) {
+      const record = read(conversationId, requestId);
+      if (record) update(conversationId, requestId, record.network, current => { current.awaitingUser = true; });
     },
     fail(conversationId: ConversationId, requestId: string) {
       const record = read(conversationId, requestId);

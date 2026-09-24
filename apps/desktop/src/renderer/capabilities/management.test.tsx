@@ -9,7 +9,7 @@ import { companyManagementFixture, loadCompanyFixture } from "./company-test-fix
 afterEach(cleanup);
 it("keeps zero-package navigation empty and management available", async () => {
   const api = makeFakeApi();
-  Object.assign(api, { capabilityManagement: { list: async () => ({ packages: [], issues: [] }), subscribe: () => () => {}, setEnabled: vi.fn() } });
+  Object.assign(api, { capabilityManagement: { list: async () => ({ packages: [], issues: [] }), subscribe: () => () => {}, setEnabled: vi.fn(), restart: vi.fn() } });
   render(<App api={api} />);
   await screen.findByRole("textbox", { name: "消息输入" });
   expect(screen.queryByText("研究主题")).toBeNull();

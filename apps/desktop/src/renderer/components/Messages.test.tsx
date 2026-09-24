@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessageView } from "../state/chat.js";
+import type { InteractionRecord } from "@deepfield/contracts";
 import { Messages } from "./Messages.js";
 
 function message(
@@ -21,6 +22,64 @@ function message(
 }
 
 describe("Chat message rendering", () => {
+  it("uses trusted task associations when two packages share the same local task ID", () => {
+    const interactions: InteractionRecord[] = ["a", "b"].map(id => ({ id, conversationId: "c", requestId: "r", toolCallId: id, revision: 3, status: "submitted", taskId: "local-task", createdAt: "today", updatedAt: "today", payload: { kind: "approval", summary: `Start ${id}`, operation: { provider: "capability", operationId: "opaque", contractVersion: "1" } } }));
+    const tasks = ["a", "b"].map(id => ({ conversationId: "c", sourceRequestId: "r", interactionId: id, analyzeAfter: false, analysisState: "none" as const,
+      snapshot: { taskRef: { capabilityId: `package-${id}`, taskId: "local-task" }, status: "running" as const, presentation: { text: `Progress ${id}`, target: { capabilityId: `package-${id}`, viewId: "result", input: {} }, linkLabel: `Open ${id}` } } }));
+    const { container } = render(<Messages messages={[{ ...message("assistant", ""), requestId: "r" }]}
+      interactionCards={{ interactions, respond: vi.fn() }} capabilityCards={{ tasks, confirmations: [], operations: [], approve: vi.fn(), dismiss: vi.fn(), open: vi.fn() }} />);
+    const cards = container.querySelectorAll(".chat-interaction-card");
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0] as HTMLElement).getByText("Progress a")).toBeTruthy();
+    expect(within(cards[1] as HTMLElement).getByText("Progress b")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Open a" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open b" })).toHaveLength(1);
+    expect(container.querySelectorAll(".capability-chat-card")).toHaveLength(0);
+  });
+  it("evolves an approval into one result entry while preserving unrelated operations", () => {
+    const interaction: InteractionRecord = { id: "interaction", conversationId: "c", requestId: "r", toolCallId: "t", revision: 3, status: "succeeded",
+      createdAt: "today", updatedAt: "today", resultSummary: "主题创建完成", payload: { kind: "approval", summary: "创建主题", operation: { provider: "capability", operationId: "opaque", contractVersion: "1" } } };
+    const target = { capabilityId: "company-research", viewId: "companies", input: { itemId: "new" } };
+    const { container } = render(<Messages messages={[{ ...message("assistant", ""), requestId: "r" }]}
+      interactionCards={{ interactions: [interaction], respond: vi.fn() }}
+      capabilityCards={{ tasks: [], confirmations: [], operations: [
+        { conversationId: "c", sourceRequestId: "r", invocationId: "executed", interactionId: "interaction", status: "completed", title: "", presentation: { text: "主题创建完成", target, linkLabel: "查看新主题" } },
+        { conversationId: "c", sourceRequestId: "r", invocationId: "other", status: "failed", title: "另一个操作失败" },
+      ], approve: vi.fn(), dismiss: vi.fn(), open: vi.fn() }} />);
+    expect(container.querySelectorAll(".chat-interaction-card, .capability-chat-card")).toHaveLength(2);
+    expect(screen.getAllByText("主题创建完成")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "查看新主题" })).toHaveLength(1);
+    expect(screen.getByText("另一个操作失败")).toBeTruthy();
+  });
+  it("keeps the completed operation link after generic approval replaces the old pending card", () => {
+    const user = { ...message("user", "创建"), requestId: "r1" };
+    const approval: InteractionRecord = { id: "i1", conversationId: "c1", requestId: "r1", toolCallId: "t1", revision: 2,
+      status: "succeeded", createdAt: "2026-09-23", updatedAt: "2026-09-23",
+      payload: { kind: "approval", summary: "创建主题", operation: { provider: "company", operationId: "create", contractVersion: "1" } } };
+    const operations = [{ conversationId: "c1", sourceRequestId: "r1", invocationId: "v1", status: "completed" as const,
+      title: "已创建", presentation: { text: "已创建主题", target: { capabilityId: "company", viewId: "topic", input: { id: "one" } } } }];
+    render(<Messages messages={[user]} interactionCards={{ interactions: [approval], respond: vi.fn(async () => approval) }}
+      capabilityCards={{ tasks: [], confirmations: [], operations, approve: vi.fn(async () => {}), dismiss: vi.fn(async () => {}), open: vi.fn(async () => {}) }} />);
+    expect(screen.getByText("已创建主题")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看" })).toBeTruthy();
+  });
+  it("attaches operation controls once after the last assistant reply and never shows analysis checkboxes", () => {
+    const user = { ...message("user", "新建主题"), key: "user-op", requestId: "request-op" };
+    const first = { ...message("assistant", "正在处理"), key: "assistant-first", requestId: "request-op" };
+    const last = { ...message("assistant", "请确认"), key: "assistant-last", requestId: "request-op" };
+    const confirmation = { confirmationRef: "confirm", capabilityId: "company", actionId: "create", sourceRequestId: "request-op",
+      invocationId: "invocation", inputSummary: { title: "新建主题", fields: [{ label: "主题", value: "半导体" }] }, analyzeAfter: false };
+    const cards = { tasks: [], operations: [], confirmations: [confirmation], approve: vi.fn(async () => {}), dismiss: vi.fn(async () => {}), open: vi.fn(async () => {}) };
+    const { container, rerender } = render(<Messages messages={[user, first, last]} capabilityCards={cards} />);
+    const replies = container.querySelectorAll(".message.assistant");
+    expect(replies[0]?.querySelector(".capability-chat-card")).toBeNull();
+    expect(replies[1]?.querySelectorAll(".capability-chat-card")).toHaveLength(1);
+    expect(container.querySelectorAll("input[type=checkbox]")).toHaveLength(0);
+    rerender(<Messages messages={[user]} />);
+    expect(container.querySelectorAll(".message.assistant")).toHaveLength(0);
+    rerender(<Messages messages={[user]} capabilityCards={cards} />);
+    expect(container.querySelectorAll(".message.assistant .capability-chat-card")).toHaveLength(1);
+  });
   it.each(["", ".", "。"])("preserves terminal underscores in a bare source URL before '%s' and its copied destination", async (punctuation) => {
     const url = "https://h5.ifeng.com/c/vivoArticle/v002HEzQBOzuQO8W9qYu9BZgIK5Ygahx9hILpwNgkP1uMHc__";
     const copyText = vi.fn(async () => undefined);

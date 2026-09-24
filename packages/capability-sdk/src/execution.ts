@@ -14,6 +14,7 @@ export interface PiExecutionContextMessage {
 export interface PiExecutionRequest {
   requestId: string;
   prompt: string;
+  humanPrompt?: string;
   systemPrompt: string;
   finalizationSystemPrompt?: string;
   skillName?: string;
@@ -65,4 +66,5 @@ export type PiExecutionEvent =
   | { requestId: string; type: "text_reset" }
   | PiRegularToolActivityEvent
   | PiUnbilledToolActivityEvent
+  | { requestId: string; type: "handed_off" }
   | { requestId: string; type: "completed"; text: string };

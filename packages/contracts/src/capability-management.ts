@@ -45,5 +45,6 @@ export const CapabilitySetEnabledArgsSchema = Type.Tuple([CapabilityIdSchema, Ty
 export interface CapabilityManagementApi {
   list(): Promise<CapabilitySnapshot>;
   setEnabled(id: string, enabled: boolean): Promise<void>;
+  restart(): Promise<void>;
   subscribe(listener: (snapshot: CapabilitySnapshot) => void): () => void;
 }

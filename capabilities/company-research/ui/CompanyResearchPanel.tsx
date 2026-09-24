@@ -4,6 +4,7 @@ import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import { researchRetryMode, COMPANY_RESEARCH_TEMPLATES, type BatchResearchEntry, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
 import { MarkdownMessage } from "../../../apps/desktop/src/renderer/components/MarkdownMessage.js";
 import { CompanyResearchModal, type ResearchContextProps } from "./CompanyResearchModal.js";
+import { useFormField, type FormControl } from "./form-control.js";
 import { ConfirmModal } from "./ConfirmModal.js";
 import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
 import { StructuredResearchReport } from "./StructuredResearchReport.js";
@@ -11,6 +12,10 @@ import { ResearchReportContext } from "./ResearchReportContext.js";
 import { useCompanyResearch } from "./use-company-research.js";
 
 export interface CompanyResearchPanelProps extends ResearchContextProps {
+  requestedRunId?: string;
+  requestedRevision?: string;
+  refreshToken?: number;
+  navigationDirtyRef?: { current: boolean };
   api: DesktopApi;
   itemId: string;
   companyId: string;
@@ -51,7 +56,8 @@ function ReportTabs({ run, rawText, exportControl }: { run: KeyResearchRun | und
   </>;
 }
 
-function WordExportChoiceModal({ availableRaw, availableStructured, selection, busy, onChange, onClose, onConfirm }: {
+export function WordExportChoiceModal({ availableRaw, availableStructured, selection, control, busy, onChange, onClose, onConfirm }: {
+  control?: FormControl;
   availableRaw: boolean;
   availableStructured: boolean;
   selection: CompanyResearchWordExportSelection;
@@ -60,18 +66,20 @@ function WordExportChoiceModal({ availableRaw, availableStructured, selection, b
   onClose(): void;
   onConfirm(): void;
 }) {
+  const [raw, setRaw] = useFormField(control, "raw", selection.raw);
+  const [structured, setStructured] = useFormField(control, "structured", selection.structured);
   return <Modal title="选择导出内容" onClose={busy ? () => undefined : onClose}>
     <div className="modal-body word-export-choice">
       <fieldset disabled={busy}>
         <legend>选择要写入 Word 的报告</legend>
-        <label><input type="checkbox" checked={selection.raw} disabled={!availableRaw} onChange={(event) => onChange({ ...selection, raw: event.target.checked })} />原始调研报告</label>
+        <label><input type="checkbox" checked={control ? raw : selection.raw} disabled={!availableRaw} onChange={(event) => control ? setRaw(event.target.checked) : onChange({ ...selection, raw: event.target.checked })} />原始调研报告</label>
         {!availableRaw && <p className="muted">此版本没有可用的原始调研报告。</p>}
-        <label><input type="checkbox" checked={selection.structured} disabled={!availableStructured} onChange={(event) => onChange({ ...selection, structured: event.target.checked })} />结构化报告</label>
+        <label><input type="checkbox" checked={control ? structured : selection.structured} disabled={!availableStructured} onChange={(event) => control ? setStructured(event.target.checked) : onChange({ ...selection, structured: event.target.checked })} />结构化报告</label>
         {!availableStructured && <p className="muted">此版本没有可用的结构化报告。</p>}
       </fieldset>
       <div className="modal-actions">
         <button type="button" disabled={busy} onClick={onClose}>取消</button>
-        <button className="primary-button" type="button" disabled={busy || (!selection.raw && !selection.structured)} onClick={onConfirm}>{busy ? "导出中…" : "确认导出"}</button>
+        <button className="primary-button" type="button" disabled={busy || (control ? !raw && !structured : !selection.raw && !selection.structured)} onClick={onConfirm}>{busy ? "导出中…" : "确认导出"}</button>
       </div>
     </div>
   </Modal>;
@@ -110,8 +118,15 @@ function activityLabel(activity: ResearchActivity): string {
 export function CompanyResearchPanel(props: CompanyResearchPanelProps) {
   return <ResearchTarget key={`${props.itemId}:${props.companyId}`} {...props} />;
 }
-function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActive = true, onOpenSettings, ...context }: CompanyResearchPanelProps) {
-  const research = useCompanyResearch(api, itemId, companyId);
+function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActive = true, onOpenSettings, requestedRunId, requestedRevision, refreshToken, navigationDirtyRef, ...context }: CompanyResearchPanelProps) {
+  const research = useCompanyResearch(api, itemId, companyId, requestedRunId, requestedRevision);
+  const previousRefreshToken = useRef(refreshToken);
+  useEffect(() => {
+    if (previousRefreshToken.current !== refreshToken) {
+      previousRefreshToken.current = refreshToken;
+      research.refreshFromNavigation();
+    }
+  }, [refreshToken]);
   const [newReportModalOpen, setNewReportModalOpen] = useState(false);
   const [retryModalOpen, setRetryModalOpen] = useState(false);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
@@ -124,10 +139,10 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback>();
   const exportSequence = useRef(0);
   const exportInFlight = useRef(false);
-  const active = research.state.active;
+  const active = research.state.active?.run.id === research.selectedRunId ? research.state.active : undefined;
   const run = research.selectedRun;
   const latest = research.state.runs.find((entry) => entry.schemaVersion === "company-research-report-v1");
-  const occupied = queueEntry?.status === "pending" || queueEntry?.status === "running";
+  const occupied = queueEntry?.status === "pending" || queueEntry?.status === "running" || (!!research.state.active && !active);
   const summary = research.state.runs.find((entry) => entry.id === research.selectedRunId);
   const selectionKey = `${itemId}:${companyId}:${research.selectedRunId ?? ""}`;
   const currentSelectionKey = useRef(selectionKey);
@@ -137,6 +152,7 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   const canRetryStructuring = summary?.status === "structure_failed";
   const reportSearchStatus = run?.searchStatus ?? summary?.searchStatus ?? active?.run.searchStatus ?? "unknown";
   const modalOpen = newReportModalOpen || retryModalOpen;
+  if (navigationDirtyRef) navigationDirtyRef.current = modalOpen;
   const displayedError = research.error;
   const cancelQueueEntry = async (): Promise<void> => {
     if (!queueEntry?.entryId || queueCancelPending) return;

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { COMPANY_RESEARCH_TEMPLATES, RESEARCH_DIRECTIONS, type ResearchDirection, type StartCompanyResearchInput } from "../contracts/index.js";
 import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
 import { researchActionError, type ResearchActionErrorPresentation } from "./research-error-presentation.js";
+import { useFormField, type FormControl } from "./form-control.js";
 
 export interface ResearchContextProps {
   readonly topicName: string;
@@ -10,6 +11,7 @@ export interface ResearchContextProps {
   readonly companyNote?: string;
 }
 export interface CompanyResearchModalProps extends ResearchContextProps {
+  control?: FormControl;
   initial?: StartCompanyResearchInput;
   mode?: "start" | "retry";
   disabled?: boolean;
@@ -22,6 +24,7 @@ export interface CompanyResearchModalProps extends ResearchContextProps {
   submittingLabel?: string;
   closeOnSubmit?: boolean;
   cancelLabel?: string;
+  onEdited?(): void;
 }
 function localToday(): string {
   const date = new Date();
@@ -32,11 +35,11 @@ function validDate(value: string, today: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
-export function CompanyResearchModal({ initial, mode = "start", disabled, active = true, topicName, topicScope, companyName, companyNote, onClose, onStart, onOpenSettings, title, submitLabel: customSubmitLabel, submittingLabel, closeOnSubmit = true, cancelLabel = "取消" }: CompanyResearchModalProps) {
+export function CompanyResearchModal({ initial, control, mode = "start", disabled, active = true, topicName, topicScope, companyName, companyNote, onClose, onStart, onOpenSettings, title, submitLabel: customSubmitLabel, submittingLabel, closeOnSubmit = true, cancelLabel = "取消", onEdited }: CompanyResearchModalProps) {
   const today = localToday();
-  const [direction, setDirection] = useState<ResearchDirection>(initial && RESEARCH_DIRECTIONS.includes(initial.direction) ? initial.direction : "product_and_technology");
-  const [focusScope, setFocusScope] = useState(initial?.focusScope && initial.focusScope.length <= 1000 ? initial.focusScope : "");
-  const [asOfDate, setAsOfDate] = useState(initial && validDate(initial.asOfDate, today) ? initial.asOfDate : today);
+  const [direction, setDirection] = useFormField<ResearchDirection>(control, "direction", initial && RESEARCH_DIRECTIONS.includes(initial.direction) ? initial.direction : "product_and_technology");
+  const [focusScope, setFocusScope] = useFormField(control, "focusScope", initial?.focusScope && initial.focusScope.length <= 1000 ? initial.focusScope : "");
+  const [asOfDate, setAsOfDate] = useFormField(control, "asOfDate", initial && validDate(initial.asOfDate, today) ? initial.asOfDate : today);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<ResearchActionErrorPresentation>();
   const handleSubmit = async (event: FormEvent): Promise<void> => {
@@ -49,6 +52,7 @@ export function CompanyResearchModal({ initial, mode = "start", disabled, active
     setSubmitting(true);
     setError(undefined);
     try {
+      await control?.flush();
       await onStart({ direction, asOfDate, ...(focusScope.trim() ? { focusScope: focusScope.trim() } : {}) });
       if (closeOnSubmit) onClose();
       else setSubmitting(false);
@@ -68,11 +72,11 @@ export function CompanyResearchModal({ initial, mode = "start", disabled, active
       </dl>
       {error && <p className="error" role="alert">{error.message} {error.settingsModule && onOpenSettings && <button type="button" onClick={() => onOpenSettings(error.settingsModule!)}>前往设置</button>}</p>}
       {disabled && <p className="muted">已有调研正在运行，请稍后再试。</p>}
-      <label>研究方向<select required value={direction} onChange={(event) => setDirection(event.target.value as ResearchDirection)}>
+      <label>研究方向<select required value={direction} onChange={(event) => { onEdited?.(); setDirection(event.target.value as ResearchDirection); }}>
         {RESEARCH_DIRECTIONS.map((value) => <option key={value} value={value}>{COMPANY_RESEARCH_TEMPLATES[value].title}</option>)}
       </select></label>
-      <label>关注范围（可选）<textarea value={focusScope} maxLength={1000} rows={4} onChange={(event) => setFocusScope(event.target.value)} /></label>
-      <label>截至日期<input type="date" value={asOfDate} max={today} required onChange={(event) => setAsOfDate(event.target.value)} /></label>
+      <label>关注范围（可选）<textarea value={focusScope} maxLength={1000} rows={4} onChange={(event) => { onEdited?.(); setFocusScope(event.target.value); }} /></label>
+      <label>截至日期<input type="date" value={asOfDate} max={today} required onChange={(event) => { onEdited?.(); setAsOfDate(event.target.value); }} /></label>
       <div className="modal-actions">
         <button type="button" disabled={submitting} onClick={onClose}>{cancelLabel}</button>
         <button className="primary-button" type="submit" disabled={submitting || disabled}>{submitting ? (submittingLabel ?? (mode === "retry" ? "正在重新尝试…" : "正在启动…")) : submitLabel}</button>

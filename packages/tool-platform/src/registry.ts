@@ -72,6 +72,12 @@ function assertValidDefinition(definition: unknown): asserts definition is ToolD
   if (typeof d.description !== "string" || d.description.trim().length === 0) {
     throw new ToolRegistryError(`tool ${key} description must be a non-empty string`);
   }
+  if (d.userFacing !== undefined &&
+    (typeof d.userFacing !== "object" || d.userFacing === null
+      || typeof d.userFacing.name !== "string" || !d.userFacing.name.trim()
+      || typeof d.userFacing.description !== "string" || !d.userFacing.description.trim())) {
+    throw new ToolRegistryError(`tool ${key} userFacing copy must contain a name and description`);
+  }
   if (!TOOL_EFFECTS.has(d.effect)) {
     throw new ToolRegistryError(`tool ${key} has unknown effect`);
   }
@@ -155,6 +161,7 @@ function buildSnapshot(definition: ToolDefinition<any, any>): ToolDefinition<any
     identity: { name: definition.identity.name, version: definition.identity.version },
     label: definition.label,
     description: definition.description,
+    ...(definition.userFacing === undefined ? {} : { userFacing: { name: definition.userFacing.name, description: definition.userFacing.description } }),
     inputSchema: Clone(definition.inputSchema),
     outputSchema: Clone(definition.outputSchema),
     effect: definition.effect,

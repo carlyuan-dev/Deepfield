@@ -56,6 +56,7 @@ export class ContextBuilder {
     return {
       conversationId: conversation.id,
       systemPrompt: MAIN_AGENT_SYSTEM_PROMPT,
+      ...(() => { const human = [...recent].reverse().find(message => message.role === "user"); return human ? { humanPrompt: human.content } : {}; })(),
       messages: latest.map((message) => ({
         role: message.role,
         content: message.content,

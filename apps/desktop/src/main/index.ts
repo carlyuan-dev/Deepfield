@@ -1,4 +1,5 @@
 import { CapabilityRegistry } from "./capabilities/registry.js";
+import { registerNavigationIpc } from "./capabilities/navigation-ipc.js";
 import { createCapabilityHostServices } from "@deepfield/capability-sdk";
 import { capabilityPaths } from "./capabilities/installation.js";
 import { prepareCapabilities, createCapabilityRuntime, type CapabilityRuntime } from "./capabilities/runtime.js";
@@ -35,6 +36,11 @@ import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-cata
 import { PiModelGateway } from "../shared/model-gateway.js";
 import { listSearchProviderManifests } from "@deepfield/retrieval";
 import { ConfigurationService } from "./configuration-service.js";
+import { CapabilityChatHost } from "./capabilities/chat-host.js";
+import { ChatInteractionHost } from "./chat/interaction-host.js";
+import { registerChatInteractionIpc } from "./chat/interaction-ipc.js";
+import { registerCapabilityChatIpc } from "./capabilities/chat-ipc.js";
+import { availableChatTools } from "../worker/tools/tool-runtime.js";
 
 protocol.registerSchemesAsPrivileged([{ scheme: "deepfield-capability", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
@@ -44,6 +50,8 @@ let toolHost: ToolWorkerHost | undefined;
 let appRuntime: ApplicationRuntime | undefined;
 const capabilities = new CapabilityRegistry();
 let capabilityRuntime: CapabilityRuntime | undefined;
+let chatHost: CapabilityChatHost | undefined;
+let interactionHost: ChatInteractionHost | undefined;
 let capabilitySnapshot: readonly TrustedCapabilityEntry[] = Object.freeze([]);
 const configurationListeners = new Set<() => void>();
 let ipcDispose: (() => void) | undefined;
@@ -67,6 +75,11 @@ function startAgentWorker(
   });
   let runtimeRef!: AgentWorkerRuntime;
   const host = createToolWorkerHost({
+    chatInteraction: { call: (requestId, toolCallId, operation, args) => {
+      if (!interactionHost) return Promise.reject(new Error("Interaction unavailable"));
+      return interactionHost.call(requestId, toolCallId, operation, args);
+    } },
+    capabilityChat: { call: (chatRequestId, toolCallId, operation, args) => chatHost?.call(chatRequestId, toolCallId, operation, args) ?? Promise.resolve({ status: "error", error: { code: "capability_unavailable", message: "capability_unavailable", retryable: false } }) },
     ...(usageRuntime ? { usage: usageRuntime.worker } : {}),
     audit: new SqliteToolAudit(repositories.toolExecutions),
     secrets: { get: (name) => secrets.get(name) },
@@ -106,6 +119,12 @@ void app.whenReady().then(async () => {
   usageRuntime = createMainUsageRuntime(createUsageRepository(database), () => agentRuntime);
   configureUsageRecorder(usageRuntime.recorder);
   const repositories = createRepositories(database);
+  interactionHost = new ChatInteractionHost(repositories, capabilities, () => capabilityRuntime,
+    conversationId => appRuntime?.chatService.interactionChanged(conversationId),
+    (owner, invocationId, result, generation) => chatHost?.interactionOutcome(owner, invocationId, result, generation),
+    (conversationId, target, generation) => chatHost?.autoOpenEditor(conversationId, target, generation) ?? Promise.resolve({ status: "blocked" }),
+    (conversationId, target) => chatHost?.openForConversation(conversationId, target) ?? Promise.resolve({ status: "blocked" }));
+  chatHost = new CapabilityChatHost(() => capabilityRuntime, capabilities, repositories, interactionHost);
   const secrets = new SecretStore(paths.secretsFile, {
     isAvailable: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
@@ -140,8 +159,23 @@ void app.whenReady().then(async () => {
     mainSkillCatalog = undefined;
   }
   appRuntime = createApplicationRuntime({
+    interactions: interactionHost.coordinator,
+    respondToInteraction: (conversationId, command, messageId) => interactionHost!.respond(conversationId, command, "user_message", messageId),
+    respondToTask: (conversationId, command, messageId) => interactionHost!.respondToTask(conversationId, command, messageId),
+    onUserMessage: conversationId => interactionHost!.revokeTask(conversationId),
+    onTaskStopped: conversationId => interactionHost!.revokeTask(conversationId),
+    taskScope: conversationId => interactionHost!.taskScope(conversationId),
+    onDispose: () => interactionHost?.dispose(),
     repositories,
     profiles,
+    capabilityDirectory: () => chatHost?.directory() ?? [],
+    capabilityHelp: () => chatHost?.helpDirectory() ?? [],
+    helpTools: webSearch => availableChatTools(webSearch),
+    onRequestStarted: (requestId, conversationId, prompt, restoredKeys) => { chatHost?.begin(requestId, conversationId, prompt, restoredKeys); interactionHost?.begin(requestId, conversationId); },
+    onRequestFinished: requestId => { chatHost?.end(requestId); interactionHost?.end(requestId); },
+    onAnalysisChanged: conversationId => chatHost?.announce(conversationId),
+    onAutoEvent: (conversationId, event) => chatHost?.emitAuto(conversationId, event),
+    isConversationActive: conversationId => chatHost?.isActiveConversation(conversationId) === true,
     worker: {
       send: (request) => {
         const client = agentRuntime?.client;
@@ -155,7 +189,8 @@ void app.whenReady().then(async () => {
   });
   const prepared = await prepareCapabilities(capabilityPaths({ userDataRoot, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, isPackaged: app.isPackaged }));
   capabilitySnapshot = prepared.workerSnapshot;
-  capabilityRuntime = createCapabilityRuntime(prepared, capabilities);
+  capabilityRuntime = createCapabilityRuntime(prepared, capabilities, undefined, repositories.capabilityInvocations);
+  const disposeNavigation = registerNavigationIpc(ipcMainAdapter, capabilityRuntime.navigation);
   agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
   const services = createCapabilityHostServices({
     "company-research.repositories": {
@@ -163,6 +198,7 @@ void app.whenReady().then(async () => {
         capabilityItems: repositories.capabilityItems, companies: repositories.companies,
         itemCompanies: repositories.itemCompanies, companyResearchRuns: repositories.companyResearchRuns,
         companyResearchDiagnostics: repositories.companyResearchDiagnostics, companyResearchBatches: repositories.companyResearchBatches,
+        companyResearchProtocol: repositories.companyResearchProtocol,
         toolExecutions: { deleteByTraceIds: (ids: string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
         runInTransaction: <T>(work: () => T) => repositories.runInTransaction(work),
       },
@@ -185,11 +221,22 @@ void app.whenReady().then(async () => {
     },
   });
   await capabilityRuntime.start(agentRuntime.client, services);
-  const disposeManagement = registerCapabilityManagementIpc(ipcMainAdapter, capabilityRuntime);
+  await chatHost.connectTaskProviders();
+  await interactionHost.recover();
+  const disposeInteractions = registerChatInteractionIpc(ipcMainAdapter, interactionHost);
+  appRuntime.chatService.recoverInteractionResumes();
+  const disposeChatCapability = registerCapabilityChatIpc(ipcMainAdapter, chatHost,
+    conversationId => appRuntime?.chatService.taskChanged(conversationId));
+  for (const link of repositories.chatCapabilities.allTasks()) appRuntime.chatService.taskChanged(link.conversationId);
+  const disposeManagement = registerCapabilityManagementIpc(ipcMainAdapter, capabilityRuntime, () => {
+    app.relaunch();
+    setImmediate(() => app.quit());
+  });
   protocol.handle("deepfield-capability", createCapabilityResourceHandler(() => capabilityRuntime?.readyEntries().map(entry => ({ id: entry.manifest.id, root: entry.root, state: "ready" })) ?? []));
   const disposeApp = registerIpcHandlers({
+    beforeConversationDelete: conversationId => interactionHost!.releaseConversation(conversationId),
     capabilities,
-    onConfigurationChanged: () => { for (const listener of configurationListeners) listener(); },
+    onConfigurationChanged: () => { for (const listener of configurationListeners) listener(); for (const event of repositories.chatInteractions.pendingEvents()) appRuntime?.chatService.interactionChanged(event.conversationId); },
     usage: usageRuntime.query,
     ipcMain: ipcMainAdapter,
     clipboard: { writeText: (text) => clipboard.writeText(text) },
@@ -199,7 +246,7 @@ void app.whenReady().then(async () => {
     chat: appRuntime.chatService,
   });
 
-  ipcDispose = () => { disposeManagement(); disposeApp(); protocol.unhandle("deepfield-capability"); };
+  ipcDispose = () => { disposeInteractions(); disposeChatCapability(); disposeNavigation(); disposeManagement(); disposeApp(); protocol.unhandle("deepfield-capability"); };
   mainWindow = createWindow();
 
   app.on("activate", () => {
@@ -234,9 +281,12 @@ app.on("before-quit", (event) => {
   }
   ipcDispose?.();
   ipcDispose = undefined;
+  appRuntime?.chatService.dispose();
   // Order: reject/clean host RPC first, then kill the worker, then close the DB.
   toolHost?.dispose();
   toolHost = undefined;
+  chatHost?.dispose();
+  chatHost = undefined;
   agentRuntime?.dispose();
   agentRuntime = undefined;
   void capabilityRuntime?.dispose();

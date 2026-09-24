@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { createExecutionHandoff, type ExecutionHandoff } from "./execution-handoff.js";
 import type {
   AgentWorkerEvent,
   SearchRuntimeSnapshot,
@@ -40,27 +41,21 @@ export function createPiChatAgent(
   searchProviderFactory: (snapshot: SearchRuntimeSnapshot) => SearchProvider = createMeteredSearchProvider,
   toolActor: "main_agent" | "capability" = "main_agent",
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void,
+  capabilityTools?: (request: import("@deepfield/contracts").AgentWorkerRequest, handoff: ExecutionHandoff) => AgentTool<any>[],
 ): ChatAgent {
-  const executor = createPiAgentExecutor(
-    {
-      runtime,
-      getApiKey: (snapshot, providerId) => gateway.getApiKey(snapshot, providerId),
-      createSearchProvider: searchProviderFactory,
-    },
-    {
-      tools,
-      ...(skills === undefined ? {} : { skills }),
-      runtimeContext,
-      ...(toolSessions === undefined ? {} : { toolSessions }),
-      toolActor,
-      ...(diagnosticSink === undefined ? {} : { diagnosticSink }),
-    },
-  );
   return {
     async run(request, emit, signal): Promise<void> {
+      const handoff = createExecutionHandoff();
+      const executor = createPiAgentExecutor(
+        { runtime, getApiKey: (snapshot, providerId) => gateway.getApiKey(snapshot, providerId), createSearchProvider: searchProviderFactory },
+        { tools: [...tools, ...(capabilityTools?.(request, handoff) ?? [])], handoff, ...(skills === undefined ? {} : { skills }), runtimeContext,
+          ...(toolSessions === undefined ? {} : { toolSessions }), toolActor,
+          ...(diagnosticSink === undefined ? {} : { diagnosticSink }) },
+      );
       const executionRequest: PiExecutionRequest = {
         requestId: request.requestId,
         prompt: request.prompt,
+        ...(request.context.humanPrompt === undefined ? {} : { humanPrompt: request.context.humanPrompt }),
         systemPrompt: request.context.systemPrompt,
         contextMessages: request.context.messages,
         ...(request.context.finalizationSystemPrompt === undefined

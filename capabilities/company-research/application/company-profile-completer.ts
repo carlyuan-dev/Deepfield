@@ -6,7 +6,7 @@ import { Value } from "typebox/value";
 
 export class CompanyProfileExecutionError extends AppError {
   constructor(readonly requestId: string, readonly companyId: string, readonly failureCode: Extract<CompanyProfileWorkerEvent, { type: "failed" }>["code"], invalidFormat = false) {
-    super(invalidFormat ? "EXTERNAL.INVALID_RESPONSE" : "EXTERNAL.UNAVAILABLE", invalidFormat ? { service: "llm" } : failureCode === "search_unavailable" ? { service: "search" } : undefined);
+    super(failureCode === "invalid_evidence" ? "EXTERNAL.INVALID_RESPONSE" : "EXTERNAL.UNAVAILABLE", failureCode === "invalid_evidence" ? { service: invalidFormat ? "llm" : "search" } : failureCode === "search_unavailable" ? { service: "search" } : undefined);
   }
 }
 export function createCompanyProfileCompleter(profiles: RuntimeProfileResolver, worker: CompanyProfileWorkerPort, recordDiagnostic?: ProfileDiagnosticSink): CompanyProfileCompleter {

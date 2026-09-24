@@ -2,6 +2,8 @@ export * from "./ids.js";
 export * from "./conversations.js";
 export * from "./text-chunker.js";
 export * from "./chat.js";
+export * from "./chat-interaction.js";
+export * from "./chat-capability.js";
 export * from "./chat-transcript.js";
 export * from "./ipc.js";
 export * from "./tools.js";

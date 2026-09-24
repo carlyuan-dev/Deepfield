@@ -3,8 +3,10 @@ import { RECOGNITION_TEXT_TOO_LONG_MESSAGE, RecognitionTextTooLongError, chunkRe
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import { type CompanyDraft, type ItemCompanyView } from "../contracts/index.js";
 import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
+import { useFormField, type FormControl } from "./form-control.js";
 
 export interface ImportCompaniesModalProps {
+  control?: FormControl;
   api: DesktopApi;
   itemId: string;
   active?: boolean;
@@ -31,9 +33,9 @@ function mergeDrafts(current: CompanyDraft[], incoming: CompanyDraft[]): Company
   return merged;
 }
 
-export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCompaniesAdded }: ImportCompaniesModalProps) {
-  const [sourceText, setSourceText] = useState("");
-  const [drafts, setDrafts] = useState<CompanyDraft[]>();
+export function ImportCompaniesModal({ api, itemId, control, active = true, onClose, onCompaniesAdded }: ImportCompaniesModalProps) {
+  const [sourceText, setSourceText] = useFormField(control, "text", "");
+  const [drafts, setDrafts] = useFormField<CompanyDraft[] | undefined>(control, "companies", undefined);
   const [run, setRun] = useState<RecognitionRun>();
   const [progress, setProgress] = useState<{ current: number; total: number }>();
   const [recognizing, setRecognizing] = useState(false);
@@ -60,6 +62,7 @@ export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCo
 
   const recognize = async (): Promise<void> => {
     if (recognizing || sourceText.trim().length === 0) return;
+    if (control) { if (control.step === "selection") return; setRecognizing(true); try { await control.confirm(); } catch { setError("识别失败，请重试"); setRecognizing(false); } return; }
     let activeRun = run;
     let collected = drafts ?? [];
     if (activeRun === undefined || activeRun.nextIndex >= activeRun.chunks.length) {
@@ -107,6 +110,7 @@ export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCo
   };
 
   const confirm = async (): Promise<void> => {
+    if (control && control.step !== "selection") return;
     if (
       submitting ||
       drafts === undefined ||
@@ -121,6 +125,7 @@ export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCo
     setSubmitting(true);
     setError(undefined);
     try {
+      if (control) { await control.confirm(); return; }
       onCompaniesAdded(await api.industryResearch.addCompanies(itemId, cleaned));
       close();
     } catch {
@@ -130,7 +135,7 @@ export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCo
   };
 
   const retryIndex = run !== undefined && run.nextIndex < run.chunks.length ? run.nextIndex : undefined;
-  const recognitionIncomplete = retryIndex !== undefined;
+  const recognitionIncomplete = retryIndex !== undefined || !!control && control.step !== "selection";
   const recognizeLabel = recognizing && progress !== undefined
     ? "正在识别…"
     : retryIndex !== undefined
@@ -141,8 +146,8 @@ export function ImportCompaniesModal({ api, itemId, active = true, onClose, onCo
     <Modal title="一键导入公司" active={active} onClose={close}>
       <div className="modal-body import-companies">
         {error !== undefined && <p className="error" role="alert">{error}</p>}
-        <label>公司文本<textarea value={sourceText} disabled={recognizing} onChange={(event) => changeSource(event.target.value)} placeholder="粘贴公司名称或含公司信息的文本" rows={5} /></label>
-        <button className="recognize-button" type="button" disabled={recognizing || submitting || sourceText.trim().length === 0} onClick={() => void recognize()}>{recognizeLabel}</button>
+        <label>公司文本<textarea value={sourceText} disabled={recognizing || control?.step === "selection"} onChange={(event) => changeSource(event.target.value)} placeholder="粘贴公司名称或含公司信息的文本" rows={5} /></label>
+        <button className="recognize-button" type="button" disabled={recognizing || submitting || control?.step === "selection" || sourceText.trim().length === 0} onClick={() => void recognize()}>{recognizeLabel}</button>
         {recognitionIncomplete && !recognizing && drafts !== undefined && drafts.length > 0 && <p className="muted" role="status">已保留识别结果，重试成功后即可导入</p>}
         {drafts !== undefined && drafts.length > 0 && (
           <section className="candidate-section">

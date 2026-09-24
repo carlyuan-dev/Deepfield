@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import type { Company, CompanyProfileInput } from "../contracts/index.js";
+import { useFormField, useMappedFormField, type FormControl } from "./form-control.js";
 
 export interface CompanyProfileFormProps {
+  control?: FormControl;
   api: DesktopApi;
   company: Company;
   onCancel(): void;
@@ -13,22 +15,18 @@ function splitValues(value: string): string[] {
   return value.split(/[,，\n]/u).map((entry) => entry.trim()).filter(Boolean);
 }
 
-export function CompanyProfileForm({ api, company, onCancel, onSaved }: CompanyProfileFormProps) {
-  const [name, setName] = useState(company.name);
-  const [legalName, setLegalName] = useState(company.legalName ?? "");
-  const [aliases, setAliases] = useState(company.aliases?.join("，") ?? "");
-  const [noAliases, setNoAliases] = useState(company.aliases?.length === 0);
-  const [headquarters, setHeadquarters] = useState(company.headquarters ?? "");
-  const [foundedAt, setFoundedAt] = useState(company.foundedAt ?? "");
-  const [websiteState, setWebsiteState] = useState<"unknown" | "none" | "known">(
-    company.officialWebsite === undefined ? "unknown" : company.officialWebsite === null ? "none" : "known",
-  );
-  const [website, setWebsite] = useState(company.officialWebsite ?? "");
-  const [listings, setListings] = useState(
-    company.stockListings?.map((listing) => `${listing.exchange}:${listing.ticker}`).join("\n") ?? "",
-  );
-  const [unlisted, setUnlisted] = useState(company.stockListings?.length === 0);
-  const [tags, setTags] = useState(company.businessTags?.join("，") ?? "");
+export function CompanyProfileForm({ api, company, control, onCancel, onSaved }: CompanyProfileFormProps) {
+  const [name, setName] = useFormField(control, "name", company.name);
+  const [legalName, setLegalName] = useMappedFormField(control, "legalName", company.legalName ?? "", value => value ?? "", value => value || null);
+  const [aliases, setAliases] = useMappedFormField(control, "aliases", company.aliases?.join("，") ?? "", value => value?.join("，") ?? "", splitValues);
+  const [noAliases, setNoAliases] = useMappedFormField(control, "aliases", company.aliases?.length === 0, value => value?.length === 0, value => value ? [] : splitValues(aliases));
+  const [headquarters, setHeadquarters] = useMappedFormField(control, "headquarters", company.headquarters ?? "", value => value ?? "", value => value || null);
+  const [foundedAt, setFoundedAt] = useMappedFormField(control, "foundedAt", company.foundedAt ?? "", value => value ?? "", value => value || null);
+  const [website, setWebsite] = useMappedFormField<string>(control, "officialWebsite", company.officialWebsite ?? "", value => typeof value === "string" ? value : company.officialWebsite ?? "", value => value);
+  const [websiteState, setWebsiteState] = useMappedFormField<"unknown" | "none" | "known">(control, "officialWebsite", company.officialWebsite === undefined ? "unknown" : company.officialWebsite === null ? "none" : "known", value => value === undefined || value?.state === "unknown" ? "unknown" : value === null ? "none" : "known", value => value === "none" ? null : value === "unknown" ? { state: "unknown" } : website.trim());
+  const [listings, setListings] = useMappedFormField<string>(control, "stockListings", company.stockListings?.map(listing => `${listing.exchange}:${listing.ticker}`).join("\n") ?? "", value => value?.map((listing: { exchange: string; ticker: string }) => `${listing.exchange}:${listing.ticker}`).join("\n") ?? "", value => value.split("\n").filter(Boolean).map(line => ({ exchange: line.split(":")[0] ?? "", ticker: line.split(":").slice(1).join(":") })));
+  const [unlisted, setUnlisted] = useMappedFormField(control, "stockListings", company.stockListings?.length === 0, value => value?.length === 0, value => value ? [] : listings.split("\n").filter(Boolean).map(line => ({ exchange: line.split(":")[0] ?? "", ticker: line.split(":").slice(1).join(":") })));
+  const [tags, setTags] = useMappedFormField(control, "businessTags", company.businessTags?.join("，") ?? "", value => value?.join("，") ?? "", splitValues);
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -76,6 +74,7 @@ export function CompanyProfileForm({ api, company, onCancel, onSaved }: CompanyP
     setSubmitting(true);
     setError(undefined);
     try {
+      if (control) { await control.confirm(); return; }
       onSaved(await api.industryResearch.updateCompany(company.id, input));
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "";

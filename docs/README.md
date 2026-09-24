@@ -7,11 +7,15 @@
 1. [开发指南](development.md)：运行配置、测试选择、报告行为与本地交付。
 2. [Base 总览](base/base.overview.设计文档.md)：当前 Chat / Capability → Base 的单向依赖边界、能力目录和实施状态。
 3. [Base Usage](base/base.usage.设计文档.md)：统一用量账本、统计口径、采集与看板。当前 Base 包只包含 Usage，不意味着其他通用模块已完成迁移。
+4. [Capability 总览](capabilities/capability.overview.设计文档.md)：已完成的包化边界、启停规则与后续范围。
+5. [Capability 与 Chat 交互协议](capabilities/capability.protocol.设计文档.md)：Chat 工具、确认卡、任务恢复与按需分析已实现；当前版本于 2026-09-24 经用户确认纳入本地稳定检查点，历史[手测清单](manual-tests/2026-09-23-chat-capability.md)保留供回归参考。
+6. [Capability 开发指南](capabilities/capability.开发指南.md)：当前 SDK、独立最小包、构建安装与更新规则；配套非调研记录查询示例。
+7. [Chat 人机交互设计](chat/chat.interaction.设计文档.md)：已实现的 Chat 专属询问/操作确认、共享真实表单、任务范围授权与等待/恢复协议，不属于 Base。
 
 ## 源码导航
 
 - `packages/application/src/chat/`：Chat 会话编排、上下文构建与会话相关测试。
-- `packages/application/src/capabilities/company-research/`：公司研究能力、行业研究入口、校验与能力测试。
+- `capabilities/company-research/`：独立公司研究包，包含 application、runtime、ui、export 与 contracts。
 - `packages/application/src/tools/`：应用层工具审计实现与测试。
 - `packages/application/src/testing/`：Application 及跨包测试共享的数据库 helper 与 fixture。
 - `packages/application/src/ports.ts`：Application 对外部运行时与能力适配器的端口定义。
@@ -20,7 +24,7 @@
 - `apps/desktop/src/worker/`：Worker 入口、装配、主进程传输、消息生命周期与用量运行时。
 - `apps/desktop/src/worker/agent/`：Pi Agent 执行与运行时契约；`pi-execution-contract` 定义不依赖 Chat Worker 形状的执行请求、事件与工具来源，`pi-agent-executor` 保留执行循环并只消费显式注入的运行时、密钥读取与搜索 Provider 工厂，`pi-execution-context` 定义注入的 Pi 会话上下文边界，`pi-chat-agent` 是保持旧 API、装配默认具体实现的兼容工厂。`pi-runtime` 只定义运行时契约，`pi-default-runtime` 提供默认 Pi 实现；`pi-message-utils`、`pi-tool-results` 和 `finalization-prompts` 分别承载消息判定、工具结果处理和终局提示词，运行控制、运行时上下文与工具批次准入保持为独立模块。
 - `apps/desktop/src/worker/chat/`：Chat agent 选择、消息映射、Chat 提示词、会话转录与每轮 checkpoint 收集；`pi-chat-context` 将这些 Chat 行为装配为执行器上下文。
-- `apps/desktop/src/worker/capabilities/company-research/`：公司档案与公司研究能力、提示词、诊断和测试 helper。
+- `capabilities/company-research/runtime/`：公司档案与公司研究专属 Agent 适配、提示词、诊断和测试 helper。
 - `apps/desktop/src/worker/tools/`：Pi 工具适配、工具运行时、安全活动投影与工具来源投影。
 
 已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
@@ -29,7 +33,7 @@ Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，且
 
 ## 历史决策与过程参考
 
-Capability 包化目标见 [Capability 架构设计文档](capabilities/capability.overview.设计文档.md)：自有可信包、启动扫描与按需加载、统一动作协议、Chat 渐进说明加载，以及 Capability A 的迁移边界。[第一批实施计划及验收记录](superpowers/plans/2026-09-20-capability-packages-phase-1.md)覆盖已实现的协议、非执行扫描、可回收装配与独立构建探针；尚未接入生产启动，真实 A 仍未迁移，管理界面与 Chat 调用留待后续批次。
+Capability 包化见 [Capability 架构设计文档](capabilities/capability.overview.设计文档.md)。[第一批](superpowers/plans/2026-09-20-capability-packages-phase-1.md)完成协议、扫描与加载基础；[第二批](superpowers/plans/2026-09-21-capability-packages-phase-2.md)已完成真实 A 独立包、生产启动及管理界面，并随用户验收版本合入本地稳定检查点 `stable-2026-09-22`。第三批包含 SDK、网关、导航、任务／产物、Chat 联动与开发模板；后续交互及公司资料更新优化随 2026-09-24 用户验收版本纳入本地稳定检查点 `stable-2026-09-24`。
 
 本轮源码整理的范围与验收记录见[第二批源码职责归类](superpowers/plans/2026-09-18-source-organization.md#本批验收记录)：完成职责归类、执行器适配/依赖拆分和窄契约守卫；不包含Base.Agent迁移、业务功能变更或安装包更新。
 

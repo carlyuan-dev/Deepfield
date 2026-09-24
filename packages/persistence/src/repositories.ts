@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { createCompanyResearchProtocolRepository } from "./company-research-protocol-repository.js";
+import { createCapabilityInvocationRepository } from "./capability-invocation-repository.js";
 import { createCompanyResearchBatchRepository } from "./company-research-batch-repository.js";
 import { createCapabilityItemRepository } from "./capability-item-repository.js";
 import { createCompanyRepository } from "./company-repository.js";
@@ -12,9 +14,15 @@ import { createCompanyProfileDiagnosticRepository } from "./company-profile-diag
 import { runInTransaction } from "./transactions.js";
 import type { Repositories } from "./types.js";
 import { createChatSessionRepository } from "./chat-session-repository.js";
+import { createChatCapabilityRepository } from "./chat-capability-repository.js";
+import { createChatInteractionRepository } from "./chat-interaction-repository.js";
 
 export function createRepositories(db: DatabaseSync): Repositories {
   return {
+    chatCapabilities: createChatCapabilityRepository(db),
+    chatInteractions: createChatInteractionRepository(db),
+    companyResearchProtocol: createCompanyResearchProtocolRepository(db),
+    capabilityInvocations: createCapabilityInvocationRepository(db),
     chatSessions: createChatSessionRepository(db),
     companyResearchBatches: createCompanyResearchBatchRepository(db),
     capabilityItems: createCapabilityItemRepository(db),

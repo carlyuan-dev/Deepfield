@@ -12,8 +12,17 @@ import { ResearchItemModal } from "./ResearchItemModal.js";
 import { BatchCompanyResearchModal } from "./BatchCompanyResearchModal.js";
 import { OperationProgress } from "./OperationProgress.js";
 import { useOperationProgress } from "./use-operation-progress.js";
+import type { CapabilityUiNavigation, CapabilityInteractionEditor } from "@deepfield/capability-sdk";
+import { CompanyFormView } from "./CompanyFormView.js";
+import type { PreparedResearch } from "../actions/drafts.js";
+import { CompanyResearchModal } from "./CompanyResearchModal.js";
+import { ResearchDraftConflictError } from "./research-error-presentation.js";
+import { reportRevision } from "./report-revision.js";
+import { hasUnknownCompanyProfileFields } from "../application/company-profile-completeness.js";
 
 export interface IndustryResearchCapabilityProps {
+  interactionEditor?: CapabilityInteractionEditor;
+  navigation?: CapabilityUiNavigation;
   api: DesktopApi;
   onClose(): void;
   active?: boolean;
@@ -40,7 +49,7 @@ function localReportTime(timestamp: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function IndustryResearchCapability({ api, onClose, active = true, onOpenSettings }: IndustryResearchCapabilityProps) {
+export function IndustryResearchCapability({ api, onClose, active = true, onOpenSettings, navigation, interactionEditor }: IndustryResearchCapabilityProps) {
   const [items, setItems] = useState<CapabilityItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<CapabilityItem>();
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>();
@@ -49,6 +58,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [itemError, setItemError] = useState<string>();
   const [companyError, setCompanyError] = useState<string>();
+  const [profileUpdateError, setProfileUpdateError] = useState<string>();
   const [openModal, setOpenModal] = useState<OpenModal>();
   const [editingItem, setEditingItem] = useState<CapabilityItem>();
   const [confirmation, setConfirmation] = useState<Confirmation>();
@@ -61,21 +71,89 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
   const [editingCompanyProfile, setEditingCompanyProfile] = useState(false);
   const [confirmingIdentity, setConfirmingIdentity] = useState<ItemCompanyView>();
   const companyRequest = useRef(0);
+  const itemsRequest = useRef(0);
+  const [requestedRunId, setRequestedRunId] = useState<string>();
+  const [requestedRevision, setRequestedRevision] = useState<string>();
+  const [researchRefreshToken, setResearchRefreshToken] = useState(0);
+  const [externalDraft, setExternalDraft] = useState<PreparedResearch>();
+  const draftCurrent = useRef<PreparedResearch | undefined>(undefined);
+  const draftInvalidation = useRef<Promise<void> | undefined>(undefined);
+  const draftConflict = useRef(false);
+  const dirty = useRef(false);
+  const panelDirty = useRef(false);
+  const formDirty = useRef(false);
+  const currentEditor = useRef(interactionEditor);
+  currentEditor.current = interactionEditor;
+  const hydratedItem = useRef<string | undefined>(undefined);
+  dirty.current = !!(openModal || editingCompanyProfile || confirmingIdentity || confirmation || externalDraft);
+  useEffect(() => navigation?.register({
+    canLeave: () => !dirty.current && !panelDirty.current && !(currentEditor.current && formDirty.current),
+    async open(_target, { view, signal, commit }) {
+      if (dirty.current || panelDirty.current) return { status: "blocked", message: "请先完成或关闭正在编辑的内容。" };
+      try {
+        const input = view.input as Record<string, string>;
+        if (view.viewId === "topic-preview") return { status: "not_found" };
+        if (view.viewId === "form") return { status: "unsupported" };
+        let prepared: PreparedResearch | undefined;
+        if (view.viewId === "research-draft") {
+          if (!api.researchDraft) return { status: "unsupported" };
+          const result = await api.researchDraft.get({ capabilityId: "company-research", draftId: input.draftId!, revision: input.revision! });
+          if (!result.ok || !result.prepared) return { status: "blocked", message: "草稿已修改，请刷新草稿。" };
+          prepared = result.prepared;
+        }
+        const itemId = prepared?.parameters.itemId ?? input.itemId;
+        const companyId = prepared?.parameters.companyId ?? input.companyId;
+        const item = itemId ? await api.industryResearch.getItem(itemId) : undefined;
+        if (itemId && !item) return { status: "not_found" };
+        const loaded = item ? await api.industryResearch.listCompanies(item.id) : [];
+        const refreshedItems = await api.industryResearch.listItems();
+        if (companyId && !loaded.some(company => company.id === companyId)) return { status: "not_found" };
+        if (view.viewId === "report") {
+          const run = await api.companyResearch.getRun(itemId!, companyId!, input.runId!);
+          if (!run || run.id !== input.runId || run.itemId !== itemId || run.companyId !== companyId) return { status: "not_found" };
+          if (await reportRevision(run) !== input.revision) return { status: "blocked", message: "报告内容已更新，请重新打开最新报告引用。" };
+        }
+        if (signal.aborted) return { status: "blocked" };
+        const opened = commit(() => {
+          ++companyRequest.current;
+          hydratedItem.current = item?.id;
+          ++itemsRequest.current;
+          setItems(newestFirst(refreshedItems)); setLoadingItems(false); setItemError(undefined);
+          setSelectedItem(item); setCompanies(companiesByName(loaded)); setSelectedCompanyId(companyId);
+          setLoadingCompanies(false); setCompanyError(undefined);
+          setRequestedRunId(view.viewId === "report" ? input.runId : undefined);
+          setRequestedRevision(view.viewId === "report" ? input.revision : undefined);
+          if (view.viewId === "company") setResearchRefreshToken(value => value + 1);
+          setExternalDraft(prepared); draftCurrent.current = prepared;
+          draftInvalidation.current = undefined; draftConflict.current = false;
+          panelDirty.current = false; dirty.current = !!prepared;
+          setSelecting(false); setSelectedCompanyIds(new Set());
+        });
+        return { status: opened ? "opened" : "blocked" };
+      } catch { return { status: "not_found" }; }
+    },
+  }), [api, navigation]);
   const companyProfileStatuses = useRef(new Map<string, ItemCompanyView["profileStatus"]>());
 
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId);
-  const profileConfigurationIssue = companies.find((company) => company.profileStatus === "pending" && company.profileIssue)?.profileIssue;
+  const selectedCompanyNeedsIdentityConfirmation = selectedCompany?.profileStatus === "failed" && (
+    selectedCompany.profileIdentityHint !== undefined ||
+    (selectedCompany.profileProvenance?.identity.disposition !== undefined && selectedCompany.profileProvenance.identity.disposition !== "matched")
+  );
+  const profileUpdatePending = selectedCompany?.profileStatus === "pending" || selectedCompany?.profileStatus === "enriching";
+  const profileUpdateHint = profileUpdateError ?? (profileUpdatePending ? "信息更新中" : selectedCompany?.profileStatus === "failed" ? "更新未完成，可再次更新信息" : selectedCompany && hasUnknownCompanyProfileFields(selectedCompany) ? "部分信息未知，可更新信息" : "信息已更新");
   const sortedItems = useMemo(() => newestFirst(items), [items]);
   const listVisible = active && selectedCompanyId === undefined && selectedItem !== undefined;
   const operation = useOperationProgress(api, selectedItem?.id ?? "", listVisible);
   const previousList = useRef({ visible: listVisible, itemId: selectedItem?.id });
 
   const loadItems = useCallback(async (): Promise<void> => {
+    const request = ++itemsRequest.current;
     setLoadingItems(true);
     setItemError(undefined);
-    try { setItems(newestFirst(await api.industryResearch.listItems())); }
-    catch { setItemError("加载调研列表失败，请重试"); }
-    finally { setLoadingItems(false); }
+    try { const loaded = await api.industryResearch.listItems(); if (itemsRequest.current === request) setItems(newestFirst(loaded)); }
+    catch { if (itemsRequest.current === request) setItemError("加载调研列表失败，请重试"); }
+    finally { if (itemsRequest.current === request) setLoadingItems(false); }
   }, [api]);
 
   const loadCompanies = useCallback(async (item: CapabilityItem, quiet = false): Promise<void> => {
@@ -111,9 +189,8 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
       if (exists) companyProfileStatuses.current.delete(event.companyId);
       return current.map((company) => {
         if (company.id !== event.companyId) return company;
-        const { profileIssue: _issue, profileProvenance, ...rest } = company;
+        const { profileIssue: _issue, ...rest } = company;
         return { ...rest, profileStatus: event.status,
-          ...(profileProvenance && event.status !== "pending" && event.status !== "enriching" ? { profileProvenance } : {}),
           ...(event.issue ? { profileIssue: event.issue } : {}) };
       });
     });
@@ -128,6 +205,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
       setCompanyError(undefined);
       return;
     }
+    if (hydratedItem.current === selectedItem.id) { hydratedItem.current = undefined; return () => { companyRequest.current += 1; }; }
     setCompanies([]);
     void loadCompanies(selectedItem);
     return () => { companyRequest.current += 1; };
@@ -170,8 +248,9 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
     setEditingCompanyProfile(false);
   };
 
-  const retryCompanyProfile = async (company: ItemCompanyView): Promise<void> => {
-    setCompanyError(undefined);
+  const updateCompanyProfile = async (company: ItemCompanyView): Promise<void> => {
+    if (company.profileStatus === "pending" || company.profileStatus === "enriching") return;
+    setProfileUpdateError(undefined);
     setCompanies((current) => current.map((entry) =>
       entry.id === company.id ? { ...entry, profileStatus: "pending" } : entry,
     ));
@@ -180,9 +259,9 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
       if (!accepted && selectedItem !== undefined) await loadCompanies(selectedItem);
     } catch {
       setCompanies((current) => current.map((entry) =>
-        entry.id === company.id ? { ...entry, profileStatus: "failed" } : entry,
+        entry.id === company.id ? { ...entry, profileStatus: company.profileStatus } : entry,
       ));
-      setCompanyError(`“${company.name}”重试失败，请稍后再试`);
+      setProfileUpdateError("更新未启动，请稍后再试");
     }
   };
 
@@ -312,7 +391,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
         </>
       ) : selectedCompany !== undefined ? (
         <>
-          <div className="capability-page-heading"><div><h1 className="capability-title">{selectedCompany.name}</h1></div><div className="capability-actions">{!editingCompanyProfile && <button className="company-detail-action" onClick={() => setEditingCompanyProfile(true)}>编辑信息</button>}<button className="danger-button company-detail-action" onClick={() => beginConfirmation({ kind: "remove-company", company: selectedCompany })}>删除公司</button></div></div>
+          <div className="capability-page-heading"><div><h1 className="capability-title">{selectedCompany.name}</h1></div><div className="capability-actions"><small className="company-profile-update-hint" role="status">{profileUpdateHint}</small><button className="company-detail-action" disabled={profileUpdatePending} onClick={() => void updateCompanyProfile(selectedCompany)}>{profileUpdatePending ? "更新中…" : "更新信息"}</button>{!editingCompanyProfile && <button className="company-detail-action" onClick={() => setEditingCompanyProfile(true)}>编辑信息</button>}<button className="danger-button company-detail-action" onClick={() => beginConfirmation({ kind: "remove-company", company: selectedCompany })}>删除公司</button></div></div>
           {editingCompanyProfile ? <CompanyProfileForm api={api} company={selectedCompany} onCancel={() => setEditingCompanyProfile(false)} onSaved={(saved) => handleCompanySaved({ ...saved, itemId: selectedCompany.itemId, ...(selectedCompany.note !== undefined ? { note: selectedCompany.note } : {}) })} /> : <dl className="company-detail">
             <div className="scope-row"><dt>公司名称</dt><dd>{selectedCompany.name}</dd></div>
             <div className="scope-row"><dt>法定名称</dt><dd>{selectedCompany.legalName ?? "未知"}</dd></div>
@@ -324,9 +403,10 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
             <div className="scope-row"><dt>业务标签</dt><dd>{selectedCompany.businessTags?.join("、") ?? "未知"}</dd></div>
             <div className="scope-row"><dt>候选备注</dt><dd>{selectedCompany.note ?? "未填写"}</dd></div>
           </dl>}
+          {selectedCompanyNeedsIdentityConfirmation && <div><button className="company-profile-confirm" aria-label={`${selectedCompany.profileIdentityHint ? "修改" : "确认"}主体 ${selectedCompany.name}`} onClick={() => setConfirmingIdentity(selectedCompany)}>{selectedCompany.profileIdentityHint ? "修改主体" : "确认主体"}</button></div>}
           {!editingCompanyProfile && selectedCompany.profileProvenance && <details>
             <summary>资料核实来源</summary>
-            <p className="muted">{selectedCompany.profileProvenance.identity.disposition === "matched" ? "本次来源用于身份及部分字段核实，未确认字段保持未知。" : "身份尚未确认，请核对公司名称并编辑信息或重试。"}</p>
+            <p className="muted">{selectedCompany.profileProvenance.identity.disposition === "matched" ? "本次来源用于身份及部分字段核实，未确认字段保持未知。" : "身份尚未确认，请核对公司名称并确认主体或更新信息。"}</p>
             <ul>{selectedCompany.profileProvenance.sources.map((source) => <li key={`${source.kind}:${source.url}`}><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a>（{source.kind === "opened_page" ? "已读取网页" : "搜索摘要"}）</li>)}</ul>
           </details>}
           <CompanyResearchPanel
@@ -334,6 +414,10 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
             api={api}
             itemId={selectedItem.id}
             companyId={selectedCompany.id}
+            refreshToken={researchRefreshToken}
+            {...(requestedRunId ? { requestedRunId } : {})}
+            {...(requestedRevision ? { requestedRevision } : {})}
+            navigationDirtyRef={panelDirty}
             topicName={selectedItem.industry}
             companyName={selectedCompany.name}
             active={active}
@@ -356,16 +440,10 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
           </div>
           </div>
           {companyError !== undefined && <div className="error" role="alert">{companyError} <button onClick={() => void loadCompanies(selectedItem)}>重新加载</button></div>}
-          {profileConfigurationIssue && <div className="error" role="status">{profileConfigurationIssue.category === "configuration" ? <>公司资料补全已暂停，请配置{profileConfigurationIssue.context?.service === "search" ? "搜索" : "模型"}服务。{onOpenSettings && <button onClick={() => onOpenSettings(profileConfigurationIssue.context?.service ?? "llm")}>前往设置</button>}</> : "资料补全队列暂不可用，请重启应用后重试。"}</div>}
           <section className="company-panel" aria-labelledby="company-list-title">
             <h2 id="company-list-title">当前公司</h2>
             {loadingCompanies ? <p className="muted">加载公司列表…</p> : companies.length === 0 ? <p className="muted">暂无公司，可手动添加或从文本识别。</p> : (
               <ul className="company-list">{companies.map((company) => {
-                const needsIdentityConfirmation = company.profileStatus === "failed" && (
-                  company.profileIdentityHint !== undefined ||
-                  (company.profileProvenance?.identity.disposition !== undefined && company.profileProvenance.identity.disposition !== "matched")
-                );
-                const formatFailure = company.profileStatus === "failed" && company.profileIssue?.code === "EXTERNAL.INVALID_RESPONSE";
                 const batchEntry = operation.batch?.entries.find((entry) => (entry.status === "pending" || entry.status === "running") && entry.companyId === company.id);
                 const batchEntryActive = batchEntry?.status === "running" && operation.batch?.status === "running";
                 const batchEntryStatus = batchEntry?.status === "pending" ? "等待调研"
@@ -374,23 +452,15 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
                       : batchEntryActive ? (batchEntry.stage === "structure" ? "正在整理调研结果" : "正在收集调研资料") : undefined;
                 const reportTime = company.reportSummary && company.reportSummary.count > 0 ? localReportTime(company.reportSummary.latestCreatedAt) : undefined;
                 return <li key={company.id}>{selecting
-                  ? <label className="company-select-row"><input type="checkbox" aria-label={`选择 ${company.name}`} checked={selectedCompanyIds.has(company.id)} onChange={() => toggleCompany(company.id)} /><span><strong>{company.name}</strong>{company.profileStatus === "ready" && company.headquarters !== undefined && <> · {company.headquarters}</>}</span></label>
-                  : <div className={`company-list-row profile-${company.profileStatus}`}>
-                    <button className="company-row-button" disabled={company.profileStatus === "pending" || company.profileStatus === "enriching"} aria-label={`查看 ${company.name}`} onClick={() => { setEditingCompanyProfile(false); setSelectedCompanyId(company.id); }}>
+                  ? <label className="company-select-row"><input type="checkbox" aria-label={`选择 ${company.name}`} checked={selectedCompanyIds.has(company.id)} onChange={() => toggleCompany(company.id)} /><span><strong>{company.name}</strong>{company.headquarters !== undefined && <> · {company.headquarters}</>}</span></label>
+                  : <div className="company-list-row">
+                    <button className="company-row-button" aria-label={`查看 ${company.name}`} onClick={() => { setEditingCompanyProfile(false); setProfileUpdateError(undefined); setRequestedRunId(undefined); setRequestedRevision(undefined); setSelectedCompanyId(company.id); }}>
                       <strong>{company.name}</strong>
-                      {needsIdentityConfirmation && <span className="company-profile-identity-status">身份待确认</span>}
-                      {company.profileStatus === "ready" && company.headquarters !== undefined && <span>{company.headquarters}</span>}
-                      {company.profileStatus === "ready" && company.note !== undefined && <small>{company.note}</small>}
+                      {company.headquarters !== undefined && <span>{company.headquarters}</span>}
+                      {company.note !== undefined && <small>{company.note}</small>}
                       {batchEntryStatus && <small className={batchEntryActive ? "company-research-active-status" : undefined}>{batchEntryStatus}</small>}
                     </button>
                     {batchEntryActive && <span className="company-profile-spinner" role="status" aria-label={`${company.name} ${batchEntryStatus}`} />}
-                    {company.profileStatus === "enriching" && <span className="company-profile-spinner" role="status" aria-label={`${company.name} 基本信息补全中`} />}
-                    {company.profileStatus === "failed" && <div className="company-profile-actions">
-                      {formatFailure && <span className="company-profile-error-text">结果格式错误，请重试</span>}
-                      {needsIdentityConfirmation && <button className="company-profile-confirm" aria-label={`${company.profileIdentityHint ? "修改" : "确认"}主体 ${company.name}`} onClick={() => setConfirmingIdentity(company)}>{company.profileIdentityHint ? "修改主体" : "确认主体"}</button>}
-                      <button className="company-profile-retry" aria-label={`重试补全 ${company.name}`} onClick={() => void retryCompanyProfile(company)}>重试</button>
-                      <span className="company-profile-failed" role="img" title={formatFailure ? "结果格式错误，请重试" : "基本信息补全失败"} aria-label={`${company.name} ${formatFailure ? "结果格式错误，请重试" : "基本信息补全失败"}`}>!</span>
-                    </div>}
                     {company.reportSummary && company.reportSummary.count > 0 && reportTime && <small className="company-report-summary muted" aria-label={`报告 ${company.reportSummary.count} 份 · 最新创建于 ${reportTime}`}>
                         <span className="company-report-count">报告 {company.reportSummary.count} 份</span>
                         <span className="company-report-separator" aria-hidden="true">·</span>
@@ -407,7 +477,32 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
         </div>
       </div>
 
+      {interactionEditor && <CompanyFormView api={api} editor={interactionEditor} active={active} dirtyRef={formDirty}
+        onItemSaved={handleSaved} onCompaniesAdded={handleCompaniesAdded} onCompanySaved={handleCompanySaved}
+        onResearchStarted={() => { if (selectedItem) void loadCompanies(selectedItem, true); setResearchRefreshToken(value => value + 1); }} />}
       {openModal === "create" && <ResearchItemModal api={api} active={active} onClose={() => setOpenModal(undefined)} onSaved={handleSaved} />}
+      {externalDraft && selectedItem && selectedCompany && <CompanyResearchModal
+        initial={externalDraft.parameters} topicName={selectedItem.industry} companyName={selectedCompany.name} active={active}
+        onClose={() => { setExternalDraft(undefined); dirty.current = false; }}
+        onEdited={() => {
+          if (draftInvalidation.current || !draftCurrent.current || !api.researchDraft) return;
+          // One invalidation per opened form makes the previous chat reference stale immediately.
+          draftInvalidation.current = api.researchDraft.invalidate(draftCurrent.current.draftRef).then(result => {
+            if (result.ok && result.prepared) draftCurrent.current = result.prepared;
+            else draftConflict.current = true;
+          }).catch(() => { draftConflict.current = true; });
+        }}
+        onStart={async input => {
+          await draftInvalidation.current;
+          if (draftConflict.current || !draftCurrent.current || !api.researchDraft) throw new ResearchDraftConflictError();
+          const current = draftCurrent.current;
+          const updated = await api.researchDraft.update({ draftRef: current.draftRef, parameters: { ...input, itemId: current.parameters.itemId, companyId: current.parameters.companyId } });
+          if (!updated.ok || !updated.prepared) throw new ResearchDraftConflictError();
+          draftCurrent.current = updated.prepared;
+          const result = await api.researchDraft.submit(updated.prepared);
+          if (!result.ok) throw new ResearchDraftConflictError();
+        }} {...(onOpenSettings ? { onOpenSettings } : {})}
+      />}
       {openModal === "edit" && editingItem !== undefined && <ResearchItemModal api={api} active={active} item={editingItem} onClose={() => { setOpenModal(undefined); setEditingItem(undefined); }} onSaved={handleSaved} />}
       {openModal === "add" && selectedItem !== undefined && <AddCompaniesModal api={api} active={active} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}
       {openModal === "import" && selectedItem !== undefined && <ImportCompaniesModal api={api} active={active} itemId={selectedItem.id} onClose={() => setOpenModal(undefined)} onCompaniesAdded={handleCompaniesAdded} />}

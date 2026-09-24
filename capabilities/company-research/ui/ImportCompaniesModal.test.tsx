@@ -6,6 +6,18 @@ import { makeFakeApi } from "../../../apps/desktop/src/renderer/renderer-test-he
 import { ImportCompaniesModal } from "./ImportCompaniesModal.js";
 
 describe("ImportCompaniesModal", () => {
+  it("never lets recognition buttons approve adding candidates or partial results approve recognition", async () => {
+    const api = makeFakeApi(); const user = userEvent.setup(); const confirm = vi.fn(async () => {});
+    const control = { values: { text: "公司甲", companies: [{ name: "公司甲" }] }, step: "recognition", edit: vi.fn(), flush: async () => {}, transition: async () => {}, confirm, cancel: async () => {} };
+    const view = render(<ImportCompaniesModal api={api} itemId="topic" control={control} onClose={() => {}} onCompaniesAdded={() => {}} />);
+    expect((screen.getByRole("button", { name: "确认导入" }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<ImportCompaniesModal api={api} itemId="topic" control={{ ...control, step: "selection" }} onClose={() => {}} onCompaniesAdded={() => {}} />);
+    const recognize = screen.getByRole("button", { name: "重新识别" });
+    expect((recognize as HTMLButtonElement).disabled).toBe(true);
+    await user.click(recognize); expect(confirm).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "确认导入" })); expect(confirm).toHaveBeenCalledOnce();
+    expect(api.industryResearch.addCompanies).not.toHaveBeenCalled();
+  });
   it("keeps manual company entry out of the recognition flow", async () => {
     const user = userEvent.setup();
     const api = makeFakeApi();

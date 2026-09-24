@@ -563,6 +563,121 @@ MIGRATIONS.push({ version: 23, up(db) {
   );`);
 } });
 
+MIGRATIONS.push({ version: 24, up(db) {
+  db.exec(`CREATE TABLE capability_invocations(
+    id TEXT PRIMARY KEY, capability_id TEXT NOT NULL, action_id TEXT NOT NULL,
+    binding_digest TEXT NOT NULL, issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('issued','pending','completed')),
+    result_json TEXT, task_id TEXT, terminal_at INTEGER
+  );
+  CREATE INDEX idx_capability_invocations_task ON capability_invocations(capability_id, task_id);
+  CREATE INDEX idx_capability_invocations_retention ON capability_invocations(terminal_at, expires_at);`);
+} });
+
+MIGRATIONS.push({ version: 25, up(db) {
+  db.exec(`CREATE TABLE company_research_drafts(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE company_research_tasks(id TEXT PRIMARY KEY, invocation_id TEXT NOT NULL UNIQUE, data TEXT NOT NULL, finished_at TEXT);
+    CREATE INDEX idx_company_research_task_retention ON company_research_tasks(finished_at);`);
+} });
+
+MIGRATIONS.push({ version: 26, up(db) {
+  db.exec(`CREATE TABLE chat_capability_descriptions(
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL, package_version TEXT NOT NULL,
+    action_id TEXT NOT NULL, contract_digest TEXT NOT NULL,
+    documentation TEXT NOT NULL, declaration_json TEXT NOT NULL,
+    PRIMARY KEY(conversation_id, capability_id, package_version, action_id, contract_digest)
+  );
+  CREATE TABLE chat_capability_tasks(
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL, task_id TEXT NOT NULL,
+    source_request_id TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+    analyze_after INTEGER NOT NULL DEFAULT 0,
+    analysis_state TEXT NOT NULL DEFAULT 'none',
+    consumed_event_id TEXT,
+    PRIMARY KEY(conversation_id, capability_id, task_id)
+  );
+  CREATE INDEX idx_chat_capability_tasks_ref ON chat_capability_tasks(capability_id, task_id);`);
+} });
+
+MIGRATIONS.push({ version: 27, up(db) {
+  db.exec(`CREATE TABLE chat_capability_views(
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    target_key TEXT NOT NULL, source_request_id TEXT NOT NULL,
+    target_json TEXT NOT NULL,
+    PRIMARY KEY(conversation_id, target_key)
+  );`);
+} });
+
+MIGRATIONS.push({ version: 28, up(db) {
+  db.exec(`CREATE TABLE chat_capability_invocations(
+    invocation_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_request_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    call_digest TEXT NOT NULL
+  );
+  CREATE INDEX idx_chat_invocation_binding ON chat_capability_invocations(conversation_id, call_digest);`);
+} });
+
+MIGRATIONS.push({ version: 29, up(db) {
+  db.exec(`CREATE TABLE chat_capability_operation_cards(
+    invocation_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_request_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('awaiting_confirmation','completed','failed','cancelled','interrupted','uncertain')),
+    title TEXT NOT NULL,
+    presentation_json TEXT
+  );
+  CREATE INDEX idx_chat_operation_cards_request ON chat_capability_operation_cards(conversation_id, source_request_id);`);
+} });
+
+MIGRATIONS.push({ version: 30, up(db) {
+  db.exec(`CREATE TABLE chat_interactions(
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_request_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('question','approval')),
+    payload_json TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision >= 1),
+    status TEXT NOT NULL CHECK(status IN ('waiting','editing','executing','answered','cancelled','invalidated','submitted','succeeded','failed','uncertain')),
+    content_version TEXT,
+    receipt_id TEXT UNIQUE,
+    answer TEXT,
+    result_summary TEXT,
+    task_id TEXT,
+    failure_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX idx_chat_interactions_one_active ON chat_interactions(conversation_id)
+    WHERE status IN ('waiting','editing','executing');
+  CREATE INDEX idx_chat_interactions_conversation ON chat_interactions(conversation_id, created_at);
+  CREATE TABLE chat_interaction_responses(
+    id TEXT PRIMARY KEY, interaction_id TEXT NOT NULL REFERENCES chat_interactions(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL,
+    detail TEXT NOT NULL, created_at TEXT NOT NULL,
+    UNIQUE(interaction_id, revision)
+  );
+  CREATE TABLE chat_interaction_resume_events(
+    id TEXT PRIMARY KEY, interaction_id TEXT NOT NULL REFERENCES chat_interactions(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_request_id TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','claimed','consumed')),
+    created_at TEXT NOT NULL,
+    UNIQUE(interaction_id, kind)
+  );
+  CREATE INDEX idx_chat_interaction_resume_pending ON chat_interaction_resume_events(conversation_id, state, created_at);`);
+} });
+
+MIGRATIONS.push({ version: 31, up(db) {
+  db.exec(`CREATE TABLE chat_interaction_continuations(
+    receipt_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    owner_json TEXT NOT NULL, operation_json TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0
+  );`);
+} });
+
 export function migrate(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {

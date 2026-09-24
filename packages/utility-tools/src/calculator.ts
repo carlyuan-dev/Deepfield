@@ -114,6 +114,7 @@ export function createCalculatorDefinition(): ToolDefinition<
   return {
     identity: { name: "calculator", version: 1 },
     label: "Calculator",
+    userFacing: { name: "计算器", description: "计算基本算术表达式" },
     description: "Evaluate a finite arithmetic expression using numbers and basic operators.",
     inputSchema: calculatorInputSchema,
     outputSchema: calculatorOutputSchema,

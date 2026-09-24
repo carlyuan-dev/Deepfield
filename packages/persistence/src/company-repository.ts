@@ -117,8 +117,39 @@ export function createCompanyRepository(db: DatabaseSync): CompanyRepository {
       const existing = repository.getById(companyId);
       if (!existing || existing.profileStatus !== "enriching") return undefined;
       const added = Object.fromEntries(Object.entries(fields).filter(([key]) => existing[key as keyof Company] === undefined)) as CompanyProfileFields;
-      const stored = provenance === undefined ? undefined : { ...provenance, fields: added,
-        fieldEvidence: Object.fromEntries(Object.entries(provenance.fieldEvidence).filter(([field]) => field in added)) };
+      const previous = existing.profileProvenance;
+      const stored = (() => {
+        if (provenance === undefined) return previous;
+        const fieldEvidence = {
+          ...previous?.fieldEvidence,
+          ...Object.fromEntries(Object.entries(provenance.fieldEvidence).filter(([field]) => field in added)),
+        };
+        const key = (source: { kind: string; url: string }) => `${source.kind}:${source.url}`;
+        const available = new Map([...(previous?.sources ?? []), ...provenance.sources].map(source => [key(source), source] as const));
+        const retained = new Map<string, (typeof provenance.sources)[number]>();
+        const retain = (ref: { kind: string; url: string }) => {
+          const source = available.get(key(ref));
+          if (source && (retained.has(key(ref)) || retained.size < 40)) retained.set(key(ref), source);
+        };
+        // Identity and one source per accepted field take priority over unreferenced history.
+        for (const ref of provenance.identity.sources) retain(ref);
+        const evidence = Object.entries(fieldEvidence);
+        const newEvidence = evidence.filter(([field]) => field in added);
+        const oldEvidence = evidence.filter(([field]) => !(field in added));
+        for (const [, refs] of [...newEvidence, ...oldEvidence]) if (refs?.[0]) retain(refs[0]);
+        for (const [, refs] of [...newEvidence, ...oldEvidence]) for (const ref of refs ?? []) retain(ref);
+        for (const source of [...provenance.sources, ...(previous?.sources ?? [])]) retain(source);
+        return {
+          ...provenance,
+          identity: { ...provenance.identity, sources: provenance.identity.sources.filter(ref => retained.has(key(ref))) },
+          fields: { ...previous?.fields, ...added },
+          fieldEvidence: Object.fromEntries(evidence.flatMap(([field, refs]) => {
+            const kept = refs?.filter(ref => retained.has(key(ref))) ?? [];
+            return kept.length ? [[field, kept]] : [];
+          })),
+          sources: [...retained.values()],
+        };
+      })();
       // One guarded statement commits values and evidence together. A manual
       // update changes status to ready, invalidating an obsolete completion.
       const result = db.prepare(`UPDATE companies SET
@@ -154,10 +185,8 @@ export function createCompanyRepository(db: DatabaseSync): CompanyRepository {
     setProfileStatus(companyId, status, issue): Company | undefined {
       const updatedAt = new Date().toISOString();
       const result = db
-        .prepare(`UPDATE companies SET profile_status = ?, profile_issue_json = ?, updated_at = ?,
-          profile_provenance_json = CASE WHEN ? IN ('pending', 'enriching') THEN NULL ELSE profile_provenance_json END
-          WHERE id = ?`)
-        .run(status, issue === undefined ? null : JSON.stringify(issue), updatedAt, status, companyId);
+        .prepare(`UPDATE companies SET profile_status = ?, profile_issue_json = ?, updated_at = ? WHERE id = ?`)
+        .run(status, issue === undefined ? null : JSON.stringify(issue), updatedAt, companyId);
       return result.changes === 0 ? undefined : repository.getById(companyId);
     },
 

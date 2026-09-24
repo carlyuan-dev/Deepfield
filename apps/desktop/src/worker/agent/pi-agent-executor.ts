@@ -96,6 +96,7 @@ export function createPiAgentExecutor(
     toolSessions,
     toolActor = "main_agent",
     diagnosticSink,
+    handoff,
   } = options;
   return {
     async run(
@@ -185,6 +186,7 @@ export function createPiAgentExecutor(
         const outcomesByCallId = new Map<string, CachedPiToolOutcome>();
         const syntheticRecorded = new Set<string>();
         const beforeToolCallSeen = new Set<string>();
+        const handoffSkippedCallIds = new Set<string>();
         const runPolicy = {
           ...WEB_CHAT_POLICY,
           toolDecisionTurns: Math.max(0, request.toolAccess.maxAgentTurns - 1),
@@ -431,7 +433,7 @@ export function createPiAgentExecutor(
           activeActivities.clear();
         };
 
-        const emitTerminal = (event: Extract<PiExecutionEvent, { type: "completed" }>): void => {
+        const emitTerminal = (event: Extract<PiExecutionEvent, { type: "completed" | "handed_off" }>): void => {
           if (adapterSettled) {
             return;
           }
@@ -541,6 +543,33 @@ export function createPiAgentExecutor(
           sessionId: preparedContext.sessionId,
           toolExecution: "sequential",
           beforeToolCall: async ({ assistantMessage, toolCall }) => {
+            if (handoff?.isRequested()) {
+              handoffSkippedCallIds.add(toolCall.id);
+              const scope = batchScopeByCallId.get(toolCall.id);
+              if (scope !== undefined && toolSessions !== undefined && !syntheticRecorded.has(toolCall.id)) {
+                syntheticRecorded.add(toolCall.id);
+                await toolSessions.recordSynthetic({
+                  executionId: scopedActivityCallKey(request.requestId, scope),
+                  traceId: request.requestId,
+                  actor: toolActor,
+                  tool: { name: toolCall.name, version: 1 },
+                  status: "skipped",
+                  errorCode: "handoff_pending",
+                  ...scope,
+                  attempts: 0,
+                  budgetConsumed: false,
+                });
+              }
+              return {
+                block: true,
+                reason: JSON.stringify({
+                  status: "skipped",
+                  code: "handoff_pending",
+                  message: "工具未执行：当前执行已交接",
+                  budgetConsumed: false,
+                }),
+              };
+            }
             const plan = planAssistantToolBatch(assistantMessage);
             if (plan !== undefined) beforeToolCallSeen.add(toolCall.id);
             // Keep the existing skipped-call audit for exhausted tools, while
@@ -621,6 +650,7 @@ export function createPiAgentExecutor(
             };
           },
           prepareNextTurnWithContext: ({ message, toolResults, context, newMessages }) => {
+            if (handoff?.isRequested()) return undefined;
             if (capabilityFinalization && finalizationReason !== undefined) {
               return { context: { ...context, systemPrompt: synthesisSystemPrompt, messages: finalizationMessages(), tools: [] } };
             }
@@ -774,6 +804,7 @@ export function createPiAgentExecutor(
             };
           },
           shouldStopAfterTurn: ({ message, newMessages }) => {
+            if (handoff?.isRequested()) return true;
             if (capabilityFinalization && finalizationReason !== undefined) {
               return message !== finalizationTrigger;
             }
@@ -894,7 +925,13 @@ export function createPiAgentExecutor(
               NETWORK_TOOL_NAMES.has(event.toolName) &&
               !beforeToolCallSeen.has(event.toolCallId) &&
               !outcomesByCallId.has(event.toolCallId);
-            if (preDispatchValidationFailure) {
+            if (handoffSkippedCallIds.has(event.toolCallId)) {
+              emitActivity(activity, "skipped", {
+                errorCode: "handoff_pending",
+                ...scope,
+                budgetConsumed: false,
+              });
+            } else if (preDispatchValidationFailure) {
               if (!syntheticRecorded.has(event.toolCallId)) {
                 syntheticRecorded.add(event.toolCallId);
                 await toolSessions.recordSynthetic({
@@ -988,7 +1025,13 @@ export function createPiAgentExecutor(
           failActiveActivities();
           throw new PiChatAgentError("incomplete_lifecycle", "agent finished without a complete start/end sequence");
         }
-        const finalAnswer = validateFinalAnswer(finalText, request.prompt, finalHadToolUse);
+        if (handoff?.isRequested()) {
+          failActiveActivities();
+          emitTerminal({ requestId: request.requestId, type: "handed_off" });
+          reportDiagnostic();
+          return;
+        }
+        const finalAnswer = validateFinalAnswer(finalText, request.humanPrompt ?? request.prompt, finalHadToolUse);
         if (!finalAnswer.ok) {
           failActiveActivities();
           throw new PiChatAgentError(finalAnswer.code, "agent finished without a final answer");

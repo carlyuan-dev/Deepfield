@@ -6,6 +6,8 @@ import { createCapabilityAgentRuntime } from "./capabilities/agent-runtime.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
 import { Value } from "typebox/value";
+import { renderChatHelp } from "@deepfield/application";
+import { availableChatTools } from "./tools/tool-runtime.js";
 import { rawResearchRequest, structureResearchRequest } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
 import {
   assistant,
@@ -94,6 +96,7 @@ describe("utility worker assembly (focused revision)", () => {
         (tool) => tool.name,
       ),
     ).toEqual([
+      "view_available_features",
       "get_current_datetime",
       "calculator",
       "convert_timezone",
@@ -117,6 +120,34 @@ describe("utility worker assembly (focused revision)", () => {
     expect(endpoint.posted.some((value) => (value as { type?: string }).type === "completed")).toBe(
       true,
     );
+    loop.dispose();
+  });
+
+  it("injects a read-only feature tool even without capabilities and returns the help template", async () => {
+    const outputs: string[] = [];
+    let agent!: FakePiAgent;
+    agent = new FakePiAgent({ beforeEvents: async () => {
+      const tools = (agent.receivedOptions?.initialState as { tools?: Array<{ name: string; execute: Function }> }).tools ?? [];
+      const feature = tools.find(tool => tool.name === "view_available_features");
+      if (!feature) throw new Error("feature tool was not injected");
+      const result = await feature.execute("features", {}, new AbortController().signal);
+      outputs.push(result.content[0].text);
+    }, events: [{ type: "agent_start" } as AgentEvent, { type: "agent_end", messages: [assistant("完成")] }] });
+    const endpoint = new InMemoryEndpoint();
+    const hostClient = { request: () => Promise.resolve({ acknowledged: true }), handleReply: () => undefined, dispose: () => undefined } as unknown as HostClient;
+    const { loop } = createUtilityAssembly({ endpoint, agentMode: "pi", hostClient, piRuntime: makeRuntime(agent, stubModel) });
+    endpoint.emit({ ...request(), prompt: "我们有哪些工具可以用？" });
+    await flushPending();
+    expect(outputs[0]).toBe(renderChatHelp(availableChatTools(false), []));
+    expect(outputs[0]).toContain("当前没有可用能力");
+    expect(outputs[0]).not.toContain("网页搜索");
+    const ready = [{ name: "示例能力", markdown: "整理事项。\n\n例如：新建一个事项" }];
+    endpoint.emit({ ...request(), requestId: "req-2", prompt: "我们有什么能力？",
+      context: { ...request().context, capabilityHelp: ready } });
+    await flushPending();
+    expect(outputs[1]).toBe(renderChatHelp(availableChatTools(false), ready));
+    expect(outputs[1]).toContain("### 示例能力\n\n整理事项。\n\n例如：新建一个事项");
+    expect(outputs[1]).not.toContain("sha256");
     loop.dispose();
   });
 

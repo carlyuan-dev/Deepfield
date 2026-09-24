@@ -1,11 +1,15 @@
 import type { CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
 import type { CompanyResearchPrompt } from "./company-research-prompt.js";
 
-export const COMPANY_RESEARCH_STRUCTURING_PROMPT_VERSION = "company-research-structure-v1" as const;
+export const COMPANY_RESEARCH_STRUCTURING_PROMPT_VERSION = "company-research-structure-v2" as const;
 
 export function buildCompanyResearchStructuringPrompt(
   request: CompanyResearchStructureWorkerRequest,
 ): CompanyResearchPrompt {
+  const completeObjectExample = {
+    coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
+    sections: request.template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+  };
   const instructions = [
     `Prompt 版本：${COMPANY_RESEARCH_STRUCTURING_PROMPT_VERSION}`,
     "你是面向专业记者的研究报告分析与结构化编辑。不能访问互联网，不调用任何工具或搜索。唯一事实依据是所提供的原始 Markdown 报告。",
@@ -26,6 +30,7 @@ export function buildCompanyResearchStructuringPrompt(
     "claimType 按优先顺序映射：公司未来目标、意向、时间表、安排为 plan；未来结果的第三方推演为 forecast；第三方反推过去或当前数据为 estimate；公司对自身能力、原因或效果的主观主张为 company_statement；其余已发生且可由记录确认的事件或数据为 reported_fact。公司财报数字和已完成事件可以是 reported_fact。",
     "每条 fact 恰有一个内联 source，只含 title、url；同一网页可在不同事实中重复，不创建来源字典、内容 ID、跨模块引用、编辑字段或核验状态。",
     "只输出一个 JSON 对象（JSON object only），严格符合给定 Schema。顶层只有 coreSummary、sections；section 只有 sectionId、status、summary、facts。不得输出 Markdown 围栏、解释、前后记、系统外壳或额外字段。",
+    `完整单对象格式示例（只示范结构，不是目标公司的事实）：${JSON.stringify(completeObjectExample)}`,
   ].join("\n");
   const input = [
     "【不可变研究上下文快照】", JSON.stringify(request.context),

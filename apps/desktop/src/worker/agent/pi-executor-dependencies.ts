@@ -11,6 +11,7 @@ import type {
   PiToolSessionProvider,
   SkillCatalogProvider,
 } from "./pi-runtime.js";
+import type { ExecutionHandoff } from "./execution-handoff.js";
 
 export interface PiAgentExecutorDependencies {
   runtime: PiRuntime;
@@ -28,4 +29,5 @@ export interface PiAgentExecutorOptions {
   toolSessions?: PiToolSessionProvider;
   toolActor?: "main_agent" | "capability";
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void;
+  handoff?: ExecutionHandoff;
 }

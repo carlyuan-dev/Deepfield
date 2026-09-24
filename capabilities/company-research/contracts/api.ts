@@ -22,6 +22,12 @@ import type { SettingsView } from "../../../packages/contracts/src/settings.js";
 import type { CompanyResearchWordExportSelection, CompanyResearchWordExportResult } from "./ipc.js";
 
 export interface CompanyResearchApi {
+  researchDraft?: {
+    get(ref: import("@deepfield/capability-sdk").DraftRef): Promise<DraftUiResult>;
+    invalidate(ref: import("@deepfield/capability-sdk").DraftRef): Promise<DraftUiResult>;
+    update(prepared: import("../actions/drafts.js").PreparedResearch): Promise<DraftUiResult>;
+    submit(prepared: import("../actions/drafts.js").PreparedResearch): Promise<{ ok: boolean; code?: string }>;
+  };
   industryResearch: {
     getCompanyProfileProgress(itemId: string): Promise<CompanyProfileProgress>;
     subscribeCompanyProfileProgress(listener: (state: CompanyProfileProgress) => void): () => void;
@@ -73,3 +79,4 @@ export interface CompanyResearchApi {
   };
   settings: { get(): Promise<SettingsView>; };
 }
+export interface DraftUiResult { ok: boolean; prepared?: import("../actions/drafts.js").PreparedResearch; code?: string }

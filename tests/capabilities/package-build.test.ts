@@ -63,6 +63,7 @@ describe("standalone capability package build", () => {
         await module.activate({ record: (value) => marker.push(value) }, defer);
       },
       activateWorker: async (entry, defer) => {
+        if (entry.manifest.protocolVersion !== 1) throw new Error("unexpected_probe_protocol");
         const module = await import(pathToFileURL(join(entry.root, entry.manifest.entries.worker)).href) as {
           activate(context: { record(value: string): void }, defer: (cleanup: () => void) => void): Promise<void>;
         };

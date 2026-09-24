@@ -74,6 +74,7 @@ export function createConvertTimezoneDefinition(): ToolDefinition<
   return {
     identity: { name: "convert_timezone", version: 1 },
     label: "Convert Time Zone",
+    userFacing: { name: "时区转换", description: "将日期时间转换到指定时区" },
     description: "Convert an absolute ISO 8601 date-time into an IANA time zone.",
     inputSchema: convertTimezoneInputSchema,
     outputSchema: dateTimeOutputSchema,

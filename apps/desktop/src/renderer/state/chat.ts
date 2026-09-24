@@ -243,7 +243,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         };
       const draftOrder =
         existing === undefined ? [...state.draftOrder, requestId] : state.draftOrder;
-      let sending = state.sending;
+      let sending = state.conversationId === conversationId && event.type !== "completed" && event.type !== "failed" && event.type !== "handed_off" ? true : state.sending;
       switch (event.type) {
         case "started":
           draft = {
@@ -252,6 +252,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ...(event.skillName !== undefined ? { skillName: event.skillName } : {}),
             ...(event.webSearch === true ? { webSearch: true } : {}),
           };
+          sending = state.conversationId === conversationId ? true : state.sending;
           break;
         case "text_delta":
           draft = { ...draft, content: draft.content + event.delta };
@@ -296,6 +297,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
               activity.status === "running" ? { ...activity, status: "completed" } : activity,
             ),
           };
+          sending = state.conversationId === conversationId ? false : state.sending;
+          return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
+        case "handed_off":
+          draft = { ...draft, status: "done", toolActivities: draft.toolActivities.map(activity =>
+            activity.status === "running" ? { ...activity, status: "completed" } : activity) };
           sending = state.conversationId === conversationId ? false : state.sending;
           return { ...finalizeDraft(state, messages, requestConversations, requestId, draft), sending };
         case "failed":

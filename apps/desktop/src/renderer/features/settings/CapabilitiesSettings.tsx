@@ -6,9 +6,15 @@ const statusLabels: Record<string, string> = { ready: "可用", disabled: "未�
 export function CapabilitiesSettings({ api }: { api: CapabilityManagementApi }) {
   const { snapshot, error } = useCapabilities(api);
   const [pending, setPending] = useState<string>();
+  const [restarting, setRestarting] = useState(false);
+  const [restartFailed, setRestartFailed] = useState(false);
   const [message, setMessage] = useState<string>();
   return <>
-    <header className="settings-header"><div><h2>能力</h2><p>勾选或取消勾选以选择启用的能力，配置将在软件重启后生效。</p></div></header>
+    <header className="settings-header"><div><h2>能力</h2><p>勾选或取消勾选以选择启用的能力，配置将在软件重启后生效。</p></div><div className="capability-restart"><small>重启会中断正在运行的任务</small><button type="button" disabled={pending !== undefined || restarting} onClick={() => {
+      if (pending !== undefined || restarting) return;
+      setRestarting(true); setRestartFailed(false);
+      void api.restart().catch(() => { setRestarting(false); setRestartFailed(true); });
+    }}>{restarting ? "正在重启…" : "重新启动"}</button></div></header>
     {error && <p role="alert">无法读取能力列表</p>}
     {!snapshot && !error && <p>加载能力…</p>}
     {snapshot?.packages.length === 0 && <p>暂无已安装能力</p>}
@@ -19,7 +25,7 @@ export function CapabilitiesSettings({ api }: { api: CapabilityManagementApi }) 
           type="checkbox"
           aria-label={`下次启动启用${item.name}`}
           checked={item.enabledNextStart}
-          disabled={pending !== undefined}
+          disabled={pending !== undefined || restarting}
           onChange={event => {
             setPending(item.id); setMessage(undefined);
             void api.setEnabled(item.id, event.target.checked).then(() => setMessage("下次启动生效"), () => setMessage("无法保存能力设置，请重试")).finally(() => setPending(undefined));
@@ -33,5 +39,6 @@ export function CapabilitiesSettings({ api }: { api: CapabilityManagementApi }) 
       {item.issue && <p role="alert">{item.issue.code} · {item.issue.message}</p>}
     </section>)}
     {message && <p role="status">{message}</p>}
+    {restartFailed && <p role="alert">无法重新启动应用，请重试</p>}
   </>;
 }

@@ -6,8 +6,9 @@ import type { CapabilityRuntime } from "./runtime.js";
 
 type ManagementRuntime = Pick<CapabilityRuntime, "list" | "issues" | "subscribe" | "setEnabled">;
 /** Caller must supply the application's trusted top-level-window IPC adapter. */
-export function registerCapabilityManagementIpc(ipc: IpcMainLike, runtime: ManagementRuntime): () => void {
+export function registerCapabilityManagementIpc(ipc: IpcMainLike, runtime: ManagementRuntime, requestRestart: () => void): () => void {
   const subscriptions = new Map<number, () => void>();
+  let restartRequested = false;
   const snapshot = (): CapabilitySnapshot => {
     // Directory names and caught exceptions never cross the renderer boundary.
     const issues = runtime.issues.map(issue => safeCapabilityIssue(issue.code));
@@ -29,6 +30,18 @@ export function registerCapabilityManagementIpc(ipc: IpcMainLike, runtime: Manag
     await runtime.setEnabled(args[0], args[1]);
     return null;
   }));
+  ipc.handle(IPC_CHANNELS.capabilityManagementRestart, (_event, ...args) => appResult(async () => {
+    if (args.length) throw new AppError("INPUT.INVALID");
+    if (restartRequested) return null;
+    restartRequested = true;
+    try {
+      requestRestart();
+    } catch {
+      restartRequested = false;
+      throw new AppError("INTERNAL.UNKNOWN");
+    }
+    return null;
+  }));
   ipc.handle(IPC_CHANNELS.capabilityManagementSubscribe, (event, ...args) => appResult(async () => {
     if (args.length) throw new AppError("INPUT.INVALID");
     const sender = event.sender;
@@ -47,6 +60,6 @@ export function registerCapabilityManagementIpc(ipc: IpcMainLike, runtime: Manag
   }));
   return () => {
     for (const id of subscriptions.keys()) remove(id);
-    for (const channel of [IPC_CHANNELS.capabilityManagementList, IPC_CHANNELS.capabilityManagementSetEnabled, IPC_CHANNELS.capabilityManagementSubscribe, IPC_CHANNELS.capabilityManagementUnsubscribe]) ipc.removeHandler(channel);
+    for (const channel of [IPC_CHANNELS.capabilityManagementList, IPC_CHANNELS.capabilityManagementSetEnabled, IPC_CHANNELS.capabilityManagementRestart, IPC_CHANNELS.capabilityManagementSubscribe, IPC_CHANNELS.capabilityManagementUnsubscribe]) ipc.removeHandler(channel);
   };
 }

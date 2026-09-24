@@ -56,6 +56,20 @@ export class CompanyProfileEnrichmentService {
   constructor(private readonly companies: CompanyRepository, private readonly completer: CompanyProfileCompleter, private readonly options: CompanyProfileEnrichmentOptions = {}) {}
   start(): void { this.stopped = false; this.companies.resetEnrichingProfiles(); this.captureProgress(); this.resume(); }
   enqueue(_companyId: CompanyId): void { this.captureProgress(); this.resume(); }
+  membershipsChanged(itemId: string): void {
+    const cohort = this.cohorts.get(itemId);
+    if (!cohort) {
+      this.finalizingProgress.delete(itemId);
+      this.publishProgress(this.getProgress(itemId));
+      return;
+    }
+    const progress = this.progressFor(itemId, cohort);
+    if (progress.status === "completed" || progress.status === "idle") {
+      this.cohorts.delete(itemId);
+      if (progress.status === "completed") this.finalizingProgress.set(itemId, progress);
+    }
+    this.publishProgress(progress);
+  }
   private captureProgress(): void {
     for (const itemId of [...(this.options.getTopicIds?.() ?? [])]) {
       const ids = this.options.getTopicCompanyIds?.(itemId) ?? [];
@@ -91,7 +105,8 @@ export class CompanyProfileEnrichmentService {
   }
   getIssue() { return this.queueIssue ?? this.companies.list().find((company) => company.profileStatus === "pending" && company.profileIssue?.category === "configuration")?.profileIssue; }
   retry(companyId: CompanyId): boolean {
-    if (this.companies.getById(companyId)?.profileStatus !== "failed") return false;
+    const company = this.companies.getById(companyId);
+    if (!company || (company.profileStatus !== "failed" && company.profileStatus !== "ready")) return false;
     this.companies.setProfileStatus(companyId, "pending");
     this.emit({ companyId, status: "pending" }); this.resume(); return true;
   }

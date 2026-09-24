@@ -12,7 +12,7 @@ export function createCapabilityAgentRuntime(options: { runtime?: PiRuntime; too
   return {
     gateway,
     classifyError(error: unknown) { return error instanceof PiChatAgentError ? error.code : undefined; },
-    createAgent(config: { diagnostic?: (value: import("../agent/pi-runtime.js").PiRunDiagnostic) => void; allowedTools?: readonly string[]; onToolOutput?: (name: string, output: unknown) => void }) {
+    createAgent(config: { diagnostic?: (value: import("../agent/pi-runtime.js").PiRunDiagnostic) => void; allowedTools?: readonly string[]; onToolOutput?: (name: string, output: unknown) => void; toolOutputContext?: (name: string, output: unknown) => string | undefined }) {
       const base = options.toolSessions;
       const sessions: PiToolSessionProvider | undefined = base ? {
         bindSearchProvider: (...args) => base.bindSearchProvider(...args),
@@ -21,7 +21,28 @@ export function createCapabilityAgentRuntime(options: { runtime?: PiRuntime; too
         releaseTrace: (...args) => base.releaseTrace(...args),
         createAgentTools: context => base.createAgentTools({ ...context, actor: "capability" })
           .filter(tool => (config.allowedTools ?? ["web_search", "read_webpage", "get_current_datetime"]).includes(tool.name))
-          .map(tool => ({ ...tool, async execute(...args) { const result = await tool.execute(...args); config.onToolOutput?.(tool.name, successfulToolOutput(result)); return result; } })),
+          .map(tool => ({ ...tool, async execute(...args) {
+            const result = await tool.execute(...args);
+            const output = successfulToolOutput(result);
+            config.onToolOutput?.(tool.name, output);
+            if (output !== undefined) {
+              try {
+                const context = config.toolOutputContext?.(tool.name, output);
+                // Retrieval admission and source projection parse this JSON too.
+                // Preserve its fields and the original registry result/details.
+                const part = result.content.length === 1 ? result.content[0] : undefined;
+                if (context && context.length <= 64_000 && part?.type === "text") {
+                  const payload: unknown = JSON.parse(part.text);
+                  if (typeof payload === "object" && payload !== null && !Array.isArray(payload) && !("capabilityContext" in payload)) {
+                    // Put the small catalog before page text so bounded synthesis
+                    // retains the references even when long page bodies are cut.
+                    return { ...result, content: [{ type: "text" as const, text: JSON.stringify({ capabilityContext: context, ...payload }) }] };
+                  }
+                }
+              } catch { /* Optional presentation must never invalidate successful tool execution. */ }
+            }
+            return result;
+          } })),
       } : undefined;
       const executor = createPiAgentExecutor({ runtime: options.runtime ?? defaultPiRuntime(), getApiKey: (snapshot, provider) => gateway.getApiKey(snapshot, provider), createSearchProvider: createMeteredSearchProvider }, {
         toolActor: "capability", ...(sessions ? { toolSessions: sessions } : {}), ...(config.diagnostic ? { diagnosticSink: config.diagnostic } : {}),

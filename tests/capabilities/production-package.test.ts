@@ -72,7 +72,7 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     const runtime = createCapabilityRuntime(prepared, registry, load);
     await runtime.start(client, services);
     const call = (operation: string, input: unknown[]) => registry.call({ capabilityId: "company-research", operation, input, requestId: randomUUID() });
-    return { runtime, call, async dispose() { await runtime.dispose(); await worker.dispose(); client.dispose(); } };
+    return { runtime, registry, call, async dispose() { await runtime.dispose(); await worker.dispose(); client.dispose(); } };
   }
   async function assertCore() {
     const app = createApplicationRuntime({ repositories, profiles, worker: new FakeWorker({ events: request => [chatEvent(request.requestId, "completed", "offline chat reply")] }) });
@@ -91,8 +91,20 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     const item = await active.call("industryResearch.createItem", [{ industry: "离线验收主题" }]) as { id: string };
     const company = repositories.companies.upsert({ name: "离线验收公司" });
     repositories.itemCompanies.add(item.id as never, company.id);
-    const saved = await active.call("companyResearch.start", [item.id, company.id, { direction: "product_and_technology", asOfDate: "2026-09-21" }]) as { id: string };
-    await vi.waitFor(() => expect(repositories.companyResearchRuns.getByIdForTarget(item.id as never, company.id, saved.id as never)?.status).toBe("completed"));
+    repositories.companies.setProfileStatus(company.id, "ready");
+    const prepare = active.registry.publicAction("company-research", "research.prepare")!;
+    const submit = active.registry.publicAction("company-research", "research.submit")!;
+    expect(submit.requiresConfirmation).toBe(true);
+    const prepared = await prepare.handler({ itemId: item.id, companyId: company.id, direction: "product_and_technology", asOfDate: "2026-09-21" }, { invocationId: "offline-prepare", source: "chat" });
+    if (prepared.status !== "completed") throw new Error("draft not prepared");
+    expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toEqual([]);
+    const accepted = await submit.handler(prepared.data, { invocationId: "offline-submit", source: "chat" });
+    expect(accepted.status).toBe("accepted");
+    expect(await submit.handler(prepared.data, { invocationId: "offline-submit", source: "chat" })).toEqual(accepted);
+    await vi.waitFor(() => expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]?.status).toBe("completed"));
+    const saved = repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]!;
+    if (accepted.status !== "accepted") throw new Error("submission not accepted");
+    expect(await active.registry.taskProvider("company-research")!.get(accepted.taskRef)).toMatchObject({ status: "succeeded", artifactRefs: expect.any(Array), finishedAt: expect.any(String) });
     const report = repositories.companyResearchRuns.getByIdForTarget(item.id as never, company.id, saved.id as never)!;
     expect(report).toMatchObject({ rawReportText: expect.stringContaining("离线测试"), structuredContent: expect.any(Object) });
     expect(await active.call("companyResearch.exportWord", [item.id, company.id, saved.id, { raw: true, structured: true }])).toMatchObject({ status: "saved" });

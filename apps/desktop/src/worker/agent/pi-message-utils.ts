@@ -104,7 +104,7 @@ export function validateFinalAnswer(text: string | undefined, userPrompt: string
   if (endedWithToolUse) return { ok: false, code: "invalid_final_tool_use" };
   if (text === undefined || text.trim().length === 0) return { ok: false, code: "invalid_final_empty" };
   if (text.includes("<｜｜DSML｜｜") || text.includes("<|DSML|>")) return { ok: false, code: "invalid_final_protocol" };
-  const containsHan = /\p{Script=Han}/u;
-  if (containsHan.test(userPrompt) && !containsHan.test(text)) return { ok: false, code: "invalid_final_language" };
+  // Language follows the real-human system context. Character heuristics would reject
+  // valid code, names, and explicitly requested English answers; never discard those.
   return { ok: true, text };
 }

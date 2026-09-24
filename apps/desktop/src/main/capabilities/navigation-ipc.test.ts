@@ -1,0 +1,33 @@
+import { expect, it } from "vitest";
+import type { CapabilityNavigationEvent } from "@deepfield/capability-sdk";
+import { registerNavigationIpc } from "./navigation-ipc.js";
+import { ViewNavigation } from "./view-navigation.js";
+import { createPreloadApi, IPC_CHANNELS } from "../../preload/preload-api.js";
+import type { IpcEventLike } from "../ipc.js";
+
+it("connects validated preload subscription and ack without exposing a generic open RPC", async () => {
+  const handlers = new Map<string, (event: IpcEventLike, ...args: unknown[]) => unknown>();
+  const listeners = new Map<string, (event: unknown, ...args: unknown[]) => void>();
+  const sender = { id: 1, send(channel: string, value: unknown) { listeners.get(channel)?.({}, value); }, on() {}, removeListener() {} };
+  const target = { capabilityId: "records", viewId: "detail", input: {} };
+  const navigation = new ViewNavigation(async () => ({ status: "resolved", view: target }));
+  const dispose = registerNavigationIpc({ handle: (channel, handler) => { handlers.set(channel, handler); }, removeHandler: channel => { handlers.delete(channel); } }, navigation);
+  const api = createPreloadApi({ invoke: async (channel, ...args) => handlers.get(channel)?.({ sender }, ...args), on: (channel, listener) => { listeners.set(channel, listener); return () => { listeners.delete(channel); }; } }).capabilityNavigation!;
+  const events: CapabilityNavigationEvent[] = [];
+  const unsubscribe = api.subscribe(event => events.push(event));
+  const pending = navigation.open(target);
+  await Promise.resolve();
+  const event = events[0]!;
+  expect(event.kind).toBe("open");
+  expect(await api.ack("invented", "records", { status: "opened" })).toBe(false);
+  expect(await api.ack(event.requestId, "records", { status: "opened" })).toBe(true);
+  expect(await pending).toEqual({ status: "opened" });
+  expect(handlers.has("deepfield:navigation:open")).toBe(false);
+  expect(await api.retry("invented")).toEqual({ status: "not_found" });
+  await api.noteManualNavigation?.();
+  expect(navigation.manualGeneration()).toBe(1);
+  unsubscribe();
+  expect(await navigation.open(target)).toEqual({ status: "blocked", message: "renderer_unavailable" });
+  expect(listeners.has(IPC_CHANNELS.navigationEvents)).toBe(false);
+  dispose(); navigation.dispose();
+});

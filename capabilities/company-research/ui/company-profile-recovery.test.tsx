@@ -9,19 +9,43 @@ import { capabilityItem, makeFakeApi } from "../../../apps/desktop/src/renderer/
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
 
 describe("profile recovery presentation", () => {
-  it("loads persisted queue guidance, opens the correct Settings module, and clears on resume", async () => {
+  it("offers update on unknown and complete details without list retry controls", async () => {
+    const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
+    const base: ItemCompanyView = { id: "company" as CompanyId, name: "待补字段", normalizedName: "待补字段", itemId: item.id, profileStatus: "ready", createdAt: "", updatedAt: "", headquarters: "北京" };
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockResolvedValue([base]);
+    const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: /^机器人/ }));
+    expect(screen.queryByRole("button", { name: /重试补全/ })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "查看 待补字段" }));
+    expect(screen.getByText("部分信息未知，可更新信息")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "更新信息" }));
+    expect(fake.industryResearch.retryCompanyProfile).toHaveBeenCalledWith(base.id);
+    expect((screen.getByRole("button", { name: "更新中…" }) as HTMLButtonElement).disabled).toBe(true);
+    fake.industryResearch.listCompanies.mockResolvedValue([{ ...base, legalName: "已知", aliases: [], foundedAt: "2020", officialWebsite: null, stockListings: [], businessTags: ["软件"] }]);
+    await act(async () => fake.emitProfile({ companyId: base.id, status: "ready" }));
+    await waitFor(() => expect(screen.getByText("信息已更新")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "更新信息" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "更新信息" }));
+    expect(fake.industryResearch.retryCompanyProfile).toHaveBeenCalledTimes(2);
+  });
+  it("keeps a pending company accessible for research without a list failure prompt", async () => {
     const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
     const base: ItemCompanyView = { id: "company" as CompanyId, name: "待补全公司", normalizedName: "待补全公司", itemId: item.id, profileStatus: "pending", createdAt: "", updatedAt: "" };
     fake.industryResearch.listItems.mockResolvedValue([item]);
     fake.industryResearch.listCompanies.mockResolvedValue([{ ...base, profileIssue: toPublicError(new AppError("CONFIG.CREDENTIAL_MISSING", { service: "search" })) }]);
-    const settings = vi.fn(); const user = userEvent.setup();
-    render(<IndustryResearchCapability api={fake} onClose={() => {}} onOpenSettings={settings} />);
+    const user = userEvent.setup();
+    render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
-    await user.click(await screen.findByRole("button", { name: "前往设置" }));
-    expect(settings).toHaveBeenCalledWith("search");
+    expect(screen.queryByRole("button", { name: "前往设置" })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "查看 待补全公司" }));
+    expect((screen.getByRole("button", { name: "更新中…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "开始调研" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "开始调研" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
     fake.industryResearch.listCompanies.mockResolvedValue([base]);
     await act(async () => fake.emitProfile({ companyId: base.id, status: "pending" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "前往设置" })).toBeNull());
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
   it("shows ambiguous identity inline and confirms the precise subject without editing facts", async () => {
     const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
@@ -30,8 +54,12 @@ describe("profile recovery presentation", () => {
     fake.industryResearch.listCompanies.mockResolvedValue([company]);
     const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
-    const badge = await screen.findByText("身份待确认");
-    expect(badge.closest(".company-row-button")).toBeTruthy();
+    expect(screen.queryByText("身份待确认")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "查看 同名公司" }));
+    expect(screen.getByText("更新未完成，可再次更新信息")).toBeTruthy();
+    expect(screen.getByText("身份尚未确认，请核对公司名称并确认主体或更新信息。")).toBeTruthy();
+    expect(screen.queryByText("本次来源用于身份及部分字段核实，未确认字段保持未知。")).toBeNull();
+    expect(screen.getByRole("button", { name: "开始调研" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "确认主体 同名公司" }));
     expect(screen.getByRole("dialog", { name: "确认公司主体" })).toBeTruthy();
     expect(screen.getByText("检索到三个同名主体，无法确认具体公司")).toBeTruthy();
@@ -49,14 +77,15 @@ describe("profile recovery presentation", () => {
     expect(screen.queryByRole("dialog", { name: "确认公司主体" })).toBeNull();
   });
 
-  it("prefills the latest saved hint after technical failure and keeps retry plus modify actions", async () => {
+  it("prefills the latest saved hint after technical failure in detail", async () => {
     const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
     fake.industryResearch.listItems.mockResolvedValue([item]);
     fake.industryResearch.listCompanies.mockResolvedValue([{ id: "company" as CompanyId, name: "三星", normalizedName: "三星", itemId: item.id, profileStatus: "failed", createdAt: "", updatedAt: "", profileIdentityHint: { name: "三星电子株式会社", officialWebsite: "https://www.samsung.com/" }, profileIssue: toPublicError(new AppError("EXTERNAL.INVALID_RESPONSE", { service: "llm" })) }]);
     const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} active={false} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
-    expect(await screen.findByText("结果格式错误，请重试")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重试补全 三星" })).toBeTruthy();
+    expect(screen.queryByText("结果格式错误，请重试")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "查看 三星" }));
+    expect(screen.getByRole("button", { name: "更新信息" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "修改主体 三星" }));
     expect((screen.getByLabelText("精确主体名称") as HTMLInputElement).value).toBe("三星电子株式会社");
     expect((screen.getByLabelText("官方网站（可选）") as HTMLInputElement).value).toBe("https://www.samsung.com/");

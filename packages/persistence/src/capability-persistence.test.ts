@@ -296,7 +296,7 @@ describe("Capability A persistence", () => {
     expect(repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 0 });
     expect(repo.listRuns("item" as never, "company" as never)).toEqual(summaries);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 22 });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 29 });
     expect(db.prepare("PRAGMA table_info(company_research_model_diagnostics)").all()).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "attempt" }),
       expect.objectContaining({ name: "validation_issues_json" }),

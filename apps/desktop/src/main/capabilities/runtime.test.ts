@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
@@ -48,6 +48,7 @@ describe("optional capability startup", () => {
     const client = worker(); client.activateCapability.mockRejectedValueOnce(new Error("failed"));
     await runtime.start(client, services);
     expect(recover).not.toHaveBeenCalled(); expect(dispose).toHaveBeenCalledOnce(); expect(registry.readyIds()).toEqual([]); expect(runtime.list()[0]?.status).toBe("failed");
+    expect(runtime.helpEntries()).toEqual([]);
   });
   it.each(["dispose", "exit"])("does not publish late activation or start later packages after %s", async interruption => {
     const { paths } = await fixture(); await writeTestPackage(paths.scanRoot, "second-package");
@@ -109,5 +110,28 @@ describe("optional capability startup", () => {
     await rm(paths.scanRoot, { recursive: true }); const removed = await prepareCapabilities(paths);
     const load = vi.fn(); await createCapabilityRuntime(removed, new CapabilityRegistry(), load).start(worker(), services);
     expect(load).not.toHaveBeenCalled(); expect(removed.workerSnapshot).toEqual([]);
+    expect(createCapabilityRuntime(removed, new CapabilityRegistry(), load).actionCatalog.list()).toEqual([]);
+  });
+  it("keeps main-only packages alive during Worker exit and replacement without rebootstrap", async () => {
+    const { paths } = await fixture();
+    const root = await writeTestPackage(paths.scanRoot, "main-only");
+    await mkdir(join(root, "docs")); await writeFile(join(root, "docs/help.md"), "用户帮助。\n\n例如：查看事项");
+    await writeFile(join(root, "capability.json"), JSON.stringify({ id: "main-only", name: "Main", description: "technical description", version: "1.0.0", protocolVersion: 2, hostApiVersion: 2, entries: { main: "dist/main.js" }, help: "docs/help.md", actions: [], requirements: [] }));
+    await writeEnabledIds(paths.statePath, ["main-only", "test-package"]);
+    const prepared = await prepareCapabilities(paths); const registry = new CapabilityRegistry();
+    const boots: string[] = []; const cleanups: string[] = [];
+    const runtime = createCapabilityRuntime(prepared, registry, async entry => ({ bootstrap(registrar: CapabilityRegistrar) {
+      boots.push(entry.id); registrar.defer(() => { cleanups.push(entry.id); });
+      registrar.register("private", Type.Null(), Type.String(), () => entry.id);
+    } }));
+    const client = worker(); await runtime.start(client, services);
+    expect(runtime.actionCatalog.list()).toEqual([]); // v1 private operations never become actions
+    expect(runtime.helpEntries()).toEqual([{ name: "Main", markdown: "用户帮助。\n\n例如：查看事项" }, { name: "test-package" }]);
+    client.exit(); expect(registry.readyIds()).toEqual(["main-only"]);
+    expect(runtime.helpEntries()).toEqual([{ name: "Main", markdown: "用户帮助。\n\n例如：查看事项" }]);
+    await runtime.start(worker(), services);
+    expect(boots.filter(id => id === "main-only")).toHaveLength(1); expect(cleanups).not.toContain("main-only");
+    expect(await registry.call({ capabilityId: "main-only", operation: "private", requestId: "request", input: null })).toBe("main-only");
+    await runtime.dispose(); expect(cleanups).toContain("main-only");
   });
 });

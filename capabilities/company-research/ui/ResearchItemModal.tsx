@@ -2,8 +2,10 @@ import { useState, type FormEvent } from "react";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import type { CapabilityItem } from "../contracts/index.js";
 import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
+import { useFormField, type FormControl } from "./form-control.js";
 
 export interface ResearchItemModalProps {
+  control?: FormControl;
   api: DesktopApi;
   active?: boolean;
   item?: CapabilityItem;
@@ -16,11 +18,11 @@ function optionalValue(value: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function ResearchItemModal({ api, item, active = true, onClose, onSaved }: ResearchItemModalProps) {
+export function ResearchItemModal({ api, item, control, active = true, onClose, onSaved }: ResearchItemModalProps) {
   const editing = item !== undefined;
-  const [industry, setIndustry] = useState(item?.industry ?? "");
-  const [researchScope, setResearchScope] = useState(item?.researchScope ?? "");
-  const [notes, setNotes] = useState(item?.notes ?? "");
+  const [industry, setIndustry] = useFormField(control, "industry", item?.industry ?? "");
+  const [researchScope, setResearchScope] = useFormField(control, "researchScope", item?.researchScope ?? "");
+  const [notes, setNotes] = useFormField(control, "notes", item?.notes ?? "");
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,6 +44,7 @@ export function ResearchItemModal({ api, item, active = true, onClose, onSaved }
       ...(normalizedNotes !== undefined ? { notes: normalizedNotes } : {}),
     };
     try {
+      if (control) { await control.confirm(); return; }
       const saved = editing
         ? await api.industryResearch.updateItem(item.id, input)
         : await api.industryResearch.createItem(input);

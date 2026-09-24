@@ -2131,7 +2131,6 @@ describe("pi chat agent", () => {
   it.each([
     ["", "invalid_final_empty"],
     ["<｜｜DSML｜｜ calls>private</｜｜DSML｜｜ calls>", "invalid_final_protocol"],
-    ["English only", "invalid_final_language"],
   ] as const)("classifies invalid final output as %s -> %s", async (text, code) => {
     const answer = assistant(text);
     const fake = new FakePiAgent({ events: [{ type: "agent_start" }, agentEnd([answer])] });

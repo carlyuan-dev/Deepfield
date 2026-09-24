@@ -14,7 +14,7 @@ const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 const input = { direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
-it.each(["settlement", "admission", "profile"] as const)("interrupts disposal at %s without stale writes or user cancellation", async boundary => {
+it.each(["settlement", "admission"] as const)("interrupts disposal at %s without stale writes or user cancellation", async boundary => {
   const f = setup();
   f.batch.dispose();
   const services = createCompanyResearchServices({
@@ -29,16 +29,9 @@ it.each(["settlement", "admission", "profile"] as const)("interrupts disposal at
     const resolve = f.profiles.resolveActiveLlm;
     f.profiles.resolveActiveLlm = async () => { await new Promise<void>(r => { releaseBoundary = r; }); return resolve(); };
   }
-  let batch = services.companyResearchBatch;
-  if (boundary === "profile") {
-    batch.dispose();
-    batch = new CompanyResearchBatchService(f.db.repos, services.companyResearch, {
-      whenIdle: () => new Promise<void>(r => { releaseBoundary = r; }), resume: () => {},
-    });
-  }
+  const batch = services.companyResearchBatch;
   const initial = batch.start(f.item.id, f.entries);
   await flush();
-  if (boundary === "profile") batch.dispose();
   // The owning capability invalidates both coordinators before its first await.
   const disposing = services.dispose();
   const replacementResearch = new CompanyResearchService(f.db.repos, f.profiles, f.worker, { requestIdFactory: () => crypto.randomUUID() });
@@ -231,15 +224,21 @@ it.each(["raw", "structure"] as const)("recovers %s as paused and resumes the ap
   again.resume("recover"); await flush(); expect(f.requests[0]?.stage).toBe(stage); expect(f.requests[0]?.runId).toBe(run.id);
   await again.cancel("recover");
 });
-it("yields after active profile completion, starts no further profiles, then resumes enrichment", async () => {
+it("starts research while profile enrichment is unresolved and resumes later profiles afterward", async () => {
   const f = setup(); f.batch.dispose(); let finish!: () => void;
-  const extra = f.db.repos.companies.upsert({ name: "资料甲" }); const later = f.db.repos.companies.upsert({ name: "资料乙" });
+  const extra = f.companies[0]!;
+  f.db.repos.companies.setProfileStatus(extra.id, "pending");
+  const later = f.db.repos.companies.upsert({ name: "资料乙" });
   let batch: CompanyResearchBatchService | undefined;
   const enrichment = new CompanyProfileEnrichmentService(f.db.repos.companies, { prepare: async c => async () => { if (c.id === extra.id) await new Promise<void>(resolve => { finish = resolve; }); return profileResult(); } }, { isForegroundBusy: () => !!batch?.isReserved() });
   enrichment.start(); await flush(); batch = new CompanyResearchBatchService(f.db.repos, f.research, enrichment);
-  const state = batch.start(f.item.id, f.entries); await flush(); expect(f.requests).toHaveLength(0);
-  finish(); await flush(); expect(f.requests).toHaveLength(1); expect(f.db.repos.companies.getById(later.id)?.profileStatus).toBe("pending");
-  await batch.cancel(state.batchId); await enrichment.whenIdle(); expect(f.db.repos.companies.getById(later.id)?.profileStatus).toBe("ready");
+  const state = batch.start(f.item.id, f.entries); await flush();
+  expect(f.db.repos.companies.getById(extra.id)?.profileStatus).toBe("enriching");
+  expect(f.requests).toHaveLength(1);
+  expect(f.db.repos.companies.getById(later.id)?.profileStatus).toBe("pending");
+  await batch.cancel(state.batchId);
+  finish(); await enrichment.whenIdle();
+  expect(f.db.repos.companies.getById(later.id)?.profileStatus).toBe("ready");
 });
 it("waits for terminal worker iterator release before starting the next company", async () => {
   const f = setup(); let release!: () => void;
@@ -266,14 +265,12 @@ it("persists owned run identity before first dispatch and cancels before dispatc
   f.batch.start(f.item.id, f.entries); await flush(); await cancel;
   expect(f.requests).toHaveLength(0); expect(f.research.listRuns(f.item.id, f.companies[0]!.id)).toEqual([]);
 });
-it("cancels a profile-boundary wait without awaiting unrelated enrichment", async () => {
-  const f = setup(); f.batch.dispose(); let finish!: () => void;
-  const idle = new Promise<void>(resolve => { finish = resolve; });
-  const batch = new CompanyResearchBatchService(f.db.repos, f.research, { whenIdle: () => idle, resume: () => {} });
-  const state = batch.start(f.item.id, f.entries); await flush(); let done = false;
-  const cancel = batch.cancel(state.batchId).then(() => { done = true; }); await flush();
-  expect(done).toBe(true); expect(batch.isReserved()).toBe(false); expect(f.requests).toHaveLength(0);
-  finish(); await cancel;
+it("cancels before queue launch without dispatching research", async () => {
+  const f = setup();
+  const state = f.batch.start(f.item.id, f.entries);
+  await f.batch.cancel(state.batchId);
+  expect(f.batch.isReserved()).toBe(false);
+  expect(f.requests).toHaveLength(0);
 });
 it("cancels recovered unfinished work while preserving an already terminal owned failure", async () => {
   const f = setup(); f.batch.dispose();

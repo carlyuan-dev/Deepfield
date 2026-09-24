@@ -108,6 +108,7 @@ export function createCurrentDatetimeDefinition(
   return {
     identity: { name: "get_current_datetime", version: 1 },
     label: "Current Date and Time",
+    userFacing: { name: "当前日期时间", description: "查询指定时区的当前日期和时间" },
     description: "Get the current date and time in a requested IANA time zone.",
     inputSchema: currentDatetimeInputSchema,
     outputSchema: dateTimeOutputSchema,

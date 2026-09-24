@@ -611,3 +611,22 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.capability-chat-cards { display: grid; gap: 8px; padding: 8px 0 0; }
+.capability-chat-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.capability-chat-card.compact { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; font-size: 13px; }
+.capability-card-status { color: var(--muted); white-space: nowrap; }
+.capability-card-link { border: 0; background: transparent; color: var(--accent-strong); padding: 0 2px; font-size: inherit; text-decoration: underline; }
+.capability-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.capability-chat-card h3 { margin: 0 0 8px; font-size: 13px; }
+.capability-chat-card p { margin: 4px 0; }
+.capability-chat-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; font-size: 12px; }
+.chat-interaction-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 8px; }
+.chat-interaction-card.compact { padding: 8px 10px; font-size: 13px; }
+.chat-interaction-prompt { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-interaction-option { display: flex; align-items: center; gap: 10px; margin: 7px 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); cursor: pointer; transition: background 120ms, border-color 120ms; }
+.chat-interaction-option:hover, .chat-interaction-option:focus-within { border-color: var(--accent); background: var(--accent-soft); }
+.chat-interaction-option.selected { border-color: var(--accent); background: var(--accent-soft); }
+.chat-interaction-option input { accent-color: var(--accent); flex: none; }
+.chat-interaction-card.compact { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; line-height: 1.6; }
+.chat-interaction-card.compact p { margin: 4px 0 0; flex-basis: 100%; }
+.chat-interaction-card textarea { display: block; width: 100%; min-height: 68px; margin-top: 8px; resize: vertical; }

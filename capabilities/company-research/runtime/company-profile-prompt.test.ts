@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
-import { CompanyProfileCandidateSchema, CompanyProfileFieldsSchema } from "../contracts/index.js";
+import { CompanyProfileFieldsSchema } from "../contracts/index.js";
+import { CompanyProfileModelCandidateSchema } from "./company-profile-model.js";
 import { buildCompanyProfileRequestPrompt, companyProfileOutputInstructions, companyProfileOutputExamples } from "./company-profile-prompt.js";
 
 describe("company profile structured output instructions", () => {
   it("shows a schema-valid matched example with every field and object source references", () => {
     const example = companyProfileOutputExamples[0];
-    expect(Value.Check(CompanyProfileCandidateSchema, example)).toBe(true);
+    expect(Value.Check(CompanyProfileModelCandidateSchema, example)).toBe(true);
     expect(Object.keys(example.fields).sort()).toEqual(Object.keys(CompanyProfileFieldsSchema.properties).sort());
     for (const field of Object.keys(example.fields)) {
-      expect(example.fieldEvidence[field]).toEqual([{ url: expect.any(String), kind: "opened_page" }]);
+      expect(example.fieldEvidence[field]).toEqual([{ evidenceId: "e1" }]);
     }
     expect(example.fields.stockListings).toEqual([{ exchange: expect.any(String), ticker: expect.any(String) }]);
     expect(companyProfileOutputInstructions).toContain(JSON.stringify(example));
@@ -17,7 +18,7 @@ describe("company profile structured output instructions", () => {
   });
   it("shows separate valid ambiguous/unresolved shapes without matchedName or fields", () => {
     for (const example of companyProfileOutputExamples.slice(1)) {
-      expect(Value.Check(CompanyProfileCandidateSchema, example)).toBe(true);
+      expect(Value.Check(CompanyProfileModelCandidateSchema, example)).toBe(true);
       expect(example.identity).not.toHaveProperty("matchedName");
       expect(example.fields).toEqual({}); expect(example.fieldEvidence).toEqual({});
       expect(companyProfileOutputInstructions).toContain(JSON.stringify(example));

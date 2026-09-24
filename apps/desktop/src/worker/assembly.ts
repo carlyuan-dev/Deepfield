@@ -3,6 +3,7 @@ import type { WorkerEndpoint, WorkerLoop } from "./message-loop.js";
 import { createWorkerMessageLoop } from "./message-loop.js";
 import { createFakeChatAgent } from "./chat/fake-chat-agent.js";
 import { createPiChatAgent } from "./agent/pi-chat-agent.js";
+import { createPiChatInteractionTools } from "./tools/pi-chat-interaction-tools.js";
 import { selectChatAgent } from "./chat/select-chat-agent.js";
 import {
   createHostConversationReader,
@@ -16,6 +17,8 @@ import { createSnapshotWorkerLoader, type TrustedCapabilityEntry } from "../shar
 import { createCapabilityAgentRuntime } from "./capabilities/agent-runtime.js";
 import { WorkerCapabilityRegistry, type CapabilityWorkerLoader } from "./capabilities/registry.js";
 import { withUsageContext } from "../shared/usage-collection.js";
+import { createPiCapabilityTools } from "./tools/pi-capability-tools.js";
+import { createPiFeatureCatalogTool } from "./tools/pi-feature-catalog-tool.js";
 
 export interface UtilityAssemblyDeps {
   capabilityLoader?: CapabilityWorkerLoader;
@@ -65,7 +68,8 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
   const agent = selectChatAgent(deps.agentMode, {
     fake: () => createFakeChatAgent(),
     pi: () =>
-      createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime),
+      createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime, undefined, undefined, "main_agent", undefined,
+        (request, handoff) => [createPiFeatureCatalogTool(request, toolRuntime), ...createPiChatInteractionTools(request, deps.hostClient, handoff), ...createPiCapabilityTools(request, deps.hostClient, handoff)]),
   });
   const services = createCapabilityHostServices({
     "model.execution": { runtime: createCapabilityAgentRuntime({ ...(deps.piRuntime ? { runtime: deps.piRuntime } : {}), toolSessions: toolRuntime }), ...(deps.agentMode ? { mode: deps.agentMode } : {}) },

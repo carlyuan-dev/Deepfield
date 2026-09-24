@@ -84,6 +84,7 @@ export class IndustryResearchService {
     private readonly companyRecognizer: CompanyRecognizer,
     private readonly companyEnrichment?: {
       enqueue(companyId: Company["id"]): void;
+      membershipsChanged?(itemId: CapabilityItemId): void;
       retry?(companyId: Company["id"]): boolean;
       confirmIdentity?(companyId: Company["id"], hint: CompanyProfileIdentityHint): boolean;
       getIssue?(): Company["profileIssue"];
@@ -243,7 +244,12 @@ export class IndustryResearchService {
         return [toView(company, membership)];
       });
     });
-    for (const companyId of newlyCreated) this.companyEnrichment?.enqueue(companyId);
+    // Membership has committed. Queue startup is best effort; the pending
+    // profile is durable and startup can pick it up again.
+    for (const companyId of newlyCreated) {
+      try { this.companyEnrichment?.enqueue(companyId); }
+      catch { /* Profile enrichment must not turn a saved import into an import failure. */ }
+    }
     return added;
   }
 
@@ -272,6 +278,7 @@ export class IndustryResearchService {
       if (error instanceof AppError) throw error;
       throw new IndustryResearchServiceError("company removal failed");
     }
+    this.companyEnrichment?.membershipsChanged?.(itemId);
   }
 
   retryCompanyProfile(companyId: Company["id"]): boolean {

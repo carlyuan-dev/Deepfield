@@ -1,0 +1,98 @@
+import { expect, it, vi } from "vitest";
+import { ViewNavigation } from "./view-navigation.js";
+import { CapabilityRegistry } from "./registry.js";
+
+const target = { capabilityId: "records", viewId: "detail", input: { id: "1" } };
+it("invalidates automatic navigation when the user navigates manually", async () => {
+  let resolve!: (value: any) => void;
+  const navigation = new ViewNavigation(() => new Promise(done => { resolve = done; }));
+  navigation.attach(1, () => {});
+  const generation = navigation.manualGeneration();
+  const pending = navigation.open(target);
+  navigation.noteManualNavigation();
+  resolve({ status: "resolved", view: target });
+  expect(await pending).toEqual({ status: "blocked", message: "manual_navigation" });
+  expect(navigation.manualGeneration()).toBe(generation + 1);
+  navigation.dispose();
+});
+it("invalidates pending resolution and delivered navigation when the originating context ends", async () => {
+  let resolve!: (value: any) => void;
+  const navigation = new ViewNavigation(() => new Promise(done => { resolve = done; }));
+  const events: any[] = []; navigation.attach(1, event => events.push(event));
+  const controller = new AbortController();
+  const pending = navigation.open(target, controller.signal);
+  controller.abort(); resolve({ status: "resolved", view: target });
+  await Promise.resolve();
+  expect(events.filter(event => event.kind === "open")).toEqual([]);
+  expect(await pending).toEqual({ status: "blocked", message: "origin_inactive" });
+  const nextController = new AbortController();
+  const next = navigation.open(target, nextController.signal);
+  resolve({ status: "resolved", view: target }); await Promise.resolve();
+  const request = events.at(-1); expect(request.kind).toBe("open");
+  nextController.abort();
+  expect(await next).toEqual({ status: "blocked", message: "origin_inactive" });
+  expect(events.at(-1).kind).toBe("cancel");
+  expect(navigation.ack(1, request.requestId, "records", { status: "opened" })).toBe(false);
+  navigation.dispose();
+});
+it("does not treat package resolution or delivery as UI acknowledgement", async () => {
+  const navigation = new ViewNavigation(async () => ({ status: "resolved", view: target }), 1000);
+  const events: any[] = [];
+  navigation.attach(1, event => events.push(event));
+  let done = false;
+  const pending = navigation.open(target).then(result => { done = true; return result; });
+  await Promise.resolve(); await Promise.resolve();
+  expect(done).toBe(false);
+  const request = events[0];
+  expect(navigation.ack(2, request.requestId, target.capabilityId, { status: "opened" })).toBe(false);
+  expect(navigation.ack(1, request.requestId, "wrong", { status: "opened" })).toBe(false);
+  expect(navigation.ack(1, request.requestId, target.capabilityId, { status: "opened" })).toBe(true);
+  expect(await pending).toEqual({ status: "opened" });
+  navigation.dispose();
+});
+it("returns unsupported for a package without a semantic UI", async () => {
+  const navigation = new ViewNavigation(async () => ({ status: "unsupported" }));
+  expect(await navigation.open(target)).toEqual({ status: "unsupported" });
+  navigation.dispose();
+});
+it("validates declared view parameters and preserves draft revision during resolution", async () => {
+  const registry = new CapabilityRegistry();
+  const activation = registry.begin("records", [], [{ id: "detail", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } }]);
+  const seen: unknown[] = [];
+  activation.registerViewProvider!({ resolve: async ref => { seen.push(ref); return { status: "resolved", view: target }; } });
+  await activation.ready();
+  expect(await registry.resolveView({ ...target, input: { id: 2 } })).toEqual({ status: "not_found", message: "invalid_view" });
+  expect(seen).toEqual([]);
+  const draft = { capabilityId: "records", draftId: "d", revision: "r4" };
+  expect(await registry.resolveView(draft)).toEqual({ status: "resolved", view: target });
+  expect(seen).toEqual([draft]);
+  await activation.dispose();
+  expect((await registry.resolveView(draft)).status).toBe("not_found");
+});
+it("settles on renderer loss and prevents stale retries or disposed package opens", async () => {
+  const navigation = new ViewNavigation(async () => ({ status: "resolved", view: target }));
+  const events: any[] = [];
+  const detach = navigation.attach(1, event => events.push(event));
+  const pending = navigation.open(target);
+  await Promise.resolve();
+  detach();
+  expect(await pending).toEqual({ status: "blocked", message: "renderer_unavailable" });
+  expect((await navigation.retry(1, events[0].requestId)).status).toBe("not_found");
+  navigation.attach(1, event => events.push(event));
+  const next = navigation.open(target);
+  navigation.revokeCapability("records");
+  expect(await next).toEqual({ status: "blocked", message: "capability_unavailable" });
+  navigation.dispose();
+});
+it("expires requests and rejects late acknowledgements", async () => {
+  vi.useFakeTimers();
+  const events: any[] = [];
+  const navigation = new ViewNavigation(async () => ({ status: "resolved", view: target }), 20);
+  navigation.attach(1, event => events.push(event));
+  const pending = navigation.open(target);
+  await vi.advanceTimersByTimeAsync(21);
+  expect(await pending).toEqual({ status: "blocked", message: "navigation_timeout" });
+  expect(events.at(-1).kind).toBe("cancel");
+  expect(navigation.ack(1, events[0].requestId, target.capabilityId, { status: "opened" })).toBe(false);
+  navigation.dispose(); vi.useRealTimers();
+});

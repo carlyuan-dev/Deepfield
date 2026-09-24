@@ -2,7 +2,29 @@ import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { readManifestFile, validatePackagePaths } from "./package-paths.js";
+import { MAX_USER_HELP_BYTES, readManifestFile, readPackageUserHelp, validatePackagePaths } from "./package-paths.js";
+
+describe("readPackageUserHelp", () => {
+  it("reads bounded UTF-8 Markdown and falls back for absent, empty and unsafe help", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "deepfield-help-"));
+    const root = join(parent, "package"); await mkdir(join(root, "docs"), { recursive: true });
+    await writeFile(join(root, "docs/help.md"), "用途。\n\n- 新建一个主题\n");
+    expect(await readPackageUserHelp(root, "docs/help.md")).toBe("用途。\n\n- 新建一个主题");
+    expect(await readPackageUserHelp(root, undefined)).toBeUndefined();
+    expect(await readPackageUserHelp(root, "docs/missing.md")).toBeUndefined();
+    await writeFile(join(root, "docs/empty.md"), "  \n");
+    expect(await readPackageUserHelp(root, "docs/empty.md")).toBeUndefined();
+    expect(await readPackageUserHelp(root, "../outside.md")).toBeUndefined();
+    expect(await readPackageUserHelp(root, "/tmp/outside.md")).toBeUndefined();
+    await writeFile(join(parent, "outside.md"), "must not read");
+    await symlink(join(parent, "outside.md"), join(root, "docs/link.md"));
+    expect(await readPackageUserHelp(root, "docs/link.md")).toBeUndefined();
+    await writeFile(join(root, "docs/large.md"), "x".repeat(MAX_USER_HELP_BYTES + 1));
+    expect(await readPackageUserHelp(root, "docs/large.md")).toBeUndefined();
+    await writeFile(join(root, "docs/invalid.md"), Buffer.from([0xff, 0xfe]));
+    expect(await readPackageUserHelp(root, "docs/invalid.md")).toBeUndefined();
+  });
+});
 
 describe("readManifestFile", () => {
   it("rejects a manifest over 256 KiB before reading it", async () => {

@@ -10,6 +10,74 @@ const database = () => { const db = openTestDb(); dbs.push(db); return db; };
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("company profile Agent queue", () => {
+  it("retries an incomplete ready profile once and preserves manual facts and provenance", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Incomplete" });
+    const first = profileResult({ headquarters: "北京", aliases: [] });
+    first.sources[0] = { ...first.sources[0]!, url: "https://old.example.test/company" };
+    db.repos.companies.setProfileStatus(company.id, "enriching");
+    db.repos.companies.completeProfile(company.id, first.fields, first);
+    const run = vi.fn(async () => profileResult({ headquarters: "上海", legalName: "新全称", aliases: ["不应覆盖"] }));
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => run });
+    expect(service.retry(company.id)).toBe(true);
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fields).toEqual({ headquarters: "北京", aliases: [] });
+    expect(service.retry(company.id)).toBe(false);
+    await service.whenIdle();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", headquarters: "北京", aliases: [], legalName: "新全称" });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fields).toEqual({ headquarters: "北京", aliases: [], legalName: "新全称" });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.sources.map(source => source.url)).toEqual(expect.arrayContaining([
+      "https://old.example.test/company", "https://example.test/company",
+    ]));
+  });
+
+  it("updates a complete profile while retaining manually known facts", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Known" });
+    db.repos.companies.update(company.id, { name: company.name, legalName: "已知", aliases: [], headquarters: "北京", foundedAt: "2020", officialWebsite: null, stockListings: [], businessTags: ["软件"] });
+    const run = vi.fn(async () => profileResult({ legalName: "模型名称", headquarters: "上海" }));
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => run });
+    expect(service.retry(company.id)).toBe(true);
+    expect(service.retry(company.id)).toBe(false);
+    await service.whenIdle();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", legalName: "已知", headquarters: "北京" });
+  });
+  it("retains existing facts and provenance when a requested update fails", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Existing" });
+    db.repos.companies.update(company.id, { name: company.name, headquarters: "手工地点" });
+    const previous = profileResult({ legalName: "已有法定名称" });
+    db.repos.companies.setProfileStatus(company.id, "enriching");
+    db.repos.companies.completeProfile(company.id, previous.fields, previous);
+    const before = db.repos.companies.getById(company.id)!;
+    expect(before.profileProvenance).toBeDefined();
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => { throw new AppError("EXTERNAL.TIMEOUT"); } });
+    expect(service.retry(company.id)).toBe(true);
+    await service.whenIdle();
+    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "failed", headquarters: "手工地点", profileProvenance: before.profileProvenance });
+  });
+  it("keeps new identity and field evidence attached when old provenance has 40 sources", async () => {
+    const db = database(); const company = db.repos.companies.upsert({ name: "Sources" });
+    const old = profileResult({ headquarters: "北京" });
+    old.sources = Array.from({ length: 40 }, (_, index) => ({ ...old.sources[0]!, url: `https://old.example.test/${index}` }));
+    old.identity.sources = [{ url: old.sources[0]!.url, kind: "search_snippet" }];
+    old.fieldEvidence.headquarters = old.identity.sources;
+    db.repos.companies.setProfileStatus(company.id, "enriching");
+    db.repos.companies.completeProfile(company.id, old.fields, old);
+    const latest = profileResult({ legalName: "新法定名称" });
+    latest.sources[0] = { ...latest.sources[0]!, url: "https://new.example.test/company" };
+    latest.identity.sources = [{ url: latest.sources[0]!.url, kind: "search_snippet" }];
+    latest.fieldEvidence.legalName = latest.identity.sources;
+    const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => latest });
+    expect(service.retry(company.id)).toBe(true); await service.whenIdle();
+    const saved = db.repos.companies.getById(company.id)?.profileProvenance;
+    const urls = new Set(saved?.sources.map(source => source.url));
+    expect(saved?.sources).toHaveLength(40);
+    expect(urls.has("https://old.example.test/0")).toBe(true);
+    expect(urls.has("https://new.example.test/company")).toBe(true);
+    expect(saved?.fields).toMatchObject({ headquarters: "北京", legalName: "新法定名称" });
+    for (const ref of [...(saved?.identity.sources ?? []), ...Object.values(saved?.fieldEvidence ?? {}).flatMap(refs => refs ?? [])]) {
+      expect(urls.has(ref.url)).toBe(true);
+    }
+  });
   it("emits one terminal result for the current cohort, then returns idle and starts imports and retries fresh", async () => {
     const db = database();
     const historicReady = db.repos.companies.upsert({ name: "历史成功" }); db.repos.companies.setProfileStatus(historicReady.id, "ready");
@@ -83,7 +151,7 @@ describe("company profile Agent queue", () => {
     ]);
     expect(service.getProgress("topic")).toEqual({ itemId: "topic", status: "idle", total: 0, processed: 0, failed: 0 });
   });
-  it("clears old ambiguous evidence when a user retry fails for a new reason", async () => {
+  it("retains prior ambiguous evidence when a later update fails for a new reason", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Ambiguous" }); let attempts = 0;
     const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => {
       if (++attempts > 1) throw new AppError("EXTERNAL.TIMEOUT");
@@ -93,7 +161,7 @@ describe("company profile Agent queue", () => {
     expect(db.repos.companies.getById(company.id)?.profileProvenance?.identity.disposition).toBe("ambiguous");
     service.retry(company.id); await service.whenIdle();
     expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "failed", profileIssue: { code: "EXTERNAL.TIMEOUT" } });
-    expect(db.repos.companies.getById(company.id)?.profileProvenance).toBeUndefined();
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.identity.disposition).toBe("ambiguous");
   });
   it.each(["delete", "dispose"])("never writes an in-flight result after %s", async (action) => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Cancelled target" });
@@ -126,7 +194,11 @@ describe("company profile Agent queue", () => {
     expect(db.repos.companies.getById(first.id)?.profileStatus).toBe("ready");
     expect(db.repos.companies.getById(second.id)?.profileStatus).toBe("failed");
     succeed = true; expect(service.retry(second.id)).toBe(true); await service.whenIdle();
-    expect(calls).toEqual(["First", "Second", "Second"]); expect(service.retry(first.id)).toBe(false);
+    expect(calls).toEqual(["First", "Second", "Second"]);
+    expect(service.retry(first.id)).toBe(true);
+    expect(service.retry(first.id)).toBe(false);
+    await service.whenIdle();
+    expect(calls).toEqual(["First", "Second", "Second", "First"]);
   });
   it("confirms the same ambiguous company with a saved hint and retains it when the resumed run fails", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "三星" });

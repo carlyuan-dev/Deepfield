@@ -31,6 +31,7 @@ export function createReadWebpageDefinition(
   return {
     identity: { name: "read_webpage", version: 1 },
     label: "Read Webpage",
+    userFacing: { name: "读取网页", description: "读取公开网页内容" },
     description:
       "Open one public HTTP(S) webpage and return bounded readable text. Use URLs returned by web_search to verify important claims.",
     inputSchema: FetchInputSchema,

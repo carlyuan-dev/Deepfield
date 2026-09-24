@@ -29,9 +29,7 @@ export function useOperationProgress(api: DesktopApi, itemId: string, listVisibl
       if (!alive || state.itemId !== itemId) return;
       profileEventSeen = true;
       if (state.status !== "idle") setBatch(current => terminal(current) ? null : current);
-      setProfile(current => state.status === "idle"
-        ? profileTerminal(current) ? current : null
-        : state.status === "completed" && !visible.current ? null : state);
+      setProfile(state.status === "idle" ? null : state.status === "completed" && !visible.current ? null : state);
     });
     void api.companyResearchBatch.getState(itemId).then((state) => { if (alive && !batchEventSeen) setBatch(terminal(state) ? null : state); }).catch(() => {});
     void api.industryResearch.getCompanyProfileProgress(itemId).then((state) => {

@@ -53,7 +53,7 @@ describe("profile main/worker typed boundary", () => {
       expect(client.pendingCount()).toBe(0); expect(loop.activeCount()).toBe(0);
     } finally { loop.dispose(); client.dispose(); }
   });
-  it("keeps non-format evidence failures on the ordinary external failure path", async () => {
+  it("distinguishes source verification failures from provider availability", async () => {
     const raw = rawResearchRequest();
     const sendProfile = vi.fn(async function* (request: CompanyProfileWorkerRequest) {
       const identity = { kind: "company-profile.event" as const, requestId: request.requestId, companyId: request.companyId };
@@ -61,7 +61,7 @@ describe("profile main/worker typed boundary", () => {
       yield { ...identity, type: "failed" as const, code: "invalid_evidence" as const };
     });
     const run = await createCompanyProfileCompleter({ resolveActiveLlm: async () => raw.llm, resolveActiveSearch: async () => raw.search }, { sendProfile }).prepare(company, []);
-    await expect(run()).rejects.toMatchObject({ code: "EXTERNAL.UNAVAILABLE" });
+    await expect(run()).rejects.toMatchObject({ code: "EXTERNAL.INVALID_RESPONSE", context: { service: "search" } });
   });
   it("rejects foreign company terminal events instead of accepting unrelated provenance", async () => {
     const raw = rawResearchRequest(); const endpoint = new FakeEndpoint(); const client = new AgentWorkerClient(endpoint);

@@ -10,6 +10,7 @@ export function companyManagementFixture() {
     list: async () => snapshot,
     subscribe: (listener: (snapshot: CapabilitySnapshot) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setEnabled: async (_id: string, enabled: boolean) => { snapshot = { ...snapshot, packages: snapshot.packages.map(item => ({ ...item, enabledNextStart: enabled })) }; for (const listener of listeners) listener(snapshot); },
+    restart: async () => {},
     publish: (next: CapabilitySnapshot) => { snapshot = next; for (const listener of listeners) listener(snapshot); },
   };
 }

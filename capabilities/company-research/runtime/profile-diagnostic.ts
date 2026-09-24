@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import type { TSchema } from "typebox";
 import { CompanyProfileCandidateSchema, type ProfileSchemaIssue } from "../contracts/index.js";
 
 const fields = new Set(["identity", "disposition", "matchedName", "reason", "sources", "fields", "fieldEvidence", "legalName", "aliases", "headquarters", "foundedAt", "officialWebsite", "stockListings", "businessTags", "exchange", "ticker", "url", "kind"]);
@@ -16,9 +17,9 @@ function at(value: unknown, path: string): unknown {
   return value;
 }
 /** Validator messages, field values and unknown property names never leave here. */
-export function profileSchemaIssues(value: unknown): ProfileSchemaIssue[] {
+export function profileSchemaIssues(value: unknown, schema: TSchema = CompanyProfileCandidateSchema): ProfileSchemaIssue[] {
   const expectedNames = new Set(["object", "array", "string", "number", "boolean", "null", "pattern", "minItems", "maxItems", "minLength", "maxLength", "anyOf"]);
-  return Value.Errors(CompanyProfileCandidateSchema, value).slice(0, 20).map((error) => {
+  return Value.Errors(schema, value).slice(0, 20).map((error) => {
     const params = error.params as Record<string, unknown>;
     const required = error.keyword === "required" && Array.isArray(params.requiredProperties) ? params.requiredProperties[0] : undefined;
     const path = `${error.instancePath}${typeof required === "string" ? `/${required}` : ""}`;

@@ -1,6 +1,7 @@
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { CapabilityUiModule, CapabilityUiProps } from "@deepfield/capability-sdk";
 import { capabilityUiRuntime } from "./ui-runtime.js";
+import type { CapabilityInteractionState } from "./interaction-state.js";
 
 export type CapabilityModuleLoader = (url: string) => Promise<CapabilityUiModule>;
 export const loadCapabilityModule: CapabilityModuleLoader = url => import(/* @vite-ignore */ url);
@@ -8,11 +9,13 @@ export interface CapabilityHostProps extends CapabilityUiProps {
   capabilityId: string;
   uiEntry: string;
   loadModule?: CapabilityModuleLoader;
+  interaction?: CapabilityInteractionState;
 }
 
-class PackageBoundary extends Component<{ children: ReactNode; onClose(): void }, { failed: boolean }> {
+class PackageBoundary extends Component<{ children: ReactNode; onClose(): void; onFailure(): void }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch() { this.props.onFailure(); }
   render() { return this.state.failed ? <Failure onClose={this.props.onClose} /> : this.props.children; }
 }
 function Failure({ onClose }: { onClose(): void }) {
@@ -20,12 +23,14 @@ function Failure({ onClose }: { onClose(): void }) {
 }
 
 export function CapabilityHost(props: CapabilityHostProps) {
-  return <PackageBoundary key={`${props.capabilityId}:${props.uiEntry}`} onClose={props.onClose}><LoadedCapability {...props} /></PackageBoundary>;
+  return <PackageBoundary key={`${props.capabilityId}:${props.uiEntry}`} onClose={props.onClose} onFailure={() => props.interaction?.fail(props.capabilityId)}><LoadedCapability {...props} /></PackageBoundary>;
 }
-function LoadedCapability({ capabilityId, uiEntry, loadModule = loadCapabilityModule, ...props }: CapabilityHostProps) {
+function LoadedCapability({ capabilityId, uiEntry, loadModule = loadCapabilityModule, interaction, ...props }: CapabilityHostProps) {
   const [View, setView] = useState<React.ComponentType<CapabilityUiProps>>();
   const [failed, setFailed] = useState(false);
+  const navigation = useMemo(() => interaction ? { register: (handler: Parameters<CapabilityInteractionState["register"]>[1]) => interaction.register(capabilityId, handler) } : undefined, [interaction, capabilityId]);
   useEffect(() => {
+    interaction?.mount(capabilityId);
     let alive = true;
     const links: HTMLLinkElement[] = [];
     const clear = () => { for (const link of links) link.remove(); };
@@ -50,10 +55,14 @@ function LoadedCapability({ capabilityId, uiEntry, loadModule = loadCapabilityMo
           links.push(link); document.head.append(link);
         })));
         if (alive) setView(() => view);
-      } catch { clear(); if (alive) setFailed(true); }
+      } catch { clear(); if (alive) { setFailed(true); interaction?.fail(capabilityId); } }
     })();
-    return () => { alive = false; clear(); };
-  }, [capabilityId, uiEntry, loadModule]);
+    return () => { alive = false; clear(); interaction?.unmount(capabilityId); };
+  }, [capabilityId, uiEntry, loadModule, interaction]);
   if (failed) return <Failure onClose={props.onClose} />;
-  return <div data-capability-ui={capabilityId}>{View ? <View {...props} /> : <p>加载能力界面…</p>}</div>;
+  return <div data-capability-ui={capabilityId}>{View ? <><View {...props} {...(navigation ? { navigation } : {})} /><Ready capabilityId={capabilityId} interaction={interaction} /></> : <p>加载能力界面…</p>}</div>;
+}
+function Ready({ capabilityId, interaction }: { capabilityId: string; interaction: CapabilityInteractionState | undefined }) {
+  useEffect(() => { interaction?.ready(capabilityId); }, [capabilityId, interaction]);
+  return null;
 }

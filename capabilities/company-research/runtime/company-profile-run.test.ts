@@ -21,7 +21,7 @@ describe("profile capability generic Agent run", () => {
   it.each([
     ["json_parse", "这是中文资料说明，但不是JSON。公司资料已经核实。sk-secret"],
     ["agent_failed", "English only sk-secret"],
-    ["schema_invalid", JSON.stringify({ identity: { disposition: "matched", matchedName: "公司", reason: "证据", sources: [{ url: "https://example.com", kind: "search_snippet" }] }, fields: { legalName: "公司" }, fieldEvidence: { legalName: ["sk-secret"] } })],
+    ["schema_invalid", JSON.stringify({ identity: { disposition: "matched", subjectType: "company", matchedName: "公司", reason: "证据", sources: [{ url: "https://example.com", kind: "search_snippet" }] }, fields: { legalName: "公司" }, fieldEvidence: { legalName: ["sk-secret"] } })],
   ])("reports safe %s after successful retrieval", async (code, output) => {
     const raw = rawResearchRequest(); const tools = createToolRuntime({ audit: new FakeAuditSink() });
     const completeText = vi.fn(async () => output);
@@ -36,7 +36,7 @@ describe("profile capability generic Agent run", () => {
     expect(events[0]).toMatchObject({ type: "diagnostic", code, searchSourceCount: 1, searchToolCalls: 1, model: { stopReason: "stop" } });
     expect(events[1]).toMatchObject({ type: "failed", code: code === "agent_failed" ? "agent_failed" : "invalid_evidence" });
     expect(JSON.stringify(events)).not.toContain("sk-secret");
-    if (code === "schema_invalid") expect(events[0]).toMatchObject({ schemaIssues: [{ path: "/fieldEvidence/legalName/0", expected: "object", actual: "string" }] });
+    if (code === "schema_invalid") expect(events[0]).toMatchObject({ schemaIssues: expect.arrayContaining([expect.objectContaining({ path: "/fieldEvidence/legalName/0", actual: "string" })]) });
     if (code === "agent_failed") expect(events[0]).toMatchObject({ piError: "invalid_final_language", model: { errorCategory: "invalid_final_language" } });
     expect(completeText).toHaveBeenCalledTimes(code === "agent_failed" ? 0 : 1);
   });
@@ -67,7 +67,7 @@ describe("profile capability generic Agent run", () => {
     const tools = createToolRuntime({ audit: new FakeAuditSink(), retrieval: { transport: { fetch } } });
     const bind = vi.fn((trace: string, _provider: unknown, limits: Parameters<typeof tools.bindSearchProvider>[2]) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search }, limits));
     const reference = { url: "https://example.com/1", kind: "opened_page" };
-    const result = { identity: { disposition: "matched", matchedName: "示例公司", reason: "网页确认了主体", sources: [reference] }, fields: { legalName: "示例公司" }, fieldEvidence: { legalName: [reference] } };
+    const result = { identity: { disposition: "matched", subjectType: "company", matchedName: "示例公司", reason: "网页确认了主体", sources: [{ evidenceId: "e4" }] }, fields: { legalName: "示例公司" }, fieldEvidence: { legalName: [{ evidenceId: "e4" }] } };
     const recording = makeRecordingInstalledPiRuntime([
       assistant("", { stopReason: "toolUse", content: [1, 2, 3, 4].map((i) => ({ type: "toolCall", id: `search-${i}`, name: "web_search", arguments: { query: `示例公司 ${i}` } })) }),
       assistant("", { stopReason: "toolUse", content: [1, 2, 3].map((i) => ({ type: "toolCall", id: `read-${i}`, name: "read_webpage", arguments: { url: `https://example.com/${i}` } })) }),
@@ -83,6 +83,18 @@ describe("profile capability generic Agent run", () => {
     expect(recording.requests.at(-1)?.tools).toEqual([]);
     expect(recording.requests.at(-1)?.systemPrompt).not.toContain("必须先搜索");
     expect(JSON.stringify(recording.requests.at(-1)?.messages)).toContain("注册全称");
+    expect(JSON.stringify(recording.requests.at(-1)?.messages)).toContain("collectedEvidence");
+    expect(JSON.stringify(recording.requests.at(-1)?.messages)).toContain("evidenceId");
+    const searchResult = recording.requests[1]?.messages.find(message => message.role === "toolResult" && message.toolName === "web_search");
+    if (!searchResult || searchResult.role !== "toolResult") throw new Error("missing search result");
+    const payload = JSON.parse(searchResult.content.filter(part => part.type === "text").map(part => part.text).join(""));
+    expect(JSON.parse(payload.capabilityContext)).toMatchObject({ collectedEvidence: [
+      { evidenceId: "e1", url: "https://example.com/1", kind: "search_snippet" },
+      { evidenceId: "e2", url: "https://example.com/2", kind: "search_snippet" },
+      { evidenceId: "e3", url: "https://example.com/3", kind: "search_snippet" },
+    ] });
+    expect(payload.results).toHaveLength(3);
+    expect(searchResult.details).toMatchObject({ executionId: expect.any(String), budgetConsumed: true });
     expect(events).toEqual([expect.objectContaining({ type: "diagnostic", code: "ok", phase: "complete", searchToolCalls: 3, readToolCalls: 2, searchSourceCount: 3, openedSourceCount: 2 }), expect.objectContaining({ kind: "company-profile.event", type: "completed", result: expect.objectContaining({ fields: { legalName: "示例公司" }, sources: [expect.objectContaining(reference)] }) })]);
     expect(tools.traceLedgerCount()).toBe(0);
   });
@@ -90,16 +102,24 @@ describe("profile capability generic Agent run", () => {
   it.each([
     ["malformed JSON", "这不是JSON"],
     ["schema-invalid JSON", JSON.stringify({
-      identity: { disposition: "matched", matchedName: "示例公司", reason: "网页确认了主体", sources: [{ url: "https://example.com", kind: "search_snippet" }] },
+      identity: { disposition: "matched", subjectType: "company", matchedName: "示例公司", reason: "网页确认了主体", sources: [{ url: "https://example.com", kind: "search_snippet" }] },
       fields: { legalName: "示例公司" },
       fieldEvidence: { legalName: ["https://example.com"] },
+    })],
+    ["a missing closing parenthesis in the source URL", JSON.stringify({
+      identity: { disposition: "matched", subjectType: "company", matchedName: "示例公司", reason: "来源确认主体", sources: [{ url: "https://zh.wikipedia.org/wiki/月之暗面_(公司", kind: "search_snippet" }] },
+      fields: { legalName: "示例公司" }, fieldEvidence: { legalName: [{ evidenceId: "e1" }] },
+    })],
+    ["a snippet incorrectly labeled as an opened page", JSON.stringify({
+      identity: { disposition: "matched", subjectType: "company", matchedName: "示例公司", reason: "来源确认主体", sources: [{ url: "https://zh.wikipedia.org/wiki/月之暗面_(公司)", kind: "opened_page" }] },
+      fields: { legalName: "示例公司" }, fieldEvidence: { legalName: [{ evidenceId: "e1" }] },
     })],
   ])("repairs %s once without another agent or search", async (_case, firstOutput) => {
     const raw = rawResearchRequest();
     const tools = createToolRuntime({ audit: new FakeAuditSink() });
-    const search = vi.fn(async () => ({ provider: "fixture", results: [{ title: "示例公司", url: "https://example.com", snippet: "示例公司经营机器人业务", rank: 1, provider: "fixture" }] }));
-    const ref = { url: "https://example.com", kind: "search_snippet" as const };
-    const corrected = { identity: { disposition: "matched", matchedName: "示例公司", reason: "网页确认了主体", sources: [ref] }, fields: { legalName: "示例公司" }, fieldEvidence: { legalName: [ref] } };
+    const search = vi.fn(async () => ({ provider: "fixture", results: [{ title: "示例公司", url: "https://zh.wikipedia.org/wiki/月之暗面_(公司)", snippet: "示例公司经营机器人业务", rank: 1, provider: "fixture" }] }));
+    const ref = { evidenceId: "e1" };
+    const corrected = { identity: { disposition: "matched", subjectType: "company", matchedName: "示例公司", reason: "网页确认了主体", sources: [ref] }, fields: { legalName: "示例公司" }, fieldEvidence: { legalName: [ref] } };
     const completeText = vi.fn(async (_snapshot: unknown, _system: string, _prompt: string, _signal?: AbortSignal) => JSON.stringify(corrected));
     const recording = makeRecordingInstalledPiRuntime([
       assistant("", { stopReason: "toolUse", content: [{ type: "toolCall", id: "search", name: "web_search", arguments: { query: "示例公司 机器人" } }] }),
@@ -124,7 +144,9 @@ describe("profile capability generic Agent run", () => {
       expect.stringContaining("示例公司经营机器人业务"),
       expect.any(AbortSignal),
     );
-    expect(JSON.parse(completeText.mock.calls[0]?.[2] ?? "{}")).toMatchObject({ previousCandidate: firstOutput });
+    expect(JSON.parse(completeText.mock.calls[0]?.[2] ?? "{}")).toMatchObject({ previousCandidate: firstOutput,
+      originalRequest: { researchTopics: ["机器人"] }, collectedEvidence: [{ evidenceId: "e1", url: "https://zh.wikipedia.org/wiki/月之暗面_(公司)", kind: "search_snippet" }],
+    });
     expect(events).toEqual([
       expect.objectContaining({ type: "diagnostic", code: "ok", formatRepair: { attempted: true, outcome: "succeeded", durationMs: expect.any(Number) } }),
       expect.objectContaining({ type: "completed", result: expect.objectContaining({ fields: { legalName: "示例公司" } }) }),
@@ -134,7 +156,7 @@ describe("profile capability generic Agent run", () => {
   it.each([
     ["a second malformed candidate", "still-not-json", "json_parse"],
     ["fabricated corrected evidence", JSON.stringify({
-      identity: { disposition: "matched", matchedName: "示例公司", reason: "网页确认了主体", sources: [{ url: "https://invented.test", kind: "search_snippet" }] },
+      identity: { disposition: "matched", subjectType: "company", matchedName: "示例公司", reason: "网页确认了主体", sources: [{ url: "https://invented.test", kind: "search_snippet" }] },
       fields: { legalName: "示例公司" },
       fieldEvidence: { legalName: [{ url: "https://invented.test", kind: "search_snippet" }] },
     }), "source_missing"],

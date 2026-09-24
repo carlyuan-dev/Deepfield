@@ -11,6 +11,11 @@ import { createCompanyResearchServices, type CompanyResearchServicesPorts } from
 import * as C from "./contracts/index.js";
 import { CapabilityItemSchema, CompanySchema, ItemCompanyViewSchema } from "./contracts/operation-results.js";
 import { createCompanyResearchWordExportService, type ExportDependencies } from "./export/company-research-word-export.js";
+import { ResearchDrafts } from "./actions/drafts.js";
+import { ResearchSubmission } from "./actions/handlers.js";
+import { registerResearchProtocol } from "./actions/register.js";
+export { createActionDefinitions, viewDeclarations } from "./actions/definitions.js";
+declare const __COMPANY_ACTION_DECLARATIONS__: import("@deepfield/capability-sdk").CompiledActionDeclaration[];
 
 export interface CompanyResearchMainPorts extends CompanyResearchServicesPorts {
   settings: { get(): Promise<SettingsView> };
@@ -36,13 +41,19 @@ export function bootstrap(registrar: CapabilityRegistrar, services: CapabilityHo
 }
 
 /** Owns every business subscription and delays background work until both entries succeed. */
-export function activate(registrar: CapabilityRegistrar, ports: CompanyResearchMainPorts): void {
+export function activate(registrar: CapabilityRegistrar, ports: CompanyResearchMainPorts, declarations = typeof __COMPANY_ACTION_DECLARATIONS__ === "undefined" ? [] : __COMPANY_ACTION_DECLARATIONS__): void {
   const services = createCompanyResearchServices(ports, { deferStart: true });
+  if (!ports.repositories.companyResearchProtocol) throw new Error("incompatible_host_services");
+  const submission = new ResearchSubmission(new ResearchDrafts(ports.repositories.companyResearchProtocol, services.companyResearch), services.companyResearchBatch, ports.profiles, services.companyResearch,
+    (itemId, companyId) => ({ topicName: services.industryResearch.getItem(itemId as import("@deepfield/contracts").CapabilityItemId)?.industry ?? "当前研究主题",
+      companyName: services.industryResearch.listCompanies(itemId as import("@deepfield/contracts").CapabilityItemId).find(company => company.id === companyId)?.name ?? "当前公司" }));
   registrar.defer(services.dispose);
   registrar.onReady(services.start);
   if (ports.onConfigurationChanged) registrar.defer(ports.onConfigurationChanged(() => services.companyProfiles.configurationChanged()));
   const word = createCompanyResearchWordExportService({ ...ports.documentSave, getRun: (...args) => services.companyResearch.getRun(...args) });
-  registerCompanyResearchOperations(registrar, { ...services, settings: ports.settings, companyResearchWordExport: word });
+  const operations = { ...services, settings: ports.settings, companyResearchWordExport: word };
+  registerCompanyResearchOperations(registrar, operations, submission);
+  registerResearchProtocol(registrar, operations, submission, declarations);
   // LIFO cleanup must interrupt live work before any asynchronous registration
   // teardown yields to rejected Worker streams. The early defer covers setup failure.
   registrar.defer(services.dispose);
@@ -51,7 +62,7 @@ export function activate(registrar: CapabilityRegistrar, ports: CompanyResearchM
 export type CompanyResearchOperationServices = Pick<ReturnType<typeof createCompanyResearchServices>, "industryResearch" | "companyResearch" | "companyResearchBatch" | "companyProfiles"> & { settings: { get(): Promise<SettingsView> }; companyResearchWordExport: ReturnType<typeof createCompanyResearchWordExportService> };
 
 /** Package-owned validated business operations. */
-export function registerCompanyResearchOperations(registrar: CapabilityRegistrar, services: CompanyResearchOperationServices): void {
+export function registerCompanyResearchOperations(registrar: CapabilityRegistrar, services: CompanyResearchOperationServices, submission?: ResearchSubmission): void {
   const id = Type.String({ minLength: 1, maxLength: 200 });
   const ids = Type.Array(id, { minItems: 1, maxItems: 1000 });
   const empty = Type.Tuple([]);
@@ -80,7 +91,7 @@ export function registerCompanyResearchOperations(registrar: CapabilityRegistrar
     return services.companyProfiles.getProgress(itemId as import("@deepfield/contracts").CapabilityItemId);
   });
   register("companyResearch", "start", C.CompanyResearchStartArgsSchema, C.CompanyResearchBatchStateSchema,
-    (itemId: string, companyId: string, input: C.StartCompanyResearchInput) => services.companyResearchBatch.start(itemId, [{ companyId, input }]));
+    (itemId: string, companyId: string, input: C.StartCompanyResearchInput) => submission ? submission.submitUi(itemId, [{ companyId, input }]) : services.companyResearchBatch.start(itemId, [{ companyId, input }]));
   register("companyResearch", "cancel", one, Type.Undefined(), (runId: string) => services.companyResearchBatch.cancelByRunId(runId));
   for (const [method, input, output] of [
     ["getState", two, C.CompanyResearchStateSchema],
@@ -89,15 +100,16 @@ export function registerCompanyResearchOperations(registrar: CapabilityRegistrar
     ["deleteRun", C.CompanyResearchDeleteRunArgsSchema, Type.Undefined()],
   ] as const) register("companyResearch", method, input, output);
   register("companyResearch", "retryStructuring", C.CompanyResearchRetryStructuringArgsSchema, C.CompanyResearchBatchStateSchema,
-    (itemId: string, companyId: string, runId: string) => services.companyResearchBatch.enqueueRetryStructuring(itemId, companyId, runId));
+    (itemId: string, companyId: string, runId: string) => submission ? submission.retryStructureUi(itemId, companyId, runId) : services.companyResearchBatch.enqueueRetryStructuring(itemId, companyId, runId));
   register("companyResearch", "retryFailed", C.CompanyResearchRetryFailedArgsSchema, C.CompanyResearchBatchStateSchema,
-    (itemId: string, companyId: string, runId: string, input: C.StartCompanyResearchInput) => services.companyResearchBatch.enqueueRetryFailed(itemId, companyId, runId, input));
+    (itemId: string, companyId: string, runId: string, input: C.StartCompanyResearchInput) => submission ? submission.submitUi(itemId, [{ companyId, input }], { runId }) : services.companyResearchBatch.enqueueRetryFailed(itemId, companyId, runId, input));
   register("companyResearch", "exportWord", C.CompanyResearchExportArgsSchema, C.CompanyResearchWordExportResultSchema, (...args: Parameters<typeof services.companyResearchWordExport.export>) => services.companyResearchWordExport.export(...args));
   for (const [method, input, output] of [
-    ["start", C.CompanyResearchBatchStartArgsSchema, C.CompanyResearchBatchStateSchema],
     ["getState", one, Type.Union([C.CompanyResearchBatchStateSchema, Type.Null()])],
     ["cancel", one, Type.Undefined()], ["cancelEntry", C.CompanyResearchQueueCancelEntryArgsSchema, Type.Undefined()], ["resume", one, C.CompanyResearchBatchStateSchema],
   ] as const) register("companyResearchBatch", method, input, output);
+  register("companyResearchBatch", "start", C.CompanyResearchBatchStartArgsSchema, C.CompanyResearchBatchStateSchema,
+    (itemId: string, entries: C.BatchResearchEntryInput[]) => submission ? submission.submitUi(itemId, entries) : services.companyResearchBatch.start(itemId, entries));
   register("settings", "get", empty, SettingsViewSchema);
   for (const [topic, schema, subscribe] of [
     ["companyResearch.subscribe", C.CompanyResearchEventSchema, (listener: (event: any) => void) => services.companyResearch.subscribe(listener)],

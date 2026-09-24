@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CapabilityHost } from "./CapabilityHost.js";
 import type { CapabilityUiModule } from "@deepfield/capability-sdk";
+import { CapabilityInteractionState } from "./interaction-state.js";
 
 afterEach(cleanup);
 const props = { capabilityId: "example", uiEntry: "deepfield-capability://example/dist/ui.js", bridge: { invoke: async () => null, subscribe: () => () => {} }, onClose() {}, onOpenSettings() {} };
@@ -27,4 +28,24 @@ it("treats CSS errors as package failures and cleans every stylesheet", async ()
   await waitFor(() => expect(document.querySelector("link[data-capability-style]")).not.toBeNull());
   fireEvent.error(document.querySelector("link[data-capability-style]")!);
   expect(await screen.findByRole("alert")).toBeTruthy(); expect(document.querySelector("link[data-capability-style]")).toBeNull();
+});
+it("connects package navigation registration and only opens after the package commits", async () => {
+  const interaction = new CapabilityInteractionState();
+  const module: CapabilityUiModule = { createView: runtime => function View({ navigation }) {
+    const [page, setPage] = runtime.react.useState("original");
+    runtime.react.useEffect(() => navigation?.register({
+      canLeave: () => true,
+      open: async (target, context) => {
+        const applied = context.commit(() => setPage("draftId" in target ? `${target.draftId}:${target.revision}` : target.viewId));
+        return { status: applied ? "opened" : "blocked" };
+      },
+    }), [navigation]);
+    return <p>{page}</p>;
+  } };
+  render(<CapabilityHost {...props} interaction={interaction} loadModule={async () => module} />);
+  await screen.findByText("original");
+  const target = { capabilityId: "example", draftId: "draft", revision: "rev-7" };
+  const result = await interaction.open({ kind: "open", requestId: "r", target, view: { capabilityId: "example", viewId: "edit", input: {} }, expiresAt: Date.now() + 1000 }, () => {});
+  expect(result).toEqual({ status: "opened" });
+  expect(await screen.findByText("draft:rev-7")).toBeTruthy();
 });

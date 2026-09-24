@@ -3,13 +3,14 @@ import { registerCapabilityManagementIpc } from "./management-ipc.js";
 import { IPC_CHANNELS } from "../../preload/preload-api.js";
 import { createPreloadApi } from "../../preload/preload-api.js";
 import type { IpcEventLike } from "../ipc.js";
+import { createTrustedIpcMainAdapter, type RendererIpcEventLike } from "../ipc-trusted-adapter.js";
 
 it("bounds management writes, strips raw issues, and releases subscriptions", async () => {
   const handlers = new Map<string, (event: IpcEventLike, ...args: unknown[]) => unknown>();
   const dispose = vi.fn(); const setEnabled = vi.fn(async () => { throw new Error("sk-secret"); });
   const runtime = { list: () => [], issues: [{ packageName: "sk-secret", code: "sk-secret" }], setEnabled, subscribe: () => dispose };
   const sender = { id: 1, send: vi.fn(), on: vi.fn(), removeListener: vi.fn() };
-  const cleanup = registerCapabilityManagementIpc({ handle: (channel, handler) => { handlers.set(channel, handler); }, removeHandler: channel => { handlers.delete(channel); } }, runtime);
+  const cleanup = registerCapabilityManagementIpc({ handle: (channel, handler) => { handlers.set(channel, handler); }, removeHandler: channel => { handlers.delete(channel); } }, runtime, () => {});
   const call = (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender }, ...args);
   const snapshot = await call(IPC_CHANNELS.capabilityManagementList);
   expect(snapshot).toEqual({ ok: true, value: { packages: [], issues: [{ code: "unavailable", message: "能力不可用" }] } });
@@ -42,6 +43,68 @@ it("isolates an oversized package DTO without dropping valid navigation", async 
   const entry = { id: "example", name: "Example", description: "", version: "1.0.0", status: "ready" as const, enabledNextStart: true, navigation: { title: "Example", order: 0, route: "/example" }, uiEntry: "deepfield-capability://example/dist/ui.js" };
   registerCapabilityManagementIpc({ handle: (channel, handler) => { if (channel === IPC_CHANNELS.capabilityManagementList) list = handler; }, removeHandler() {} }, {
     list: () => [{ ...entry, id: "bad", name: "x".repeat(201) }, entry], issues: [], subscribe: () => () => {}, setEnabled: async () => {},
-  });
+  }, () => {});
   expect(await list({} as IpcEventLike)).toMatchObject({ ok: true, value: { packages: [entry], issues: [{ code: "invalid_manifest" }] } });
+});
+
+it("validates restart arguments and requests restart only once", async () => {
+  const handlers = new Map<string, (event: IpcEventLike, ...args: unknown[]) => unknown>();
+  const requestRestart = vi.fn();
+  const register = registerCapabilityManagementIpc as unknown as (
+    ipc: Parameters<typeof registerCapabilityManagementIpc>[0],
+    runtime: Parameters<typeof registerCapabilityManagementIpc>[1],
+    requestRestart: () => void,
+  ) => () => void;
+  register({ handle: (channel, handler) => { handlers.set(channel, handler); }, removeHandler() {} }, {
+    list: () => [], issues: [], subscribe: () => () => {}, setEnabled: async () => {},
+  }, requestRestart);
+  const restart = handlers.get("deepfield:capability-management:restart")!;
+
+  expect(await restart({} as IpcEventLike, "unexpected")).toMatchObject({ ok: false });
+  expect(requestRestart).not.toHaveBeenCalled();
+  expect(await restart({} as IpcEventLike)).toEqual({ ok: true, value: null });
+  expect(await restart({} as IpcEventLike)).toEqual({ ok: true, value: null });
+  expect(requestRestart).toHaveBeenCalledTimes(1);
+});
+
+it("allows retrying restart when the main-process request fails", async () => {
+  const handlers = new Map<string, (event: IpcEventLike, ...args: unknown[]) => unknown>();
+  const requestRestart = vi.fn()
+    .mockImplementationOnce(() => { throw new Error("private restart detail"); })
+    .mockImplementationOnce(() => {});
+  const register = registerCapabilityManagementIpc as unknown as (
+    ipc: Parameters<typeof registerCapabilityManagementIpc>[0],
+    runtime: Parameters<typeof registerCapabilityManagementIpc>[1],
+    requestRestart: () => void,
+  ) => () => void;
+  register({ handle: (channel, handler) => { handlers.set(channel, handler); }, removeHandler() {} }, {
+    list: () => [], issues: [], subscribe: () => () => {}, setEnabled: async () => {},
+  }, requestRestart);
+  const restart = handlers.get("deepfield:capability-management:restart")!;
+
+  const failed = await restart({} as IpcEventLike);
+  expect(failed).toMatchObject({ ok: false });
+  expect(JSON.stringify(failed)).not.toContain("private restart detail");
+  expect(await restart({} as IpcEventLike)).toEqual({ ok: true, value: null });
+  expect(requestRestart).toHaveBeenCalledTimes(2);
+});
+
+it("accepts restart only from the trusted top-level renderer", async () => {
+  const handlers = new Map<string, (event: RendererIpcEventLike, ...args: unknown[]) => unknown>();
+  const mainFrame = { url: "file:///Applications/Deepfield.app/out/renderer/index.html" };
+  const sender = { id: 1, mainFrame, isDestroyed: () => false, send: vi.fn(), on: vi.fn(), removeListener: vi.fn() };
+  const ipc = createTrustedIpcMainAdapter({
+    handle: (channel, handler) => { handlers.set(channel, handler); },
+    removeHandler: channel => { handlers.delete(channel); },
+  }, () => sender, mainFrame.url);
+  const requestRestart = vi.fn();
+  registerCapabilityManagementIpc(ipc, {
+    list: () => [], issues: [], subscribe: () => () => {}, setEnabled: async () => {},
+  }, requestRestart);
+  const restart = handlers.get("deepfield:capability-management:restart")!;
+
+  expect(() => restart({ sender, senderFrame: { ...mainFrame } })).toThrow("untrusted IPC sender");
+  expect(requestRestart).not.toHaveBeenCalled();
+  await expect(restart({ sender, senderFrame: mainFrame })).resolves.toEqual({ ok: true, value: null });
+  expect(requestRestart).toHaveBeenCalledTimes(1);
 });

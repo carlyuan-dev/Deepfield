@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
-import { activate, type CompanyResearchMainPorts } from "../main.js";
+import { activate, createActionDefinitions, viewDeclarations, type CompanyResearchMainPorts } from "../main.js";
+import { compileActionCatalog } from "../../../scripts/capabilities/build-actions.js";
+import { fileURLToPath } from "node:url";
 import { CapabilityRegistry, activateRegisteredCapability } from "../../../apps/desktop/src/main/capabilities/registry.js";
 import { getCompanyResearchTemplate } from "../contracts/index.js";
 import { CompanyResearchService } from "./company-research-service.js";
@@ -8,6 +10,8 @@ import { AgentWorkerClient } from "../../../apps/desktop/src/main/agent-worker-c
 import { FakeEndpoint } from "../../../apps/desktop/src/main/agent-worker-client-test-helpers.js";
 import { createCompanyResearchWorkerClient } from "../worker-client.js";
 const dbs: TestDb[] = [];
+const declarations = await compileActionCatalog({ capabilityRoot: fileURLToPath(new URL("..", import.meta.url)), actions: createActionDefinitions() });
+const protocol = { views: JSON.parse(JSON.stringify(viewDeclarations)) as Array<{ id: string; inputSchema: Record<string, unknown> }>, publicActions: declarations.map(declaration => ({ capabilityId: "company-research", actionId: declaration.id, packageVersion: "2.0.0", declaration, documentation: "test" })) };
 afterEach(() => { vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.cleanup(); });
 
 it("interrupts registered business services before Worker exit rejects their live stream", async () => {
@@ -34,8 +38,8 @@ it("interrupts registered business services before Worker exit rejects their liv
     companyRecognizer: { recognize: async () => [] }, companyCompleter: { prepare: vi.fn() }, requestIdFactory: () => crypto.randomUUID(),
     settings: { get: vi.fn() }, documentSave: { showSaveDialog: vi.fn(), writeFile: vi.fn(), rename: vi.fn(), unlink: vi.fn(), randomToken: () => "token" },
   };
-  const activation = await activateRegisteredCapability({ registry, capabilityId: "company-research",
-    activateMain: registrar => activate(registrar, ports), activateWorker: async () => {},
+  const activation = await activateRegisteredCapability({ registry, capabilityId: "company-research", ...protocol,
+    activateMain: registrar => activate(registrar, ports, declarations), activateWorker: async () => {},
     onWorkerUnavailable: listener => client.subscribeUnavailable(listener),
   });
   await registry.call({ capabilityId: "company-research", operation: "companyResearchBatch.start", requestId: "start",
@@ -82,8 +86,8 @@ it("leaves actual active batch and raw report untouched until successful Worker 
     settings: { get: vi.fn() }, documentSave: { showSaveDialog: vi.fn(), writeFile: vi.fn(), rename: vi.fn(), unlink: vi.fn(), randomToken: () => "token" },
   };
   const registry = new CapabilityRegistry();
-  await expect(activateRegisteredCapability({ registry, capabilityId: "company-research",
-    activateMain: registrar => activate(registrar, ports),
+  await expect(activateRegisteredCapability({ registry, capabilityId: "company-research", ...protocol,
+    activateMain: registrar => activate(registrar, ports, declarations),
     activateWorker: async () => {
       expect(deleted).not.toHaveBeenCalled(); expect(saved).not.toHaveBeenCalled(); expect(cleanup).not.toHaveBeenCalled();
       throw new Error("worker failed");
@@ -93,8 +97,8 @@ it("leaves actual active batch and raw report untouched until successful Worker 
   expect(db.repos.companyResearchBatches.getById("active")).toEqual(beforeBatch);
   expect(db.repos.companyResearchBatches.getById("terminal")).toBeDefined();
   expect(db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, run.id)).toEqual(beforeRun);
-  const activation = await activateRegisteredCapability({ registry, capabilityId: "company-research",
-    activateMain: registrar => activate(registrar, ports),
+  const activation = await activateRegisteredCapability({ registry, capabilityId: "company-research", ...protocol,
+    activateMain: registrar => activate(registrar, ports, declarations),
     activateWorker: async () => { expect(cleanup).not.toHaveBeenCalled(); }, onWorkerUnavailable: () => () => {},
   });
   await activation.ready();

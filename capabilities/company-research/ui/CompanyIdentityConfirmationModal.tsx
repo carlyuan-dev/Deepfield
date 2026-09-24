@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import type { CompanyProfileIdentityHint, ItemCompanyView } from "../contracts/index.js";
 import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
+import { useFormField, type FormControl } from "./form-control.js";
 
 function isHttpWebsite(value: string): boolean {
   try {
@@ -13,6 +14,7 @@ function isHttpWebsite(value: string): boolean {
 }
 
 export interface CompanyIdentityConfirmationModalProps {
+  control?: FormControl;
   api: DesktopApi;
   company: ItemCompanyView;
   active?: boolean;
@@ -20,9 +22,9 @@ export interface CompanyIdentityConfirmationModalProps {
   onConfirmed(hint: CompanyProfileIdentityHint): void;
 }
 
-export function CompanyIdentityConfirmationModal({ api, company, active = true, onClose, onConfirmed }: CompanyIdentityConfirmationModalProps) {
-  const [name, setName] = useState(company.profileIdentityHint?.name ?? "");
-  const [officialWebsite, setOfficialWebsite] = useState(company.profileIdentityHint?.officialWebsite ?? "");
+export function CompanyIdentityConfirmationModal({ api, company, control, active = true, onClose, onConfirmed }: CompanyIdentityConfirmationModalProps) {
+  const [name, setName] = useFormField(control, "name", company.profileIdentityHint?.name ?? "");
+  const [officialWebsite, setOfficialWebsite] = useFormField(control, "officialWebsite", company.profileIdentityHint?.officialWebsite ?? "");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const provenanceIdentity = company.profileProvenance?.identity;
@@ -47,6 +49,7 @@ export function CompanyIdentityConfirmationModal({ api, company, active = true, 
     setBusy(true);
     setError(undefined);
     try {
+      if (control) { await control.confirm(); return; }
       const accepted = await api.industryResearch.confirmCompanyProfileIdentity(company.id, hint);
       if (!accepted) {
         setError("公司状态已变化，请刷新后重试");

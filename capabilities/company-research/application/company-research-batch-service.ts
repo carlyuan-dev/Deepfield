@@ -8,13 +8,15 @@ import type { CompanyResearchService } from "./company-research-service.js";
 export class CompanyResearchBatchService {
   private state: CompanyResearchBatchState | undefined;
   private task: Promise<void> | undefined;
-  private wakeProfileBoundary: (() => void) | undefined;
   private listeners = new Set<(state: CompanyResearchBatchState) => void>();
   private entryWaiters = new Map<string, Set<() => void>>();
   private unsubscribe: () => void;
   private recovered = false;
   private disposed = false;
-  constructor(private readonly repos: Repositories, private readonly research: CompanyResearchService, private readonly profile?: { whenIdle(): Promise<void>; resume(): void }) {
+  private persistReceipts?: (state: CompanyResearchBatchState) => void;
+  /** Called only inside the queue/run's existing SQLite transaction. */
+  setReceiptWriter(writer: (state: CompanyResearchBatchState) => void): void { this.persistReceipts = writer; }
+  constructor(private readonly repos: Repositories, private readonly research: CompanyResearchService, private readonly profile?: { resume(): void }) {
     this.unsubscribe = research.subscribe(event => {
       if (this.disposed) return;
       if (event.type === "tool_activity" && event.errorCode === "authentication_failed" && this.state) {
@@ -59,20 +61,20 @@ export class CompanyResearchBatchService {
     if (!this.repos.capabilityItems.getById(itemId as CapabilityItemId)) throw new AppError("RESOURCE.NOT_FOUND");
     return structuredClone(this.state ?? null);
   }
-  start(itemId: string, entries: BatchResearchEntryInput[]): CompanyResearchBatchState {
+  start(itemId: string, entries: BatchResearchEntryInput[], onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
     if (!Array.isArray(entries) || entries.length === 0 || entries.length > 1000 || new Set(entries.map(e => e.companyId)).size !== entries.length) throw new AppError("INPUT.INVALID");
     for (const entry of entries) {
       if (!Value.Check(BatchResearchEntryInputSchema, entry)) throw new AppError("INPUT.INVALID");
       this.research.validateBatchEntry(itemId, entry.companyId, entry.input);
     }
-    if (this.state) return this.append(itemId, entries.map(entry => ({ ...entry, mode: "new" as const })));
+    if (this.state) return this.append(itemId, entries.map(entry => ({ ...entry, mode: "new" as const })), onQueued);
     if (this.repos.companyResearchBatches.getActive()) throw new AppError("BUSINESS.CONFLICT");
     const batchId = randomUUID();
     this.reserve(batchId);
-    this.state = { batchId, itemId, status: "waiting_profile", entries: structuredClone(entries).map(e => this.createEntry(itemId, e, "new")), processed: 0, succeeded: 0, failed: 0, total: entries.length };
+    this.state = { batchId, itemId, status: "running", entries: structuredClone(entries).map(e => this.createEntry(itemId, e, "new")), processed: 0, succeeded: 0, failed: 0, total: entries.length };
     try {
-      this.save();
+      this.save(() => onQueued?.(this.state!));
     } catch (error) {
       this.state = undefined;
       this.research.release(batchId);
@@ -81,18 +83,18 @@ export class CompanyResearchBatchService {
     this.launch();
     return structuredClone(this.state);
   }
-  enqueueRetryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput): CompanyResearchBatchState {
+  enqueueRetryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     this.research.validateBatchEntry(itemId, companyId, input);
     const run = this.research.getRun(itemId, companyId, runId);
     if (run?.schemaVersion !== "company-research-report-v1" || researchRetryMode(run, input) === "unavailable") throw new AppError("BUSINESS.CONFLICT");
-    return this.enqueue(itemId, companyId, input, "retry_failed", runId);
+    return this.enqueue(itemId, companyId, input, "retry_failed", runId, onQueued);
   }
-  enqueueRetryStructuring(itemId: string, companyId: string, runId: string): CompanyResearchBatchState {
+  enqueueRetryStructuring(itemId: string, companyId: string, runId: string, onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     const run = this.research.getRun(itemId, companyId, runId);
     if (run?.schemaVersion !== "company-research-report-v1" || run.status !== "structure_failed") throw new AppError("BUSINESS.CONFLICT");
     const input: StartCompanyResearchInput = { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) };
     this.research.validateBatchEntry(itemId, companyId, input);
-    return this.enqueue(itemId, companyId, input, "retry_structure", runId);
+    return this.enqueue(itemId, companyId, input, "retry_structure", runId, onQueued);
   }
   async cancelByRunId(runId: string): Promise<void> {
     const entry = this.state?.entries.find(candidate => candidate.status === "running" && candidate.runId === runId);
@@ -138,7 +140,7 @@ export class CompanyResearchBatchService {
   resume(batchId: string): CompanyResearchBatchState {
     const state = this.require(batchId);
     if (state.status !== "paused" || this.task) throw new AppError("BUSINESS.CONFLICT");
-    state.status = "waiting_profile";
+    state.status = "running";
     delete state.issue;
     this.save();
     this.launch();
@@ -149,7 +151,6 @@ export class CompanyResearchBatchService {
     if (state.status === "cancelled" || state.status === "completed") return;
     state.status = "cancelling";
     this.save();
-    this.wakeProfileBoundary?.();
     const entry = state.entries.find(e => e.status === "running");
     if (entry?.runId && this.research.isActiveRun(entry.runId)) await this.research.cancel(entry.runId);
     await this.task;
@@ -175,7 +176,17 @@ export class CompanyResearchBatchService {
     this.save();
   }
   subscribe(listener: (state: CompanyResearchBatchState) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  dispose(): void { this.disposed = true; this.wakeProfileBoundary?.(); this.unsubscribe(); this.listeners.clear(); }
+  dispose(): void {
+    if (!this.disposed && this.state && this.persistReceipts) {
+      // Preserve the queue itself; publish a durable interrupted/paused receipt
+      // without cancelling reports or allowing late worker callbacks to mutate it.
+      const paused = structuredClone(this.state); paused.status = "paused";
+      for (const entry of paused.entries) if (entry.status === "running") entry.interrupted = true;
+      try { this.repos.runInTransaction(() => this.persistReceipts?.(paused)); }
+      catch { /* Startup reconciles the durable queue; storage failure must not keep workers alive. */ }
+    }
+    this.disposed = true; this.unsubscribe(); this.listeners.clear();
+  }
   private require(batchId: string): CompanyResearchBatchState {
     if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
     if (this.state?.batchId !== batchId) throw new AppError("RESOURCE.NOT_FOUND");
@@ -183,8 +194,7 @@ export class CompanyResearchBatchService {
   }
   private launch(): void {
     const state = this.state!;
-    const cancelledAtBoundary = new Promise<void>(resolve => { this.wakeProfileBoundary = resolve; });
-    const task = Promise.resolve().then(() => this.run(cancelledAtBoundary)).catch(error => {
+    const task = Promise.resolve().then(() => this.run()).catch(error => {
       if (this.disposed || this.state !== state || this.state.status === "cancelling") return;
       this.state.status = "paused";
       this.state.issue = toPublicError(error);
@@ -192,13 +202,9 @@ export class CompanyResearchBatchService {
     }).finally(() => { if (this.task === task) this.task = undefined; });
     this.task = task;
   }
-  private async run(cancelledAtBoundary: Promise<void>): Promise<void> {
+  private async run(): Promise<void> {
     const state = this.state!;
-    if (this.disposed) return;
-    await Promise.race([this.profile?.whenIdle(), cancelledAtBoundary]);
     if (this.disposed || state.status === "cancelling") return;
-    state.status = "running";
-    this.save();
     for (const entry of state.entries) {
       if (entry.status !== "pending" && entry.status !== "running") continue;
       if (this.disposed || this.cancelled()) return;
@@ -300,7 +306,7 @@ export class CompanyResearchBatchService {
       const previousRunId = entry.runId;
       entry.runId = run.id;
       // Called inside the same SQLite transaction that creates this owned run.
-      try { this.repos.companyResearchBatches.save(this.state!); }
+      try { this.repos.companyResearchBatches.save(this.state!); this.persistReceipts?.(this.state!); }
       catch (error) { if (previousRunId === undefined) delete entry.runId; else entry.runId = previousRunId; throw error; }
     });
   }
@@ -314,6 +320,7 @@ export class CompanyResearchBatchService {
       this.repos.runInTransaction(() => {
         transactionalWork?.();
         this.repos.companyResearchBatches.save(state);
+        this.persistReceipts?.(state);
         if (state.status === "completed" || state.status === "cancelled") this.repos.companyResearchBatches.deleteTerminal(state.batchId);
       });
     } catch (error) {
@@ -339,19 +346,19 @@ export class CompanyResearchBatchService {
     }
     for (const listener of this.listeners) { try { listener(structuredClone(state)); } catch { /* closed renderer */ } }
   }
-  private enqueue(itemId: string, companyId: string, input: StartCompanyResearchInput, mode: "retry_failed" | "retry_structure", originalRunId: string): CompanyResearchBatchState {
+  private enqueue(itemId: string, companyId: string, input: StartCompanyResearchInput, mode: "retry_failed" | "retry_structure", originalRunId: string, onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     if (this.disposed) throw new AppError("BUSINESS.CONFLICT");
     const entry = { companyId, input, mode, originalRunId };
-    if (this.state) return this.append(itemId, [entry]);
+    if (this.state) return this.append(itemId, [entry], onQueued);
     if (this.repos.companyResearchBatches.getActive()) throw new AppError("BUSINESS.CONFLICT");
     const batchId = randomUUID();
     this.reserve(batchId);
-    this.state = { batchId, itemId, status: "waiting_profile", entries: [this.createEntry(itemId, entry, mode, originalRunId)], processed: 0, succeeded: 0, failed: 0, total: 1 };
-    try { this.save(); } catch (error) { this.state = undefined; this.research.release(batchId); throw error; }
+    this.state = { batchId, itemId, status: "running", entries: [this.createEntry(itemId, entry, mode, originalRunId)], processed: 0, succeeded: 0, failed: 0, total: 1 };
+    try { this.save(() => onQueued?.(this.state!)); } catch (error) { this.state = undefined; this.research.release(batchId); throw error; }
     this.launch();
     return structuredClone(this.state);
   }
-  private append(itemId: string, entries: Array<BatchResearchEntryInput & { mode: "new" | "retry_failed" | "retry_structure"; originalRunId?: string }>): CompanyResearchBatchState {
+  private append(itemId: string, entries: Array<BatchResearchEntryInput & { mode: "new" | "retry_failed" | "retry_structure"; originalRunId?: string }>, onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     const state = this.state!;
     if (state.status === "cancelling" || state.status === "cancelled" || state.status === "completed") throw new AppError("BUSINESS.CONFLICT");
     const activeCompanies = new Set(state.entries.filter(entry => entry.status === "pending" || entry.status === "running").map(entry => entry.companyId));
@@ -360,7 +367,7 @@ export class CompanyResearchBatchService {
     const previousTotal = state.total;
     state.entries.push(...entries.map(entry => this.createEntry(itemId, entry, entry.mode, entry.originalRunId)));
     state.total = state.entries.length;
-    try { this.save(); } catch (error) {
+    try { this.save(() => onQueued?.(state)); } catch (error) {
       state.entries.splice(previousLength);
       state.total = previousTotal;
       throw error;

@@ -9,7 +9,7 @@ import {
 
 function event(
   requestId: string,
-  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint"> | "text_reset",
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint" | "handed_off"> | "text_reset",
   payload?: string,
 ): AgentWorkerEvent {
   switch (type) {
@@ -41,6 +41,13 @@ const persisted = (id: string, role: "user" | "assistant", content: string): Cha
 });
 
 describe("chat reducer", () => {
+  it("releases sending on handoff while keeping streamed text and tool activity", () => {
+    let state = chatReducer(loadedConversation("c1"), { type: "USER_SUBMIT", content: "继续", requestId: "r1" });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: { type: "text_delta", requestId: "r1", delta: "正在准备" } });
+    state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: { type: "handed_off", requestId: "r1" } });
+    expect(state.sending).toBe(false);
+    expect(visibleMessages(state).at(-1)).toMatchObject({ content: "正在准备", status: "done" });
+  });
   it("loads history and renders it as done messages", () => {
     const state = loadedConversation("c1", [
       persisted("m1", "user", "a"),

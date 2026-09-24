@@ -60,7 +60,11 @@ function structureRepairPrompt(request: Extract<CompanyResearchWorkerRequest, { 
     ].join("\n"),
     input: [
       "【格式修复】", "【模板】", JSON.stringify(request.template), "【输出 Schema】", JSON.stringify(request.outputSchema),
-      "【安全校验反馈】", JSON.stringify({ category: error.category, issues: error.issues }),
+      "【安全校验反馈】", JSON.stringify({
+        category: error.category,
+        issues: error.issues,
+        ...(error.repairHint === undefined ? {} : { repairHint: error.repairHint }),
+      }),
       "【失败候选】", candidate.slice(0, FAILED_CANDIDATE_LIMIT),
       "【原始报告】", request.rawReportText,
     ].join("\n"),

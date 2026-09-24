@@ -111,7 +111,7 @@ export class HostClient {
     // Timer + pending are registered BEFORE postMessage so a synchronous reply
     // delivered during post() can never be lost.
     return new Promise((resolve, reject) => {
-      const timer = this.#timer(this.#timeoutMs);
+      const timer = this.#timer(method === "capability.call" ? Math.max(this.#timeoutMs, 30_000) : this.#timeoutMs);
       const pending: PendingRpc = { method, resolve, reject, timer };
       this.#pending.set(hostRequestId, pending);
       timer.promise.then(() => {

@@ -8,6 +8,7 @@ export interface ResearchActionErrorPresentation {
 }
 
 export function researchActionError(value: unknown, action: "start" | "retry"): ResearchActionErrorPresentation {
+  if (value instanceof ResearchDraftConflictError) return { message: "草稿版本已变更或不可用。已保留您的输入，请关闭后重新打开最新草稿。" };
   // This class is constructed locally by UI preflight only, never by IPC.
   if (value instanceof ResearchReadinessError) return {
     message: value.message,
@@ -31,3 +32,4 @@ export function researchActionError(value: unknown, action: "start" | "retry"): 
 export function researchActionErrorText(value: unknown, action: "start" | "retry"): string {
   return researchActionError(value, action).message;
 }
+export class ResearchDraftConflictError extends Error {}

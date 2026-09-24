@@ -21,9 +21,19 @@ export const AgentContextSnapshotSchema = Type.Object(
   {
     conversationId: Type.String(),
     systemPrompt: Type.String(),
+    humanPrompt: Type.Optional(Type.String()),
     finalizationSystemPrompt: Type.Optional(Type.String()),
     messages: Type.Array(AgentContextMessageSchema),
     historyTurns: Type.Optional(Type.Array(ChatHistoryTurnSchema)),
+    capabilityDirectory: Type.Optional(Type.Array(Type.Object({
+      capabilityId: Type.String({ minLength: 1 }), capabilityName: Type.String(), packageVersion: Type.String({ minLength: 1 }),
+      actionId: Type.String({ minLength: 1 }), title: Type.String(), description: Type.String(),
+      mode: Type.Union([Type.Literal("immediate"), Type.Literal("task")]),
+      effects: Type.Object({ data: Type.Union([Type.Literal("read"), Type.Literal("write"), Type.Literal("destructive")]), consumesResources: Type.Boolean() }, { additionalProperties: false }),
+      contractDigest: Type.String({ minLength: 1 }),
+    }, { additionalProperties: false }), { maxItems: 100 })),
+    capabilityHelp: Type.Optional(Type.Array(Type.Object({ name: Type.String({ minLength: 1 }),
+      markdown: Type.Optional(Type.String({ maxLength: 8192 })) }, { additionalProperties: false }), { maxItems: 100 })),
   },
   { additionalProperties: false },
 );
@@ -121,6 +131,10 @@ export const AgentWorkerEventSchema = Type.Union([
     { additionalProperties: false },
   ),
   ToolActivityEventSchema,
+  Type.Object(
+    { requestId: Type.String(), type: Type.Literal("handed_off") },
+    { additionalProperties: false },
+  ),
   Type.Object(
     { requestId: Type.String(), type: Type.Literal("completed"), text: Type.String() },
     { additionalProperties: false },

@@ -84,6 +84,7 @@ export function echoProbeDefinition(): ToolDefinition<typeof probeInputSchema, t
   return {
     identity: { name: "echo_probe", version: 1 },
     label: "Echo Probe",
+    userFacing: { name: "回显探针", description: "回显输入文本" },
     description: "Offline probe tool that echoes its text input (no network).",
     inputSchema: probeInputSchema,
     outputSchema: probeOutputSchema,
@@ -418,4 +419,22 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
       return tools;
     },
   };
+}
+
+/** Projection of exactly the registered, granted Pi tools, including injected test tools. */
+export function chatToolDirectory(runtime: UtilityToolRuntime, networkEnabled: boolean): Array<{ name: string; description: string }> {
+  const definitions = new Map(runtime.registry.list().map(definition => [definition.identity.name, definition]));
+  return runtime.createAgentTools({ traceId: "help-catalog", actor: "main_agent", networkEnabled })
+    .map(tool => {
+      const definition = definitions.get(tool.name);
+      return { name: definition?.userFacing?.name ?? tool.label,
+        description: definition?.userFacing?.description ?? tool.description };
+    });
+}
+
+/** Main mirrors the production assembly's registration options without running tools. */
+export function availableChatTools(networkEnabled: boolean): Array<{ name: string; description: string }> {
+  const runtime = createToolRuntime({ audit: { start: async () => {}, finish: async () => {} },
+    conversationReader: { listRecent: async () => [], read: async () => undefined, search: async () => [] } });
+  return chatToolDirectory(runtime, networkEnabled);
 }

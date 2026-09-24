@@ -22,6 +22,7 @@ export interface CompanyResearchServiceRepositories {
 }
 
 export interface CompanyResearchBatchServiceRepositories {
+  companyResearchProtocol?: Repositories["companyResearchProtocol"];
   companyResearchBatches: Pick<Repositories["companyResearchBatches"], "deleteAllTerminal" | "getActive" | "getLatest" | "save" | "deleteTerminal">;
   companyResearchRuns: Pick<Repositories["companyResearchRuns"], "getByIdForTarget" | "deleteActive" | "deleteTerminal">;
   capabilityItems: Pick<Repositories["capabilityItems"], "getById">;

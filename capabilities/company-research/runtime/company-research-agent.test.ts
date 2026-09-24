@@ -445,13 +445,29 @@ describe("generic company research agent", () => {
   });
 
   it("structures in one no-tool model call without a Search snapshot", async () => {
-    const completeText = vi.fn(async () => JSON.stringify(validStructuredCandidate()));
+    const completeText = vi.fn(async (..._args: unknown[]) => JSON.stringify(validStructuredCandidate()));
     const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
     expect(request).not.toHaveProperty("search");
     await createCompanyResearchAgent({ gateway: { completeText } as never, rawAgent: {} as never }).run(request, (event) => events.push(event), new AbortController().signal);
     expect(completeText).toHaveBeenCalledWith(request.llm, expect.stringContaining("不能访问互联网"), expect.stringContaining(request.rawReportText), expect.any(AbortSignal));
+    expect(completeText.mock.calls[0]?.[1]).toContain(JSON.stringify(validStructuredCandidate()));
     expect(events.map((event) => event.type)).toEqual(["started", "model_diagnostic", "completed"]);
     expect(events[1]).toMatchObject({ phase: "structuring", searchCalls: 0, fetchCalls: 0, stopReason: "stop" });
+  });
+
+  it("completes the Honor two-object shape without spending the repair call", async () => {
+    const candidate = validStructuredCandidate();
+    const text = `${JSON.stringify({ coreSummary: candidate.coreSummary })}\n${JSON.stringify({ sections: candidate.sections })}`;
+    const completeText = vi.fn(async () => text);
+    const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
+
+    await createCompanyResearchAgent({ gateway: { completeText } as never }).run(request, (event) => events.push(event), new AbortController().signal);
+
+    expect(completeText).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === "model_diagnostic")).toEqual([
+      expect.objectContaining({ attempt: 1, stopReason: "stop" }),
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "completed", text });
   });
 
   it("classifies an empty structure completion without calling it a provider failure", async () => {
@@ -483,6 +499,8 @@ describe("generic company research agent", () => {
     expect(completeText).toHaveBeenCalledTimes(2);
     expect(completeText.mock.calls[1]?.[1]).toContain("格式修复");
     expect(completeText.mock.calls[1]?.[2]).toContain(request.rawReportText);
+    expect(completeText.mock.calls[1]?.[2]).toContain('"expected":"valid_json_syntax"');
+    expect(completeText.mock.calls[1]?.[2]).toContain('"repairHint":{"kind":"json_syntax","position":');
     expect(events.filter((event) => event.type === "model_diagnostic")).toEqual([
       expect.objectContaining({ attempt: 1, errorCategory: "json_parse", failedCandidate: '{"coreSummary": [}' }),
       expect.objectContaining({ attempt: 2, stopReason: "stop" }),

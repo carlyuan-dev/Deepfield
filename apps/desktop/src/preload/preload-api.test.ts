@@ -39,6 +39,38 @@ function makeFakeIpc(): FakeIpc {
 }
 
 describe("preload api", () => {
+  it("routes interaction decisions and bound editor responses through distinct channels", async () => {
+    const invokes: Array<{ channel: string; args: unknown[] }> = [];
+    const record = { id: "i1", conversationId: "c1", requestId: "r1", toolCallId: "t1", revision: 1,
+      status: "waiting", createdAt: "now", updatedAt: "now", payload: { kind: "approval", summary: "Create", operation: { provider: "example", operationId: "a", contractVersion: "1" } } };
+    const api = createPreloadApi({ invoke: async (channel, ...args) => { invokes.push({ channel, args }); return { ok: true, value: record }; }, on: () => () => {} });
+    const command = { interactionId: "i1", expectedRevision: 1, response: { kind: "decision" as const, decision: "approve" as const } };
+    await api.chat.respondInteraction!("c1", command);
+    await api.chat.respondInteractionEditor!("c1", command);
+    expect(invokes).toEqual([
+      { channel: "chat:interactions:respond", args: ["c1", command] },
+      { channel: "chat:interactions:editor-respond", args: ["c1", command] },
+    ]);
+  });
+  it("uses a fixed guarded auto-open channel and validates the navigation result", async () => {
+    const invokes: Array<{ channel: string; args: unknown[] }> = [];
+    const api = createPreloadApi({ invoke: async (channel, ...args) => { invokes.push({ channel, args }); return { ok: true, value: { status: "opened" } }; }, on: () => () => {} });
+    await expect(api.chat.autoOpenInteractionEditor("c1", "i1")).resolves.toEqual({ status: "opened" });
+    await expect(api.chat.openInteractionEditor("c1", "i1")).resolves.toEqual({ status: "opened" });
+    expect(invokes).toEqual([{ channel: "chat:interactions:editor-auto-open", args: ["c1", "i1"] },
+      { channel: "chat:interactions:editor-open", args: ["c1", "i1"] }]);
+  });
+  it("requests restart through one fixed no-argument channel", async () => {
+    const invokes: Array<{ channel: string; args: unknown[] }> = [];
+    const api = createPreloadApi({
+      invoke: async (channel, ...args) => { invokes.push({ channel, args }); return { ok: true, value: null }; },
+      on: () => () => {},
+    }).capabilityManagement as CapabilityManagementApiWithRestart;
+
+    await api.restart();
+
+    expect(invokes).toEqual([{ channel: "deepfield:capability-management:restart", args: [] }]);
+  });
   it("exposes only a validated unknown-usage deletion snapshot call", async () => {
     const invokes: Array<{ channel: string; args: unknown[] }> = [];
     const api = createPreloadApi({ invoke: async (channel, ...args) => { invokes.push({ channel, args }); return { ok: true, value: 1 }; }, on: () => () => {} });
@@ -124,3 +156,7 @@ describe("preload api", () => {
     expect(invokes).toContainEqual({ channel: IPC_CHANNELS.conversationsDelete, args: ["conversation-1"] });
   });
 });
+
+interface CapabilityManagementApiWithRestart {
+  restart(): Promise<void>;
+}

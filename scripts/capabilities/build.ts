@@ -1,6 +1,7 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyBuiltActionCatalog } from "./build-actions.ts";
 
 // An absent source root is a supported host-only distribution. Clear previous
 // build products so removing sources cannot accidentally ship a stale package.
@@ -15,5 +16,7 @@ const entries = await readdir(source, { withFileTypes: true }).catch((error: Nod
 for (const entry of entries) {
   if (!entry.isDirectory()) continue;
   const builder = await import(pathToFileURL(join(source, entry.name, "build.ts")).href) as { buildPackage(outDir: string): Promise<void> };
-  await builder.buildPackage(join(output, entry.name));
+  const packageOutput = join(output, entry.name);
+  await builder.buildPackage(packageOutput);
+  await verifyBuiltActionCatalog(packageOutput);
 }

@@ -73,7 +73,7 @@ export interface PendingStream {
 }
 
 export function isChatTerminal(event: StreamEvent): boolean {
-  return event.type === "completed" || event.type === "failed";
+  return event.type === "completed" || event.type === "failed" || event.type === "handed_off";
 }
 
 export function isToolTerminal(event: StreamEvent): boolean {

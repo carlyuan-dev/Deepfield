@@ -20,7 +20,7 @@ export interface ChatEventHub {
 const MAX_REMEMBERED = 100;
 
 function isTerminal(event: AgentWorkerEvent): boolean {
-  return event.type === "completed" || event.type === "failed";
+  return event.type === "completed" || event.type === "failed" || event.type === "handed_off";
 }
 
 export function createChatEventHub(): ChatEventHub {

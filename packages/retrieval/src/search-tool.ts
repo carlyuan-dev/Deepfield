@@ -109,6 +109,7 @@ export function createSearchWebDefinition(
   return {
     identity: { name: "web_search", version: 1 },
     label: "Search Web",
+    userFacing: { name: "网页搜索", description: "搜索公开网页" },
     description: `Search the web through a fixed configured search provider. Keep query within ${maxQueryLength} characters; shorten or split longer queries.`,
     inputSchema: Type.Object({ ...SearchWebInputSchema.properties, query: Type.String({ minLength: 1, maxLength: maxQueryLength }) }, { additionalProperties: false }),
     outputSchema: SearchWebOutputSchema,

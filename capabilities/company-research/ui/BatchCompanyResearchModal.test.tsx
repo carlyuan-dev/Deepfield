@@ -23,7 +23,7 @@ describe("batch company research UI", () => {
     await screen.findByRole("button", { name: "查看 A公司" });
     emit(completed); expect(screen.getByText("公司资料补全已完成")).toBeTruthy();
     emit({ itemId: "topic", status: "idle", processed: 0, failed: 0, total: 0 });
-    expect(screen.getByText("公司资料补全已完成")).toBeTruthy();
+    expect(screen.queryByText("公司资料补全已完成")).toBeNull();
     emit({ itemId: "topic", status: "running", processed: 0, failed: 0, total: 1 });
     expect(screen.getByText("正在自动补全公司信息")).toBeTruthy();
     emit(completed);
@@ -158,6 +158,8 @@ describe("batch company research UI", () => {
     expect(body.contains(footer)).toBe(false);
     expect(within(dialog).getByText("正在整理调研结果")).toBeTruthy();
     expect(within(dialog).getByText("等待调研")).toBeTruthy();
+    expect((within(dialog).getByRole("checkbox", { name: "选择 名字很长但应当保持单行显示的公司" }) as HTMLInputElement).disabled).toBe(true);
+    expect((within(dialog).getByRole("checkbox", { name: "选择 等待中的公司" }) as HTMLInputElement).disabled).toBe(true);
     expect(within(dialog).getByLabelText("报告 3 份 最新创建于 2026-09-17")).toBeTruthy();
     const longName = within(dialog).getByText("名字很长但应当保持单行显示的公司");
     expect(longName).toHaveProperty("title", "名字很长但应当保持单行显示的公司");
@@ -185,8 +187,8 @@ describe("batch company research UI", () => {
     await user.click(screen.getByRole("button", { name: "批量调研公司" }));
     await user.click(screen.getByRole("checkbox", { name: "选择 A公司" }));
     await user.click(screen.getByRole("checkbox", { name: "选择 B公司" }));
-    expect((screen.getByRole("checkbox", { name: /选择 D公司/ }) as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByText(/公司资料尚未就绪/)).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: /选择 D公司/ }) as HTMLInputElement).disabled).toBe(false);
+    expect(screen.queryByText(/公司资料尚未就绪/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "下一步" }));
     await user.selectOptions(screen.getByLabelText("研究方向"), "market_and_commercialization");
     await user.type(screen.getByLabelText("关注范围（可选）"), "共同范围");

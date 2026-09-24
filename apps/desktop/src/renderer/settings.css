@@ -78,6 +78,11 @@
   margin: 0;
 }
 
+.settings-header > div:first-child { min-width: 0; }
+.capability-restart { flex: none; display: flex; align-items: center; gap: 10px; }
+.capability-restart small { color: var(--muted); }
+.capability-restart button { flex: none; white-space: nowrap; }
+
 .setting-row {
   display: flex;
   align-items: center;

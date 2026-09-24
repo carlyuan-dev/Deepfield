@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCompanyResearchTemplate, type CompanyDraft } from "../contracts/index.js";
 import { IndustryResearchService } from "./industry-research-service.js";
+import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
 
 const dbs: TestDb[] = [];
@@ -12,6 +13,112 @@ afterEach(() => {
 });
 
 describe("IndustryResearchService", () => {
+  it("keeps a committed import successful when starting automatic enrichment fails", () => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "机器人" });
+    const enqueue = vi.fn(() => { throw new Error("profile queue unavailable"); });
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] }, { enqueue });
+    const added = service.addCompanies(item.id, [{ name: "甲公司" }]);
+    expect(added).toHaveLength(1);
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(service.listCompanies(item.id)[0]).toMatchObject({ name: "甲公司", profileStatus: "pending" });
+  });
+  it.each([
+    { removedReady: true, expectedProcessed: 2 },
+    { removedReady: false, expectedProcessed: 3 },
+  ])("publishes recalculated progress after removing a company (ready=$removedReady)", ({ removedReady, expectedProcessed }) => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "机器人" });
+    const companies = Array.from({ length: 9 }, (_, index) => db.repos.companies.upsert({ name: `公司${index}` }));
+    for (const company of companies) db.repos.itemCompanies.add(item.id, company.id);
+    const enrichment = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => { throw Error("not called"); } }, {
+      isForegroundBusy: () => true,
+      getTopicIds: () => [item.id],
+      getTopicCompanyIds: () => db.repos.itemCompanies.listByItem(item.id).map(entry => entry.companyId),
+    });
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] }, enrichment);
+    const progress: Array<ReturnType<typeof enrichment.getProgress>> = [];
+    enrichment.subscribeProgress(state => progress.push(state));
+    enrichment.start();
+    for (const company of companies.slice(0, 3)) db.repos.companies.setProfileStatus(company.id, "ready");
+    enrichment.enqueue(companies[0]!.id);
+    expect(progress.at(-1)).toMatchObject({ total: 9, processed: 3 });
+    service.removeCompany(item.id, companies[removedReady ? 0 : 3]!.id);
+    expect(progress.at(-1)).toMatchObject({ total: 8, processed: expectedProcessed });
+    service.removeCompanies(item.id, companies.filter((_, index) => index !== (removedReady ? 0 : 3)).map(company => company.id));
+    expect(progress.at(-1)).toMatchObject({ status: "idle", total: 0, processed: 0 });
+  });
+
+  it("keeps a shared company's other topic queued when removed from one topic", async () => {
+    const db = openTestDb(); dbs.push(db);
+    const first = db.repos.capabilityItems.create({ industry: "机器人" });
+    const second = db.repos.capabilityItems.create({ industry: "软件" });
+    const shared = db.repos.companies.upsert({ name: "共享公司" });
+    db.repos.itemCompanies.add(first.id, shared.id);
+    db.repos.itemCompanies.add(second.id, shared.id);
+    const enrichment = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => ({
+      identity: { disposition: "matched", matchedName: "共享公司", reason: "已确认", sources: [{ url: "https://example.test", kind: "search_snippet" }] },
+      fields: { headquarters: "北京" }, fieldEvidence: { headquarters: [{ url: "https://example.test", kind: "search_snippet" }] },
+      sources: [{ url: "https://example.test", kind: "search_snippet", title: "来源", excerpt: "地点" }],
+    }) }, {
+      getTopicIds: () => [first.id, second.id],
+      getTopicCompanyIds: itemId => db.repos.itemCompanies.listByItem(itemId as typeof first.id).map(entry => entry.companyId),
+    });
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] }, enrichment);
+    enrichment.start();
+    service.removeCompany(first.id, shared.id);
+    await enrichment.whenIdle();
+    expect(service.listCompanies(first.id)).toEqual([]);
+    expect(service.listCompanies(second.id)[0]).toMatchObject({ id: shared.id, profileStatus: "ready" });
+  });
+  it("publishes idle when deletion follows a completed profile cohort", async () => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "机器人" });
+    const first = db.repos.companies.upsert({ name: "已补全公司一" });
+    const second = db.repos.companies.upsert({ name: "已补全公司二" });
+    db.repos.itemCompanies.add(item.id, first.id);
+    db.repos.itemCompanies.add(item.id, second.id);
+    const enrichment = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => ({
+      identity: { disposition: "matched", matchedName: "已补全公司", reason: "已确认", sources: [{ url: "https://example.test", kind: "search_snippet" }] },
+      fields: { headquarters: "北京" }, fieldEvidence: { headquarters: [{ url: "https://example.test", kind: "search_snippet" }] },
+      sources: [{ url: "https://example.test", kind: "search_snippet", title: "来源", excerpt: "地点" }],
+    }) }, {
+      getTopicIds: () => [item.id], getTopicCompanyIds: () => db.repos.itemCompanies.listByItem(item.id).map(entry => entry.companyId),
+    });
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] }, enrichment);
+    const progress: Array<ReturnType<typeof enrichment.getProgress>> = [];
+    enrichment.subscribeProgress(state => progress.push(state));
+    enrichment.start(); await enrichment.whenIdle();
+    expect(progress.at(-1)).toMatchObject({ status: "completed", total: 2 });
+    service.removeCompany(item.id, first.id);
+    expect(progress.at(-1)).toMatchObject({ status: "idle", total: 0 });
+    service.removeCompany(item.id, second.id);
+    expect(progress.at(-1)).toMatchObject({ status: "idle", total: 0 });
+  });
+  it("keeps shared pending progress visible after deleting another company without a tracked cohort", () => {
+    const db = openTestDb(); dbs.push(db);
+    const item = db.repos.capabilityItems.create({ industry: "机器人" });
+    const other = db.repos.capabilityItems.create({ industry: "软件" });
+    const ready = db.repos.companies.upsert({ name: "已完成公司" });
+    db.repos.companies.setProfileStatus(ready.id, "ready");
+    db.repos.itemCompanies.add(item.id, ready.id);
+    const shared = db.repos.companies.upsert({ name: "共享待补公司" });
+    db.repos.itemCompanies.add(other.id, shared.id);
+    const enrichment = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => { throw Error("not called"); } }, {
+      isForegroundBusy: () => true,
+      getTopicIds: () => [item.id, other.id],
+      getTopicCompanyIds: topic => db.repos.itemCompanies.listByItem(topic as typeof item.id).map(entry => entry.companyId),
+    });
+    const service = new IndustryResearchService(db.repos, { recognize: async () => [] }, enrichment);
+    const progress: Array<ReturnType<typeof enrichment.getProgress>> = [];
+    enrichment.subscribeProgress(state => progress.push(state));
+    enrichment.start();
+    service.addCompany(item.id, { name: shared.name });
+    expect(enrichment.getProgress(item.id)).toMatchObject({ status: "waiting", total: 1, processed: 0 });
+    service.removeCompany(item.id, ready.id);
+    expect(progress.at(-1)).toMatchObject({ itemId: item.id, status: "waiting", total: 1, processed: 0 });
+    expect(service.listCompanies(other.id)[0]).toMatchObject({ id: shared.id, profileStatus: "pending" });
+  });
   it("aggregates only usable report versions for this topic, using creation time and retaining company metadata", () => {
     const db = openTestDb(); dbs.push(db);
     const service = new IndustryResearchService(db.repos, { recognize: async () => [] });

@@ -4,6 +4,7 @@ import { CompanyProfileCandidateSchema, type CompanyProfileDiagnostic, type Prof
 import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/retrieval/output-contracts";
 import type { CompanyAgentRuntime } from "./ports.js";
 import { profileSchemaIssues, safeProfilePath } from "./profile-diagnostic.js";
+import { CompanyProfileModelCandidateSchema, type ProfileCatalogSource } from "./company-profile-model.js";
 import {
   buildCompanyProfileRepairPrompt,
   buildCompanyProfileRequestPrompt,
@@ -33,27 +34,36 @@ class ProfileFailure extends Error {
 /** Only called with successful registry outputs, never model text or progress events. */
 export class ProfileEvidenceLedger {
   private readonly sources = new Map<string, ProfileSource>();
+  private readonly ids = new Map<string, string>();
   private searched = false;
   counts() { return { searchSourceCount: [...this.sources.values()].filter((source) => source.kind === "search_snippet").length, openedSourceCount: [...this.sources.values()].filter((source) => source.kind === "opened_page").length }; }
-  evidence(): ProfileSource[] { return [...this.sources.values()].map((source) => ({ ...source })); }
+  evidence(): ProfileCatalogSource[] { return [...this.sources.entries()].map(([sourceKey, source]) => ({ ...source, evidenceId: this.ids.get(sourceKey)! })); }
+  private add(source: ProfileSource): ProfileCatalogSource {
+    const sourceKey = key(source);
+    if (!this.ids.has(sourceKey)) this.ids.set(sourceKey, `e${this.ids.size + 1}`);
+    this.sources.set(sourceKey, source);
+    return { ...source, evidenceId: this.ids.get(sourceKey)! };
+  }
   requireSearch(): void { if (!this.searched) throw new ProfileFailure("search_unavailable"); }
-  record(tool: string, output: unknown): void {
+  record(tool: string, output: unknown): ProfileCatalogSource[] {
+    const recorded: ProfileCatalogSource[] = [];
     if (tool === "web_search" && Value.Check(SearchWebOutputSchema, output)) {
       for (const row of output.results) {
         if (!publicUrl(row.url) || !row.snippet.trim()) continue;
         this.searched = true;
         const source: ProfileSource = { url: row.url, kind: "search_snippet", title: row.title.trim() || row.url, excerpt: row.snippet.slice(0, 4000) };
-        this.sources.set(key(source), source);
+        recorded.push(this.add(source));
       }
     }
     if (tool === "read_webpage" && Value.Check(ReadWebpageOutputSchema, output) && output.text.trim() && output.characterCount > 0 && publicUrl(output.url)) {
       const source: ProfileSource = { url: output.url, kind: "opened_page", title: output.title.trim() || output.url, excerpt: output.text.slice(0, 4000) };
-      this.sources.set(key(source), source);
+      recorded.push(this.add(source));
     }
+    return recorded;
   }
   validate(value: unknown): CompanyProfileResult {
     this.requireSearch();
-    if (!Value.Check(CompanyProfileCandidateSchema, value)) {
+    if (!Value.Check(CompanyProfileModelCandidateSchema, value)) {
       const record = value && typeof value === "object" ? value as Record<string, unknown> : undefined;
       const identity = record?.identity && typeof record.identity === "object" ? record.identity as Record<string, unknown> : undefined;
       const emptyIdentity = Array.isArray(identity?.sources) && identity.sources.length === 0 ? "/identity/sources" : undefined;
@@ -61,8 +71,29 @@ export class ProfileEvidenceLedger {
       const emptyField = Object.entries(fieldEvidence ?? {}).find(([, refs]) => Array.isArray(refs) && refs.length === 0)?.[0];
       const emptyPath = emptyIdentity ?? (emptyField ? safeProfilePath(`/fieldEvidence/${emptyField}`) : undefined);
       const detail = emptyPath ? this.detail("empty_refs", emptyPath) : undefined;
-      throw new ProfileFailure("invalid_evidence", "schema_invalid", "schema", undefined, profileSchemaIssues(value), detail);
+      throw new ProfileFailure("invalid_evidence", "schema_invalid", "schema", undefined, profileSchemaIssues(value, CompanyProfileModelCandidateSchema), detail);
     }
+    const catalog = new Map(this.evidence().map(source => [source.evidenceId, source]));
+    const resolve = (refs: typeof value.identity.sources, path: string): ProfileSourceRef[] => refs.map(ref => {
+      if (!("evidenceId" in ref)) return ref;
+      const source = catalog.get(ref.evidenceId);
+      if (!source) throw new ProfileFailure("invalid_evidence", "source_missing", "evidence", path, [], this.detail("url_absent", path));
+      return { url: source.url, kind: source.kind };
+    });
+    const identitySources = resolve(value.identity.sources, "/identity/sources");
+    const normalized = {
+      identity: value.identity.disposition === "matched"
+        ? value.identity.subjectType === "company"
+          ? { disposition: "matched" as const, matchedName: value.identity.matchedName, reason: value.identity.reason, sources: identitySources }
+          : { disposition: "unresolved" as const, reason: `目前仅确认品牌或产品，尚未核实负责相关业务的公司主体。${value.identity.reason}`.slice(0, 4000), sources: identitySources }
+        : { ...value.identity, sources: identitySources },
+      fields: value.identity.disposition === "matched" && value.identity.subjectType !== "company" ? {} : value.fields,
+      fieldEvidence: value.identity.disposition === "matched" && value.identity.subjectType !== "company" ? {} : Object.fromEntries(Object.entries(value.fieldEvidence).map(([field, refs]) => [field, resolve(refs!, safeProfilePath(`/fieldEvidence/${field}`))])),
+    };
+    if (!Value.Check(CompanyProfileCandidateSchema, normalized)) throw new ProfileFailure("invalid_evidence", "schema_invalid", "schema");
+    return this.validateResolved(normalized);
+  }
+  private validateResolved(value: import("typebox").Static<typeof CompanyProfileCandidateSchema>): CompanyProfileResult {
     const referenced = new Set<string>();
     const verify = (refs: ProfileSourceRef[], path: string): void => {
       if (!refs.length) throw new ProfileFailure("invalid_evidence", "source_missing", "evidence", path, [], this.detail("empty_refs", path));
@@ -104,8 +135,8 @@ function parseCandidate(text: string): unknown {
   catch { throw new ProfileFailure("invalid_evidence", "json_parse", "json_parse"); }
 }
 
-function repairable(error: unknown): error is ProfileFailure & { reason: "json_parse" | "schema_invalid" } {
-  return error instanceof ProfileFailure && (error.reason === "json_parse" || error.reason === "schema_invalid");
+function repairable(error: unknown): error is ProfileFailure {
+  return error instanceof ProfileFailure && ["json_parse", "schema_invalid", "source_missing", "kind_mismatch"].includes(error.reason);
 }
 
 export function createCompanyProfileAgent(options: { runtime: CompanyAgentRuntime }): CompanyProfileAgent {
@@ -129,10 +160,13 @@ export function createCompanyProfileAgent(options: { runtime: CompanyAgentRuntim
     };
     try {
       let text: string | undefined;
+      let toolEvidence: ProfileCatalogSource[] = [];
       const agent = options.runtime.createAgent({
         diagnostic: value => { const { traceId: _traceId, ...safeModel } = value; model = safeModel; },
         allowedTools: ["web_search", "read_webpage", "get_current_datetime"],
-        onToolOutput: (name, output) => { if (name === "web_search") searchToolCalls += 1; if (name === "read_webpage") readToolCalls += 1; ledger.record(name, output); },
+        onToolOutput: (name, output) => { if (name === "web_search") searchToolCalls += 1; if (name === "read_webpage") readToolCalls += 1; toolEvidence = ledger.record(name, output); },
+        toolOutputContext: () => toolEvidence.length
+          ? JSON.stringify({ collectedEvidence: toolEvidence.map(({ evidenceId, url, kind }) => ({ evidenceId, url, kind })) }) : undefined,
       });
       await agent.run({ requestId: request.requestId,
         prompt: buildCompanyProfileRequestPrompt(request),
@@ -155,7 +189,7 @@ export function createCompanyProfileAgent(options: { runtime: CompanyAgentRuntim
             request,
             evidence: ledger.evidence(),
             previousCandidate: text,
-            validationFeedback: { code: firstError.reason, schemaIssues: firstError.schemaIssues },
+            validationFeedback: { code: firstError.reason, schemaIssues: firstError.schemaIssues, ...(firstError.path ? { path: firstError.path } : {}) },
           }), signal);
         } catch {
           formatRepair = { attempted: true, outcome: signal.aborted ? "cancelled" : "failed", durationMs: Math.max(0, Date.now() - repairStartedMs) };

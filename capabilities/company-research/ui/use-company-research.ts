@@ -4,6 +4,7 @@ import { researchRetryMode, type CompanyResearchEvent, type CompanyResearchState
 import { assertResearchReady } from "./research-readiness.js";
 
 import { researchActionError } from "./research-error-presentation.js";
+import { reportRevision } from "./report-revision.js";
 
 const EMPTY_STATE: CompanyResearchState = { runs: [], globalActiveRun: null };
 export type ResearchViewError =
@@ -39,10 +40,11 @@ interface Actions {
   retryStructuring(): Promise<void>;
   deleteSelected(): Promise<void>;
   reload(): void;
+  refreshFromNavigation(): void;
   selectRun(id: string): void;
 }
 
-export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: string) {
+export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: string, requestedRunId?: string, requestedRevision?: string) {
   const [view, setView] = useState(EMPTY_VIEW);
   const [now, setNow] = useState(Date.now);
   const actions = useRef<Actions | undefined>(undefined);
@@ -51,7 +53,9 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     // Async work belongs to this target/session. A separate ticket protects
     // history selection even when an earlier detail request is still pending.
     let alive = true;
-    let current = EMPTY_VIEW;
+    let current = { ...EMPTY_VIEW, selectedRunId: requestedRunId };
+    let pinnedRunId = requestedRunId;
+    let pinnedRevision = requestedRevision;
     let revision = 0;
     let detailTicket = 0;
     let refreshing: Promise<boolean> | undefined;
@@ -71,6 +75,11 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
       publish({ detailLoading: true });
       try {
         const run = await api.companyResearch.getRun(itemId, companyId, id);
+        if (run && id === requestedRunId && pinnedRevision) {
+          const actual = await reportRevision(run);
+          if (!alive || ticket !== detailTicket) return;
+          if (pinnedRevision && actual !== pinnedRevision) { publish({ selectedRun: undefined, error: { kind: "detail-load", message: "报告内容已更新，请重新打开最新报告引用。" } }); return; }
+        }
         if (!alive || ticket !== detailTicket) return;
         if (!run || run.id !== id || run.itemId !== itemId || run.companyId !== companyId) {
           publish({ selectedRun: undefined, error: { kind: "detail-load", message: "加载调研报告失败，请重试" } });
@@ -97,7 +106,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
             if (requestedRevision !== revision) continue;
             const previousActive = current.state.active?.run;
             const finished = previousActive && snapshot.runs.some((run) => run.id === previousActive.id);
-            const selectedRunId = snapshot.active?.run.id
+            const selectedRunId = pinnedRunId ?? snapshot.active?.run.id
               ?? (finished ? previousActive.id : snapshot.runs.find((run) => run.id === current.selectedRunId)?.id)
               ?? snapshot.runs[0]?.id;
             // Keep the same run's saved raw report readable during stage reloads.
@@ -111,7 +120,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
               state: snapshot, selectedRunId, selectedRun: retained, streamedRaw, loading: false,
               error: current.error?.kind === "state-load" ? undefined : current.error,
             });
-            if (snapshot.active?.run.status === "researching") {
+            if (snapshot.active?.run.status === "researching" && snapshot.active.run.id === selectedRunId) {
               ++detailTicket;
               publish({ selectedRun: undefined, detailLoading: false });
             } else {
@@ -168,6 +177,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           await assertResearchReady(api, { search: true });
           if (!alive) return;
           await api.companyResearch.start(itemId, companyId, input);
+          pinnedRunId = undefined;
           if (!alive) return;
           ++detailTicket;
           publish({ selectedRunId: undefined, selectedRun: undefined, streamedRaw: undefined });
@@ -205,6 +215,8 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           if (!alive) return;
           await api.companyResearch.retryFailed(itemId, companyId, run.id, input);
           if (!alive) return;
+          pinnedRevision = undefined;
+          pinnedRunId = run.id;
           ++detailTicket;
           publish({ selectedRunId: run.id });
           ++revision;
@@ -227,6 +239,8 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           if (!alive) return;
           await api.companyResearch.retryStructuring(itemId, companyId, run.id);
           if (!alive) return;
+          pinnedRevision = undefined;
+          pinnedRunId = run.id;
           ++detailTicket;
           publish({ selectedRunId: run.id });
           ++revision;
@@ -247,6 +261,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         try {
           await api.companyResearch.deleteRun(itemId, companyId, deletedId);
           if (!alive) return;
+          pinnedRunId = undefined;
           ++revision;
           const refreshed = await refresh();
           if (!alive) return;
@@ -263,6 +278,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           }
           const remaining = current.state.runs;
           const next = remaining[deletedIndex] ?? remaining[deletedIndex - 1] ?? remaining[0];
+          pinnedRunId = next?.id;
           const retained = current.selectedRun?.id === next?.id ? current.selectedRun : undefined;
           ++detailTicket;
           publish({ selectedRunId: next?.id, selectedRun: retained, streamedRaw: undefined, error: undefined });
@@ -282,8 +298,16 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
           void refresh();
         }
       },
+      refreshFromNavigation() {
+        pinnedRunId = undefined;
+        pinnedRevision = undefined;
+        ++revision;
+        ++detailTicket;
+        void refresh();
+      },
       selectRun(id) {
         if (current.state.active || !current.state.runs.some((run) => run.id === id)) return;
+        pinnedRunId = id;
         publish({
           selectedRunId: id, selectedRun: undefined, streamedRaw: undefined,
           error: current.error?.kind === "detail-load" || current.error?.kind === "execution" ? undefined : current.error,
@@ -293,7 +317,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     };
     void refresh();
     return () => { alive = false; ++detailTicket; unsubscribe(); actions.current = undefined; };
-  }, [api, itemId, companyId]);
+  }, [api, itemId, companyId, requestedRunId, requestedRevision]);
 
   const active = view.state.active;
   useEffect(() => {
@@ -319,6 +343,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     retryStructuring: () => actions.current!.retryStructuring(),
     deleteSelected: () => actions.current!.deleteSelected(),
     reload: () => actions.current!.reload(),
+    refreshFromNavigation: () => actions.current!.refreshFromNavigation(),
     selectRun: (id: string) => actions.current!.selectRun(id),
   };
 }

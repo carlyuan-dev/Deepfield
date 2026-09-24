@@ -30,7 +30,8 @@ describe("OperationProgress", () => {
     expect(screen.queryByText("调研队列已完成")).toBeNull();
     rerender(<OperationProgress batch={batch({ status: "completed" })} profile={profile({ status: "completed", processed: 3, failed: 1 })} onCancel={async () => {}} onResume={async () => {}} />);
     expect(screen.getByText("公司资料补全已完成")).toBeTruthy();
-    expect(screen.getByText("成功 2 · 失败 1")).toBeTruthy();
+    expect(screen.getByText("已处理 3 家公司")).toBeTruthy();
+    expect(screen.queryByText(/失败 1/)).toBeNull();
     expect(screen.queryByText("调研队列已完成")).toBeNull();
     expect(screen.queryByText("正在自动补全公司信息")).toBeNull();
     expect(screen.queryByRole("progressbar", { name: "公司资料补全进度" })).toBeNull();

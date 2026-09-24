@@ -13,6 +13,6 @@ export interface CompanyAgent {
 }
 export interface CompanyAgentRuntime {
   gateway: ModelGateway;
-  createAgent(options: { diagnostic?: (value: RunDiagnostic) => void; allowedTools?: readonly string[]; onToolOutput?: (name: string, output: unknown) => void }): CompanyAgent;
+  createAgent(options: { diagnostic?: (value: RunDiagnostic) => void; allowedTools?: readonly string[]; onToolOutput?: (name: string, output: unknown) => void; toolOutputContext?: (name: string, output: unknown) => string | undefined }): CompanyAgent;
   classifyError(error: unknown): ExecutionErrorCode | undefined;
 }

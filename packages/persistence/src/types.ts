@@ -183,6 +183,10 @@ export interface ToolExecutionCleanupRepository {
 }
 
 export interface Repositories {
+  chatInteractions: ReturnType<typeof import("./chat-interaction-repository.js").createChatInteractionRepository>;
+  chatCapabilities: ReturnType<typeof import("./chat-capability-repository.js").createChatCapabilityRepository>;
+  companyResearchProtocol: ReturnType<typeof import("./company-research-protocol-repository.js").createCompanyResearchProtocolRepository>;
+  capabilityInvocations: import("./capability-invocation-repository.js").InvocationRepository;
   chatSessions: ReturnType<typeof import("./chat-session-repository.js").createChatSessionRepository>;
   companyResearchBatches: ReturnType<typeof createCompanyResearchBatchRepository>;
   capabilityItems: CapabilityItemRepository;

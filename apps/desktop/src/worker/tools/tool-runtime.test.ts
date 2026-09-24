@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeAuditSink, FakeRetryClock, ToolRunner, ToolSet } from "@deepfield/tool-platform";
 import { ToolBudgetLedger } from "@deepfield/tool-platform";
 import { ResourceStore } from "@deepfield/retrieval";
-import { createToolRuntime, TraceBudgetPool } from "./tool-runtime.js";
+import { chatToolDirectory, createToolRuntime, TraceBudgetPool } from "./tool-runtime.js";
 
 function makeRuntime(registerProbe = true) {
   return createToolRuntime({ audit: new FakeAuditSink(), registerProbe });
@@ -29,6 +29,15 @@ function retrievalContext(traceId: string) {
 }
 
 describe("utility tool runtime assembly (focused revision)", () => {
+  it("lists granted registered tools with definition-owned user copy", () => {
+    const withoutProbe = chatToolDirectory(makeRuntime(false), false);
+    const withProbe = chatToolDirectory(makeRuntime(true), false);
+    expect(withoutProbe.some(tool => tool.name === "回显探针")).toBe(false);
+    expect(withProbe).toEqual(expect.arrayContaining([{ name: "回显探针", description: "回显输入文本" }]));
+    expect(withProbe).toEqual(expect.arrayContaining([{ name: "计算器", description: "计算基本算术表达式" }]));
+    expect(chatToolDirectory(makeRuntime(false), false).some(tool => tool.name === "网页搜索")).toBe(false);
+    expect(chatToolDirectory(makeRuntime(false), true).some(tool => tool.name === "网页搜索")).toBe(true);
+  });
   it("gives each trace its provider query schema and rejects oversized model calls without budget use", async () => {
     const runtime = makeRuntime(false);
     let calls = 0;

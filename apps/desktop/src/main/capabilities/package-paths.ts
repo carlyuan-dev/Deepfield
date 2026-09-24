@@ -1,7 +1,9 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { open, readFile, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 export const MAX_MANIFEST_BYTES = 256 * 1024;
+export const MAX_USER_HELP_BYTES = 8 * 1024;
 
 export interface ManifestFileSystem {
   stat(path: string): Promise<{ size: number }>;
@@ -60,10 +62,38 @@ export async function resolvePackageFile(packageRoot: string, path: string): Pro
   }
 }
 
+/** Only package-declared documentation is read by startup; describe never accepts a path. */
+export async function readPackageDocumentation(packageRoot: string, path: string): Promise<string> {
+  const file = await resolvePackageFile(packageRoot, path);
+  if (!file) throw new Error("documentation_missing");
+  const content = await readFile(file, "utf8");
+  if (!content.trim()) throw new Error("documentation_missing");
+  return content;
+}
+
+/** Optional user prose: missing, empty, unsafe, oversized, or invalid UTF-8 falls back to name only. */
+export async function readPackageUserHelp(packageRoot: string, path: string | undefined): Promise<string | undefined> {
+  if (!path) return undefined;
+  const file = await resolvePackageFile(packageRoot, path);
+  if (!file) return undefined;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_USER_HELP_BYTES) return undefined;
+    const bytes = Buffer.alloc(MAX_USER_HELP_BYTES + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    if (bytesRead > MAX_USER_HELP_BYTES || bytesRead !== metadata.size) return undefined;
+    const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead));
+    return content.trim() || undefined;
+  } catch { return undefined; }
+  finally { await handle?.close().catch(() => {}); }
+}
+
 export async function validatePackagePaths(
   packageRoot: string,
   paths: {
-    entries: { main: string; worker: string; ui?: string };
+    entries: { main: string; worker?: string; ui?: string };
     documentationPaths: readonly string[];
   },
   fileSystem: PackagePathFileSystem = defaultPackagePathFileSystem,
@@ -76,7 +106,8 @@ export async function validatePackagePaths(
   }
 
   const candidates = [
-    ...Object.values(paths.entries).map((path) => ({ path, missingCode: "entry_missing" as const })),
+    ...Object.values(paths.entries).filter((path): path is string => path !== undefined)
+      .map((path) => ({ path, missingCode: "entry_missing" as const })),
     ...paths.documentationPaths.map((path) => ({ path, missingCode: "documentation_missing" as const })),
   ];
 

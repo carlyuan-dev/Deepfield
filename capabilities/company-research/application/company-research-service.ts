@@ -68,8 +68,7 @@ export class CompanyResearchService {
   isActiveRun(runId: string): boolean { return this.active?.run.id === runId; }
   validateBatchEntry(itemId: string, companyId: string, input: StartCompanyResearchInput): void {
     this.normalizeInput(input);
-    const target = this.requireTarget(itemId, companyId);
-    if (target.company.profileStatus !== "ready") throw new AppError("BUSINESS.CONFLICT");
+    this.requireTarget(itemId, companyId);
   }
   private readonly listeners = new Set<(event: CompanyResearchEvent) => void>();
   private readonly now: () => Date;

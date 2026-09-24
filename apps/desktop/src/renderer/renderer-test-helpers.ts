@@ -63,18 +63,7 @@ export interface FakeDesktopApi extends DesktopApi {
   skills: {
     list: Mock<() => Promise<SkillSummary[]>>;
   };
-  chat: {
-    send: Mock<
-      (
-        conversationId: string,
-        content: string,
-        requestId: string,
-        options: ChatRequestOptions,
-      ) => Promise<ChatSendResult>
-    >;
-    subscribe: Mock<(listener: (event: AgentWorkerEvent) => void) => () => void>;
-    listMessages: Mock<(conversationId: string) => Promise<ChatMessage[]>>;
-  };
+  chat: { [K in keyof DesktopApi["chat"]]: Mock<DesktopApi["chat"][K]> };
   listeners: Set<(event: AgentWorkerEvent) => void>;
   conversationListeners: Set<(conversation: Conversation) => void>;
   researchListeners: Set<(event: CompanyResearchEvent) => void>;
@@ -300,6 +289,16 @@ export function makeFakeApi(): FakeDesktopApi {
       list: vi.fn(async (): Promise<SkillSummary[]> => []),
     },
     chat: {
+      listInteractions: vi.fn(async () => []),
+      respondInteraction: vi.fn(async () => { throw new Error("interaction not configured"); }),
+      respondInteractionEditor: vi.fn(async () => { throw new Error("interaction editor not configured"); }),
+      readInteractionEditor: vi.fn(async () => { throw new Error("interaction editor not configured"); }),
+      autoOpenInteractionEditor: vi.fn(async () => ({ status: "unsupported" })),
+      openInteractionEditor: vi.fn(async () => ({ status: "unsupported" })),
+      beginInteractionEdit: vi.fn(async () => { throw new Error("interaction editor not configured"); }),
+      updateInteractionEditor: vi.fn(async () => { throw new Error("interaction editor not configured"); }),
+      transitionInteractionEditor: vi.fn(async () => { throw new Error("interaction editor not configured"); }),
+      onInteractions: vi.fn(() => () => {}),
       send: vi.fn(
         async (
           conversationId: string,
@@ -344,7 +343,7 @@ export function makeFakeApi(): FakeDesktopApi {
     },
     nextRequestId: (): string => `req-${++sendSeq}`,
   };
-  return Object.assign(api, { capabilityManagement: { list: async () => ({ packages: [], issues: [] }), subscribe: () => () => {}, setEnabled: async () => {} }, capabilities: {
+  return Object.assign(api, { capabilityManagement: { list: async () => ({ packages: [], issues: [] }), subscribe: () => () => {}, setEnabled: async () => {}, restart: async () => {} }, capabilities: {
     invoke: async (call: import("@deepfield/capability-sdk").CapabilityCall) => {
       const [namespace, method] = call.operation.split(".");
       const target = Reflect.get(api, namespace!) as Record<string, (...args: unknown[]) => unknown>;

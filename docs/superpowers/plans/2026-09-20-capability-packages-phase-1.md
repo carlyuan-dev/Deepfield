@@ -1,5 +1,7 @@
 # Capability 包化第一批实施计划
 
+当前状态（2026-09-22）：第一批已完成，第二批真实公司调研拆包与管理界面也已完成；用户确认当前版本手测基本稳定后，本地 develop → staging → main 已合并至 `9475b2b`，标签为 `stable-2026-09-22`，未推送远端。第三批 Chat 渐进发现与调用尚未实现。下方首次交付的提交与测试记录为历史记录，不代表当前分支状态。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. 用户于 2026-09-21 确认执行；按任务实施并独立复核。本计划不授权第二、三批实现。
 
 **Goal:** 建立可信 Capability 包的协议、无执行扫描和可回收加载机制，用独立探针证明 main/worker/ui 分离交付可行，不改变现有公司调研行为。
@@ -179,4 +181,4 @@ interface ActivationResult {
 
 最终定向验证：`npx --no-install vitest run packages/capability-sdk/src apps/desktop/src/main/capabilities tests/capabilities/package-build.test.ts`，6 个测试文件、47 项通过；`npm run typecheck` 通过。`npm run build` 通过（main 514、preload 683、renderer 1006 个模块）；随后仅修正未接入生产的清单校验并重跑上述定向测试与 typecheck，没有重复生产构建。
 
-所有验证均离线；未运行全仓测试、真实 Provider 调用或 Electron GUI。工作区并存其他任务的研究评测改动，未纳入本批提交；typecheck/build 是当时工作区的整体检查，不宣称其他任务已经验收。本批保留在 develop，未合并、未推送。第二批需另写细化计划，重点消除真实 A 的静态依赖并接入管理界面。
+首次交付时，所有验证均离线；未运行全仓测试、真实 Provider 调用或 Electron GUI。工作区并存其他任务的研究评测改动，未纳入本批提交；typecheck/build 是当时工作区的整体检查，不宣称其他任务已经验收。当时本批保留在 develop，未合并、未推送。后续第二批已完成，见[第二批实施计划](2026-09-21-capability-packages-phase-2.md)；当前合并状态见本文顶部。

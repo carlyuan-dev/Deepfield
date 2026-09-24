@@ -100,7 +100,7 @@ export function createWorkerMessageLoop(
         execution.settle("invalid_event", "agent emitted an invalid event", true);
         return;
       }
-      if (event.type === "completed" || event.type === "failed") {
+      if (event.type === "completed" || event.type === "failed" || event.type === "handed_off") {
         execution.finalize();
         endpoint.postMessage(event);
         return;

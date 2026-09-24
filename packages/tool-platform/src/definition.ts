@@ -74,6 +74,8 @@ export interface ToolDefinition<TInput extends TSchema, TOutput extends TSchema>
   readonly identity: ToolIdentity;
   readonly label: string;
   readonly description: string;
+  /** Short end-user copy for deterministic feature listings. */
+  readonly userFacing?: { readonly name: string; readonly description: string };
   readonly inputSchema: TInput;
   readonly outputSchema: TOutput;
   readonly effect: ToolEffect;

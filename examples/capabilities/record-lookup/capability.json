@@ -1,0 +1,11 @@
+{
+  "id": "record-lookup",
+  "name": "示例记录查询",
+  "description": "用固定示例记录演示领域无关的即时只读动作",
+  "version": "1.0.0",
+  "protocolVersion": 2,
+  "hostApiVersion": 2,
+  "entries": { "main": "dist/main.js" },
+  "requirements": [],
+  "actions": []
+}

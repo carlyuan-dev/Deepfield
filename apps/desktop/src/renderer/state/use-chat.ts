@@ -19,6 +19,7 @@ export function useChat(
   conversationId: string | undefined,
   eventHub: ChatEventHub,
   requestIdFactory: () => string,
+  onRequestStart?: (requestId: string) => void,
 ): ChatController {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
 
@@ -72,6 +73,7 @@ export function useChat(
         return Promise.resolve(undefined);
       }
       const requestId = requestIdFactory();
+      onRequestStart?.(requestId);
       eventHub.registerRequest(requestId, conversationId as ConversationId);
       dispatch({ type: "USER_SUBMIT", content, requestId });
       return api.chat.send(conversationId, content, requestId, options).then(
@@ -90,7 +92,7 @@ export function useChat(
         },
       );
     },
-    [api, conversationId, state.sending, state.loadState, eventHub, requestIdFactory],
+    [api, conversationId, state.sending, state.loadState, eventHub, requestIdFactory, onRequestStart],
   );
 
   return { state, submit, reload };

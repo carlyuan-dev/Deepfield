@@ -1,4 +1,10 @@
 import { Type, type Static } from "typebox";
+import { DraftRefSchema, ViewRefSchema } from "./interaction.js";
+
+export const CapabilityNavigationEventSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("open"), requestId: Type.String({ minLength: 1 }), target: Type.Union([ViewRefSchema, DraftRefSchema]), view: ViewRefSchema, expiresAt: Type.Number() }, { additionalProperties: false }),
+  Type.Object({ kind: Type.Literal("cancel"), requestId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+]);
 
 const Id = Type.String({ minLength: 1, maxLength: 200 });
 export const CapabilityCallSchema = Type.Object({ capabilityId: Id, operation: Id, requestId: Id, input: Type.Unknown() }, { additionalProperties: false });

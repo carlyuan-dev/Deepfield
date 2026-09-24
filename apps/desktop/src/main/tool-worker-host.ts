@@ -11,6 +11,8 @@ import type { ConversationRepositories } from "./conversation-reader.js";
 import { createRepositoryConversationReader } from "./conversation-reader.js";
 
 export interface ToolWorkerHostOptions {
+  capabilityChat?: { call(chatRequestId: string, toolCallId: string, operation: "describe" | "invoke" | "task.get" | "task.cancel" | "read" | "open", args: unknown): Promise<unknown> };
+  chatInteraction?: { call(chatRequestId: string, toolCallId: string, operation: "question" | "draft.read" | "draft.update" | "draft.transition" | "proposal.create", args: unknown): Promise<unknown> };
   usage?: { record(value: UsageAttempt): Promise<boolean>; health(sessionId: string, health: UsageDeliveryHealth): void };
   audit: ToolAuditSink;
   secrets: { get(name: string): string | undefined };
@@ -26,6 +28,8 @@ export interface ToolWorkerHost {
 }
 
 const HOST_RPC_METHODS = new Set<HostRpcMethod>([
+  "capability.call",
+  "chat.interaction",
   "usage.record", "usage.health",
   "audit.start",
   "audit.finish",
@@ -95,6 +99,20 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
   async function handleValid(request: HostRequest): Promise<void> {
     const { hostRequestId, method } = request;
     try {
+      if (method === "chat.interaction") {
+        if (!options.chatInteraction) throw new Error("interaction_unavailable");
+        const result = await options.chatInteraction.call(request.payload.chatRequestId, request.payload.toolCallId,
+          request.payload.operation, request.payload.arguments);
+        if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { result } });
+        return;
+      }
+      if (method === "capability.call") {
+        if (!options.capabilityChat) throw new Error("capability_unavailable");
+        const result = await options.capabilityChat.call(request.payload.chatRequestId, request.payload.toolCallId,
+          request.payload.operation, request.payload.arguments);
+        if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { result } });
+        return;
+      }
       if (request.method === "usage.record" || request.method === "usage.health") {
         if (!options.usage) throw new Error("usage_unavailable");
         if (request.method === "usage.record") {
@@ -286,7 +304,7 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
           kind: "host.reply",
           method,
           ok: false,
-          code: method.startsWith("usage.") ? "usage_failed" : method.startsWith("conversation.")
+          code: method === "capability.call" ? "capability_unavailable" : method.startsWith("usage.") ? "usage_failed" : method.startsWith("conversation.")
             ? "conversation_unavailable"
             : "audit_failed",
         });

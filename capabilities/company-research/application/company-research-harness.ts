@@ -9,8 +9,15 @@ const referenceKey = (text: string): string => unescapeMarkdown(text).trim().rep
 const sourceKey = (title: string, url: string): string => `${title}\u0000${url}`;
 
 type StructureCategory = Extract<CompanyResearchModelErrorCategory, "json_parse" | "schema_invalid" | "shape_invalid" | "status_invalid" | "source_mismatch">;
+export type StructuredResearchRepairHint =
+  | { kind: "json_syntax"; position: number }
+  | { kind: "multiple_top_level_objects"; count: number };
 export class StructuredResearchValidationError extends Error {
-  constructor(readonly category: StructureCategory, readonly issues: CompanyResearchValidationIssue[] = []) {
+  constructor(
+    readonly category: StructureCategory,
+    readonly issues: CompanyResearchValidationIssue[] = [],
+    readonly repairHint?: StructuredResearchRepairHint,
+  ) {
     super(category);
     this.name = "StructuredResearchValidationError";
   }
@@ -315,12 +322,131 @@ export function extractMarkdownSources(markdown: string): Set<string> {
   return sources;
 }
 
+function topLevelObjectSlices(text: string): string[] | undefined {
+  const slices: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    index = skipWhitespace(text, index);
+    if (index === text.length) break;
+    if (text[index] !== "{") return;
+    const start = index;
+    let depth = 0;
+    let inString = false;
+    for (; index < text.length; index++) {
+      const char = text[index]!;
+      if (inString) {
+        if (char === "\\") index++;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") depth++;
+      else if (char === "}" && --depth === 0) {
+        index++;
+        slices.push(text.slice(start, index));
+        break;
+      }
+    }
+    if (depth !== 0 || inString) return;
+  }
+  return slices.length > 0 ? slices : undefined;
+}
+
+function hasDuplicateJsonObjectKeys(text: string): boolean {
+  const objects: Array<Set<string> | undefined> = [];
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (char === "{") { objects.push(new Set()); continue; }
+    if (char === "[") { objects.push(undefined); continue; }
+    if (char === "}" || char === "]") { objects.pop(); continue; }
+    if (char !== '"') continue;
+    const start = index;
+    for (index++; index < text.length; index++) {
+      if (text[index] === "\\") index++;
+      else if (text[index] === '"') break;
+    }
+    const object = objects.at(-1);
+    const next = skipWhitespace(text, index + 1);
+    if (object === undefined || text[next] !== ":") continue;
+    const key = JSON.parse(text.slice(start, index + 1)) as string;
+    if (object.has(key)) return true;
+    object.add(key);
+  }
+  return false;
+}
+
+function structuralSyntaxPosition(text: string): number | undefined {
+  const stack: string[] = [];
+  let inString = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (inString) {
+      if (char === "\\") index++;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{" || char === "[") stack.push(char);
+    else if (char === "}" || char === "]") {
+      const expected = char === "}" ? "{" : "[";
+      if (stack.at(-1) !== expected) return index;
+      stack.pop();
+    }
+  }
+  return inString || stack.length > 0 ? text.length : undefined;
+}
+
+function jsonSyntaxRepairHint(error: unknown, text: string): StructuredResearchRepairHint {
+  const positionMatch = error instanceof SyntaxError ? /\bposition\s+(\d+)\b/iu.exec(error.message) : null;
+  let position = positionMatch === null ? structuralSyntaxPosition(text) : Number(positionMatch[1]);
+  if (position === undefined) {
+    const lineMatch = error instanceof SyntaxError ? /\bline\s+(\d+)\s+column\s+(\d+)\b/iu.exec(error.message) : null;
+    if (lineMatch !== null) {
+      const line = Number(lineMatch[1]);
+      const column = Number(lineMatch[2]);
+      if (Number.isSafeInteger(line) && line >= 1 && Number.isSafeInteger(column) && column >= 1) {
+        const lines = text.split("\n", line);
+        if (lines.length === line) position = lines.slice(0, -1).reduce((total, value) => total + value.length + 1, 0) + column - 1;
+      }
+    }
+  }
+  return { kind: "json_syntax", position: Number.isSafeInteger(position) && position! >= 0 ? position! : text.length };
+}
+
 export function parseStructuredCandidate(text: string): unknown {
   const trimmed = text.trim();
   const fence = /^```json[ \t]*\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed);
+  const payload = fence ? fence[1]! : trimmed;
   let candidate: unknown;
-  try { candidate = JSON.parse(fence ? fence[1]! : trimmed); }
-  catch { throw new StructuredResearchValidationError("json_parse", [{ path: "", expected: "json_object", actual: "string" }]); }
+  try { candidate = JSON.parse(payload); }
+  catch (error) {
+    const slices = topLevelObjectSlices(payload);
+    if (slices && slices.length >= 2) {
+      try {
+        const objects = slices.map((slice) => JSON.parse(slice) as Record<string, unknown>);
+        const duplicateKey = slices.some(hasDuplicateJsonObjectKeys);
+        if (!duplicateKey && objects.length === 2) {
+          const firstKeys = Object.keys(objects[0]!);
+          const secondKeys = Object.keys(objects[1]!);
+          if (firstKeys.length === 1 && secondKeys.length === 1 &&
+            new Set([firstKeys[0], secondKeys[0]]).size === 2 &&
+            [firstKeys[0], secondKeys[0]].every((key) => key === "coreSummary" || key === "sections")) {
+            const summaryObject = firstKeys[0] === "coreSummary" ? objects[0]! : objects[1]!;
+            const sectionsObject = firstKeys[0] === "sections" ? objects[0]! : objects[1]!;
+            return { coreSummary: summaryObject.coreSummary, sections: sectionsObject.sections };
+          }
+        }
+        throw new StructuredResearchValidationError("json_parse", [{
+          path: "", expected: duplicateKey ? "unique_json_keys" : "single_json_object", actual: "string",
+        }], { kind: "multiple_top_level_objects", count: objects.length });
+      } catch (splitError) {
+        if (splitError instanceof StructuredResearchValidationError) throw splitError;
+      }
+    }
+    throw new StructuredResearchValidationError("json_parse", [
+      { path: "", expected: "valid_json_syntax", actual: "string" },
+    ], jsonSyntaxRepairHint(error, payload));
+  }
   if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
     throw new StructuredResearchValidationError("shape_invalid", [{ path: "", expected: "object", actual: actualType(candidate) }]);
   }

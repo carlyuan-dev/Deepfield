@@ -63,6 +63,7 @@ export function createConversationToolDefinitions(
   > = {
     identity: { name: "list_conversations", version: 1 },
     label: "List Conversations",
+    userFacing: { name: "会话列表", description: "列出近期会话" },
     description: "List recent conversations that contain user messages.",
     inputSchema: listInputSchema,
     outputSchema: HostConversationListPayloadSchema,
@@ -81,6 +82,7 @@ export function createConversationToolDefinitions(
   > = {
     identity: { name: "read_conversation", version: 1 },
     label: "Read Conversation",
+    userFacing: { name: "读取会话", description: "读取已有会话内容" },
     description: "Read a bounded number of user and assistant messages from one conversation.",
     inputSchema: readInputSchema,
     outputSchema: HostConversationDetailSchema,
@@ -106,6 +108,7 @@ export function createConversationToolDefinitions(
   > = {
     identity: { name: "search_conversations", version: 1 },
     label: "Search Conversations",
+    userFacing: { name: "搜索会话", description: "搜索会话标题和消息" },
     description: "Search conversation titles and message text using a local text match.",
     inputSchema: searchInputSchema,
     outputSchema: HostConversationSearchPayloadSchema,
