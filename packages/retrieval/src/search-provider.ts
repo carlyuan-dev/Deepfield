@@ -1,3 +1,5 @@
+import type { SourceDateMetadata } from "../../capability-sdk/src/model-observation.js";
+export type { SourceDateMetadata } from "../../capability-sdk/src/model-observation.js";
 export const MAX_QUERY_LENGTH = 512;
 export const MAX_RESULTS = 20;
 export const MAX_RESULT_URL_LENGTH = 2048;
@@ -68,6 +70,7 @@ export interface NormalizedSearchResult {
   date?: string;
   publishedAt?: string;
   sourceName?: string;
+  sourceDate?: SourceDateMetadata;
 }
 
 export interface NormalizedSearchResponse {
@@ -100,6 +103,7 @@ export interface RawSearchResult {
   date?: unknown;
   publishedAt?: unknown;
   sourceName?: unknown;
+  sourceDate?: SourceDateMetadata;
   [key: string]: unknown;
 }
 
@@ -251,6 +255,7 @@ export function normalizeSearchResults(
       snippet,
       rank,
       provider,
+      sourceDate: raw.sourceDate ?? { provider, precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" },
       ...(date !== undefined ? { date } : {}),
       ...(publishedAt !== undefined ? { publishedAt } : {}),
       ...(sourceName !== undefined ? { sourceName } : {}),

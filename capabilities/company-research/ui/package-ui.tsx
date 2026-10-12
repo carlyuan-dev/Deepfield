@@ -8,7 +8,7 @@ export function createCompanyResearchApi(bridge: CapabilityBridge): DesktopApi {
   const methods = {
     researchDraft: ["get", "invalidate", "update", "submit"],
     industryResearch: ["getCompanyProfileProgress", "subscribeCompanyProfileProgress", "createItem", "updateItem", "deleteItem", "deleteItems", "listItems", "getItem", "listCompanies", "updateCompany", "addCompany", "addCompanies", "removeCompany", "removeCompanies", "recognizeCompanies", "retryCompanyProfile", "confirmCompanyProfileIdentity", "subscribeCompanyProfiles"],
-    companyResearch: ["start", "cancel", "getState", "listRuns", "getRun", "exportWord", "retryStructuring", "retryFailed", "deleteRun", "subscribe"],
+    companyResearch: ["start", "cancel", "getState", "listRuns", "getRun", "getEvidence", "exportWord", "retryStructuring", "retryFailed", "deleteRun", "subscribe"],
     companyResearchBatch: ["start", "getState", "cancel", "cancelEntry", "resume", "subscribe"],
     settings: ["get"],
   } as const;

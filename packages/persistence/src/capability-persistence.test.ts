@@ -296,7 +296,7 @@ describe("Capability A persistence", () => {
     expect(repo.recoverAbandoned()).toEqual({ failedResearching: 0, failedStructuring: 0 });
     expect(repo.listRuns("item" as never, "company" as never)).toEqual(summaries);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 29 });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 32 });
     expect(db.prepare("PRAGMA table_info(company_research_model_diagnostics)").all()).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "attempt" }),
       expect.objectContaining({ name: "validation_issues_json" }),
@@ -325,11 +325,13 @@ describe("Capability A persistence", () => {
     const context = { ...input, currentDate: "2026-09-16", companyName: "ACME", topicName: "Robotics" };
     const template = getCompanyResearchTemplate(input.direction);
     const completed = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, template);
+    db.prepare("UPDATE company_research_runs SET evidence_policy = 'legacy_optional' WHERE id = ?").run(completed.id);
     repos.companyResearchRuns.completeRaw(completed.id, "raw report");
     repos.companyResearchRuns.completeStructured(completed.id, {
       coreSummary: ["summary"], sections: template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found" as const, summary: null, facts: [] })),
     });
     const structured = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, template);
+    db.prepare("UPDATE company_research_runs SET evidence_policy = 'legacy_optional' WHERE id = ?").run(structured.id);
     repos.companyResearchRuns.completeRaw(structured.id, "raw report");
     repos.companyResearchRuns.failStructuring(structured.id);
 

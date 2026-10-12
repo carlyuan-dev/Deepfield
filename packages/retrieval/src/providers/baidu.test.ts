@@ -187,6 +187,7 @@ describe("baidu basic search adapter (focused revision)", () => {
       snippet: "From snippet field.",
       rank: 1,
       provider: "baidu",
+      sourceDate: { provider: "baidu", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" },
       date: "2026-08-31",
     });
     // content fallback used only when snippet is absent; non-calendar date omitted
@@ -196,6 +197,7 @@ describe("baidu basic search adapter (focused revision)", () => {
       snippet: "Content fallback used because snippet is absent.",
       rank: 2,
       provider: "baidu",
+      sourceDate: { provider: "baidu", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" },
     });
     // no authority/rerank/icon/raw-content leaks into the serialized output
     const serialized = JSON.stringify(response);

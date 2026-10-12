@@ -100,10 +100,20 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toEqual([]);
     const accepted = await submit.handler(prepared.data, { invocationId: "offline-submit", source: "chat" });
     expect(accepted.status).toBe("accepted");
-    expect(await submit.handler(prepared.data, { invocationId: "offline-submit", source: "chat" })).toEqual(accepted);
-    await vi.waitFor(() => expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]?.status).toBe("completed"));
-    const saved = repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]!;
     if (accepted.status !== "accepted") throw new Error("submission not accepted");
+    const repeated = await submit.handler(prepared.data, { invocationId: "offline-submit", source: "chat" });
+    expect(repeated.status).toBe("accepted");
+    if (repeated.status !== "accepted") throw new Error("repeated submission not accepted");
+    // The receipt is idempotent; its asynchronous task reports current progress.
+    const { taskStatus: initialStatus, ...initialReceipt } = accepted;
+    const { taskStatus: currentStatus, ...repeatedReceipt } = repeated;
+    expect(repeatedReceipt).toEqual(initialReceipt);
+    expect(["queued", "running", "succeeded"]).toContain(initialStatus);
+    expect(["queued", "running", "succeeded"]).toContain(currentStatus);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM company_research_tasks WHERE invocation_id = ?").get("offline-submit")).toEqual({ count: 1 });
+    await vi.waitFor(() => expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]?.status).toBe("completed"));
+    expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toHaveLength(1);
+    const saved = repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]!;
     expect(await active.registry.taskProvider("company-research")!.get(accepted.taskRef)).toMatchObject({ status: "succeeded", artifactRefs: expect.any(Array), finishedAt: expect.any(String) });
     const report = repositories.companyResearchRuns.getByIdForTarget(item.id as never, company.id, saved.id as never)!;
     expect(report).toMatchObject({ rawReportText: expect.stringContaining("离线测试"), structuredContent: expect.any(Object) });

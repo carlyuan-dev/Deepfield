@@ -1,7 +1,18 @@
 import { getCompanyResearchTemplate, STRUCTURED_RESEARCH_OUTPUT_SCHEMA, type CompanyResearchRawWorkerRequest, type CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
+import type { CompanyResearchWorkerRequest, CompanyResearchWorkerEvent } from "../contracts/index.js";
+import { ResearchEvidenceCollector } from "./company-research-evidence-collector.js";
+export function zeroEvidenceEvents(request: CompanyResearchWorkerRequest): CompanyResearchWorkerEvent[] {
+  if (request.stage !== "raw") return [];
+  const events: CompanyResearchWorkerEvent[] = [];
+  const collector = new ResearchEvidenceCollector(request.requestId, receipt => events.push({ type: "evidence", requestId: request.requestId, runId: request.runId, stage: "raw", attemptId: request.attemptId!, receipt }));
+  collector.observe({ requestId: request.requestId, modelRequestId: `model-${request.requestId}`, phase: "ordinary", state: "dispatched", responseState: "succeeded", projections: [] });
+  events.push({ type: "evidence_manifest", requestId: request.requestId, runId: request.runId, stage: "raw", attemptId: request.attemptId!, manifest: collector.manifest() });
+  return events;
+}
 
 export function rawResearchRequest(): CompanyResearchRawWorkerRequest {
   return {
+    evidencePolicy: "legacy_optional",
     requestId: "research-1", runId: "run-1", kind: "company-research.raw.run", stage: "raw",
     llm: { id: "llm-1", name: "Test", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128000, apiKey: "sk-secret-research-key" },
     search: { id: "search-1", name: "Search", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: { searchEngine: "search_std" }, apiKey: "search-key" },

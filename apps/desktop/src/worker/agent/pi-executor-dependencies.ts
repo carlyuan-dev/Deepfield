@@ -12,6 +12,7 @@ import type {
   SkillCatalogProvider,
 } from "./pi-runtime.js";
 import type { ExecutionHandoff } from "./execution-handoff.js";
+import type { ModelRequestObserver } from "@deepfield/capability-sdk";
 
 export interface PiAgentExecutorDependencies {
   runtime: PiRuntime;
@@ -30,4 +31,5 @@ export interface PiAgentExecutorOptions {
   toolActor?: "main_agent" | "capability";
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void;
   handoff?: ExecutionHandoff;
+  observeModelRequest?: ModelRequestObserver;
 }

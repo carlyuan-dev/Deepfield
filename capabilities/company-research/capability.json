@@ -2,7 +2,7 @@
   "id": "company-research",
   "name": "公司调研",
   "description": "行业主题、公司资料与公司关键调研报告",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "protocolVersion": 2,
   "hostApiVersion": 2,
   "entries": { "main": "dist/main.js", "worker": "dist/worker.js", "ui": "dist/ui.js" },

@@ -6,6 +6,11 @@ export interface ResearchActionErrorPresentation {
   message: string;
   settingsModule?: "llm" | "search";
 }
+export function researchEvidenceFailureText(code: string | undefined, rawPreserved = false): string | undefined {
+  if (code === "context_budget_exceeded") return "估算上下文预算不足，请选择足够上下文的 LLM 配置后重试";
+  if (code === "evidence_incomplete") return `检索依据不完整，${rawPreserved ? "已保留原始报告，" : ""}请重新联网调研`;
+  return undefined;
+}
 
 export function researchActionError(value: unknown, action: "start" | "retry"): ResearchActionErrorPresentation {
   if (value instanceof ResearchDraftConflictError) return { message: "草稿版本已变更或不可用。已保留您的输入，请关闭后重新打开最新草稿。" };

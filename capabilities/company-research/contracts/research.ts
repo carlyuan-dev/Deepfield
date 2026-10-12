@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import { EvidencePolicySchema, EvidenceReceiptSchema, EvidenceManifestSchema, FrozenEvidencePacketSchema } from "./research-evidence.js";
 import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "../../../packages/contracts/src/settings.js";
 import type { CapabilityItemId, CompanyId, ResearchRunId } from "../../../packages/contracts/src/ids.js";
 import { CompanyProfileFieldsSchema } from "./capability-items.js";
@@ -90,6 +91,7 @@ export const KeyResearchStatusSchema = Type.Union([
 export type KeyResearchStatus = Static<typeof KeyResearchStatusSchema>;
 
 export const ResearchFailureCodeSchema = Type.Union([
+  Type.Literal("evidence_incomplete"), Type.Literal("context_budget_exceeded"),
   Type.Literal("structuring_failed"),
   Type.Literal("tool_failed"),
   Type.Literal("model_failed"),
@@ -122,6 +124,9 @@ export type LegacyResearchRun = Static<typeof LegacyResearchRunSchema>;
 // Artifact requirements for each transition are owned by Application/Repository;
 // this persisted JSON boundary validates shape and bounds without repairing data.
 export const KeyResearchRunSchema = Type.Object({
+  evidencePolicy: Type.Optional(Type.Union([Type.Literal("required_v1"), Type.Literal("legacy_optional")])),
+  attemptId: Type.Optional(IdSchema),
+  evidencePacketState: Type.Optional(Type.Union([Type.Literal("ready"), Type.Literal("budget_exceeded")])),
   ...RunIdentity,
   schemaVersion: Type.Literal("company-research-report-v1"),
   status: KeyResearchStatusSchema,
@@ -193,6 +198,8 @@ export const CompanyResearchStateSchema = Type.Object({
 export type CompanyResearchState = Static<typeof CompanyResearchStateSchema>;
 
 const WorkerRequestFields = {
+  evidencePolicy: EvidencePolicySchema,
+  attemptId: Type.Optional(IdSchema),
   requestId: IdSchema,
   runId: IdSchema,
   llm: LlmRuntimeSnapshotSchema,
@@ -208,6 +215,7 @@ export const CompanyResearchRawWorkerRequestSchema = Type.Object({
 }, { additionalProperties: false });
 export type CompanyResearchRawWorkerRequest = Static<typeof CompanyResearchRawWorkerRequestSchema>;
 export const CompanyResearchStructureWorkerRequestSchema = Type.Object({
+  evidencePacket: Type.Optional(FrozenEvidencePacketSchema),
   ...WorkerRequestFields,
   kind: Type.Literal("company-research.structure.run"),
   stage: Type.Literal("structure"),
@@ -269,6 +277,10 @@ export const CompanyResearchValidationIssueSchema = Type.Object({
 }, { additionalProperties: false });
 export type CompanyResearchValidationIssue = Static<typeof CompanyResearchValidationIssueSchema>;
 export const CompanyResearchModelDiagnosticSchema = Type.Object({
+  packetHash: Type.Optional(Type.String({ maxLength: 64 })),
+  packetVersion: Type.Optional(Type.Integer({ minimum: 1, maximum: 1 })),
+  snapshotHash: Type.Optional(Type.String({ maxLength: 64 })),
+  budgetVersion: Type.Optional(Type.String({ maxLength: 100 })),
   ...EventIdentity,
   type: Type.Literal("model_diagnostic"),
   traceId: IdSchema,
@@ -292,6 +304,8 @@ export const CompanyResearchModelDiagnosticSchema = Type.Object({
 }, { additionalProperties: false });
 export type CompanyResearchModelDiagnostic = Static<typeof CompanyResearchModelDiagnosticSchema>;
 export const CompanyResearchWorkerEventSchema = Type.Union([
+  Type.Object({ ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("evidence"), attemptId: IdSchema, receipt: EvidenceReceiptSchema }, { additionalProperties: false }),
+  Type.Object({ ...EventIdentity, stage: Type.Literal("raw"), type: Type.Literal("evidence_manifest"), attemptId: IdSchema, manifest: EvidenceManifestSchema }, { additionalProperties: false }),
   Type.Object({ ...EventIdentity, type: Type.Literal("started") }, { additionalProperties: false }),
   RawTextDeltaSchema,
   ResearchToolActivitySchema,
@@ -311,7 +325,7 @@ export const CompanyResearchWorkerEventSchema = Type.Union([
   }, { additionalProperties: false }),
   Type.Object({
     ...EventIdentity, stage: Type.Literal("structure"), type: Type.Literal("failed"),
-    code: Type.Literal("structuring_failed"), message: Type.Literal("company research structuring failed"),
+    code: Type.Union([Type.Literal("structuring_failed"), Type.Literal("evidence_incomplete"), Type.Literal("context_budget_exceeded")]), message: Type.Literal("company research structuring failed"),
   }, { additionalProperties: false }),
   Type.Object({ ...EventIdentity, type: Type.Literal("cancelled") }, { additionalProperties: false }),
 ]);
@@ -328,6 +342,7 @@ export const CompanyResearchStateChangedEventSchema = Type.Object({
   runId: IdSchema,
   // Public fixed category only; provider diagnostics never cross this boundary.
   outcome: Type.Optional(Type.Union([
+    Type.Literal("evidence_incomplete"), Type.Literal("context_budget_exceeded"),
     Type.Literal("research_failed"), Type.Literal("web_search_failed"), Type.Literal("tool_failed"),
     Type.Literal("model_failed"), Type.Literal("empty_report"), Type.Literal("protocol_leak"),
     Type.Literal("language_validation_failed"), Type.Literal("incomplete_response"),

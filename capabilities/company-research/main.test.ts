@@ -8,6 +8,7 @@ describe("package-owned operation boundary", () => {
     ["getState", "getStateCalls", ["item-1", "company-1"]],
     ["listRuns", "listRunsCalls", ["item-1", "company-1"]],
     ["getRun", "getRunCalls", ["item-1", "company-1", "run-1"]],
+    ["getEvidence", "getEvidenceCalls", ["item-1", "company-1", "run-1"]],
     ["exportWord", "exportCalls", ["item-1", "company-1", "run-1", { raw: false, structured: true }]],
     ["retryFailed", "retryFailedCalls", ["item-1", "company-1", "run-1", RESEARCH_INPUT]],
     ["retryStructuring", "retryStructuringCalls", ["item-1", "company-1", "run-1"]],

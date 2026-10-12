@@ -2,11 +2,11 @@ import type { ProviderHttpClient } from "../provider-http-client.js";
 import {
   SearchProviderError,
   assertValidSearchRequest,
-  isValidDateString,
   normalizeSearchResults,
   type SearchProvider,
   type SearchProviderErrorCode,
 } from "../search-provider.js";
+import { publicationDate } from "../publication-date.js";
 
 const MAX_DOUBAO_QUERY_LENGTH = 100;
 
@@ -69,13 +69,14 @@ export function createDoubaoProvider(deps: { client: ProviderHttpClient; token: 
       if (!Array.isArray(results)) throw new SearchProviderError("malformed_response");
       return normalizeSearchResults("doubao", results.map((entry) => {
         const result = object(entry);
-        const date = typeof result.PublishTime === "string" ? result.PublishTime.slice(0, 10) : undefined;
+        const sourceDate = publicationDate("doubao", "PublishTime", result.PublishTime);
         return {
           title: result.Title,
           url: result.Url,
           snippet: result.Snippet,
           ...(result.SiteName == null ? {} : { sourceName: result.SiteName }),
-          ...(date !== undefined && isValidDateString(date) ? { date } : {}),
+          sourceDate,
+          ...(sourceDate.normalizedValue === undefined ? {} : { date: sourceDate.normalizedValue }),
         };
       }), request.maxResults);
     },

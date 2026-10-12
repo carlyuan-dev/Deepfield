@@ -19,6 +19,7 @@ export const CompanyResearchGetRunArgsSchema = Type.Tuple([
   IdSchema,
   IdSchema,
 ]);
+export const CompanyResearchGetEvidenceArgsSchema = CompanyResearchGetRunArgsSchema;
 export const CompanyResearchWordExportSelectionSchema = Type.Object({
   raw: Type.Boolean(),
   structured: Type.Boolean(),

@@ -14,6 +14,8 @@
 
 ## 源码导航
 
+最新版本材料：[0.1.1 收口记录](releases/2026-10-12-v0.1.1.md)、[研究窗口交接](research-window-handoff-2026-10-12.md)。交接中实验原件仅本地保留，不随源码发布。
+
 - `packages/application/src/chat/`：Chat 会话编排、上下文构建与会话相关测试。
 - `capabilities/company-research/`：独立公司研究包，包含 application、runtime、ui、export 与 contracts。
 - `packages/application/src/tools/`：应用层工具审计实现与测试。

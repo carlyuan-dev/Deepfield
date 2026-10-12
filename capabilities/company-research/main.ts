@@ -97,6 +97,7 @@ export function registerCompanyResearchOperations(registrar: CapabilityRegistrar
     ["getState", two, C.CompanyResearchStateSchema],
     ["listRuns", two, Type.Array(C.ResearchRunSummarySchema)],
     ["getRun", C.CompanyResearchGetRunArgsSchema, optional(C.ResearchRunSchema)],
+    ["getEvidence", C.CompanyResearchGetEvidenceArgsSchema, C.ResearchEvidenceViewSchema],
     ["deleteRun", C.CompanyResearchDeleteRunArgsSchema, Type.Undefined()],
   ] as const) register("companyResearch", method, input, output);
   register("companyResearch", "retryStructuring", C.CompanyResearchRetryStructuringArgsSchema, C.CompanyResearchBatchStateSchema,

@@ -10,6 +10,7 @@ import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-se
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
 import type { CompanyResearchWorkerPort } from "../host-ports.js";
 import { getCompanyResearchTemplate } from "../contracts/index.js";
+import { zeroEvidenceEvents } from "../runtime/company-research-test-helpers.js";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -64,7 +65,7 @@ it.each(["settlement", "admission"] as const)("interrupts disposal at %s without
   expect(replacement.getState(f.item.id)).toBeNull();
   replacement.dispose(); replacementResearch.dispose();
 });
-const setupResolver = async () => ({ id: "l", name: "l", provider: "custom", protocol: "openai_compatible", baseUrl: "https://a.test", modelId: "m", contextWindow: 32000, apiKey: "s" } as const);
+const setupResolver = async () => ({ id: "l", name: "l", provider: "custom", protocol: "openai_compatible", baseUrl: "https://a.test", modelId: "m", contextWindow: 128000 as number, apiKey: "s" } as const);
 it("keeps cancellation retryable if terminal cleanup cannot commit", async () => {
   const f = setup();
   const first = f.batch.start(f.item.id, f.entries); await flush();
@@ -165,7 +166,7 @@ function setup() {
   const item = db.repos.capabilityItems.create({ industry: "测试" });
   const companies = ["甲", "乙"].map(name => { const c = db.repos.companies.upsert({ name }); db.repos.companies.setProfileStatus(c.id, "ready"); db.repos.itemCompanies.add(item.id, c.id); return c; });
   const requests: CompanyResearchWorkerRequest[] = []; const releases: (() => void)[] = [];
-  const profiles = { resolveActiveLlm: async () => ({ id: "l", name: "l", provider: "custom", protocol: "openai_compatible", baseUrl: "https://a.test", modelId: "m", contextWindow: 32000, apiKey: "s" } as const), resolveActiveSearch: async () => ({ id: "s", name: "s", provider: "zhipu", baseUrl: "https://a.test", options: {}, apiKey: "s" } as const) };
+  const profiles = { resolveActiveLlm: setupResolver, resolveActiveSearch: async () => ({ id: "s", name: "s", provider: "zhipu", baseUrl: "https://a.test", options: {}, apiKey: "s" } as const) };
   const worker: CompanyResearchWorkerPort = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(request); return (async function* () { await new Promise<void>(resolve => releases.push(resolve)); yield { type: "failed", requestId: request.requestId, runId: request.runId, stage: "raw", code: "model_failed", message: "company research failed" } as const; })(); }, cancelResearch() { releases.shift()?.(); } };
   const research = new CompanyResearchService(db.repos, profiles, worker, { requestIdFactory: () => crypto.randomUUID() });
   const batch = new CompanyResearchBatchService(db.repos, research);
@@ -183,9 +184,23 @@ it("reserves all queue gaps, creates only dispatched runs, and continues after i
   expect(f.batch.getState(f.item.id)).toBeNull();
 });
 const structured = JSON.stringify({ coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map(sectionId => ({ sectionId, status: "not_found", summary: null, facts: [] })) });
+it.each(["evidence_incomplete", "context_budget_exceeded"] as const)("settles %s and continues to preserve the next completed report", async code => {
+  const f = setup();
+  if (code === "context_budget_exceeded") f.profiles.resolveActiveLlm = async () => ({ ...await setupResolver(), contextWindow: f.requests.length === 0 ? 32000 : 128000 });
+  f.worker.sendResearch = request => (async function* () {
+    f.requests.push(request);
+    if (request.context.companyName !== "甲" || code !== "evidence_incomplete") yield* zeroEvidenceEvents(request);
+    yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: request.stage, text: request.stage === "raw" ? "原始报告" : structured } as const;
+  })();
+  f.batch.start(f.item.id, f.entries); await flush();
+  expect(f.snapshots.at(-1)).toMatchObject({ status: "completed", failed: 1, succeeded: 1, processed: 2 });
+  expect(f.research.listRuns(f.item.id, f.companies[0]!.id)[0]).toMatchObject({ lastFailureCode: code });
+  expect(f.research.listRuns(f.item.id, f.companies[1]!.id)[0]).toMatchObject({ status: "completed" });
+  expect(f.requests.filter(r => r.context.companyName === "甲").map(r => r.stage)).toEqual(["raw"]);
+});
 it("finishes raw and structure in order and preserves a terminal report racing cancellation", async () => {
   const f = setup(); let cancellation: Promise<void> | undefined;
-  f.worker.sendResearch = request => (async function* () { f.requests.push(request); yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: request.stage, text: request.stage === "raw" ? "原始报告" : structured } as const; })();
+  f.worker.sendResearch = request => (async function* () { f.requests.push(request); yield* zeroEvidenceEvents(request); yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: request.stage, text: request.stage === "raw" ? "原始报告" : structured } as const; })();
   f.research.subscribe(event => {
     if (event.type === "state_changed" && f.research.getRun(f.item.id, event.companyId, event.runId)?.status === "completed") cancellation = f.batch.cancel(f.batch.getState(f.item.id)!.batchId);
   });
@@ -199,7 +214,7 @@ it.each(["raw", "structure"] as const)("waits for cancellation acknowledgement d
   f.worker.cancelResearch = () => {};
   f.worker.sendResearch = request => (async function* () {
     f.requests.push(request);
-    if (stage === "structure" && request.stage === "raw") { yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: "raw", text: "原始报告" } as const; return; }
+    if (stage === "structure" && request.stage === "raw") { yield* zeroEvidenceEvents(request); yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: "raw", text: "原始报告" } as const; return; }
     await new Promise<void>(resolve => { acknowledge = resolve; });
     yield { type: "cancelled", requestId: request.requestId, runId: request.runId, stage: request.stage } as const;
   })();
@@ -244,7 +259,7 @@ it("waits for terminal worker iterator release before starting the next company"
   const f = setup(); let release!: () => void;
   f.worker.sendResearch = request => (async function* () {
     f.requests.push(request);
-    try { yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: request.stage, text: request.stage === "raw" ? "原始报告" : structured } as const; }
+    try { yield* zeroEvidenceEvents(request); yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: request.stage, text: request.stage === "raw" ? "原始报告" : structured } as const; }
     finally { if (request.stage === "structure" && request.context.companyName === "甲") await new Promise<void>(resolve => { release = resolve; }); }
   })();
   f.batch.start(f.item.id, f.entries); await flush();

@@ -10,6 +10,7 @@ export function normalizeResearchInput(input: StartCompanyResearchInput): StartC
 export function researchRetryMode(saved: ResearchRun | ResearchRunSummary | undefined, latest?: StartCompanyResearchInput): ResearchRetryMode {
   if (saved?.schemaVersion !== "company-research-report-v1") return "unavailable";
   if (saved.status !== "research_failed" && saved.status !== "structure_failed" && !(saved.status === "completed" && saved.searchStatus === "none")) return "unavailable";
+  if (saved.lastFailureCode === "evidence_incomplete") return "raw";
   const input = normalizeResearchInput(latest ?? saved);
   const previous = normalizeResearchInput(saved);
   if (saved.status === "structure_failed" && saved.searchStatus !== "none" && previous.direction === input.direction && previous.asOfDate === input.asOfDate && previous.focusScope === input.focusScope) return "structure";

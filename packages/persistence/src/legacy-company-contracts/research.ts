@@ -91,6 +91,7 @@ export const KeyResearchStatusSchema = Type.Union([
 export type KeyResearchStatus = Static<typeof KeyResearchStatusSchema>;
 
 export const ResearchFailureCodeSchema = Type.Union([
+  Type.Literal("evidence_incomplete"), Type.Literal("context_budget_exceeded"),
   Type.Literal("structuring_failed"),
   Type.Literal("tool_failed"),
   Type.Literal("model_failed"),
@@ -123,6 +124,9 @@ export type LegacyResearchRun = Static<typeof LegacyResearchRunSchema>;
 // Artifact requirements for each transition are owned by Application/Repository;
 // this persisted JSON boundary validates shape and bounds without repairing data.
 export const KeyResearchRunSchema = Type.Object({
+  evidencePolicy: Type.Optional(Type.Union([Type.Literal("required_v1"), Type.Literal("legacy_optional")])),
+  attemptId: Type.Optional(IdSchema),
+  evidencePacketState: Type.Optional(Type.Union([Type.Literal("ready"), Type.Literal("budget_exceeded")])),
   ...RunIdentity,
   schemaVersion: Type.Literal("company-research-report-v1"),
   status: KeyResearchStatusSchema,
@@ -270,6 +274,10 @@ export const CompanyResearchValidationIssueSchema = Type.Object({
 }, { additionalProperties: false });
 export type CompanyResearchValidationIssue = Static<typeof CompanyResearchValidationIssueSchema>;
 export const CompanyResearchModelDiagnosticSchema = Type.Object({
+  packetHash: Type.Optional(Type.String({ maxLength: 64 })),
+  packetVersion: Type.Optional(Type.Integer({ minimum: 1, maximum: 1 })),
+  snapshotHash: Type.Optional(Type.String({ maxLength: 64 })),
+  budgetVersion: Type.Optional(Type.String({ maxLength: 100 })),
   ...EventIdentity,
   type: Type.Literal("model_diagnostic"),
   traceId: IdSchema,

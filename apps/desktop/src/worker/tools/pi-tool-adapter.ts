@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   ToolActor,
@@ -9,6 +9,8 @@ import type {
   ToolSet,
 } from "@deepfield/tool-platform";
 import type { JsonObject, ToolExecutionBatchScope, ToolExecutionEvent } from "@deepfield/contracts";
+import type { ModelToolOrigin } from "@deepfield/capability-sdk";
+import { toolResultProjection } from "./tool-source-projection.js";
 
 export interface PiToolAdapterContext extends ToolRunContext {
   toolSet: ToolSet;
@@ -136,9 +138,37 @@ function toAgentTool(
           definition.model !== undefined
             ? definition.model.formatOutput(result.output)
             : deterministicOutputText(result.output);
+        const original = JSON.stringify(result.output ?? null);
+        const projection = toolResultProjection({ content: [{ type: "text", text }] }, definition.identity.name === "web_search");
+        const modelOrigin: ModelToolOrigin = {
+          toolName: definition.identity.name,
+          sources: (projection.sources ?? []).map((source, sourceIndex) => ({ ...source,
+            ...(definition.identity.name === "web_search" ? (() => {
+              // Canonical search formatting preserves each normalized rank, including
+              // duplicate URLs; absent rank cannot establish a metadata association.
+              const rank = projection.sourceRanks?.[sourceIndex];
+              const entry = rank === undefined ? undefined : (result.output as { results?: Array<{ rank: number; url: string; title: string; sourceDate?: ModelToolOrigin["sources"][number]["sourceDate"] }> }).results?.find(item => item.rank === rank && item.url === source.url);
+              return entry ? { title: entry.title, ...(entry.sourceDate ? { sourceDate: entry.sourceDate } : {}) } : {};
+            })() : {}),
+            ...(definition.identity.name === "web_search" ? { kind: "search_snippet" as const } :
+              definition.identity.name === "read_webpage" && typeof (result.output as { text?: unknown })?.text === "string" ? (() => {
+                const page = result.output as { url?: string; requestedUrl?: string; finalUrl?: string };
+                return { kind: "page_excerpt" as const, ...(page.url === source.url ? {
+                  ...(page.requestedUrl === undefined ? {} : { requestedUrl: page.requestedUrl }),
+                  ...(page.finalUrl === undefined ? {} : { finalUrl: page.finalUrl }),
+                } : {}) };
+              })() : {}),
+          })),
+          formatting: {
+            version: definition.model ? `tool-format-v${definition.identity.version}` : "deterministic-json-v1",
+            beforeBytes: Buffer.byteLength(original, "utf8"), beforeHash: createHash("sha256").update(original).digest("hex"),
+            afterBytes: Buffer.byteLength(text, "utf8"), afterHash: createHash("sha256").update(text).digest("hex"),
+            omittedItems: definition.identity.name === "web_search" && Array.isArray((result.output as { results?: unknown })?.results) ? (result.output as { results: unknown[] }).results.length - (projection.resultCount ?? 0) : null,
+          },
+        };
         const agentResult = {
           content: [{ type: "text" as const, text }],
-          details: { executionId, budgetConsumed: result.budgetConsumed },
+          details: { executionId, budgetConsumed: result.budgetConsumed, ...(modelOrigin.sources.length ? { modelOrigin } : {}) },
         };
         successfulOutputs.set(agentResult, result.output);
         return agentResult;

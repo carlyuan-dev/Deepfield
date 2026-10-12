@@ -127,6 +127,7 @@ describe("metaso strict search adapter (focused revision)", () => {
       snippet: "Synthetic snippet one from an invented page.",
       rank: 1,
       provider: "metaso",
+      sourceDate: { provider: "metaso", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" },
       date: "2026-08-31",
     });
     expect(response.results[1]).toEqual({
@@ -135,6 +136,7 @@ describe("metaso strict search adapter (focused revision)", () => {
       snippet: "Synthetic snippet two from another invented page.",
       rank: 2,
       provider: "metaso",
+      sourceDate: { provider: "metaso", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" },
     });
     const serialized = JSON.stringify(response);
     expect(serialized).not.toContain("position");

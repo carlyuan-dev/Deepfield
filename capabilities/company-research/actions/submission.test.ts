@@ -6,6 +6,7 @@ import { ResearchDrafts } from "./drafts.js";
 import { ResearchSubmission } from "./handlers.js";
 import type { CompanyResearchWorkerPort } from "../host-ports.js";
 import { artifactRef } from "./task-artifact-adapter.js";
+import { zeroEvidenceEvents } from "../runtime/company-research-test-helpers.js";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const input = { direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
@@ -101,7 +102,10 @@ it("keeps cancelled receipts after queue cleanup and recovers pending receipts p
 it("keeps a failed second round readable, slices large raw content and rejects changed revisions", async () => {
   const f = setup(false); const raw = "证据 https://example.test/source\n".repeat(1000);
   f.worker.sendResearch = request => (async function* () {
-    if (request.stage === "raw") yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: "raw", text: raw } as const;
+    if (request.stage === "raw") {
+      yield* zeroEvidenceEvents(request);
+      yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: "raw", text: raw } as const;
+    }
     else yield { type: "failed", requestId: request.requestId, runId: request.runId, stage: "structure", code: "structuring_failed", message: "company research structuring failed" } as const;
   })();
   const accepted = await f.submission.submit(f.drafts.prepare(f.params), "partial");

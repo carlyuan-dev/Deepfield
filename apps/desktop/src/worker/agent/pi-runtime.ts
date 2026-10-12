@@ -13,6 +13,7 @@ import type {
 } from "@deepfield/contracts/tools";
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform/budget-contract";
 import type { SearchProvider } from "@deepfield/retrieval/search-provider";
+import type { ModelRequestObserver } from "@deepfield/capability-sdk";
 
 export class PiChatAgentError extends Error {
   constructor(
@@ -45,7 +46,7 @@ export interface PiAgentHandle {
 }
 
 export interface PiRuntime {
-  createSession(snapshot: LlmRuntimeSnapshot): PiSession | undefined;
+  createSession(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver): PiSession | undefined;
   createAgent(options: AgentOptions): PiAgentHandle;
 }
 

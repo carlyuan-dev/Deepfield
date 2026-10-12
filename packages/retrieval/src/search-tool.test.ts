@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SearchProvider, SearchRequest } from "./search-provider.js";
+import { normalizeSearchResults } from "./search-provider.js";
+import { publicationDate } from "./publication-date.js";
 import { createSearchWebDefinition } from "./search-tool.js";
 
 const context = { traceId: "trace-1", actor: "main_agent" as const };
@@ -10,6 +12,19 @@ function provider(timeRange: boolean) {
 }
 
 describe("web_search provider-aware date handling", () => {
+  it("keeps date provenance outside model formatted text and never reconstructs unknown raw dates", async () => {
+    const metadata = publicationDate("doubao", "PublishTime", "2026-08-22T09:16:00+08:00");
+    const value: SearchProvider = { id: "doubao", capabilities: { timeRange: true }, search: async () => normalizeSearchResults("doubao", [{ title: "来源", url: "https://example.com", snippet: "摘要", date: "2026-08-22", sourceDate: metadata }], 5) };
+    const definition = createSearchWebDefinition(value);
+    const output = await definition.execute({ query: "公司" }, context, new AbortController().signal, () => {});
+    expect(output.results[0]?.sourceDate).toEqual(metadata);
+    expect(definition.model!.formatOutput(output)).not.toContain("09:16:00");
+    const unknown = normalizeSearchResults("unrecognized", [{ title: "来源", url: "https://example.com", snippet: "摘要", date: "2026-08-22" }], 5).results[0]!.sourceDate;
+    expect(unknown).toMatchObject({ status: "unknown", nature: "unknown", evidenceSource: "unknown" });
+    expect(unknown).not.toHaveProperty("rawValue");
+    expect(unknown).not.toHaveProperty("normalizedValue");
+    expect(publicationDate("unrecognized", "date", "2026-08-22")).toEqual({ provider: "unrecognized", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" });
+  });
   it("exposes a provider query limit and rejects overflow before spending budget", async () => {
     const fake = provider(true);
     const limited = { ...fake.value, capabilities: { timeRange: true, maxQueryLength: 100 } };

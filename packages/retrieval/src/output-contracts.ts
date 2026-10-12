@@ -3,10 +3,21 @@ import { MAX_QUERY_LENGTH, MAX_RESULTS } from "./search-provider.js";
 
 // Data contracts shared with optional capabilities, without loading tool runtimes.
 export const MAX_READ_WEBPAGE_TEXT_CHARS = 12_000;
+export const SourceDateSchema = Type.Object({
+  provider: Type.String({ minLength: 1, maxLength: 64 }), fieldName: Type.Optional(Type.String({ maxLength: 64 })),
+  rawValue: Type.Optional(Type.String({ maxLength: 2048 })), normalizedValue: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" })),
+  precision: Type.Union([Type.Literal("day"), Type.Literal("datetime"), Type.Literal("unknown")]),
+  nature: Type.Union([Type.Literal("published"), Type.Literal("unknown")]), evidenceSource: Type.Union([Type.Literal("provider_metadata"), Type.Literal("unknown")]),
+  status: Type.Union([Type.Literal("valid"), Type.Literal("missing"), Type.Literal("unparseable"), Type.Literal("invalid_type"), Type.Literal("unknown")]),
+  rawType: Type.Optional(Type.Union([Type.Literal("null"), Type.Literal("number"), Type.Literal("boolean"), Type.Literal("object"), Type.Literal("array")])),
+  rawValueTruncated: Type.Optional(Type.Boolean()), rawValueBytes: Type.Optional(Type.Integer({ minimum: 0 })), rawValueHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+}, { additionalProperties: false });
 export const ReadWebpageOutputSchema = Type.Object(
   {
     title: Type.String({ maxLength: 2000 }),
     url: Type.String({ minLength: 1, maxLength: 2048 }),
+    requestedUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048, pattern: "^https?://" })),
+    finalUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048, pattern: "^https?://" })),
     text: Type.String({ maxLength: MAX_READ_WEBPAGE_TEXT_CHARS }),
     truncated: Type.Boolean(),
     characterCount: Type.Integer({ minimum: 0, maximum: MAX_READ_WEBPAGE_TEXT_CHARS }),
@@ -25,6 +36,7 @@ export const SearchWebResultSchema = Type.Object(
     date: Type.Optional(Type.String({ maxLength: 40 })),
     publishedAt: Type.Optional(Type.String({ maxLength: 40 })),
     sourceName: Type.Optional(Type.String({ maxLength: 2000 })),
+    sourceDate: Type.Optional(SourceDateSchema),
   },
   { additionalProperties: false },
 );

@@ -3,7 +3,7 @@ import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import { researchRetryMode, type CompanyResearchEvent, type CompanyResearchState, type ResearchRun, type StartCompanyResearchInput } from "../contracts/index.js";
 import { assertResearchReady } from "./research-readiness.js";
 
-import { researchActionError } from "./research-error-presentation.js";
+import { researchActionError, researchEvidenceFailureText } from "./research-error-presentation.js";
 import { reportRevision } from "./report-revision.js";
 
 const EMPTY_STATE: CompanyResearchState = { runs: [], globalActiveRun: null };
@@ -32,6 +32,8 @@ const RESEARCH_FAILURE_MESSAGES: Record<string, string> = {
   incomplete_response: "模型响应未完整结束，请重试",
   protocol_error: "调研进程通信异常，请重试",
   storage_failed: "调研结果保存失败，请重试",
+  evidence_incomplete: researchEvidenceFailureText("evidence_incomplete")!,
+  context_budget_exceeded: researchEvidenceFailureText("context_budget_exceeded")!,
 };
 interface Actions {
   start(input: StartCompanyResearchInput): Promise<void>;
@@ -333,6 +335,10 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
     elapsedLabel: seconds < 60 ? `已运行 ${seconds} 秒` : `已运行 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`,
     selectedFailureMessage: (() => {
       const selected = view.state.runs.find((run) => run.id === view.selectedRunId);
+      if (selected?.schemaVersion === "company-research-report-v1") {
+        const evidence = researchEvidenceFailureText(selected.lastFailureCode, selected.status === "structure_failed");
+        if (evidence) return evidence;
+      }
       return selected?.status === "research_failed"
         ? RESEARCH_FAILURE_MESSAGES[selected.lastFailureCode ?? "research_failed"] ?? RESEARCH_FAILURE_MESSAGES.research_failed
         : undefined;

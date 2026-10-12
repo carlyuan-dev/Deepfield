@@ -5,8 +5,8 @@ import type { PiRuntime } from "./pi-runtime.js";
 
 export function defaultPiRuntime(gateway: ModelGateway = new PiModelGateway()): PiRuntime {
   return {
-    createSession(snapshot) {
-      return { model: gateway.createModel(snapshot), streamFn: gateway.createStream?.(snapshot) ?? streamSimple };
+    createSession(snapshot, observer) {
+      return { model: gateway.createModel(snapshot), streamFn: gateway.createStream?.(snapshot, observer) ?? streamSimple };
     },
     createAgent(options) {
       return new Agent(options);

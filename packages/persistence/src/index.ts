@@ -1,4 +1,6 @@
 export { openDatabase } from "./database.js";
+export { createCompanyResearchEvidenceRepository } from "./company-research-evidence-repository.js";
+export type { CompanyResearchEvidenceRepository, EvidenceSnapshot, FrozenSnapshot, FrozenEvidencePacket } from "./research-evidence-data.js";
 export { createCapabilityInvocationRepository } from "./capability-invocation-repository.js";
 export type { InvocationRepository, InvocationRecord, InvocationIssuance } from "./capability-invocation-repository.js";
 export { migrate } from "./migrations.js";

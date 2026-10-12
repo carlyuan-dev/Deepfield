@@ -30,6 +30,8 @@ export interface ItemCompanyRepository {
 }
 
 export interface CompanyResearchRunRepository {
+  markEvidencePacketReady(runId: ResearchRunId, attemptId: string): KeyResearchRun;
+  completeRawWithEvidence(runId: ResearchRunId, attemptId: string, rawReportText: string, packetState: "ready" | "budget_exceeded"): KeyResearchRun;
   /** Topic-wide usable report counts; excludes active work and report bodies. */
   summarizeByItem(itemId: CapabilityItemId): Array<{ companyId: CompanyId; count: number; latestCreatedAt: string }>;
   createResearching(
@@ -43,7 +45,7 @@ export interface CompanyResearchRunRepository {
   /** Records a trusted raw search completion; only researching runs are eligible. */
   markSearchSucceeded(runId: ResearchRunId): KeyResearchRun;
   failResearching(runId: ResearchRunId, code: ResearchFailureCode): KeyResearchRun;
-  failStructuring(runId: ResearchRunId): KeyResearchRun;
+  failStructuring(runId: ResearchRunId, code?: "structuring_failed" | "evidence_incomplete" | "context_budget_exceeded" | "storage_failed"): KeyResearchRun;
   retryResearching(
     runId: ResearchRunId,
     input: StartCompanyResearchInput,
@@ -193,6 +195,7 @@ export interface Repositories {
   companies: CompanyRepository;
   itemCompanies: ItemCompanyRepository;
   companyResearchRuns: CompanyResearchRunRepository;
+  companyResearchEvidence: import("./research-evidence-data.js").CompanyResearchEvidenceRepository;
   companyResearchDiagnostics: CompanyResearchDiagnosticRepository;
   companyProfileDiagnostics: CompanyProfileDiagnosticRepository;
   conversations: ConversationRepository;
@@ -290,6 +293,9 @@ export interface ToolExecutionRow {
 }
 
 export interface CompanyResearchRunRow {
+  evidence_policy: "required_v1" | "legacy_optional";
+  evidence_attempt_id: string | null;
+  evidence_packet_state: "ready" | "budget_exceeded" | null;
   id: string;
   item_id: string;
   company_id: string;

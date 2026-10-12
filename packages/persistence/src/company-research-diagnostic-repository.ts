@@ -4,6 +4,7 @@ import { CompanyResearchModelDiagnosticSchema, type CompanyResearchModelDiagnost
 import type { CompanyResearchDiagnosticRepository } from "./types.js";
 
 interface DiagnosticRow {
+  evidence_json: string | null;
   request_id: string;
   run_id: string;
   trace_id: string;
@@ -35,6 +36,7 @@ function fromRow(row: DiagnosticRow): CompanyResearchModelDiagnostic {
     try { validationIssues = JSON.parse(row.validation_issues_json); } catch { throw new Error("invalid company research diagnostic"); }
   }
   return valid({
+    ...(row.evidence_json === null ? {} : JSON.parse(row.evidence_json)),
     requestId: row.request_id, runId: row.run_id, traceId: row.trace_id, stage: row.stage,
     type: "model_diagnostic", phase: row.phase, agentTurns: row.agent_turns,
     searchCalls: row.search_calls, fetchCalls: row.fetch_calls,
@@ -56,14 +58,15 @@ export function createCompanyResearchDiagnosticRepository(db: DatabaseSync): Com
       db.prepare(`INSERT INTO company_research_model_diagnostics(
         request_id, run_id, trace_id, stage, phase, agent_turns, search_calls, fetch_calls,
         max_model_input_chars_estimate, output_chars, stop_reason, error_category, attempt,
-        validation_issues_json, failed_candidate, started_at, finished_at, duration_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        validation_issues_json, failed_candidate, started_at, finished_at, duration_ms, evidence_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(record.requestId, record.runId, record.traceId, record.stage, record.phase,
           record.agentTurns, record.searchCalls, record.fetchCalls, record.maxModelInputCharsEstimate,
           record.outputChars, record.stopReason, record.errorCategory ?? null,
           record.attempt ?? null, record.validationIssues === undefined ? null : JSON.stringify(record.validationIssues),
           record.failedCandidate ?? null,
-          record.startedAt, record.finishedAt, record.durationMs);
+          record.startedAt, record.finishedAt, record.durationMs,
+          record.packetHash ? JSON.stringify({ packetHash: record.packetHash, packetVersion: record.packetVersion, snapshotHash: record.snapshotHash, budgetVersion: record.budgetVersion }) : null);
     },
     getByRequestId(requestId) {
       const row = db.prepare(`${select} WHERE request_id = ? ORDER BY COALESCE(attempt, 0) DESC LIMIT 1`).get(requestId) as unknown as DiagnosticRow | undefined;

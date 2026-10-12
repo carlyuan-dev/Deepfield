@@ -66,6 +66,7 @@ export type { CapabilityBridge, CapabilityCall, CapabilityEvent, CapabilityUiOpe
 export * from "./transport.js";
 export type { CapabilityUiNavigationHandler, CapabilityUiNavigation, CapabilityNavigationRequest, CapabilityNavigationEvent, CapabilityNavigationBridge } from "./ui.js";
 export type * from "./execution.js";
+export type * from "./model-observation.js";
 export type * from "./forms.js";
 export type { CapabilityInteractionEditor } from "./ui.js";
 export type { CapabilityRegistrar, CapabilityWorkerRegistrar } from "./host.js";

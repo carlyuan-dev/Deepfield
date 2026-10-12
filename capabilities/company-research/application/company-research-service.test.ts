@@ -5,9 +5,11 @@ import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY 
 import { AppError } from "@deepfield/contracts";
 import type { CompanyResearchWorkerPort } from "../host-ports.js";
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
+import { ResearchEvidenceCollector } from "../runtime/company-research-evidence-collector.js";
+import { evidenceHash, snapshotManifest } from "../../../packages/persistence/src/research-evidence-data.js";
 
 const dbs: TestDb[] = []; afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
-const llm: LlmRuntimeSnapshot = { id: "l1", name: "LLM", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 32000, apiKey: "llm-secret" };
+const llm: LlmRuntimeSnapshot = { id: "l1", name: "LLM", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 128000, apiKey: "llm-secret" };
 const search: SearchRuntimeSnapshot = { id: "s1", name: "Search", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: {}, apiKey: "search-secret" };
 const valid = { coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })) };
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -22,19 +24,121 @@ function setup(structureText = JSON.stringify(valid)) {
   const requests: CompanyResearchWorkerRequest[] = []; const persistedBeforeStructure: boolean[] = [];
   const worker: CompanyResearchWorkerPort = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") { const persisted = db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId as ResearchRunId); persistedBeforeStructure.push(persisted?.schemaVersion === "company-research-report-v1" && persisted.rawReportText === "原始报告"); } return (async function* () { yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
   const profiles = { llmCalls: 0, searchCalls: 0, resolveActiveLlm: async () => { profiles.llmCalls++; return llm; }, resolveActiveSearch: async () => { profiles.searchCalls++; return search; } };
+  // These isolated service fixtures have no successful source-bearing tools.
+  // Simulate a real complete zero-material request receipt, never missing evidence.
+  let send = worker.sendResearch;
+  Object.defineProperty(worker, "sendResearch", { get: () => (request: CompanyResearchWorkerRequest) => (async function* () {
+    for await (const event of send(request)) {
+      if (request.stage === "raw" && event.type === "completed" && event.requestId === request.requestId && event.runId === request.runId && request.evidencePolicy === "required_v1") {
+        const receipts: CompanyResearchWorkerEvent[] = [];
+        const collector = new ResearchEvidenceCollector(request.requestId, receipt => receipts.push({ requestId: request.requestId, runId: request.runId, stage: "raw", type: "evidence", attemptId: request.attemptId!, receipt }));
+        collector.observe({ modelRequestId: request.requestId, requestId: request.requestId, phase: "ordinary", state: "prepared", responseState: "not_sent", projections: [] });
+        collector.observe({ modelRequestId: request.requestId, requestId: request.requestId, phase: "ordinary", state: "dispatched", responseState: "succeeded", projections: [] });
+        yield* receipts;
+        yield { requestId: request.requestId, runId: request.runId, stage: "raw", type: "evidence_manifest", attemptId: request.attemptId!, manifest: collector.manifest() } as const;
+      }
+      yield event;
+    }
+  })(), set: (next: CompanyResearchWorkerPort["sendResearch"]) => { send = next; } });
   let seq = 0; const service = new CompanyResearchService(db.repos, profiles, worker, { requestIdFactory: () => `r${++seq}`, now: () => new Date(2026, 8, 11) });
   return { db, item, company, requests, persistedBeforeStructure, profiles, service, worker };
 }
 
-function seedFailed(f: ReturnType<typeof setup>, status: "research_failed" | "structure_failed", input: StartCompanyResearchInput = { direction: "product_and_technology", asOfDate: "2026-09-11" }) {
+function seedFailed(f: ReturnType<typeof setup>, status: "research_failed" | "structure_failed", input: StartCompanyResearchInput = { direction: "product_and_technology", asOfDate: "2026-09-11" }, evidenceText?: string) {
   const context = { ...input, currentDate: "2026-09-11", companyName: f.company.name, topicName: f.item.industry };
   const run = f.db.repos.companyResearchRuns.createResearching(
     f.item.id, f.company.id, input, context, getCompanyResearchTemplate(input.direction),
   );
   if (status === "research_failed") return f.db.repos.companyResearchRuns.failResearching(run.id, "tool_failed");
-  f.db.repos.companyResearchRuns.completeRaw(run.id, "原始报告");
+  if (evidenceText) {
+    const collector = new ResearchEvidenceCollector("seed-request", receipt => f.db.repos.companyResearchEvidence.append(run.id, run.attemptId!, receipt));
+    collector.observe({ requestId: "seed-request", modelRequestId: "seed-model", phase: "ordinary", state: "dispatched", responseState: "succeeded", projections: [{
+      projectionId: "seed-projection", toolCallId: "seed-tool", messageIndex: 2, mapping: "mapped",
+      origin: { toolName: "read_webpage", sources: [{ title: "来源", url: "https://fixture.test", kind: "page_excerpt" }] },
+      text: evidenceText, start: 0, end: evidenceText.length, visibleBytes: Buffer.byteLength(evidenceText), visibleHash: evidenceHash(evidenceText),
+    }] });
+  }
+  f.db.repos.runInTransaction(() => {
+    const snapshot = f.db.repos.companyResearchEvidence.freeze(run.id, run.attemptId!, f.db.repos.companyResearchEvidence.readStaging(run.id, run.attemptId!).manifest);
+    f.db.repos.companyResearchEvidence.savePacketOnce(run.id, run.attemptId!, { body: "", hash: evidenceHash(""), packetVersion: 1,
+      algorithmVersion: "source-group-v1", snapshotHash: snapshot.manifest.snapshotHash, parameters: { maxCharacters: 24000, maxExcerptCharacters: 2000 },
+      selected: [], omitted: [], emptyReason: "no_matching_saved_material" });
+    f.db.repos.companyResearchRuns.completeRawWithEvidence(run.id, run.attemptId!, "原始报告", "ready");
+  });
   return f.db.repos.companyResearchRuns.failStructuring(run.id);
 }
+
+describe("readonly evidence query", () => {
+  it("returns complete zero-material snapshot and rejects foreign run ownership", () => {
+    const f = setup(); const run = seedFailed(f, "structure_failed");
+    expect(f.service.getEvidence(f.item.id, f.company.id, run.id)).toMatchObject({ status: "complete", counts: { visibleEntries: 0, savedEntries: 0 }, groups: [] });
+    const other = f.db.repos.companies.upsert({ name: "另一公司" }); f.db.repos.itemCompanies.add(f.item.id, other.id);
+    expect(() => f.service.getEvidence(f.item.id, other.id, run.id)).toThrow("company research not found");
+  });
+  it("returns bounded saved text without packet body, hashes or runtime configuration", () => {
+    const f = setup(); const run = seedFailed(f, "structure_failed", undefined, "汉".repeat(5000));
+    const view = f.service.getEvidence(f.item.id, f.company.id, run.id);
+    expect(view.status).toBe("partial");
+    expect(JSON.stringify(view)).not.toMatch(/apiKey|llm-secret|packetVersion|snapshotHash|visibleHash|savedHash/);
+    if (view.status === "partial") {
+      expect(view.counts.visibleBytes).toBe(15000); expect(view.counts.savedBytes).toBe(12288);
+      expect(view.groups[0]!.projections[0]!.archiveClipping.reason).toBe("item_limit");
+    }
+  });
+  it("does not classify required missing snapshot as a legacy report", () => {
+    const f = setup(); const run = seedFailed(f, "research_failed");
+    expect(f.service.getEvidence(f.item.id, f.company.id, run.id)).toEqual({ status: "evidence_incomplete" });
+    f.db.db.prepare("UPDATE company_research_runs SET evidence_policy = 'legacy_optional' WHERE id = ?").run(run.id);
+    expect(f.service.getEvidence(f.item.id, f.company.id, run.id)).toEqual({ status: "legacy_missing" });
+  });
+});
+
+describe("required fixed packet load failures", () => {
+  it.each(["corrupt_packet", "malformed_packet_json", "packet_null", "packet_empty", "packet_numeric_body", "snapshot_null", "event_missing_projections", "missing_blob", "storage_read"] as const)("rejects %s before Worker dispatch with the stable failure category", async (failure) => {
+    const f = setup();
+    const saved = seedFailed(f, "structure_failed", undefined, "已保存网页正文");
+    if (failure === "corrupt_packet") {
+      const packet = f.db.repos.companyResearchEvidence.getPacket(saved.id, saved.attemptId!)!;
+      f.db.db.prepare("UPDATE company_research_evidence_packets SET packet_json = ? WHERE run_id = ? AND attempt_id = ?")
+        .run(JSON.stringify({ ...packet, body: "corrupted" }), saved.id, saved.attemptId!);
+    } else if (failure === "malformed_packet_json") {
+      f.db.db.prepare("UPDATE company_research_evidence_packets SET packet_json = ? WHERE run_id = ? AND attempt_id = ?").run("{broken", saved.id, saved.attemptId!);
+    } else if (failure === "missing_blob") {
+      f.db.db.prepare("DELETE FROM company_research_evidence_blobs WHERE run_id = ? AND attempt_id = ?").run(saved.id, saved.attemptId!);
+    } else if (failure === "snapshot_null") {
+      f.db.db.prepare("UPDATE company_research_evidence_snapshots SET snapshot_json = 'null' WHERE run_id = ?").run(saved.id);
+    } else if (failure === "event_missing_projections") {
+      f.db.db.prepare("UPDATE company_research_evidence_events SET event_json = '{}' WHERE run_id = ?").run(saved.id);
+    } else if (failure.startsWith("packet_")) {
+      const value = failure === "packet_null" ? "null" : failure === "packet_empty" ? "{}" : '{"body":42,"hash":"abc"}';
+      f.db.db.prepare("UPDATE company_research_evidence_packets SET packet_json = ? WHERE run_id = ?").run(value, saved.id);
+    } else {
+      vi.spyOn(f.db.repos.companyResearchEvidence, "getFrozen").mockImplementation(() => { throw new Error("sqlite secret read failure"); });
+    }
+    const dispatch = vi.fn(() => { throw new Error("must not dispatch"); });
+    const material = f.db.db.prepare("SELECT raw_report_text FROM company_research_runs WHERE id = ?").get(saved.id);
+    const storedEvents = f.db.db.prepare("SELECT event_json FROM company_research_evidence_events WHERE run_id = ?").all(saved.id);
+    const storedSnapshot = f.db.db.prepare("SELECT snapshot_json FROM company_research_evidence_snapshots WHERE run_id = ?").get(saved.id);
+    const storedPacket = f.db.db.prepare("SELECT packet_json FROM company_research_evidence_packets WHERE run_id = ?").get(saved.id);
+    const rebuild = vi.spyOn(f.db.repos.companyResearchEvidence, "savePacketOnce");
+    f.worker.sendResearch = dispatch;
+    const events: CompanyResearchEvent[] = [];
+    f.service.subscribe(event => events.push(event));
+    await f.service.retryStructuring(f.item.id, f.company.id, saved.id);
+    await f.service.whenSettled();
+    const expected = failure === "storage_read" ? "storage_failed" : "evidence_incomplete";
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(f.requests).toHaveLength(0);
+    expect(f.service.getRun(f.item.id, f.company.id, saved.id)).toMatchObject({ status: "structure_failed", lastFailureCode: expected });
+    expect(events).toContainEqual(expect.objectContaining({ type: "state_changed", outcome: expected }));
+    expect(JSON.stringify(events)).not.toContain("sqlite secret");
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(f.db.db.prepare("SELECT raw_report_text FROM company_research_runs WHERE id = ?").get(saved.id)).toEqual(material);
+    expect(f.db.db.prepare("SELECT event_json FROM company_research_evidence_events WHERE run_id = ?").all(saved.id)).toEqual(storedEvents);
+    expect(f.db.db.prepare("SELECT snapshot_json FROM company_research_evidence_snapshots WHERE run_id = ?").get(saved.id)).toEqual(storedSnapshot);
+    expect(f.db.db.prepare("SELECT packet_json FROM company_research_evidence_packets WHERE run_id = ?").get(saved.id)).toEqual(storedPacket);
+  });
+});
 
 function pauseWorker(f: ReturnType<typeof setup>) {
   let release!: () => void;
@@ -302,7 +406,7 @@ describe("CompanyResearchService profile snapshots", () => {
 
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "structure_failed", rawReportText: "原始报告" });
     expect(f.db.repos.companyResearchDiagnostics.listByRunId(run.id)).toContainEqual(expect.objectContaining({
-      stage: "structure", errorCategory: "json_parse", validationIssues: [{ path: "", expected: "json_object", actual: "string" }], failedCandidate: "{broken",
+      stage: "structure", errorCategory: "json_parse", validationIssues: [{ path: "", expected: "valid_json_syntax", actual: "string" }], failedCandidate: "{broken",
     }));
   });
 

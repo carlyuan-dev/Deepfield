@@ -375,3 +375,7 @@
   flex: 0 0 auto;
   white-space: nowrap;
 }
+.research-evidence { margin: 1rem 0; }
+.research-evidence summary { cursor: pointer; }
+.research-evidence article { border-top: 1px solid var(--border-color, #ddd); padding: .5rem 0; }
+.research-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }

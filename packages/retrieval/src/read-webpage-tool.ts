@@ -65,6 +65,8 @@ export function createReadWebpageDefinition(
       return {
         title: parsed.title,
         url: parsed.canonicalUrl,
+        requestedUrl: input.url,
+        finalUrl: fetched.finalUrl,
         text: parsed.text,
         truncated: parsed.truncated,
         characterCount: parsed.characterCount,

@@ -25,13 +25,24 @@ const request = { query: "公司", maxResults: 20 };
 const signal = () => new AbortController().signal;
 
 describe("Doubao Custom search", () => {
+  it("retains full raw publication time provenance before normalization", async () => {
+    const response = await setup().provider.search(request, signal());
+    expect(response.results[0]).toMatchObject({ date: "2026-08-22", sourceDate: { provider: "doubao", fieldName: "PublishTime", rawValue: result.PublishTime, normalizedValue: "2026-08-22", precision: "datetime", nature: "published", evidenceSource: "provider_metadata", status: "valid" } });
+  });
+  it.each([[undefined, "missing"], [null, "invalid_type"], [{ private: "never-copy" }, "invalid_type"], ["2026-02-30T09:16:00+08:00", "unparseable"], ["2026-08-22garbage", "unparseable"], ["中文🌱".repeat(500), "unparseable"]])("keeps legitimate results for malformed optional PublishTime (%j)", async (PublishTime, status) => {
+    const response = await setup({ Result: { WebResults: [{ ...result, PublishTime }] } }).provider.search(request, signal());
+    expect(response.results[0]).toMatchObject({ sourceDate: { status, provider: "doubao", fieldName: "PublishTime" } });
+    expect(response.results[0]).not.toHaveProperty("date");
+    expect(JSON.stringify(response)).not.toContain("never-copy");
+    if (typeof PublishTime === "string") expect(Buffer.byteLength(response.results[0]!.sourceDate!.rawValue!, "utf8")).toBeLessThanOrEqual(2048);
+  });
   it("posts the Custom web request and normalizes the documented Result.WebResults envelope", async () => {
     const { provider, requests } = setup();
     const response = await provider.search({ ...request, timeRange: { from: "2026-06-01", to: "2026-09-17" } }, signal());
     expect(requests[0]).toMatchObject({ endpoint: { origin: "https://open.feedcoopapi.com", pathPrefix: "/search_api/web_search" }, request: { method: "POST", path: "/search_api/web_search", headers: { authorization: "Bearer search-only-secret", "content-type": "application/json" } } });
     expect(requests[0]!.request.headers).not.toHaveProperty("X-Traffic-Tag");
     expect(JSON.parse(requests[0]!.request.body!)).toEqual({ SearchType: "web", Query: "公司", Count: 20, Filter: { NeedUrl: true, NeedContent: false }, TimeRange: "2026-06-01..2026-09-17" });
-    expect(response).toEqual({ provider: "doubao", results: [{ title: "公司介绍", url: "https://example.com/company", snippet: "公司公开信息", sourceName: "示例媒体", date: "2026-08-22", rank: 1, provider: "doubao" }] });
+    expect(response).toEqual({ provider: "doubao", results: [{ title: "公司介绍", url: "https://example.com/company", snippet: "公司公开信息", sourceName: "示例媒体", date: "2026-08-22", rank: 1, provider: "doubao", sourceDate: { provider: "doubao", fieldName: "PublishTime", rawValue: result.PublishTime, normalizedValue: "2026-08-22", precision: "datetime", nature: "published", evidenceSource: "provider_metadata", status: "valid" } }] });
     expect(JSON.stringify(response)).not.toMatch(/Content|Summary|RequestId|不是已打开网页/);
   });
   it("uses an editable HTTPS base path and treats empty results as success", async () => {

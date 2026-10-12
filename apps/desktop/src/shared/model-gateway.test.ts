@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { LlmRuntimeSnapshot } from "@deepfield/contracts";
 import { ModelGatewayError, PiModelGateway, classifyModelGatewayError } from "./model-gateway.js";
+import type { ModelRequestObservation } from "@deepfield/capability-sdk";
+import type { ObservedStreamOptions } from "./model-request-observation.js";
 
 const snapshot = (protocol: LlmRuntimeSnapshot["protocol"]): LlmRuntimeSnapshot => ({
   id: `profile-${protocol}`,
@@ -34,6 +36,43 @@ function captureCompletionRequests(modelId: string, finishReason = "stop"): Reco
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe.each(["openai_compatible", "anthropic_messages"] as const)("optional serialized observation %s", protocol => {
+  it("keeps a prepared request distinct from dispatch when cancelled before sending", async () => {
+    const input = snapshot(protocol);
+    const gateway = new PiModelGateway();
+    const model = gateway.createModel(input);
+    const events: ModelRequestObservation[] = [];
+    const abort = new AbortController();
+    const fetch = vi.fn(async () => new Response("must not send"));
+    const stream = gateway.createStream(input, event => { events.push(event); if (event.state === "prepared") abort.abort(); });
+    await stream(model, { messages: [{ role: "user", content: "材料", timestamp: 1 }] }, { apiKey: "fixture", signal: abort.signal, fetch, requestObservation: { requestId: "cancelled", phase: "ordinary", origins: [{ messageIndex: 0, toolCallId: "program-origin", origin: { toolName: "fixture", sources: [] }, start: 0, end: 2 }] } } as ObservedStreamOptions).result();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(events.map(event => [event.state, event.responseState])).toEqual([["prepared", "not_sent"], ["failed", "not_sent"]]);
+    expect(events[0]!.projections[0]!.text).toBe("材料");
+  });
+
+  it("propagates evidence observer failures and prevents transport", async () => {
+    const input = snapshot(protocol);
+    const gateway = new PiModelGateway();
+    const model = gateway.createModel(input);
+    const fetch = vi.fn(async () => new Response("must not send"));
+    const failure = new Error("evidence storage failed");
+    const stream = gateway.createStream(input, () => { throw failure; });
+    await expect(stream(model, { messages: [{ role: "user", content: "材料", timestamp: 1 }] }, { apiKey: "fixture", fetch, requestObservation: { requestId: "storage-failure", phase: "ordinary", origins: [] } } as ObservedStreamOptions).result()).rejects.toBe(failure);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("marks changed adapter payload layouts unmapped without matching generated text", async () => {
+    const input = snapshot(protocol);
+    const gateway = new PiModelGateway();
+    const model = gateway.createModel(input);
+    const events: ModelRequestObservation[] = [];
+    const stream = gateway.createStream(input, event => events.push(event));
+    await stream(model, { messages: [{ role: "user", content: "材料", timestamp: 1 }] }, { apiKey: "fixture", fetch: async () => new Response("failure", { status: 503 }), onPayload: payload => ({ ...(payload as object), messages: [{ role: "user", content: "外部改写" }] }), requestObservation: { requestId: "changed", phase: "ordinary", origins: [{ messageIndex: 0, toolCallId: "program-origin", origin: { toolName: "fixture", sources: [] }, start: 0, end: 2 }] } } as ObservedStreamOptions).result();
+    expect(events.filter(event => event.state === "dispatched")[0]!.projections[0]).toMatchObject({ mapping: "unmapped", text: "" });
+  });
+});
 
 describe.each(["agent stream", "completeText"] as const)("PiModelGateway %s request contract", (entrypoint) => {
   async function request(input: LlmRuntimeSnapshot): Promise<void> {

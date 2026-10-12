@@ -1,10 +1,10 @@
-import type { PiExecutionRequest, PiExecutionEvent } from "@deepfield/capability-sdk";
+import type { PiExecutionRequest, PiExecutionEvent, ModelRequestObserver } from "@deepfield/capability-sdk";
 import type { LlmRuntimeSnapshot } from "@deepfield/contracts/model-config";
 import type { CompanyResearchModelDiagnostic } from "../contracts/research.js";
 export interface ModelCompletionResult { text: string; stopReason: "stop" | "length" | "tool_use" | "error" | "aborted" | "unknown" }
 export interface ModelGateway {
-  completeText(snapshot: LlmRuntimeSnapshot, system: string, prompt: string, signal?: AbortSignal): Promise<string>;
-  completeTextResult?(snapshot: LlmRuntimeSnapshot, system: string, prompt: string, signal?: AbortSignal): Promise<ModelCompletionResult>;
+  completeText(snapshot: LlmRuntimeSnapshot, system: string, prompt: string, signal?: AbortSignal, options?: { maxTokens: number }): Promise<string>;
+  completeTextResult?(snapshot: LlmRuntimeSnapshot, system: string, prompt: string, signal?: AbortSignal, options?: { maxTokens: number }): Promise<ModelCompletionResult>;
 }
 export type ExecutionErrorCode = "provider_failed" | "stream_failed" | "incomplete_lifecycle" | "invalid_final_empty" | "invalid_final_protocol" | "invalid_final_language" | "invalid_final_tool_use";
 export type RunDiagnostic = Omit<CompanyResearchModelDiagnostic, "phase" | "type" | "requestId" | "runId" | "stage"> & { phase: "deciding" | "synthesizing" };
@@ -13,6 +13,6 @@ export interface CompanyAgent {
 }
 export interface CompanyAgentRuntime {
   gateway: ModelGateway;
-  createAgent(options: { diagnostic?: (value: RunDiagnostic) => void; allowedTools?: readonly string[]; onToolOutput?: (name: string, output: unknown) => void; toolOutputContext?: (name: string, output: unknown) => string | undefined }): CompanyAgent;
+  createAgent(options: { observeModelRequest?: ModelRequestObserver; diagnostic?: (value: RunDiagnostic) => void; allowedTools?: readonly string[]; onToolOutput?: (name: string, output: unknown) => void; toolOutputContext?: (name: string, output: unknown) => string | undefined }): CompanyAgent;
   classifyError(error: unknown): ExecutionErrorCode | undefined;
 }

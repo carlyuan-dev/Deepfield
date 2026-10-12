@@ -7,6 +7,7 @@ import {
   type SearchProvider,
   type SearchRequest,
 } from "../search-provider.js";
+import { publicationDate } from "../publication-date.js";
 
 /** Tavily Search API: POST /search with api_key in the JSON body. */
 export const ENDPOINT: ProviderEndpoint = {
@@ -71,7 +72,9 @@ export function createTavilyProvider(deps: TavilyProviderDeps): SearchProvider {
         "tavily",
         raw.map((entry) => {
           const result = entry as Record<string, unknown>;
-          return { title: result.title, url: result.url, snippet: result.content, date: result.published_date };
+          if (typeof result !== "object" || result === null || Array.isArray(result)) throw new SearchProviderError("malformed_response");
+          const sourceDate = publicationDate("tavily", "published_date", result.published_date);
+          return { title: result.title, url: result.url, snippet: result.content, sourceDate, ...(sourceDate.normalizedValue === undefined ? {} : { date: sourceDate.normalizedValue }) };
         }),
         request.maxResults,
       );

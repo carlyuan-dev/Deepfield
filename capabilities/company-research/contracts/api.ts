@@ -49,6 +49,7 @@ export interface CompanyResearchApi {
     subscribeCompanyProfiles(listener: (event: CompanyProfileEvent) => void): () => void;
   };
   companyResearch: {
+    getEvidence(itemId: string, companyId: string, runId: string): Promise<import("./research-evidence.js").ResearchEvidenceView>;
     start(
       itemId: string,
       companyId: string,

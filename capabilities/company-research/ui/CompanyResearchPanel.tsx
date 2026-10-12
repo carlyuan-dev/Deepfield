@@ -10,6 +10,7 @@ import { Modal } from "../../../apps/desktop/src/renderer/components/Modal.js";
 import { StructuredResearchReport } from "./StructuredResearchReport.js";
 import { ResearchReportContext } from "./ResearchReportContext.js";
 import { useCompanyResearch } from "./use-company-research.js";
+import { ResearchEvidenceDetails } from "./ResearchEvidenceDetails.js";
 
 export interface CompanyResearchPanelProps extends ResearchContextProps {
   requestedRunId?: string;
@@ -149,7 +150,7 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   currentSelectionKey.current = selectionKey;
   const status = active?.run.status ?? summary?.status;
   const canRetry = researchRetryMode(summary) !== "unavailable";
-  const canRetryStructuring = summary?.status === "structure_failed";
+  const canRetryStructuring = summary?.status === "structure_failed" && summary.lastFailureCode !== "evidence_incomplete";
   const reportSearchStatus = run?.searchStatus ?? summary?.searchStatus ?? active?.run.searchStatus ?? "unknown";
   const modalOpen = newReportModalOpen || retryModalOpen;
   if (navigationDirtyRef) navigationDirtyRef.current = modalOpen;
@@ -259,7 +260,7 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
           ? <p className="company-research-search-unknown" role="status">此历史报告未记录联网搜索状态，无法确认是否成功联网。</p>
           : null)}
       {status === "research_failed" && <div className="company-research-status"><p role="status">{research.selectedFailureMessage ?? "调研未完成，请稍后重试"}</p></div>}
-      {status === "structure_failed" && <div className="company-research-status"><p role="status">整理失败，请重试</p></div>}
+      {status === "structure_failed" && <div className="company-research-status"><p role="status">{research.selectedFailureMessage ?? "整理失败，请重试"}</p></div>}
       {active?.run.status === "researching" ? <div className="company-report-text" aria-live="polite">{active.draftText ? <MarkdownMessage content={active.draftText} /> : <span className="muted">报告生成后将在这里显示。</span>}</div>
         : status === "research_failed" ? (run?.schemaVersion === "company-research-report-v1" ? <ResearchReportContext run={run} /> : research.detailLoading ? <p className="muted">加载调研报告…</p> : null)
         : run?.schemaVersion === "legacy-freeform-v1" ? <div>
@@ -275,6 +276,7 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
     </>}
     {newReportModalOpen && <CompanyResearchModal {...context} {...(latest?.schemaVersion === "company-research-report-v1" ? { initial: latest } : {})} active={panelActive} disabled={occupied} onClose={() => setNewReportModalOpen(false)} onStart={research.start} {...(onOpenSettings ? { onOpenSettings } : {})} />}
     {retryModalOpen && summary?.schemaVersion === "company-research-report-v1" && <CompanyResearchModal {...context} mode="retry" initial={summary} active={panelActive} disabled={occupied} onClose={() => setRetryModalOpen(false)} onStart={research.retry} {...(onOpenSettings ? { onOpenSettings } : {})} />}
+    {run && run.id === research.selectedRunId && (hasPersistedReportBody(run) || (run.schemaVersion === "company-research-report-v1" && run.evidencePolicy === "required_v1" && run.status === "research_failed")) && <ResearchEvidenceDetails key={selectionKey} api={api} itemId={itemId} companyId={companyId} runId={run.id} />}
     {exportChoiceOpen && <WordExportChoiceModal
       availableRaw={availableRaw}
       availableStructured={availableStructured}

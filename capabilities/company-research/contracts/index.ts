@@ -6,3 +6,4 @@ export * from "./company-research-templates.js";
 export * from "./research-retry-policy.js";
 
 export * from "./ipc.js";
+export * from "./research-evidence.js";

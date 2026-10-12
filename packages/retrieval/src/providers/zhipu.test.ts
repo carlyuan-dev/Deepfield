@@ -55,6 +55,7 @@ describe("Zhipu web search adapter", () => {
       snippet: "示例公司的公开介绍。",
       rank: 1,
       provider: "zhipu",
+      sourceDate: { provider: "zhipu", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" },
       publishedAt: "2026-08-31",
       sourceName: "示例媒体",
     });

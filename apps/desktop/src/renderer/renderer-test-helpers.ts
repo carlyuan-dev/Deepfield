@@ -43,6 +43,7 @@ export interface FakeDesktopApi extends DesktopApi {
     getState: Mock<(itemId: string, companyId: string) => Promise<CompanyResearchState>>;
     listRuns: Mock<(itemId: string, companyId: string) => Promise<ResearchRunSummary[]>>;
     getRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun | undefined>>;
+    getEvidence: Mock<import("../../../../capabilities/company-research/contracts/api.js").CompanyResearchApi["companyResearch"]["getEvidence"]>;
     retryStructuring: Mock<(itemId: string, companyId: string, runId: string) => Promise<ResearchRun>>;
     retryFailed: Mock<(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput) => Promise<ResearchRun>>;
     deleteRun: Mock<(itemId: string, companyId: string, runId: string) => Promise<void>>;
@@ -266,6 +267,7 @@ export function makeFakeApi(): FakeDesktopApi {
       getState: vi.fn(async (): Promise<CompanyResearchState> => ({ runs: [], globalActiveRun: null })),
       listRuns: vi.fn(async (): Promise<ResearchRunSummary[]> => []),
       getRun: vi.fn(async (): Promise<ResearchRun | undefined> => undefined),
+      getEvidence: vi.fn(async () => ({ status: "legacy_missing" as const })),
       retryStructuring: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
       retryFailed: vi.fn(async (): Promise<ResearchRun> => { throw new Error("not implemented"); }),
       deleteRun: vi.fn(async (): Promise<void> => {}),

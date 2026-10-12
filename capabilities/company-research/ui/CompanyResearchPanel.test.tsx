@@ -23,6 +23,16 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it("places a zero-material frozen evidence view after the report", async () => {
+    const fake = makeFakeApi(); const run = researchRun();
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
+    fake.companyResearch.getRun.mockResolvedValue(run);
+    fake.companyResearch.getEvidence.mockResolvedValue({ status: "complete", counts: { visibleEntries: 0, savedEntries: 0, visibleBytes: 0, savedBytes: 0, omittedEntries: 0, omittedBytes: 0, dispatched: 0, prepared: 0 }, groups: [] });
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText("检索依据")).toBeTruthy();
+    expect(fake.companyResearch.getEvidence).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
+    expect(screen.getByText(/已存 \/ 已发送可见 0 \/ 0 条/)).toBeTruthy();
+  });
   it("warns on a completed report without successful search and offers retry", async () => {
     const fake = makeFakeApi();
     const run = researchRun({ searchStatus: "none" });
@@ -353,6 +363,17 @@ describe("two-stage company research", () => {
     expect(fake.companyResearch.retryStructuring).toHaveBeenCalledWith(context.itemId, context.companyId, run.id);
     expect(fake.companyResearch.retryFailed).not.toHaveBeenCalled();
     expect(fake.companyResearch.start).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["evidence_incomplete", "检索依据不完整，已保留原始报告，请重新联网调研", "重新尝试"],
+    ["context_budget_exceeded", "估算上下文预算不足，请选择足够上下文的 LLM 配置后重试", "重新整理"],
+  ] as const)("presents %s with the existing appropriate retry entry", async (code, message, action) => {
+    const fake = makeFakeApi();
+    const run = researchRun({ status: "structure_failed", searchStatus: "succeeded", rawReportText: "保留的原始报告", lastFailureCode: code });
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null }); fake.companyResearch.getRun.mockResolvedValue(run);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    expect(await screen.findByText(message)).toBeTruthy(); expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    expect(fake.companyResearch.start).not.toHaveBeenCalled(); expect(fake.companyResearch.retryStructuring).not.toHaveBeenCalled();
   });
 
   it("retries the selected failure with edited inputs and keeps the same selected run after completion", async () => {

@@ -12,8 +12,9 @@ export interface IndustryResearchServiceRepositories {
 }
 
 export interface CompanyResearchServiceRepositories {
+  companyResearchEvidence: Repositories["companyResearchEvidence"];
   runInTransaction: Repositories["runInTransaction"];
-  companyResearchRuns: Pick<Repositories["companyResearchRuns"], "createResearching" | "getByIdForTarget" | "retryStructuring" | "retryResearching" | "getActive" | "listRuns" | "deleteTerminal" | "recoverAbandoned" | "markSearchSucceeded" | "completeRaw" | "completeStructured" | "deleteActive" | "failResearching" | "failStructuring">;
+  companyResearchRuns: Pick<Repositories["companyResearchRuns"], "markEvidencePacketReady" | "completeRawWithEvidence" | "createResearching" | "getByIdForTarget" | "retryStructuring" | "retryResearching" | "getActive" | "listRuns" | "deleteTerminal" | "recoverAbandoned" | "markSearchSucceeded" | "completeRaw" | "completeStructured" | "deleteActive" | "failResearching" | "failStructuring">;
   companyResearchDiagnostics: Pick<Repositories["companyResearchDiagnostics"], "deleteByRunId" | "record">;
   toolExecutions: Pick<Repositories["toolExecutions"], "deleteByTraceIds">;
   capabilityItems: Pick<Repositories["capabilityItems"], "getById">;

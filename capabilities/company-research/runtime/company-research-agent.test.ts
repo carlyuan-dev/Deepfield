@@ -178,7 +178,7 @@ describe("generic company research agent", () => {
         network: "enabled", maxAgentTurns: 12, maxSearchCalls: 1,
         maxFetchCalls: reason === "natural_stop" ? 2 : 1,
       };
-      const report = "# 公司关键调研原始报告\n\n截至2026-06-30，研究范围为 Humanoid actuators；现有网页正文支持有限事实，尚未确认的内容保留为模块缺口。";
+      const report = "# 公司关键调研原始报告\n\n截至2026-06-30，研究范围为 Humanoid actuators；公司公布的内部测试称执行器达到所述性能。";
       const recording = makeRecordingInstalledPiRuntime([
         toolTurn([{ type: "toolCall", id: "source-search", name: "web_search", arguments: { query: "Humanoid actuators" } }]),
         toolTurn([{ type: "toolCall", id: "source-fetch", name: "read_webpage", arguments: { url: "https://evidence.test/source-search" } }]),
@@ -195,7 +195,8 @@ describe("generic company research agent", () => {
             instructions.includes("固定 Markdown 标题和顺序") &&
             instructions.includes("每条事实必须紧跟一个且仅一个") &&
             input.includes("Humanoid actuators") && input.includes("2026-06-30") &&
-            input.includes("# 公司关键调研原始报告") && input.includes("### 模块缺口") &&
+            input.includes("# 公司关键调研原始报告") && input.includes("### 关键事实") &&
+            !input.includes("### 模块缺口") &&
             input.includes("网页正文 source-fetch");
           return assistant(preservesRequirements ? report : "Research requirements or evidence were lost.");
         },
@@ -212,6 +213,12 @@ describe("generic company research agent", () => {
       expect(recording.requests).toHaveLength(reason === "natural_stop" ? 4 : 3);
       expect(recording.requests[0]?.systemPrompt).toContain("必须使用网页搜索");
       const finalRequest = recording.requests.at(-1);
+      for (const modelRequest of [recording.requests[0], finalRequest]) {
+        expect(modelRequest?.systemPrompt).toContain("不例行评价证据充分性");
+        expect(modelRequest?.systemPrompt).toContain("限定必须写进事实本身");
+        expect(modelRequest?.systemPrompt).toContain("仅当用户明确询问的关键问题没有答案");
+        expect(JSON.stringify(modelRequest?.messages)).not.toContain("### 模块缺口");
+      }
       expect(finalRequest?.systemPrompt).not.toMatch(/必须使用网页搜索|web_search|read_webpage/u);
       expect(finalRequest?.tools).toEqual([]);
       expect(finalRequest?.toolChoice).toBe("none");
@@ -449,7 +456,7 @@ describe("generic company research agent", () => {
     const request = structureResearchRequest(); const events: CompanyResearchWorkerEvent[] = [];
     expect(request).not.toHaveProperty("search");
     await createCompanyResearchAgent({ gateway: { completeText } as never, rawAgent: {} as never }).run(request, (event) => events.push(event), new AbortController().signal);
-    expect(completeText).toHaveBeenCalledWith(request.llm, expect.stringContaining("不能访问互联网"), expect.stringContaining(request.rawReportText), expect.any(AbortSignal));
+    expect(completeText).toHaveBeenCalledWith(request.llm, expect.stringContaining("不能访问互联网"), expect.stringContaining(request.rawReportText), expect.any(AbortSignal), { maxTokens: 8192 });
     expect(completeText.mock.calls[0]?.[1]).toContain(JSON.stringify(validStructuredCandidate()));
     expect(events.map((event) => event.type)).toEqual(["started", "model_diagnostic", "completed"]);
     expect(events[1]).toMatchObject({ phase: "structuring", searchCalls: 0, fetchCalls: 0, stopReason: "stop" });
@@ -608,7 +615,9 @@ describe("generic company research agent", () => {
     );
 
     const options = fake.receivedOptions;
-    expect(options?.initialState?.systemPrompt).toContain("company-research-raw-v1");
+    expect(options?.initialState?.systemPrompt).toContain("company-research-raw-v3");
+    expect(options?.initialState?.systemPrompt).toContain("尽可能逐字沿用原文表达");
+    expect(options?.initialState?.systemPrompt).toContain("“提升至三倍”不得改成“提升三倍”");
     expect(options?.initialState?.systemPrompt).not.toContain("优先使用简洁段落和必要的列表");
 
     const toolTurn = assistantWithTool("继续搜索");
@@ -629,6 +638,7 @@ describe("generic company research agent", () => {
     } as never);
     expect(synthesisUpdate?.context?.systemPrompt).not.toContain("优先使用简洁段落和必要的列表");
     expect(synthesisUpdate?.context?.systemPrompt).toContain("工具阶段已结束");
+    expect(synthesisUpdate?.context?.systemPrompt).toContain("尽可能逐字沿用原文表达");
     expect(events.at(-1)?.type).toBe("completed");
   });
 });

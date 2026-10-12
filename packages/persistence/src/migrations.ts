@@ -678,6 +678,31 @@ MIGRATIONS.push({ version: 31, up(db) {
   );`);
 } });
 
+MIGRATIONS.push({ version: 32, up(db) {
+  // Extend the existing checked table while preserving every historical column and row.
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'company_research_runs'").get() as { sql: string };
+  const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'company_research_runs' AND sql IS NOT NULL").all() as { sql: string }[];
+  const sql = table.sql.replace(/CREATE TABLE "?company_research_runs"?/i, "CREATE TABLE company_research_runs_v32")
+    .replace("'protocol_error','storage_failed'", "'protocol_error','storage_failed','evidence_incomplete','context_budget_exceeded'")
+    .replace("last_failure_code = 'structuring_failed'", "last_failure_code IN ('structuring_failed','evidence_incomplete','context_budget_exceeded','storage_failed')");
+  if (sql === table.sql || !sql.includes("'context_budget_exceeded'")) throw new Error("research evidence migration contract mismatch");
+  db.exec(sql);
+  db.exec("INSERT INTO company_research_runs_v32 SELECT * FROM company_research_runs; DROP TABLE company_research_runs; ALTER TABLE company_research_runs_v32 RENAME TO company_research_runs;");
+  for (const index of indexes) db.exec(index.sql);
+  db.exec(`ALTER TABLE company_research_runs ADD COLUMN evidence_policy TEXT NOT NULL DEFAULT 'legacy_optional';
+    ALTER TABLE company_research_model_diagnostics ADD COLUMN evidence_json TEXT;
+    ALTER TABLE company_research_runs ADD COLUMN evidence_attempt_id TEXT;
+    ALTER TABLE company_research_runs ADD COLUMN evidence_packet_state TEXT;
+    CREATE TABLE company_research_evidence_blobs(run_id TEXT NOT NULL REFERENCES company_research_runs(id) ON DELETE CASCADE,
+      attempt_id TEXT NOT NULL, hash TEXT NOT NULL, text TEXT NOT NULL, PRIMARY KEY(run_id, attempt_id, hash));
+    CREATE TABLE company_research_evidence_events(run_id TEXT NOT NULL REFERENCES company_research_runs(id) ON DELETE CASCADE,
+      attempt_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_json TEXT NOT NULL, PRIMARY KEY(run_id, attempt_id, sequence));
+    CREATE TABLE company_research_evidence_snapshots(run_id TEXT NOT NULL REFERENCES company_research_runs(id) ON DELETE CASCADE,
+      attempt_id TEXT NOT NULL, snapshot_json TEXT NOT NULL, PRIMARY KEY(run_id, attempt_id));
+    CREATE TABLE company_research_evidence_packets(run_id TEXT NOT NULL REFERENCES company_research_runs(id) ON DELETE CASCADE,
+      attempt_id TEXT NOT NULL, packet_json TEXT NOT NULL, PRIMARY KEY(run_id, attempt_id));`);
+} });
+
 export function migrate(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE;");
   try {

@@ -8,6 +8,7 @@ import { createApplicationRuntime } from "../../../../capabilities/company-resea
 import { AgentWorkerClient } from "../../../../capabilities/company-research/runtime/test-host-adapter.js";
 import { FakeEndpoint } from "./agent-worker-client-test-helpers.js";
 import { openTestDb, type TestDb } from "../../../../packages/application/src/testing/application-test-helpers.js";
+import { zeroEvidenceEvents } from "../../../../capabilities/company-research/runtime/company-research-test-helpers.js";
 
 const dbs: TestDb[] = [];
 const llmSnapshot: LlmRuntimeSnapshot = {
@@ -66,6 +67,7 @@ describe("application runtime composition", () => {
       await flush();
       if (stage === "structure") {
         const request = (endpoint.posted[0] as { input: CompanyResearchWorkerRequest }).input;
+        for (const event of zeroEvidenceEvents(request)) endpoint.emit(event);
         endpoint.emit({ requestId: request.requestId, runId: run.id, stage: "raw", type: "completed", text: "原始报告" });
         await flush();
       }
@@ -108,9 +110,12 @@ describe("application runtime composition", () => {
     });
     const events: unknown[] = [];
     runtime.companyResearch.subscribe((event) => events.push(event));
-    const emitCompletion = (request: CompanyResearchWorkerRequest, text: string) => endpoint.emit({
+    const emitCompletion = (request: CompanyResearchWorkerRequest, text: string) => {
+      for (const event of zeroEvidenceEvents(request)) endpoint.emit(event);
+      endpoint.emit({
       requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text,
-    });
+      });
+    };
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     try {
       const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
@@ -205,6 +210,7 @@ describe("application runtime composition", () => {
           requests.push(request);
           return (async function* () {
             const text = await new Promise<string>((resolve) => finish.set(request.requestId, resolve));
+            yield* zeroEvidenceEvents(request);
             yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text } as const;
           })();
         },

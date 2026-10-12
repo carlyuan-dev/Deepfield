@@ -27,13 +27,13 @@ function expectCode(fn: () => unknown, code: string): void {
 }
 
 describe("search provider normalized contract (focused revision)", () => {
-  it("normalizes a fixture into only title/url/snippet/rank/provider", () => {
+  it("normalizes a fixture with explicit unknown date provenance", () => {
     const response: NormalizedSearchResponse = normalizeSearchResults("fake", RAW_OK, 20);
     expect(response).toEqual({
       provider: "fake",
       results: [
-        { title: "Official", url: "https://example.com/", snippet: "snippet one", rank: 1, provider: "fake" },
-        { title: "Second", url: "https://other.example/path", snippet: "snippet two", rank: 2, provider: "fake" },
+        { title: "Official", url: "https://example.com/", snippet: "snippet one", rank: 1, provider: "fake", sourceDate: { provider: "fake", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" } },
+        { title: "Second", url: "https://other.example/path", snippet: "snippet two", rank: 2, provider: "fake", sourceDate: { provider: "fake", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" } },
       ],
     });
     // extra raw fields never leak into the normalized output
@@ -41,7 +41,7 @@ describe("search provider normalized contract (focused revision)", () => {
       { title: "A", url: "https://a.example", snippet: "s", internal: { secret: "never-leak" }, token: "sk-x" },
     ];
     const normalized = normalizeSearchResults("fake", withExtra, 20);
-    expect(normalized.results[0]).toEqual({ title: "A", url: "https://a.example/", snippet: "s", rank: 1, provider: "fake" });
+    expect(normalized.results[0]).toEqual({ title: "A", url: "https://a.example/", snippet: "s", rank: 1, provider: "fake", sourceDate: { provider: "fake", precision: "unknown", nature: "unknown", evidenceSource: "unknown", status: "unknown" } });
     expect(JSON.stringify(normalized)).not.toContain("sk-x");
   });
 

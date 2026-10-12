@@ -16,6 +16,8 @@ import { assistant, FakePiAgent, makeRuntime, request, stubModel } from "../agen
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { createPiAgentTools, deterministicOutputText, type PiToolAdapterContext } from "./pi-tool-adapter.js";
 import { createToolRuntime } from "./tool-runtime.js";
+import { createSearchWebDefinition } from "../../../../../packages/retrieval/src/search-tool.js";
+import { publicationDate } from "../../../../../packages/retrieval/src/publication-date.js";
 
 const factInputSchema = Type.Object(
   { subject: Type.String() },
@@ -73,6 +75,23 @@ async function flush(): Promise<void> {
 }
 
 describe("pi tool adapter", () => {
+  it.each([2, 10])("preserves duplicate-URL result dates by displayed rank with %s results", async (count) => {
+    const registry = new ToolRegistry();
+    const results = Array.from({ length: count }, (_, index) => ({ title: `来源${index + 1}`, url: "https://example.com/same", snippet: "摘要", rank: index + 1, provider: "doubao", date: index === 0 ? "2026-08-22" : "2026-09-23", sourceDate: publicationDate("doubao", "PublishTime", index === 0 ? "2026-08-22T09:16:00+08:00" : "2026-09-23T10:17:00+08:00") }));
+    registry.register(createSearchWebDefinition({ id: "doubao", capabilities: { timeRange: true }, search: async () => ({ provider: "doubao", results }) }));
+    const tools = createPiAgentTools(registry, makeRunner(registry, new FakeAuditSink()), context({ toolSet: new ToolSet([{ identity: { name: "web_search", version: 1 }, actor: "main_agent", effect: "network.read.public" }]) }));
+    const result = await tools[0]!.execute("duplicate-call", { query: "公司", maxResults: count }, new AbortController().signal, () => {});
+    const text = (result.content[0] as { text: string }).text;
+    const displayed = JSON.parse(text).results;
+    const origin = (result.details as { modelOrigin: { sources: Array<{ title: string; sourceDate: { rawValue: string } }>; formatting: { omittedItems: number } } }).modelOrigin;
+    expect(displayed.map((entry: { rank: number }) => entry.rank)).toEqual(Array.from({ length: Math.min(count, 8) }, (_, index) => index + 1));
+    expect(displayed.slice(0, 2).map((entry: { date: string }) => entry.date)).toEqual(["2026-08-22", "2026-09-23"]);
+    expect(origin.sources.slice(0, 2).map(source => [source.title, source.sourceDate.rawValue])).toEqual([["来源1", "2026-08-22T09:16:00+08:00"], ["来源2", "2026-09-23T10:17:00+08:00"]]);
+    expect(origin.sources).toHaveLength(Math.min(count, 8));
+    expect(origin.sources.map(source => source.title)).toEqual(displayed.map((entry: { title: string }) => entry.title));
+    expect(origin.formatting.omittedItems).toBe(count - Math.min(count, 8));
+    expect(text).not.toContain("09:16:00");
+  });
   it("keeps the canonical production search tool name", () => {
     const runtime = createToolRuntime({ audit: new FakeAuditSink() });
     const provider = { id: "test", capabilities: { timeRange: false }, search: async () => ({ provider: "test", results: [] }) };

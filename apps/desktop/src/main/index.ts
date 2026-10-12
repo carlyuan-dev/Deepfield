@@ -197,6 +197,7 @@ void app.whenReady().then(async () => {
       repositories: {
         capabilityItems: repositories.capabilityItems, companies: repositories.companies,
         itemCompanies: repositories.itemCompanies, companyResearchRuns: repositories.companyResearchRuns,
+        companyResearchEvidence: repositories.companyResearchEvidence,
         companyResearchDiagnostics: repositories.companyResearchDiagnostics, companyResearchBatches: repositories.companyResearchBatches,
         companyResearchProtocol: repositories.companyResearchProtocol,
         toolExecutions: { deleteByTraceIds: (ids: string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },

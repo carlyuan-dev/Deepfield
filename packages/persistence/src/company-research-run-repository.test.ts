@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCompanyResearchTemplate, type CompanyResearchContext, type StartCompanyResearchInput, type StructuredResearchContent } from "../../../capabilities/company-research/contracts/index.js";
 import { createRepositories, migrate, openDatabase } from "./index.js";
+import { installZeroEvidenceRawFixture } from "./research-evidence-test-fixtures.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
@@ -33,6 +34,7 @@ function fixture() {
     rmSync(directory, { recursive: true, force: true });
   });
   const repos = createRepositories(db);
+  installZeroEvidenceRawFixture(db, repos);
   const item = repos.capabilityItems.create({ industry: "Robotics" });
   const company = repos.companies.upsert({ name: "ACME" });
   repos.itemCompanies.add(item.id, company.id);
@@ -44,6 +46,7 @@ function fixture() {
 describe("company research run repository", () => {
   it("migration 14 leaves prior reports unknown without guessing from report links", () => {
     const f = fixture(); const run = f.create();
+    f.db.prepare("UPDATE company_research_runs SET evidence_policy = 'legacy_optional' WHERE id = ?").run(run.id);
     f.repo.completeRaw(run.id, rawText); f.repo.completeStructured(run.id, content);
     f.db.exec("ALTER TABLE company_research_runs DROP COLUMN search_status; DELETE FROM schema_migrations WHERE version = 14;");
     migrate(f.db);

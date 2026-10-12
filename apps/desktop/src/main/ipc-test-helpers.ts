@@ -333,6 +333,11 @@ export class FakeCompanyResearchService {
   getStateCalls: Array<{ itemId: string; companyId: string }> = [];
   listRunsCalls: Array<{ itemId: string; companyId: string }> = [];
   getRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
+  getEvidenceCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
+  getEvidence(itemId: string, companyId: string, runId: string) {
+    this.getEvidenceCalls.push({ itemId, companyId, runId });
+    return { status: "legacy_missing" as const };
+  }
   retryFailedCalls: Array<{ itemId: string; companyId: string; runId: string; input: StartCompanyResearchInput }> = [];
   retryStructuringCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];
   deleteRunCalls: Array<{ itemId: string; companyId: string; runId: string }> = [];

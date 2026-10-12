@@ -4,6 +4,8 @@ import { normalizeResearchInput, researchRetryMode, CompanyResearchWorkerEventSc
 import type { CompanyResearchServiceRepositories as Repositories } from "../host-ports.js";
 import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "../host-ports.js";
 import { StructuredResearchValidationError, validateStructuredResearch } from "./company-research-harness.js";
+import { buildEvidencePacket } from "../runtime/company-research-evidence-packet.js";
+import type { EvidenceManifest } from "../contracts/research-evidence.js";
 
 export class CompanyResearchServiceError extends AppError {
   constructor(message: string, code: AppErrorCode = "INTERNAL.UNKNOWN") {
@@ -19,6 +21,7 @@ export interface CompanyResearchServiceOptions {
 }
 
 interface ActiveResearch {
+  evidenceManifest?: EvidenceManifest;
   run: KeyResearchRun;
   requestId: string;
   stage: CompanyResearchStage;
@@ -151,6 +154,7 @@ export class CompanyResearchService {
       try {
         const requestId = this.options.requestIdFactory();
         const active = this.repositories.runInTransaction(() => {
+          this.repositories.companyResearchEvidence.deleteByRunId(saved.id);
           const retried = this.repositories.companyResearchRuns.retryResearching(
             saved.id, normalized, context, template, this.now().toISOString(),
           );
@@ -263,6 +267,30 @@ export class CompanyResearchService {
     ));
   }
 
+  getEvidence(itemId: string, companyId: string, runId: string): import("../contracts/research-evidence.js").ResearchEvidenceView {
+    const run = this.getRun(itemId, companyId, runId);
+    if (!run) throw new CompanyResearchServiceError("company research not found", "RESOURCE.NOT_FOUND");
+    if (run.schemaVersion === "legacy-freeform-v1" || run.evidencePolicy === "legacy_optional") return { status: "legacy_missing" };
+    const snapshot = run.attemptId && this.read(() => {
+      try { return this.repositories.companyResearchEvidence.getFrozen(runId, run.attemptId!); }
+      catch (error) {
+        if (error instanceof Error && error.message.startsWith("evidence_incomplete")) return undefined;
+        throw error;
+      }
+    });
+    if (run.evidencePolicy !== "required_v1" || !snapshot) return { status: "evidence_incomplete" };
+    const latest = new Map(snapshot.events.map(event => [event.modelRequestId, event]));
+    const { visibleEntries, savedEntries, visibleBytes, savedBytes, omittedEntries, omittedBytes, prepared, dispatched } = snapshot.manifest;
+    const groups = [...latest.values()].map(event => ({ modelRequestId: event.modelRequestId, phase: event.phase, responseState: event.responseState,
+      projections: event.projections.map(({ evidenceId, mapping, sources, toolName, savedText, visibleBytes, savedBytes, capturedAt, modelClipping, formatting, archiveClipping }) => ({
+        evidenceId, mapping, sources, toolName, savedText, visibleBytes, savedBytes, capturedAt,
+        ...(modelClipping ? { modelClipping } : {}), ...(formatting ? { formatting } : {}), archiveClipping,
+      })),
+    }));
+    const partial = [...latest.values()].some(event => event.responseState !== "not_sent" && event.projections.some(p => p.visibleBytes !== p.savedBytes || p.visibleHash !== p.savedHash || p.archiveClipping.reason !== "none"));
+    return { status: partial ? "partial" : "complete", counts: { visibleEntries, savedEntries, visibleBytes, savedBytes, omittedEntries, omittedBytes, prepared, dispatched }, groups };
+  }
+
   deleteRun(itemId: string, companyId: string, runId: string): void {
     const target = this.requireTarget(itemId, companyId);
     const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
@@ -271,6 +299,7 @@ export class CompanyResearchService {
     if (saved === undefined || saved.status === "researching" || saved.status === "structuring") {
       throw new CompanyResearchServiceError("company research cannot be deleted");
     }
+    if (this.isRunning()) throw new CompanyResearchServiceError("company research is already running", "BUSINESS.CONFLICT");
     try {
       this.repositories.runInTransaction(() => {
         const traceIds = this.repositories.companyResearchDiagnostics.deleteByRunId(runId);
@@ -366,15 +395,52 @@ export class CompanyResearchService {
   }
 
   private request(active: ActiveResearch): CompanyResearchWorkerRequest {
+    if (!active.run.evidencePolicy) throw new ResearchConsumeFailure("evidence_incomplete");
     const common = {
+      evidencePolicy: active.run.evidencePolicy,
+      ...(active.run.attemptId === undefined ? {} : { attemptId: active.run.attemptId }),
       requestId: active.requestId, runId: active.run.id, llm: structuredClone(active.llm),
       context: structuredClone(active.run.researchContext), template: structuredClone(active.run.template),
     };
     if (active.stage === "raw") return { ...common, kind: "company-research.raw.run", stage: "raw", search: structuredClone(active.search!), toolAccess: RAW_RESEARCH_POLICY };
     return {
       ...common, kind: "company-research.structure.run", stage: "structure",
+      ...(active.run.evidencePolicy === "required_v1" ? { evidencePacket: this.requirePacket(active) } : {}),
       rawReportText: active.run.rawReportText!, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA, toolAccess: STRUCTURE_RESEARCH_POLICY,
     };
+  }
+
+  private requirePacket(active: ActiveResearch) {
+    try { return this.loadRequiredPacket(active); }
+    catch (error) {
+      if (error instanceof ResearchConsumeFailure) throw error;
+      throw new ResearchConsumeFailure(error instanceof Error && error.message.startsWith("evidence_incomplete")
+        ? "evidence_incomplete" : "storage_failed");
+    }
+  }
+
+  private loadRequiredPacket(active: ActiveResearch) {
+    const attemptId = active.run.attemptId;
+    if (!attemptId) throw new ResearchConsumeFailure("evidence_incomplete");
+    const snapshot = this.repositories.companyResearchEvidence.getFrozen(active.run.id, attemptId);
+    if (!snapshot) throw new ResearchConsumeFailure("evidence_incomplete");
+    let packet = this.repositories.companyResearchEvidence.getPacket(active.run.id, attemptId);
+    if (!packet && active.run.evidencePacketState === "budget_exceeded") {
+      const built = buildEvidencePacket(snapshot, active.run.rawReportText!, {
+        kind: "company-research.structure.run", stage: "structure", evidencePolicy: "required_v1", attemptId,
+        requestId: active.requestId, runId: active.run.id, llm: active.llm, context: active.run.researchContext,
+        template: active.run.template, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA, toolAccess: STRUCTURE_RESEARCH_POLICY,
+      });
+      if (built.status === "budget_exceeded") throw new ResearchConsumeFailure("context_budget_exceeded");
+      active.run = this.repositories.runInTransaction(() => {
+        if (this.repositories.companyResearchEvidence.getPacket(active.run.id, attemptId)) throw new ResearchConsumeFailure("evidence_incomplete");
+        this.repositories.companyResearchEvidence.savePacketOnce(active.run.id, attemptId, built.packet);
+        return this.repositories.companyResearchRuns.markEvidencePacketReady(active.run.id, attemptId);
+      });
+      packet = this.repositories.companyResearchEvidence.getPacket(active.run.id, attemptId);
+    }
+    if (!packet || packet.snapshotHash !== snapshot.manifest.snapshotHash) throw new ResearchConsumeFailure("evidence_incomplete");
+    return packet;
   }
 
   private async consume(active: ActiveResearch): Promise<void> {
@@ -393,6 +459,16 @@ export class CompanyResearchService {
           )) continue;
           if (!Value.Check(CompanyResearchWorkerEventSchema, event)) throw new ResearchConsumeFailure("protocol_error");
           if (event.type === "started") continue;
+          if (event.type === "evidence" || event.type === "evidence_manifest") {
+            if (active.stage !== "raw" || active.run.evidencePolicy !== "required_v1" || event.attemptId !== active.run.attemptId) throw new ResearchConsumeFailure("evidence_incomplete");
+            if (event.type === "evidence_manifest") active.evidenceManifest = event.manifest;
+            else {
+              if (event.receipt.requestId !== request.requestId) throw new ResearchConsumeFailure("evidence_incomplete");
+              try { this.repositories.runInTransaction(() => this.repositories.companyResearchEvidence.append(active.run.id, event.attemptId, event.receipt)); }
+              catch (error) { throw new ResearchConsumeFailure(error instanceof Error && error.message.startsWith("evidence_incomplete") ? "evidence_incomplete" : "storage_failed"); }
+            }
+            continue;
+          }
           if (event.type === "text_delta") {
             if (active.rawDraftText.length + event.delta.length > 1_000_000) throw new ResearchConsumeFailure("protocol_error");
             active.rawDraftText += event.delta;
@@ -412,8 +488,24 @@ export class CompanyResearchService {
           } else if (event.type === "completed") {
             if (active.stage === "raw") {
               try {
-                active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeRaw(active.run.id, event.text));
-              } catch { throw new ResearchConsumeFailure("storage_failed"); }
+                if (active.run.evidencePolicy === "required_v1") {
+                  if (!active.run.attemptId || !active.evidenceManifest) throw new ResearchConsumeFailure("evidence_incomplete");
+                  const snapshot = this.repositories.companyResearchEvidence.readStaging(active.run.id, active.run.attemptId);
+                  const built = buildEvidencePacket({ ...snapshot, frozen: true }, event.text, {
+                    ...request, kind: "company-research.structure.run", stage: "structure",
+                    outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+                  });
+                  active.run = this.repositories.runInTransaction(() => {
+                    const frozen = this.repositories.companyResearchEvidence.freeze(active.run.id, active.run.attemptId!, active.evidenceManifest!);
+                    if (frozen.manifest.snapshotHash !== snapshot.manifest.snapshotHash) throw new ResearchConsumeFailure("evidence_incomplete");
+                    if (built.status === "ready") this.repositories.companyResearchEvidence.savePacketOnce(active.run.id, active.run.attemptId!, built.packet);
+                    return this.repositories.companyResearchRuns.completeRawWithEvidence(active.run.id, active.run.attemptId!, event.text, built.status === "ready" ? "ready" : "budget_exceeded");
+                  });
+                  if (built.status === "budget_exceeded") {
+                    this.active = undefined; this.stateChanged(active.run, "context_budget_exceeded"); return;
+                  }
+                } else active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeRaw(active.run.id, event.text));
+              } catch (error) { if (error instanceof ResearchConsumeFailure) throw error; throw new ResearchConsumeFailure(error instanceof Error && error.message.startsWith("evidence_incomplete") ? "evidence_incomplete" : "storage_failed"); }
               active.stage = "structure";
               active.dispatched = false;
               active.rawDraftText = "";
@@ -455,7 +547,7 @@ export class CompanyResearchService {
           } else {
             const outcome: ResearchOutcome = event.type === "cancelled"
               ? "cancelled"
-              : event.stage === "structure" ? "research_failed" : event.code;
+              : event.code === "structuring_failed" ? "research_failed" : event.code;
             this.failActive(active, outcome);
             return;
           }
@@ -487,7 +579,7 @@ export class CompanyResearchService {
           const failure = persistedFailure(outcome);
           publicOutcome = failure;
           this.repositories.companyResearchRuns.failResearching(id, failure);
-        } else this.repositories.companyResearchRuns.failStructuring(id);
+        } else this.repositories.companyResearchRuns.failStructuring(id, outcome === "evidence_incomplete" || outcome === "context_budget_exceeded" || outcome === "storage_failed" ? outcome : "structuring_failed");
       });
     } catch {
       // If storage is unavailable, startup recovery owns the abandoned row.

@@ -55,6 +55,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps): Applicat
       companies: deps.repositories.companies,
       itemCompanies: deps.repositories.itemCompanies,
       companyResearchRuns: deps.repositories.companyResearchRuns,
+      companyResearchEvidence: deps.repositories.companyResearchEvidence,
       companyResearchDiagnostics: deps.repositories.companyResearchDiagnostics,
       companyResearchBatches: deps.repositories.companyResearchBatches,
       toolExecutions: { deleteByTraceIds: ids => deps.repositories.toolExecutions.deleteByTraceIds(ids) },

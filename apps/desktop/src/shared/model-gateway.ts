@@ -12,9 +12,11 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { LlmRuntimeSnapshot } from "@deepfield/contracts";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { createLlmUsageTransport } from "./usage-collection.js";
+import type { ModelRequestObserver } from "@deepfield/capability-sdk";
+import { observeSerializedRequest, type ObservedStreamOptions } from "./model-request-observation.js";
 
 export interface ModelGateway {
-  createStream?(snapshot: LlmRuntimeSnapshot): typeof streamSimple;
+  createStream?(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver): typeof streamSimple;
   createModel(snapshot: LlmRuntimeSnapshot): Model<any>;
   getApiKey(snapshot: LlmRuntimeSnapshot, providerId: string): Promise<string>;
   completeText(
@@ -22,12 +24,14 @@ export interface ModelGateway {
     system: string,
     prompt: string,
     signal?: AbortSignal,
+    options?: { maxTokens: number },
   ): Promise<string>;
   completeTextResult?(
     snapshot: LlmRuntimeSnapshot,
     system: string,
     prompt: string,
     signal?: AbortSignal,
+    options?: { maxTokens: number },
   ): Promise<ModelCompletionResult>;
 }
 
@@ -50,7 +54,7 @@ const defaultFactories: ModelGatewayFactories = {
   anthropicMessagesApi,
 };
 
-export type ModelGatewayErrorCategory = "authentication" | "rate_limit" | "server" | "network" | "timeout" | "request" | "unknown";
+export type ModelGatewayErrorCategory = "authentication" | "rate_limit" | "server" | "network" | "timeout" | "request" | "context_budget" | "unknown";
 
 export class ModelGatewayError extends Error {
   constructor(
@@ -66,6 +70,7 @@ export function classifyModelGatewayError(error: unknown): ModelGatewayError {
   if (error instanceof ModelGatewayError) return error;
   if (typeof error !== "object" || error === null) return new ModelGatewayError();
   const record = error as Record<string, unknown>;
+  if (typeof record.message === "string" && /context[_ ]?(?:length|window)|maximum context|too many tokens|prompt is too long/i.test(record.message)) return new ModelGatewayError("context_budget", false);
   const status = typeof record.status === "number"
     ? record.status
     : typeof record.statusCode === "number" ? record.statusCode : undefined;
@@ -94,11 +99,16 @@ export class PiModelGateway implements ModelGateway {
     return this.createSession(snapshot).model;
   }
 
-  createStream(snapshot: LlmRuntimeSnapshot): typeof streamSimple {
+  createStream(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver): typeof streamSimple {
     return (model, context, options) => {
       const usage = createLlmUsageTransport(snapshot, options?.signal, options?.fetch ?? globalThis.fetch);
-      const stream = streamSimple(model, context, { ...options, maxRetries: 0, fetch: usage.fetch });
-      void stream.result().then((message) => usage.finish(message.stopReason), () => usage.finish("error"));
+      const observation = observer ? observeSerializedRequest(context, options as ObservedStreamOptions, observer, usage.fetch) : undefined;
+      const stream = streamSimple(model, context, { ...options, maxRetries: 0, fetch: usage.fetch, ...(observation ? { onPayload: observation.onPayload, fetch: observation.fetch } : {}) });
+      const finished = stream.result().then((message) => { usage.finish(message.stopReason); observation?.finish(message.stopReason); return message; }, error => { usage.finish("error"); observation?.finish("error"); throw error; });
+      // Pi represents provider failures as messages; observer/storage failures
+      // must still reject the execution result instead of appearing successful.
+      if (observation) stream.result = () => finished;
+      void finished.catch(() => undefined);
       return stream;
     };
   }
@@ -122,13 +132,14 @@ export class PiModelGateway implements ModelGateway {
     system: string,
     prompt: string,
     signal?: AbortSignal,
+    options?: { maxTokens: number },
   ): Promise<ModelCompletionResult> {
     const usage = createLlmUsageTransport(snapshot, signal);
     let transportFailure: ModelGatewayError | undefined;
     const captureFetch: typeof globalThis.fetch = async (input, init) => {
       try {
         const response = await usage.fetch(input, init);
-        if (!response.ok) transportFailure = classifyModelGatewayError({ status: response.status });
+        if (!response.ok) transportFailure = classifyModelGatewayError({ status: response.status, message: (await response.clone().text()).slice(0, 8192) });
         return response;
       } catch (error) {
         transportFailure = classifyModelGatewayError(error);
@@ -148,6 +159,7 @@ export class PiModelGateway implements ModelGateway {
           ...(signal === undefined ? {} : { signal }),
           fetch: captureFetch,
           maxRetries: 0,
+          maxTokens: options?.maxTokens ?? Math.min(8192, Math.max(1024, Math.floor(snapshot.contextWindow / 8))),
         },
       );
       usage.finish(message.stopReason);

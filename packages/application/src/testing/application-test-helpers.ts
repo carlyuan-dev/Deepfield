@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
 import type { Repositories } from "@deepfield/persistence";
+import { installZeroEvidenceRawFixture } from "../../../persistence/src/research-evidence-test-fixtures.js";
 
 export interface TestDb {
   db: DatabaseSync;
@@ -16,6 +17,7 @@ export function openTestDb(): TestDb {
   const db = openDatabase(join(dir, "deepfield.sqlite"));
   migrate(db);
   const repos = createRepositories(db);
+  installZeroEvidenceRawFixture(db, repos);
   return {
     db,
     repos,

@@ -3,6 +3,7 @@ import { CompanyResearchWorkerRequestSchema, CompanyResearchWorkerEventSchema, C
 import { createCompanyResearchAgent, type CompanyResearchAgent } from "./runtime/company-research-agent.js";
 import { createCompanyProfileAgent } from "./runtime/company-profile-agent.js";
 import type { CompanyAgentRuntime } from "./runtime/ports.js";
+import { snapshotManifest } from "../../packages/persistence/src/research-evidence-data.js";
 
 const fakeCompanyResearchAgent: CompanyResearchAgent = {
   async run(request, emit, signal) {
@@ -38,6 +39,7 @@ const fakeCompanyResearchAgent: CompanyResearchAgent = {
         })),
       });
     if (request.stage === "raw") emit({ ...identity, stage: "raw", type: "text_delta", delta: text });
+    if (request.stage === "raw" && request.evidencePolicy === "required_v1") emit({ ...identity, stage: "raw", type: "evidence_manifest", attemptId: request.attemptId!, manifest: snapshotManifest([]) });
     emit({ ...identity, type: "completed", text });
   },
 };

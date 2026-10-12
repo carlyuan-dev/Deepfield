@@ -4,6 +4,11 @@ import type { KeyResearchRun } from "../../../capabilities/company-research/cont
 
 const input = { direction: "product_and_technology", asOfDate: "2026-09-11", focusScope: "重点" } as const;
 describe("research retry policy", () => {
+  it("requires fresh network evidence for integrity failure even with unchanged research input", () => {
+    const saved = { ...input, schemaVersion: "company-research-report-v1", status: "structure_failed", searchStatus: "succeeded", lastFailureCode: "evidence_incomplete" } as KeyResearchRun;
+    expect(researchRetryMode(saved, input)).toBe("raw");
+    expect(researchRetryMode({ ...saved, lastFailureCode: "context_budget_exceeded" }, input)).toBe("structure");
+  });
   it.each([
     ["research_failed", "none", "raw"], ["research_failed", "succeeded", "raw"],
     ["structure_failed", "none", "raw"], ["structure_failed", "unknown", "structure"],
