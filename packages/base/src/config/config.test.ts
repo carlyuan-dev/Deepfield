@@ -38,6 +38,15 @@ const definition = () => defineConfig({ key: "document-service", schemaVersion: 
   secrets: { apiToken: { requiredForExecution: true }, extra: { requiredForExecution: false } } });
 
 describe("ordinary configuration", () => {
+  it("rejects unsupported schema metadata at definition creation and first binding", () => {
+    const f = fixture(), scope = f.runtime.createScope("a");
+    const input = { key: "example", schemaVersion: 1,
+      schema: Type.Object({ endpoint: Object.assign(Type.String(), { description: undefined }) }), defaults: { endpoint: "" } };
+    expect(() => defineConfig(input)).toThrowError(expect.objectContaining({ reason: "invalid_definition" }));
+    expect(() => scope.service.bind(input)).toThrowError(expect.objectContaining({ reason: "invalid_definition" }));
+    expect(f.counts()).toEqual({ reads: 0, writes: 0, secretWrites: 0 });
+  });
+
   it("lazily reads independent defaults without writing or inventing credentials", async () => {
     const f = fixture(), scope = f.runtime.createScope("package-a");
     const first = scope.service.bind(definition());

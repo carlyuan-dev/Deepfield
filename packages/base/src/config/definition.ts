@@ -74,6 +74,9 @@ export function defineConfig<S extends TSchema>(input: ConfigDefinition<S>): Con
       throw new ConfigError("invalid_definition", context);
     }
     const schema = structuredClone(input.schema);
+    // Check the effective schema after TypeBox's non-enumerable markers are removed.
+    // Accepted metadata must also be comparable on a subsequent binding.
+    cloneObject(schema, context);
     const defaults = cloneObject(input.defaults, context);
     checkValues(schema, defaults, context);
     const secrets = input.secrets === undefined ? undefined : cloneObject(input.secrets, context);
