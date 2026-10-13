@@ -1,8 +1,8 @@
 # Deepfield Base.overview 设计文档
 
-版本：0.4 · 更新日期：2026-10-13
+版本：0.5 · 更新日期：2026-10-13
 
-状态：Usage 已用于当前产品；八个能力域的划分已讨论确认，抽取设计待书面评审，尚未实施迁移。
+状态：Usage 已用于当前产品；八域抽取设计、Database 通用 CRUD 边界及首批 Errors 方案已确认，尚未实施迁移。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
@@ -43,11 +43,13 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 | Search | `@deepfield/base/search` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 待从 retrieval 与计量适配抽取 |
 | Tools | `@deepfield/base/tools` | 工具注册、参数校验、执行与授权检查、预算及审计机制 | 待从 tool-platform 等抽取 |
 | Agent | `@deepfield/base/agent` | 基于 Pi 的有界模型—工具循环、取消、事件与最终输出 | 待从共享执行器分离通用机制 |
-| Database | `@deepfield/base/database` | 数据库连接、事务、迁移执行与生命周期 | 待从 persistence 抽取，不含业务仓储 |
+| Database | `@deepfield/base/database` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 待从 persistence 抽取，不含业务仓储 |
 | Usage | `@deepfield/base/usage` | 用量记录、幂等持久化契约与汇总查询 | 已实现；采集与 SQLite 适配仍分布在应用及 persistence |
 | Errors | `@deepfield/base/errors` | 中立错误结构、公共分类及安全传输约定 | 待从现有错误契约抽取 |
 
 Config 管配置，不负责执行 Model／Search 调用；Search 提供能力，不负责决定何时搜索；Tools 执行调用方给定的授权，不授予授权；Agent 提供执行机制，不接管 Chat 的记忆与 Capability 的业务流程。
+
+Database 封装“怎样读写数据”，可以提供参数化查询、写入和轻量单表 CRUD；表结构、领域映射及业务条件由使用方负责，不将公司、报告等业务操作下沉。
 
 `packages/base` 当前实际仅包含 Usage，不应将目标入口视为可用 API。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
 
@@ -60,6 +62,8 @@ Usage 的字段、恢复机制和看板细节见 [Base.Usage 设计文档](base.
 3. 总览只维护全局边界和目录，不复制模块字段表、流程细节或验收用例。
 4. 抽取应保留业务语义；公司调研必须实际使用新的基础能力，不能只新增目录而保留另一套旧实现。
 5. 未实现能力明确注明状态，不将设计目标写成已具备功能。
+
+首批按已确认的 [Base.Errors 设计](base.errors.设计文档.md)推进，不实现其余七域。逐步实施计划留本地，正式设计维护接口和长期边界。
 
 ## 5. 参考与取舍
 

@@ -14,14 +14,17 @@ benchmark-results/
 .pnpm-store/
 **/.DS_Store
 
+# Local development plans, drafts, handoffs and dated verification records
+/docs/local/
+/docs/superpowers/plans/
+/docs/superpowers/specs/
+/docs/manual-tests/
+/docs/research-window-handoff-2026-10-12.md
+/docs/research-search-provenance-audit.md
+
 # Local research material and experimental replay tools (not product dependencies)
 /docs/material/
+/docs/base/base.reference.参考认知.md
 /docs/single-company-key-research-discussion.md
 /benchmarks/company-research/
 /scripts/research-eval/
-/docs/superpowers/plans/2026-09-20-research-evaluation-phase-1.md
-/docs/superpowers/plans/2026-09-21-research-evaluation-live.md
-/docs/superpowers/plans/2026-09-30-research-evidence-admission.md
-/docs/superpowers/specs/2026-09-20-research-evaluation-design.md
-/docs/superpowers/specs/2026-09-20-research-evaluation-pilot-and-records.md
-/docs/superpowers/specs/2026-09-30-research-evidence-admission-design.md

@@ -1,51 +1,52 @@
 # 文档阅读地图
 
-本文是当前文档入口，不新增架构层级。判断已实现行为时，以当前主线代码与对应测试为依据；日期型设计和实施计划记录当时的决策，不代表所有内容已经实现或仍然有效。
+仓库文档只维护当前有效的项目知识。设计目标与已实现状态必须分开；修改功能时同步其正式文档，不用日期型开发计划代替现状说明。
 
-## 当前维护的文档
+## 正式文档入口
 
-1. [开发指南](development.md)：运行配置、测试选择、报告行为与本地交付。
-2. [Base 总览](base/base.overview.设计文档.md)：当前 Chat / Capability → Base 的单向依赖边界、能力目录和实施状态。
-3. [Base Usage](base/base.usage.设计文档.md)：统一用量账本、统计口径、采集与看板。当前 Base 包只包含 Usage，不意味着其他通用模块已完成迁移。
-4. [Base 抽取设计](base/base.extraction.设计文档.md)：待评审的八域边界、当前归属 → 目标归属及分批迁移顺序；尚未执行代码迁移。
-5. [Capability 总览](capabilities/capability.overview.设计文档.md)：已完成的包化边界、启停规则与后续范围。
-6. [Capability 与 Chat 交互协议](capabilities/capability.protocol.设计文档.md)：Chat 工具、确认卡、任务恢复与按需分析已实现；当前版本于 2026-09-24 经用户确认纳入本地稳定检查点，历史[手测清单](manual-tests/2026-09-23-chat-capability.md)保留供回归参考。
-7. [Capability 开发指南](capabilities/capability.开发指南.md)：当前 SDK、独立最小包、构建安装与更新规则；配套非调研记录查询示例。
-8. [Chat 人机交互设计](chat/chat.interaction.设计文档.md)：已实现的 Chat 专属询问/操作确认、共享真实表单、任务范围授权与等待/恢复协议，不属于 Base。
+| 文档 | 维护内容 |
+| --- | --- |
+| [开发指南](development.md) | 环境、运行、配置、分支、交付与文档维护规则 |
+| [按风险选测指南](testing.md) | 可复用的必要检查路径，不记录某一批“测试已通过” |
+| [Base 总览](base/base.overview.设计文档.md) | Chat／Capability → Base 的单向依赖、能力目录与真实状态 |
+| [Base 抽取设计](base/base.extraction.设计文档.md) | 已确认的八域边界、当前归属 → 目标归属及迁移取舍 |
+| [Base.Errors](base/base.errors.设计文档.md) | 已批准、待实现的中立错误契约与旧接口兼容边界 |
+| [Base.Usage](base/base.usage.设计文档.md) | 已实现的用量账本、统计口径、采集与看板 |
+| [Chat 运行机制](chat/chat.runtime.设计文档.md) | Pi 循环、工具许可、联网额度、历史与配置调用边界 |
+| [Chat 人机交互](chat/chat.interaction.设计文档.md) | 询问／确认、真实表单共同编辑、任务范围授权与恢复 |
+| [Capability 总览](capabilities/capability.overview.设计文档.md) | 可选包、启停、加载隔离与宿主边界 |
+| [Capability 交互协议](capabilities/capability.protocol.设计文档.md) | 动作、页面、任务、产物及 Chat 双入口契约 |
+| [Capability 开发指南](capabilities/capability.开发指南.md) | 当前 SDK、构建安装与独立示例包 |
+| [公司调研设计](capabilities/company-research.设计文档.md) | 公司资料、统一队列、两轮报告、证据与导出规则 |
+
+版本事实保留在 [0.1.1 发布记录](releases/2026-10-12-v0.1.1.md)；它描述该版本的验证与限制，不取代当前设计。Capability 包内 `docs/actions/` 与 `docs/help.md` 是运行时使用说明，属于产品契约，必须随包维护和提交。
 
 ## 源码导航
 
-最新版本材料：[0.1.1 收口记录](releases/2026-10-12-v0.1.1.md)、[研究窗口交接](research-window-handoff-2026-10-12.md)。交接中实验原件仅本地保留，不随源码发布。
+- `packages/application/src/chat/`：Chat 会话编排、上下文与人机交互；`packages/application/src/tools/`：应用层工具审计。
+- `apps/desktop/src/worker/agent/`：共享 Pi 执行器及窄执行契约；`worker/chat/`：Chat 提示词、历史、溯源与 checkpoint 适配；`worker/tools/`：工具运行和活动投影。
+- `apps/desktop/src/worker/capabilities/agent-runtime.ts`：Capability 直接装配共享执行器，不经过 Chat 上下文工厂。
+- `capabilities/company-research/`：独立公司调研包，包含 application、runtime、ui、export 与 contracts。
+- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前只实现 Usage，其余入口仍是抽取目标。
+- `packages/contracts/`、`packages/tool-platform/`、`packages/retrieval/`、`packages/persistence/`：当前配置／错误契约、工具执行、搜索与存储；迁移边界以 Base 抽取设计为准。
 
-- `packages/application/src/chat/`：Chat 会话编排、上下文构建与会话相关测试。
-- `capabilities/company-research/`：独立公司研究包，包含 application、runtime、ui、export 与 contracts。
-- `packages/application/src/tools/`：应用层工具审计实现与测试。
-- `packages/application/src/testing/`：Application 及跨包测试共享的数据库 helper 与 fixture。
-- `packages/application/src/ports.ts`：Application 对外部运行时与能力适配器的端口定义。
-- `packages/application/src/index.ts`：Application 公共导出入口；目录调整不改变其公共 API。
-- `packages/contracts/src/model-config.ts`、`packages/contracts/src/tools.ts`、`packages/tool-platform/src/budget-contract.ts` 与 `packages/retrieval/src/search-provider.ts`：为通用执行器提供配置、工具协议、预算快照和搜索 Provider 的窄入口，避免执行器依赖各包根总入口；旧根入口与 `settings` 兼容出口继续保留。
-- `apps/desktop/src/worker/`：Worker 入口、装配、主进程传输、消息生命周期与用量运行时。
-- `apps/desktop/src/worker/agent/`：Pi Agent 执行与运行时契约；`pi-execution-contract` 定义不依赖 Chat Worker 形状的执行请求、事件与工具来源，`pi-agent-executor` 保留执行循环并只消费显式注入的运行时、密钥读取与搜索 Provider 工厂，`pi-execution-context` 定义注入的 Pi 会话上下文边界，`pi-chat-agent` 是保持旧 API、装配默认具体实现的兼容工厂。`pi-runtime` 只定义运行时契约，`pi-default-runtime` 提供默认 Pi 实现；`pi-message-utils`、`pi-tool-results` 和 `finalization-prompts` 分别承载消息判定、工具结果处理和终局提示词，运行控制、运行时上下文与工具批次准入保持为独立模块。
-- `apps/desktop/src/worker/chat/`：Chat agent 选择、消息映射、Chat 提示词、会话转录与每轮 checkpoint 收集；`pi-chat-context` 将这些 Chat 行为装配为执行器上下文。
-- `capabilities/company-research/runtime/`：公司档案与公司研究专属 Agent 适配、提示词、诊断和测试 helper。
-- `apps/desktop/src/worker/tools/`：Pi 工具适配、工具运行时、安全活动投影与工具来源投影。
+共享执行器已有独立契约和注入边界，但仍包含联网／调研场景策略及部分 SDK、desktop shared 依赖，不能称为已中立化的 Base.Agent。
 
-已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
+## 文档归属与生命周期
 
-Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，不导入 `chat/` 或 Skill 目录实现；Chat 提示词、会话恢复、历史 provenance 和 checkpoint 由 `pi-chat-agent` 在每次 run 经 `pi-chat-context` 适配。Capability 由 `apps/desktop/src/worker/capabilities/agent-runtime.ts` 直接装配同一执行器，不经 Chat 上下文工厂。执行器仍有联网／调研场景策略，并依赖 SDK 执行契约及 desktop shared 的请求观察类型；这些内容尚未完成 Base 中立化。现状与后续归属以 [Base 抽取设计](base/base.extraction.设计文档.md)为准，本边界不是已实现的 Base.Agent，也不表示 Worker 传输契约已经移除。
+| 类型 | 存放与提交规则 |
+| --- | --- |
+| 长期项目知识 | `docs/base/`、`docs/chat/`、`docs/capabilities/`、开发／验证指南及必要版本决策；随代码提交 |
+| 逐步实施计划、Agent 派工／复核、草稿 | 默认放 `docs/superpowers/plans/`、`docs/superpowers/specs/` 或 `docs/local/`；仅本地，已 ignore |
+| 日期型手测批次记录、窗口交接／专项审查原件 | 本地保留；可复用步骤归入验证指南，长期结论归入相应正式设计 |
+| 外部项目参考、真实请求／抓取、实验原件 | 仅本地；沿用忽略目录，不嵌入正式文档或随提交上传 |
 
-## 历史决策与过程参考
+维护规则：
 
-Capability 包化见 [Capability 架构设计文档](capabilities/capability.overview.设计文档.md)。[第一批](superpowers/plans/2026-09-20-capability-packages-phase-1.md)完成协议、扫描与加载基础；[第二批](superpowers/plans/2026-09-21-capability-packages-phase-2.md)已完成真实 A 独立包、生产启动及管理界面，并随用户验收版本合入本地稳定检查点 `stable-2026-09-22`。第三批包含 SDK、网关、导航、任务／产物、Chat 联动与开发模板；后续交互及公司资料更新优化随 2026-09-24 用户验收版本纳入本地稳定检查点 `stable-2026-09-24`。
+1. 同一功能只维护一个正式设计入口；其他文档链接它，不复制第二套契约。已被替代的方案不能继续标记“当前有效”。
+2. specs 中尚有效的约束先核对实现／已批准设计，整理进对应正式文档；未实现内容明确标记，不将历史设想变成新承诺。
+3. 实施结束，将长期有价值的接口、边界、取舍和限制写回正式文档。过程材料可以本地归档或在确认无独有信息后清理，不必长期留在仓库。
+4. 正式文档不得依赖本地计划、交接或参考材料才能读懂，不链接这些忽略文件。远端读者应能只用已提交文件理解项目。
+5. `.gitignore` 不会自动取消已跟踪文件；转换为本地材料时须取消版本跟踪并保留本地副本，不重写 Git 历史。之后的提交／推送才会更新远端当前目录。
 
-本轮源码整理的范围与验收记录见[第二批源码职责归类](superpowers/plans/2026-09-18-source-organization.md#本批验收记录)：完成职责归类、执行器适配/依赖拆分和窄契约守卫；不包含Base.Agent迁移、业务功能变更或安装包更新。
-
-`superpowers/specs/` 和 `superpowers/plans/` 下的日期型文件保留用于追溯背景、批准方向和实施过程，不作为当前实现的完整事实来源；同一文件中的后续更新可能覆盖早期章节。`manual-tests/` 记录特定切片的人工验收清单，也需结合当前代码使用。本轮不搬迁或删除这些材料。
-
-常用背景：
-
-- [LLM / Search 模块化设计](superpowers/specs/2026-09-11-deepfield-modular-llm-search-agent-loop-design.md)：Profile 与协议拆分背景。
-- [公司调研历史设计](superpowers/specs/2026-09-16-company-research-history-design.md)：失败记录、原记录重试和版本管理背景。
-- [批量公司调研设计](superpowers/specs/2026-09-17-batch-company-research.md)：批量编排背景。
-
-正式工作目录与主线约定见[项目入口](../README.md)。临时 worktree、`.superpowers/` scratch 与可重建输出不属于当前文档入口；私人资料、应用数据与最新 release 的保留规则见开发指南。
+本次将历史 plans、specs、日期型手测及两份交接／审查原件保留本地并移出跟踪；没有物理删除这些资料。后续过程记录使用上述本地目录，避免重新进入正式文档树。
