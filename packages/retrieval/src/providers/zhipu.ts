@@ -1,3 +1,5 @@
+import { ZHIPU_SEARCH_ENGINES, type ZhipuSearchEngine } from "@deepfield/base/config";
+export { ZHIPU_SEARCH_ENGINES, type ZhipuSearchEngine } from "@deepfield/base/config";
 import { ProviderHttpClient, type ProviderEndpoint } from "../provider-http-client.js";
 import {
   SearchProviderError,
@@ -7,14 +9,6 @@ import {
   type SearchProvider,
   type SearchRequest,
 } from "../search-provider.js";
-
-export const ZHIPU_SEARCH_ENGINES = [
-  "search_std",
-  "search_pro",
-  "search_pro_sogou",
-  "search_pro_quark",
-] as const;
-export type ZhipuSearchEngine = (typeof ZHIPU_SEARCH_ENGINES)[number];
 
 export const ZHIPU_ENDPOINT: ProviderEndpoint = {
   origin: "https://open.bigmodel.cn",

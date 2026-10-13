@@ -17,8 +17,19 @@ export interface ConfigHandle<V> {
   resolveSnapshot(): Promise<ConfigSnapshot<V>>;
   resolveDraft(draft: ConfigDraft<V>): Promise<ConfigSnapshot<V>>;
 }
-/** Task 2 adds the optional profile collection to this service. */
+export type ProfileDraft<V> = ConfigDraft<V> & { id?: string; name: string };
+export type ProfilesView<V> = { activeProfileId: string | null; profiles: (ConfigView<V> & { id: string; name: string })[] };
+export type ProfileSnapshot<V> = ConfigSnapshot<V> & { profile: { id: string; name: string } };
+export interface ProfileCollection<V> {
+  getView(): Promise<ProfilesView<V>>;
+  save(draft: ProfileDraft<V>): Promise<ProfilesView<V>>;
+  activate(id: string | null): Promise<ProfilesView<V>>;
+  delete(id: string): Promise<ProfilesView<V>>;
+  resolveActive(): Promise<ProfileSnapshot<V>>;
+  resolveDraft(draft: ProfileDraft<V>): Promise<ProfileSnapshot<V>>;
+}
 export interface ScopedConfigService {
   readonly version: 1;
   bind<S extends TSchema>(definition: ConfigDefinition<S>): ConfigHandle<Static<S>>;
+  bindProfiles<S extends TSchema>(definition: ConfigDefinition<S>): ProfileCollection<Static<S>>;
 }

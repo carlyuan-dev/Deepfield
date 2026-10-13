@@ -4,6 +4,7 @@ import * as RootContracts from "@deepfield/contracts";
 import * as ModelConfig from "@deepfield/contracts/model-config";
 import * as Tools from "@deepfield/contracts/tools";
 import * as Settings from "./settings.js";
+import * as BaseConfig from "@deepfield/base/config";
 
 describe("settings narrow-entry compatibility", () => {
   it("keeps moved schemas identical across the root, legacy and narrow entries", () => {
@@ -24,7 +25,10 @@ describe("settings narrow-entry compatibility", () => {
     for (const name of configSchemas) {
       expect(RootContracts[name]).toBe(ModelConfig[name]);
       expect(Settings[name]).toBe(ModelConfig[name]);
+      expect(BaseConfig[name]).toBe(ModelConfig[name]);
     }
+    expect(BaseConfig.DEFAULT_DEEPSEEK_MODEL_ID).toBe("deepseek-flash");
+    expect(RootContracts.DEFAULT_DEEPSEEK_MODEL_ID).toBe(BaseConfig.DEFAULT_DEEPSEEK_MODEL_ID);
     expect(RootContracts.ToolAccessPolicySchema).toBe(Tools.ToolAccessPolicySchema);
     expect(Settings.ToolAccessPolicySchema).toBe(Tools.ToolAccessPolicySchema);
   });

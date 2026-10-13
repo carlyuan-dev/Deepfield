@@ -4,7 +4,7 @@ import type { Conversation } from "./conversations.js";
 import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "./settings.js";
 import { ChatHistoryTurnSchema, ChatTranscriptMessageSchema, ChatToolSourceSchema, type ChatToolSource } from "./chat-transcript.js";
 
-export const DEFAULT_DEEPSEEK_MODEL_ID = "deepseek-flash" as const;
+export { DEFAULT_DEEPSEEK_MODEL_ID } from "@deepfield/base/config";
 
 export const AgentContextMessageSchema = Type.Object(
   {

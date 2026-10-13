@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { SearchRuntimeSnapshot } from "@deepfield/contracts";
 import { createSearchProvider, listSearchProviderManifests } from "./provider-registry.js";
+import { listSearchProviderManifests as baseManifests, SearchProfileDraftSchema } from "@deepfield/base/config";
+import { Value } from "typebox/value";
 
 describe("production search provider registry", () => {
+  it("shares pure metadata with Base and keeps strict options validation at execution", () => {
+    expect(listSearchProviderManifests).toBe(baseManifests);
+    const draft = { name: "draft", provider: "tavily", baseUrl: "https://api.tavily.com", options: { unsupported: true } } as const;
+    expect(Value.Check(SearchProfileDraftSchema, draft)).toBe(true);
+    expect(() => createSearchProvider({ ...draft, id: "one", apiKey: "test-token" })).toThrow();
+  });
   it("exposes the product providers and constructs each default adapter", () => {
     const manifests = listSearchProviderManifests();
     expect(manifests.map(({ id }) => id)).toEqual(["metaso", "baidu", "zhipu", "tavily", "serper", "doubao"]);

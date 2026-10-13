@@ -2,7 +2,8 @@ import { BaseError } from "../errors/index.js";
 
 export type ConfigErrorReason = "invalid_definition" | "definition_conflict" | "invalid_values"
   | "invalid_secrets" | "missing_secret" | "invalid_document" | "unsupported_version"
-  | "missing_migration" | "migration_failed" | "storage_failed" | "disposed";
+  | "missing_migration" | "migration_failed" | "storage_failed" | "disposed"
+  | "profile_not_found" | "no_active_profile" | "active_profile";
 export type ConfigErrorContext = {
   scope?: string; key?: string; schemaVersion?: number; storedVersion?: number;
   operation?: string; profileId?: string;
