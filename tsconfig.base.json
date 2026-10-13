@@ -19,6 +19,7 @@
     "types": ["node"],
     "paths": {
       "@deepfield/base/usage": ["./packages/base/src/usage/index.ts"],
+      "@deepfield/base/errors": ["./packages/base/src/errors/index.ts"],
       "@deepfield/contracts": ["./packages/contracts/src/index.ts"],
       "@deepfield/contracts/model-config": ["./packages/contracts/src/model-config.ts"],
       "@deepfield/contracts/tools": ["./packages/contracts/src/tools.ts"],
