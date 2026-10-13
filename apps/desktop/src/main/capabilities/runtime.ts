@@ -3,6 +3,8 @@ import type { InvocationRepository } from "@deepfield/persistence";
 import { TaskArtifactGateway } from "./task-artifact-gateway.js";
 import { relative } from "node:path";
 import type { CapabilityHostServices } from "@deepfield/capability-sdk";
+import type { ConfigScope } from "@deepfield/base/config/runtime";
+import { createCapabilityConfigServices } from "./config-services.js";
 import type { AgentWorkerClient } from "../agent-worker-client.js";
 import { loadCapabilityEntry, type TrustedCapabilityEntry } from "../../shared/capability-entry.js";
 import { scanCapabilities, selectCapabilities, type CatalogEntry, type CatalogIssue } from "./catalog.js";
@@ -50,7 +52,8 @@ export async function prepareCapabilities(paths: CapabilityPaths) {
 }
 export type PreparedCapabilities = Awaited<ReturnType<typeof prepareCapabilities>>;
 
-export function createCapabilityRuntime(prepared: PreparedCapabilities, registry: CapabilityRegistry, load = loadCapabilityEntry, invocations?: InvocationRepository) {
+export function createCapabilityRuntime(prepared: PreparedCapabilities, registry: CapabilityRegistry, load = loadCapabilityEntry, invocations?: InvocationRepository,
+  options: { createConfigScope?: (capabilityId: string) => ConfigScope } = {}) {
   let enabled = new Set(prepared.enabled);
   const states = new Map<string, { status: CapabilityStatus["status"]; issue?: string }>();
   const listeners = new Set<() => void>();
@@ -60,6 +63,7 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
   let disposed = false;
   let generation = 0;
   const activations = new Map<string, { activation: CapabilityActivation; usesWorker: boolean }>();
+  const configScopes = new Map<string, ConfigScope>();
   const publicActions = new Map<string, readonly PublicActionEntry[]>();
   let actionCatalog = new ActionCatalog([]);
   let catalogPublished = false;
@@ -69,7 +73,11 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
     if (!entry?.manifest.entries.ui) return Promise.resolve({ status: "unsupported" });
     return registry.resolveView(target);
   });
-  const unsubscribeDisposals = registry.onDispose(id => { actionConfirmations.revokeCapability(id); navigation.revokeCapability(id); });
+  const unsubscribeDisposals = registry.onDispose(id => {
+    // Revoke immediately, even when a package's deferred cleanup is asynchronous.
+    configScopes.get(id)?.dispose(); configScopes.delete(id);
+    actionConfirmations.revokeCapability(id); navigation.revokeCapability(id);
+  });
   invocations?.prune(Date.now());
   const actionGateway = new ActionGateway(registry, () => actionCatalog, actionConfirmations, invocations);
   const taskArtifactGateway = new TaskArtifactGateway(registry, invocations);
@@ -145,7 +153,7 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
         if (usesWorker && !workerAvailable) continue;
         states.set(id, { status: "loading" }); changed();
         try {
-          if (entry.manifest.requirements.some(name => !services.has(name))) throw new Error("missing_host_service");
+          if (entry.manifest.requirements.some(name => !(name === "config.v1" && options.createConfigScope) && !services.has(name))) throw new Error("missing_host_service");
           const trusted = prepared.workerSnapshot.find(candidate => candidate.id === id)!;
           const workerEntry = entry.manifest.entries.worker
             ? await resolvePackageFile(entry.root, entry.manifest.entries.worker)
@@ -160,7 +168,15 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
             activateMain: async registrar => {
               const module = await load(trusted, "main");
               assertCurrent(usesWorker);
-              await module.bootstrap(registrar, services);
+              const scope = options.createConfigScope?.(id);
+              if (scope) {
+                configScopes.set(id, scope);
+                registrar.defer(() => {
+                  scope.dispose();
+                  if (configScopes.get(id) === scope) configScopes.delete(id);
+                });
+              }
+              await module.bootstrap(registrar, scope ? createCapabilityConfigServices(services, scope.service) : services);
             },
             ...(workerEntry ? {
               activateWorker: () => { assertCurrent(true); return client.activateCapability(id, workerEntry, randomUUID()); },
@@ -186,6 +202,8 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
     },
     async dispose() {
       disposed = true; generation++; unsubscribeWorker?.();
+      for (const scope of configScopes.values()) scope.dispose();
+      configScopes.clear();
       actionConfirmations.dispose(); navigation.dispose(); unsubscribeDisposals();
       for (const entry of prepared.selected) states.set(entry.manifest.id, { status: "failed", issue: "runtime_disposed" });
       await disposeActivations(); await registry.dispose(); changed(); listeners.clear();

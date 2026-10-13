@@ -31,6 +31,8 @@ import { createTrustedIpcMainAdapter } from "./ipc-trusted-adapter.js";
 import { createWindow } from "./window.js";
 import { resolveSkillsDir } from "./skill-paths.js";
 import { ProfileStore } from "./profile-store.js";
+import { createConfigRuntime } from "@deepfield/base/config/runtime";
+import { createScopedConfigFileStore } from "./config-file-store.js";
 import { ConfiguredLlmService } from "./configured-llm-service.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { PiModelGateway } from "../shared/model-gateway.js";
@@ -131,6 +133,11 @@ void app.whenReady().then(async () => {
     decrypt: (value) => safeStorage.decryptString(value),
   });
   const profiles = new ProfileStore(paths.settingsFile, secrets, listSearchProviderManifests());
+  const configRuntime = createConfigRuntime({
+    documents: createScopedConfigFileStore(join(userDataRoot, "capability-config")),
+    secrets,
+    newId: randomUUID,
+  });
   await profiles.initialize();
   const modelGateway = new PiModelGateway();
   const configuredLlm = new ConfiguredLlmService(
@@ -189,7 +196,9 @@ void app.whenReady().then(async () => {
   });
   const prepared = await prepareCapabilities(capabilityPaths({ userDataRoot, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, isPackaged: app.isPackaged }));
   capabilitySnapshot = prepared.workerSnapshot;
-  capabilityRuntime = createCapabilityRuntime(prepared, capabilities, undefined, repositories.capabilityInvocations);
+  capabilityRuntime = createCapabilityRuntime(prepared, capabilities, undefined, repositories.capabilityInvocations, {
+    createConfigScope: capabilityId => configRuntime.createScope(capabilityId),
+  });
   const disposeNavigation = registerNavigationIpc(ipcMainAdapter, capabilityRuntime.navigation);
   agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
   const services = createCapabilityHostServices({

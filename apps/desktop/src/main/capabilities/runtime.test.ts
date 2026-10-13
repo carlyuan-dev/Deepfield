@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
-import { createCapabilityHostServices, type CapabilityRegistrar } from "@deepfield/capability-sdk";
+import { createCapabilityHostServices, type CapabilityHostServices, type CapabilityRegistrar } from "@deepfield/capability-sdk";
+import { createConfigRuntime } from "@deepfield/base/config/runtime";
+import { defineConfig, type ConfigHandle, type ScopedConfigService } from "@deepfield/base/config";
+import { createScopedConfigFileStore } from "../config-file-store.js";
 import { prepareCapabilities, createCapabilityRuntime } from "./runtime.js";
 import { CapabilityRegistry } from "./registry.js";
 import { writeEnabledIds } from "./preferences.js";
@@ -26,6 +29,90 @@ function worker() {
 }
 const services = createCapabilityHostServices({});
 describe("optional capability startup", () => {
+  it("expires scoped handles on activation failure, Worker restart and disposal, preserving next-start data", async () => {
+    const { prepared } = await fixture(["config.v1"]); const registry = new CapabilityRegistry();
+    const secretValues = new Map<string, string>(); let id = 0;
+    const documents = createScopedConfigFileStore(join(dirname(prepared.paths.scanRoot), "config"));
+    const config = createConfigRuntime({ documents, secrets: { has: ref => secretValues.has(ref), get: ref => secretValues.get(ref),
+      set: (ref, value) => { secretValues.set(ref, value); }, delete: ref => { secretValues.delete(ref); } }, newId: () => `id-${++id}` });
+    const handles: ConfigHandle<{ value: string }>[] = [];
+    const definition = defineConfig({ key: "private", schemaVersion: 1, schema: Type.Object({ value: Type.String() }), defaults: { value: "default" } });
+    let fail = true; const scopes: string[] = [];
+    const modelConfiguration = {};
+    const runtime = createCapabilityRuntime(prepared, registry, async () => ({ bootstrap(_registrar: CapabilityRegistrar, host: CapabilityHostServices) {
+      expect(host.version).toBe(1); expect(host.get("model.configuration")).toBe(modelConfiguration);
+      handles.push(host.get<ScopedConfigService>("config.v1").bind(definition));
+      if (fail) throw new Error("test failure");
+    } }), undefined, { createConfigScope: capabilityId => { scopes.push(capabilityId); return config.createScope(capabilityId); } });
+    const host = createCapabilityHostServices({ "model.configuration": modelConfiguration });
+    await runtime.start(worker(), host);
+    expect(runtime.list()[0]?.status).toBe("failed"); await expect(handles[0]!.getView()).rejects.toThrow();
+    fail = false; const client = worker(); await runtime.start(client, host);
+    const handle = handles[1]!; await handle.save({ values: { value: "saved" } });
+    const snapshot = await handle.resolveSnapshot();
+    await runtime.setEnabled("test-package", false);
+    expect((await handle.getView()).values.value).toBe("saved");
+    client.exit(); await expect(handle.getView()).rejects.toThrow();
+    await runtime.start(worker(), host);
+    expect((await handles[2]!.getView()).values.value).toBe("saved");
+    expect(snapshot.values.value).toBe("saved");
+    expect(scopes).toEqual(["test-package", "test-package", "test-package"]);
+    await runtime.dispose(); await expect(handles[2]!.save({ values: { value: "late" } })).rejects.toThrow();
+    expect((await config.createScope("test-package").service.bind(definition).getView()).values.value).toBe("saved");
+  });
+  it("does not create scopes for disabled or incompatible packages and supports an old host without config", async () => {
+    const { paths } = await fixture(["config.v1"]); await writeEnabledIds(paths.statePath, []);
+    const createConfigScope = vi.fn(); const load = vi.fn();
+    const runtime = createCapabilityRuntime(await prepareCapabilities(paths), new CapabilityRegistry(), load, undefined, { createConfigScope });
+    await runtime.start(worker(), services); expect(createConfigScope).not.toHaveBeenCalled(); expect(load).not.toHaveBeenCalled(); await runtime.dispose();
+    await writeEnabledIds(paths.statePath, ["test-package"]);
+    const oldHost = createCapabilityRuntime(await prepareCapabilities(paths), new CapabilityRegistry(), load);
+    await oldHost.start(worker(), services); expect(oldHost.list()[0]?.status).toBe("incompatible"); expect(load).not.toHaveBeenCalled(); await oldHost.dispose();
+  });
+  it("isolates corrupt package data and never reads or migrates disabled data", async () => {
+    const { paths } = await fixture(["config.v1"]);
+    await writeTestPackage(paths.scanRoot, "healthy-package", ["config.v1"]);
+    await writeTestPackage(paths.scanRoot, "disabled-package", ["config.v1"]);
+    await writeEnabledIds(paths.statePath, ["test-package", "healthy-package"]);
+    const prepared = await prepareCapabilities(paths);
+    const files = createScopedConfigFileStore(join(dirname(paths.scanRoot), "config"));
+    files.write({ scope: "test-package", key: "preferences" }, { corrupt: true });
+    const reads: string[] = []; const scopes: string[] = []; let migrations = 0; let id = 0;
+    const config = createConfigRuntime({ documents: { read: address => { reads.push(address.scope); return files.read(address); }, write: files.write },
+      secrets: { has: () => false, get: () => undefined, set() {}, delete() {} }, newId: () => `id-${++id}` });
+    const definition = defineConfig({ key: "preferences", schemaVersion: 2, schema: Type.Object({ value: Type.String() }), defaults: { value: "default" },
+      migrations: { 1: values => { migrations++; return values; } } });
+    const registry = new CapabilityRegistry();
+    const runtime = createCapabilityRuntime(prepared, registry, async () => ({ async bootstrap(registrar: CapabilityRegistrar, host: CapabilityHostServices) {
+      const handle = host.get<ScopedConfigService>("config.v1").bind(definition);
+      const view = await handle.getView();
+      registrar.register("read", Type.Null(), Type.String(), () => view.values.value);
+    } }), undefined, { createConfigScope: scope => { scopes.push(scope); return config.createScope(scope); } });
+    expect(reads).toEqual([]); await runtime.start(worker(), services);
+    expect(runtime.list().find(entry => entry.id === "test-package")?.status).toBe("failed");
+    expect(runtime.list().find(entry => entry.id === "healthy-package")?.status).toBe("ready");
+    expect(runtime.list().find(entry => entry.id === "disabled-package")?.status).toBe("disabled");
+    expect(scopes.sort()).toEqual(["healthy-package", "test-package"]);
+    expect(reads.sort()).toEqual(["healthy-package", "test-package"]); expect(migrations).toBe(0);
+    expect(await registry.call({ capabilityId: "healthy-package", operation: "read", requestId: "read", input: null })).toBe("default");
+    expect(files.read({ scope: "test-package", key: "preferences" })).toEqual({ corrupt: true });
+    await runtime.dispose();
+  });
+  it("revokes config before waiting for asynchronous package cleanup", async () => {
+    const { prepared } = await fixture(["config.v1"]); const registry = new CapabilityRegistry();
+    const config = createConfigRuntime({ documents: { read: () => undefined, write() {} },
+      secrets: { has: () => false, get: () => undefined, set() {}, delete() {} }, newId: () => "test-id" });
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let handle!: ConfigHandle<{ value: string }>;
+    const runtime = createCapabilityRuntime(prepared, registry, async () => ({ bootstrap(registrar: CapabilityRegistrar, host: CapabilityHostServices) {
+      handle = host.get<ScopedConfigService>("config.v1").bind(defineConfig({ key: "private", schemaVersion: 1,
+        schema: Type.Object({ value: Type.String() }), defaults: { value: "default" } }));
+      registrar.defer(() => gate);
+    } }), undefined, { createConfigScope: scope => config.createScope(scope) });
+    const client = worker(); await runtime.start(client, services); client.exit();
+    await expect(handle.getView()).rejects.toThrow();
+    release(); await runtime.dispose();
+  });
   it("starts only after Worker ack, keeps active work on toggle, revokes navigation on exit and recreates from same snapshot", async () => {
     const { prepared } = await fixture(); const registry = new CapabilityRegistry(); const start = vi.fn(); const dispose = vi.fn();
     const load = vi.fn(async () => ({ bootstrap(registrar: CapabilityRegistrar) { registrar.defer(dispose); registrar.onReady(start); registrar.register("ping", Type.Null(), Type.String(), () => "running"); } }));
