@@ -1,12 +1,12 @@
 # Deepfield Base.Errors 设计文档
 
-版本：0.1 · 更新日期：2026-10-13
+版本：0.2 · 更新日期：2026-10-13
 
-状态：设计及首批实施边界已获用户确认，尚未实现。当前错误实现仍在 `packages/contracts/src/errors.ts`；本文件是长期契约，不包含开发派工和逐步执行记录。
+状态：Errors 中立核心已实现并公开，现有 contracts 错误 API 已接入；用户手测待验收，其余 Base 抽取尚未实施。本文件是长期契约，不包含开发派工和逐步执行记录。
 
 ## 1. 职责与取舍
 
-目标入口为 `@deepfield/base/errors`。它统一中立错误结构、错误分类、受控公开转换和成功／失败结果包装，不集中所有业务错误码，不承担重试、日志、UI 文案或 HTTP 映射。
+公开入口为 `@deepfield/base/errors`。它统一中立错误结构、错误分类、受控公开转换和成功／失败结果包装，不集中所有业务错误码，不承担重试、日志、UI 文案或 HTTP 映射。
 
 各模块自行定义错误码、上下文及边界校验器；新增业务码不要求修改 Base。当前应用的固定码表继续保留在 contracts，作为既有 IPC 出口的白名单，而不是所有未来模块的全局注册表。
 
@@ -14,9 +14,9 @@
 
 依赖方向：调用方 → contracts 兼容适配 → Base.Errors。新模块可直接使用 Base.Errors；Base 不导入 contracts、Capability SDK、Chat、业务仓储或 Electron。
 
-## 2. 目标公开契约
+## 2. 公开契约
 
-以下是已批准的目标接口，不表示当前包已经导出这些符号：
+以下接口已由 `packages/base/src/errors/index.ts` 通过公开子入口导出：
 
 ```ts
 type ErrorCategory = "configuration" | "external" | "input" | "business"
@@ -64,6 +64,6 @@ function captureResult<T, E>(work: () => T | Promise<T>, toError: (error: unknow
 
 ## 5. 后续维护
 
-实现完成后更新本页状态和真实导出，使用必要的独立错误码、兼容转换、敏感信息隔离及既有 IPC 检查验证。具体派工、测试运行输出和命令执行清单只留本地，不作为本页的依赖。
+后续变更须同步本页状态和真实导出，使用必要的独立错误码、兼容转换、敏感信息隔离及既有 IPC 检查验证。具体派工、测试运行输出和命令执行清单只留本地，不作为本页的依赖。
 
 其他能力域的归属与迁移边界见 [Base 抽取设计](base.extraction.设计文档.md)，总目录见 [Base 总览](base.overview.设计文档.md)。未来确需扩展传输协议时单独设计，不能通过放宽旧白名单“顺便兼容”。
