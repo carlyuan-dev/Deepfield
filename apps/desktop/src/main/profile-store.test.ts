@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { createLegacyProfileManager } from "@deepfield/base/config/runtime";
 import { cleanupTempDirs, makeCrypto, makeDir } from "./secret-store-test-helpers.js";
 import { SecretStore } from "./secret-store.js";
 import { ProfileStore, ProfileStoreError } from "./profile-store.js";
@@ -11,6 +13,123 @@ const llm = { name: "DeepSeek Flash", provider: "deepseek", protocol: "openai_co
 const search = { name: "Tavily", provider: "tavily", baseUrl: "https://api.tavily.com", options: {}, apiKey: "search-secret" } as const;
 
 describe("ProfileStore", () => {
+  it("keeps permissive Search option keys and revises changes even when their values are undefined", async () => {
+    const { store } = fixture(); await store.initialize();
+    const options = { conditional: undefined, constructor: "provider-owned" };
+    const diagnostic = await store.resolveSearchDraft({ ...search, options });
+    expect(diagnostic.options).toEqual(options);
+    expect(Object.hasOwn(diagnostic.options, "conditional")).toBe(true);
+    const saved = await store.saveSearchProfile({ ...search, options: { first: undefined } });
+    const id = saved.search.profiles[0]!.id; await store.activateSearchProfile(id);
+    const previous = await store.resolveActiveSearch();
+    await store.saveSearchProfile({ ...search, id, options: { second: undefined } });
+    const next = await store.resolveActiveSearch();
+    expect(next.options).toEqual({ second: undefined });
+    expect(Object.hasOwn(next.options, "second")).toBe(true);
+    expect(next.configRevisionId).not.toBe(previous.configRevisionId);
+  });
+
+  it("saves and activates missing-key profiles but reports the established execution error", async () => {
+    const { store } = fixture(); await store.initialize();
+    const { apiKey: _key, ...draft } = search;
+    const view = await store.saveSearchProfile(draft);
+    expect(view.search.profiles[0]?.hasCredential).toBe(false);
+    await store.activateSearchProfile(view.search.profiles[0]!.id);
+    await expect(store.resolveActiveSearch()).rejects.toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING", context: { service: "search" } });
+    await expect(store.saveSearchProfile({ ...draft, apiKey: "" })).rejects.toMatchObject({ code: "CONFIG.INVALID", context: { service: "search" } });
+  });
+
+  it("keeps legacy DeepSeek credentials after deletion so a later initialization can import them", async () => {
+    const { store, secrets, root } = fixture(); secrets.set("deepseek.apiKey", "legacy-key");
+    await store.initialize();
+    const original = (await store.getView()).llm.profiles[0]!;
+    await store.activateLlmProfile(null); await store.deleteLlmProfile(original.id);
+    expect(secrets.get("deepseek.apiKey")).toBe("legacy-key");
+    const reopened = new ProfileStore(join(root, "settings.json"), secrets); await reopened.initialize();
+    const restored = await reopened.resolveActiveLlm();
+    expect(restored.id).not.toBe(original.id); expect(restored.apiKey).toBe("legacy-key");
+  });
+
+  it("fills missing revisions without changing persisted profile and credential identities", async () => {
+    const { store, root, secrets } = fixture(); await store.initialize();
+    const saved = await store.saveSearchProfile(search); await store.activateSearchProfile(saved.search.profiles[0]!.id);
+    const file = join(root, "settings.json");
+    const before = JSON.parse(readFileSync(file, "utf8")); delete before.search.profiles[0].configRevisionId;
+    writeFileSync(file, JSON.stringify(before));
+    const reopened = new ProfileStore(file, secrets); await reopened.initialize();
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.search.profiles[0].configRevisionId).toMatch(/^[a-f0-9-]{36}$/);
+    delete after.search.profiles[0].configRevisionId;
+    expect(after).toEqual(before);
+  });
+
+  it("reports a failed document write after the secret write without exposing the key", async () => {
+    const { root, secrets } = fixture();
+    const blocked = join(root, "blocked");
+    const store = new ProfileStore(join(blocked, "settings.json"), secrets); await store.initialize();
+    writeFileSync(blocked, "not a directory");
+    const error = await store.saveSearchProfile(search).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(ProfileStoreError);
+    expect(error).toMatchObject({ code: "STORAGE.FAILED", context: { service: "search" }, cause: expect.any(Error) });
+    expect(String(error)).not.toContain(search.apiKey); expect(JSON.stringify(error)).not.toContain(search.apiKey);
+  });
+
+  it("preserves secret-before-document ordering and propagates injected partial-write failures", async () => {
+    let document: unknown; let nextId = 0; let fail = false;
+    const calls: string[] = [], secrets = new Map<string, string>();
+    const cause = new Error("document write failed search-secret");
+    const manager = createLegacyProfileManager({ newId: () => `profile-${++nextId}`, equalValues: isDeepStrictEqual,
+      documents: { read: () => document, write: (value) => { calls.push("write"); if (fail) throw cause; document = structuredClone(value); } },
+      secrets: { has: (ref) => secrets.has(ref), get: (ref) => secrets.get(ref),
+        set: (ref, value) => { calls.push("set"); secrets.set(ref, value); },
+        delete: (ref) => { calls.push("delete"); secrets.delete(ref); },
+      },
+    });
+    await manager.initialize();
+    const saved = await manager.saveSearchProfile(search); const id = saved.search.profiles[0]!.id;
+    const before = structuredClone(document);
+    expect(calls).toEqual(["set", "write"]);
+    fail = true; calls.length = 0;
+    const error = await manager.saveSearchProfile({ ...search, id, apiKey: "new-test-key" }).catch((error: unknown) => error);
+    expect(error).toMatchObject({ reason: "storage_failed" });
+    expect(String(error)).not.toContain(search.apiKey); expect(JSON.stringify(error)).not.toContain(search.apiKey);
+    expect(calls).toEqual(["set", "write"]); expect(document).toEqual(before);
+    expect([...secrets.values()]).toEqual(["new-test-key"]);
+    calls.length = 0;
+    await expect(manager.deleteSearchProfile(id)).rejects.toMatchObject({ reason: "storage_failed" });
+    expect(calls).toEqual(["delete", "write"]); expect(document).toEqual(before);
+    expect(secrets.size).toBe(0);
+  });
+
+  it.each(["draft", "view", "snapshot", "diagnostic"])("isolates nested Search options from %s mutation", async (boundary) => {
+    const { store, root } = fixture(); await store.initialize();
+    const options = { nested: { list: ["original"] } };
+    const saved = await store.saveSearchProfile({ ...search, options });
+    const id = saved.search.profiles[0]!.id;
+    await store.activateSearchProfile(id);
+    const original = await store.resolveActiveSearch();
+    const before = readFileSync(join(root, "settings.json"), "utf8");
+    if (boundary === "draft") options.nested.list.push("changed");
+    if (boundary === "view") (saved.search.profiles[0]!.options as typeof options).nested.list.push("changed");
+    if (boundary === "snapshot") (original.options as typeof options).nested.list.push("changed");
+    if (boundary === "diagnostic") {
+      const diagnostic = await store.resolveSearchDraft({ ...search, id, options });
+      (diagnostic.options as typeof options).nested.list.push("changed");
+      expect(options).toEqual({ nested: { list: ["original"] } });
+    }
+    expect((await store.resolveActiveSearch()).options).toEqual({ nested: { list: ["original"] } });
+    expect((await store.resolveActiveSearch()).configRevisionId).toBe(original.configRevisionId);
+    expect(readFileSync(join(root, "settings.json"), "utf8")).toBe(before);
+  });
+
+  it("allows explicit-key diagnostics for an unknown id but refuses saving it", async () => {
+    const { store } = fixture(); await store.initialize();
+    expect(await store.resolveSearchDraft({ ...search, id: "unknown" })).toMatchObject({ id: "unknown", apiKey: search.apiKey });
+    expect(await store.resolveLlmDraft({ ...llm, id: "unknown" })).toMatchObject({ id: "unknown", apiKey: llm.apiKey });
+    await expect(store.saveSearchProfile({ ...search, id: "unknown" })).rejects.toMatchObject({ code: "CONFIG.PROFILE_MISSING" });
+    await expect(store.saveLlmProfile({ ...llm, id: "unknown" })).rejects.toMatchObject({ code: "CONFIG.PROFILE_MISSING" });
+  });
+
   it("persists opaque revisions only on actual config/key changes and keeps draft identity separate", async () => {
     const { root, store, secrets } = fixture(); await store.initialize();
     const view = await store.saveLlmProfile(llm); const id = view.llm.profiles[0]!.id;

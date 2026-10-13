@@ -1,12 +1,18 @@
 import type { TSchema } from "typebox";
 import { ConfigError, type ConfigErrorContext } from "./config-error.js";
-import { checkValues, cloneJson, cloneObject, equalJson, isObject, type ConfigDefinition } from "./definition.js";
+import { checkValues, cloneObject, equalJson, isObject, type ConfigDefinition } from "./definition.js";
 import type { ConfigAddress, ConfigRuntimeOptions } from "./ports.js";
 import type { ConfigDraft, ConfigSnapshot, ConfigView, JsonObject } from "./types.js";
 
 /** Shared record payload, independent of an ordinary document or a profile collection. */
 export type ConfigRecord = { values: JsonObject; credentialRefs: Record<string, string>; revision: string };
 export type ConfigDocument = ConfigRecord & { formatVersion: 1; kind: "config"; schemaVersion: number };
+
+/** Internal adapter policy for legacy schemas whose value domain predates JSON-only records. */
+export type ConfigRecordValuePolicy = {
+  cloneValues(value: unknown): unknown;
+  equalValues(left: unknown, right: unknown): boolean;
+};
 
 function own<T>(record: Record<string, T>, key: string): T | undefined {
   return Object.hasOwn(record, key) ? record[key] : undefined;
@@ -24,6 +30,7 @@ export class ConfigRecordCore {
     readonly address: ConfigAddress,
     private readonly ports: ConfigRuntimeOptions,
     private readonly profileId?: string,
+    private readonly valuePolicy?: ConfigRecordValuePolicy,
   ) {
     this.context = { ...address, schemaVersion: definition.schemaVersion,
       ...(profileId === undefined ? {} : { profileId }) };
@@ -31,13 +38,20 @@ export class ConfigRecordCore {
 
   newId(): string { return portCall("new_id", this.context, this.ports.newId); }
 
+  private copyValues(value: unknown): JsonObject {
+    if (!this.valuePolicy) return cloneObject(value, this.context);
+    if (!isObject(value)) throw new ConfigError("invalid_values", this.context);
+    try { return this.valuePolicy.cloneValues(value) as JsonObject; }
+    catch (cause) { throw new ConfigError("invalid_values", this.context, { cause }); }
+  }
+
   credentialRef(name: string): string {
     // Tuple encoding keeps scope, key, profile and credential boundaries unambiguous.
     return `config:${JSON.stringify([this.address.scope, this.address.key, this.profileId ?? null, name])}`;
   }
 
   values(input: unknown, fillDefaults: boolean): JsonObject {
-    const values = cloneObject(input, this.context);
+    const values = this.copyValues(input);
     const normalized = fillDefaults ? { ...cloneObject(this.definition.defaults), ...values } : values;
     checkValues(this.definition.schema, normalized, this.context);
     return normalized;
@@ -58,7 +72,7 @@ export class ConfigRecordCore {
           throw new ConfigError("invalid_document", this.context);
         }
       }
-      return { values: validateValues ? this.values(input.values, false) : cloneObject(input.values, this.context),
+      return { values: validateValues ? this.values(input.values, false) : this.copyValues(input.values),
         credentialRefs: refs as Record<string, string>, revision: input.revision };
     } catch { throw new ConfigError("invalid_document", this.context); }
   }
@@ -96,7 +110,7 @@ export class ConfigRecordCore {
       const ref = own(record.credentialRefs, name);
       return [name, ref === undefined ? false : portCall("has_secret", this.context, () => this.ports.secrets.has(ref))];
     });
-    return { values: cloneObject(record.values) as V, secretStatus: Object.fromEntries(statuses) };
+    return { values: this.copyValues(record.values) as V, secretStatus: Object.fromEntries(statuses) };
   }
 
   private draft<V>(draft: ConfigDraft<V>): { values: JsonObject; secrets: Record<string, string> } {
@@ -133,7 +147,8 @@ export class ConfigRecordCore {
         secretWrites.push({ ref, value });
       }
     }
-    const changed = !persisted || !equalJson(current.values, normalized.values) || secretWrites.length > 0;
+    const equalValues = this.valuePolicy?.equalValues ?? equalJson;
+    const changed = !persisted || !equalValues(current.values, normalized.values) || secretWrites.length > 0;
     return { record: { values: normalized.values, credentialRefs, revision: changed ? this.newId() : current.revision },
       changed, secretWrites };
   }
@@ -152,7 +167,7 @@ export class ConfigRecordCore {
       return secret === undefined ? [] : [[name, secret]];
     });
     return {
-      values: cloneJson(normalized?.values ?? record.values) as V,
+      values: this.copyValues(normalized?.values ?? record.values) as V,
       secrets: Object.fromEntries(entries),
       identity: { ...this.address, schemaVersion: this.definition.schemaVersion,
         revision: draft === undefined ? record.revision : this.newId(),

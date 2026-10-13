@@ -2,7 +2,7 @@ import type { ConfigDefinition } from "./definition.js";
 import { cloneObject, isObject } from "./definition.js";
 import { ConfigError } from "./config-error.js";
 import type { ConfigAddress, ConfigRuntimeOptions } from "./ports.js";
-import { ConfigRecordCore, portCall, type ConfigRecord } from "./record.js";
+import { ConfigRecordCore, portCall, type ConfigRecord, type ConfigRecordValuePolicy } from "./record.js";
 import type { ConfigDraft, ProfileCollection, ProfileDraft, ProfilesView, ProfileSnapshot } from "./types.js";
 
 type ProfileRecord = ConfigRecord & { id: string; name: string };
@@ -11,18 +11,23 @@ type ProfilesDocument = ProfileState & { formatVersion: 1; kind: "profiles"; sch
 const validId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200;
 const validName = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 120;
 
+/** Used only by a trusted legacy document adapter, never exposed by the scoped service. */
+type ProfileCollectionCompatibility = ConfigRecordValuePolicy & { deleteSecretsBeforeWrite: boolean };
+
 /** Collection metadata surrounds the same record core used by ordinary configuration. */
 export function createProfileCollection<V>(
   definition: ConfigDefinition,
   address: ConfigAddress,
   options: ConfigRuntimeOptions,
   assertActive: () => void,
+  compatibility?: ProfileCollectionCompatibility,
 ): ProfileCollection<V> {
   const context = { ...address, schemaVersion: definition.schemaVersion };
-  const core = (id?: string) => new ConfigRecordCore(definition, address, options, id);
+  const core = (id?: string) => new ConfigRecordCore(definition, address, options, id, compatibility);
   function write(state: ProfileState): void {
     const document: ProfilesDocument = { formatVersion: 1, kind: "profiles", schemaVersion: definition.schemaVersion, ...state };
-    portCall("write_document", context, () => options.documents.write({ ...address }, cloneObject(document, context)));
+    portCall("write_document", context, () => options.documents.write({ ...address },
+      compatibility ? compatibility.cloneValues(document) : cloneObject(document, context)));
   }
   function load(persistMigration = true): { state: ProfileState; migrated: boolean } {
     assertActive();
@@ -102,8 +107,12 @@ export function createProfileCollection<V>(
       const record = find(state, id);
       if (state.activeProfileId === id) throw new ConfigError("active_profile", { ...context, profileId: id });
       state.profiles = state.profiles.filter((entry) => entry.id !== id);
+      const deleteSecrets = () => {
+        for (const ref of Object.values(record.credentialRefs)) portCall("delete_secret", { ...context, profileId: id }, () => options.secrets.delete(ref));
+      };
+      if (compatibility?.deleteSecretsBeforeWrite) deleteSecrets();
       write(state);
-      for (const ref of Object.values(record.credentialRefs)) portCall("delete_secret", { ...context, profileId: id }, () => options.secrets.delete(ref));
+      if (!compatibility?.deleteSecretsBeforeWrite) deleteSecrets();
       return view(state);
     },
     async resolveActive() {
