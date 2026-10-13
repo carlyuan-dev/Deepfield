@@ -7,10 +7,11 @@
 1. [开发指南](development.md)：运行配置、测试选择、报告行为与本地交付。
 2. [Base 总览](base/base.overview.设计文档.md)：当前 Chat / Capability → Base 的单向依赖边界、能力目录和实施状态。
 3. [Base Usage](base/base.usage.设计文档.md)：统一用量账本、统计口径、采集与看板。当前 Base 包只包含 Usage，不意味着其他通用模块已完成迁移。
-4. [Capability 总览](capabilities/capability.overview.设计文档.md)：已完成的包化边界、启停规则与后续范围。
-5. [Capability 与 Chat 交互协议](capabilities/capability.protocol.设计文档.md)：Chat 工具、确认卡、任务恢复与按需分析已实现；当前版本于 2026-09-24 经用户确认纳入本地稳定检查点，历史[手测清单](manual-tests/2026-09-23-chat-capability.md)保留供回归参考。
-6. [Capability 开发指南](capabilities/capability.开发指南.md)：当前 SDK、独立最小包、构建安装与更新规则；配套非调研记录查询示例。
-7. [Chat 人机交互设计](chat/chat.interaction.设计文档.md)：已实现的 Chat 专属询问/操作确认、共享真实表单、任务范围授权与等待/恢复协议，不属于 Base。
+4. [Base 抽取设计](base/base.extraction.设计文档.md)：待评审的八域边界、当前归属 → 目标归属及分批迁移顺序；尚未执行代码迁移。
+5. [Capability 总览](capabilities/capability.overview.设计文档.md)：已完成的包化边界、启停规则与后续范围。
+6. [Capability 与 Chat 交互协议](capabilities/capability.protocol.设计文档.md)：Chat 工具、确认卡、任务恢复与按需分析已实现；当前版本于 2026-09-24 经用户确认纳入本地稳定检查点，历史[手测清单](manual-tests/2026-09-23-chat-capability.md)保留供回归参考。
+7. [Capability 开发指南](capabilities/capability.开发指南.md)：当前 SDK、独立最小包、构建安装与更新规则；配套非调研记录查询示例。
+8. [Chat 人机交互设计](chat/chat.interaction.设计文档.md)：已实现的 Chat 专属询问/操作确认、共享真实表单、任务范围授权与等待/恢复协议，不属于 Base。
 
 ## 源码导航
 
@@ -31,7 +32,7 @@
 
 已确认的 Chat / Capability 方向见 [Agent、Chat 与 Capability 边界设计](superpowers/specs/2026-09-15-agent-chat-capability-boundaries-design.md)，阅读时先看其中 **2026-09-18 更新**：通用 Agent 优先复用 Pi 原生机制；Chat 拥有会话与工具授权，Capability 拥有业务流程、输出契约与产物。旧文中的阶段收口设计不再作为通用 Chat 循环契约，当前总体职责边界以 Base 总览为准。
 
-Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，且不导入 `chat/`、desktop shared 具体模型、Search 计量工厂或 Skill 目录实现；Chat 提示词、会话恢复、历史 provenance 和 checkpoint 由 `pi-chat-agent` 在每次 run 经 `pi-chat-context` 适配。`pi-chat-agent` 继续实现旧 `ChatAgent` 工厂 API，并在兼容装配入口保留默认模型运行时、密钥读取与 Search 计量实现；Capability 调用点也仍经该兼容工厂进入执行器。执行器通过上述窄入口依赖现有配置与工具协议；这些中性契约仍属于现有 packages，尚未下沉 Base，也没有增加新的架构层级或改变 Base 依赖规则。本边界不是 Base.Agent，也不表示 Worker 传输契约已经移除。
+Worker 的 `pi-agent-executor` 输入输出已独立于 Chat Worker 形状，不导入 `chat/` 或 Skill 目录实现；Chat 提示词、会话恢复、历史 provenance 和 checkpoint 由 `pi-chat-agent` 在每次 run 经 `pi-chat-context` 适配。Capability 由 `apps/desktop/src/worker/capabilities/agent-runtime.ts` 直接装配同一执行器，不经 Chat 上下文工厂。执行器仍有联网／调研场景策略，并依赖 SDK 执行契约及 desktop shared 的请求观察类型；这些内容尚未完成 Base 中立化。现状与后续归属以 [Base 抽取设计](base/base.extraction.设计文档.md)为准，本边界不是已实现的 Base.Agent，也不表示 Worker 传输契约已经移除。
 
 ## 历史决策与过程参考
 
