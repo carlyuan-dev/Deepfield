@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import { BaseError, captureResult, serializeError, type PublicErrorCodec, type Result } from "@deepfield/base/errors";
 
 export const APP_ERROR_CATEGORIES = {
   "capability_unavailable": "resource",
@@ -20,27 +21,28 @@ export const PublicAppErrorSchema = Type.Unsafe<PublicAppError>(Type.Union(Objec
 }, { additionalProperties: false }))));
 
 /** Internal exception only. Never send Error instances or causes across IPC. */
-export class AppError extends Error {
-  readonly category: PublicAppError["category"];
-  constructor(readonly code: AppErrorCode, readonly context?: AppErrorContext, options?: ErrorOptions) {
-    super(code, options);
+export class AppError extends BaseError<AppErrorCode, AppErrorContext> {
+  declare readonly category: PublicAppError["category"];
+  constructor(code: AppErrorCode, context?: AppErrorContext, options?: ErrorOptions) {
+    super(code, APP_ERROR_CATEGORIES[code], context, options);
     this.name = "AppError";
-    this.category = APP_ERROR_CATEGORIES[code];
   }
 }
 
+const publicAppErrorCodec: PublicErrorCodec<PublicAppError> = {
+  parse(candidate) {
+    if (!Value.Check(PublicAppErrorSchema, candidate)) return undefined;
+    return { code: candidate.code, category: candidate.category, ...(candidate.context === undefined ? {} : { context: { ...candidate.context } }) } as PublicAppError;
+  },
+  unknown: () => ({ code: "INTERNAL.UNKNOWN", category: "internal" }),
+};
+
 /** Packages bundle their own Error constructors; validate only the public fields. */
 export function toPublicError(value: unknown): PublicAppError {
-  const exception = value instanceof Error ? value as Error & { code?: unknown; category?: unknown; context?: unknown } : undefined;
-  const candidate = exception
-    ? { code: exception.code, category: exception.category, ...(exception.context === undefined ? {} : { context: exception.context }) }
-    : value;
-  if (!Value.Check(PublicAppErrorSchema, candidate)) return { code: "INTERNAL.UNKNOWN", category: "internal" };
-  return { code: candidate.code, category: candidate.category, ...(candidate.context === undefined ? {} : { context: { ...candidate.context } }) } as PublicAppError;
+  return serializeError(value, publicAppErrorCodec);
 }
 
-export type AppResult<T> = { ok: true; value: T } | { ok: false; error: PublicAppError };
-export async function appResult<T>(work: () => T | Promise<T>): Promise<AppResult<T>> {
-  try { return { ok: true, value: await work() }; }
-  catch (error) { return { ok: false, error: toPublicError(error) }; }
+export type AppResult<T> = Result<T, PublicAppError>;
+export function appResult<T>(work: () => T | Promise<T>): Promise<AppResult<T>> {
+  return captureResult(work, toPublicError);
 }
