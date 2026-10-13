@@ -10,6 +10,7 @@ import { ContextBuilder } from "./context-builder.js";
 import { openTestDb, type TestDb } from "../testing/application-test-helpers.js";
 import {
   chatEvent,
+  deferred,
   FakeWorker,
   makeChatService as makeService,
   makeConversation,
@@ -89,10 +90,28 @@ describe("chat service", () => {
 
   it("snapshots LLM once and Search only for web-enabled messages", async () => {
     const db = openTestDb(); dbs.push(db); const worker = new FakeWorker(); const resolver = makeSecrets("sk-configured");
-    const service = new ChatService(db.repos, new ContextBuilder(db.repos), resolver, worker); const conversation = makeConversation(db);
+    let activeLlm = await resolver.resolveActiveLlm(); let activeSearch = await resolver.resolveActiveSearch();
+    resolver.getCalls = 0; resolver.searchCalls = 0;
+    resolver.resolveActiveLlm = async () => { resolver.getCalls++; return activeLlm; };
+    resolver.resolveActiveSearch = async () => { resolver.searchCalls++; return activeSearch; };
+    const release = deferred(); const finished = deferred(); let completions = 0;
+    const send = worker.send.bind(worker);
+    worker.send = (request) => {
+      send(request);
+      return (async function* () { await release.promise; yield chatEvent(request.requestId, "completed", "ok"); })();
+    };
+    const service = new ChatService(db.repos, new ContextBuilder(db.repos), resolver, worker, { onConsumptionFinished: () => { completions++; finished.resolve(); } }); const conversation = makeConversation(db);
     await service.send(conversation.id, "联网问题", "req-web", () => {}, { webSearch: true });
+    activeLlm = { ...activeLlm, id: "llm-2", modelId: "model-b" };
+    activeSearch = { ...activeSearch, id: "search-2" };
     expect(resolver.getCalls).toBe(1); expect(resolver.searchCalls).toBe(1);
     expect(worker.requests[0]).toMatchObject({ search: { id: "search-1" }, llm: { id: "llm-1" } });
+    release.resolve(); await finished.promise;
+    await service.send(conversation.id, "普通问题", "req-offline", () => {}, { webSearch: false });
+    expect(worker.requests[1]).toMatchObject({ llm: activeLlm });
+    expect(worker.requests[1]).not.toHaveProperty("search");
+    expect(resolver.getCalls).toBe(2); expect(resolver.searchCalls).toBe(1);
+    await vi.waitFor(() => expect(completions).toBe(2));
   });
   it("rejects blank content before any secret, db or worker access", async () => {
     const db = openTestDb();

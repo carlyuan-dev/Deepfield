@@ -19,11 +19,11 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   expect(predicate()).toBe(true);
 }
 
-function setup(structureText = JSON.stringify(valid)) {
+function setup(structureText = JSON.stringify(valid), rawCompletionGate?: Promise<void>) {
   const db = openTestDb(); dbs.push(db); const item = db.repos.capabilityItems.create({ industry: "智能眼镜" }); const company = db.repos.companies.upsert({ name: "小米" }); db.repos.itemCompanies.add(item.id, company.id);
   const requests: CompanyResearchWorkerRequest[] = []; const persistedBeforeStructure: boolean[] = [];
-  const worker: CompanyResearchWorkerPort = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") { const persisted = db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId as ResearchRunId); persistedBeforeStructure.push(persisted?.schemaVersion === "company-research-report-v1" && persisted.rawReportText === "原始报告"); } return (async function* () { yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
-  const profiles = { llmCalls: 0, searchCalls: 0, resolveActiveLlm: async () => { profiles.llmCalls++; return llm; }, resolveActiveSearch: async () => { profiles.searchCalls++; return search; } };
+  const worker: CompanyResearchWorkerPort = { sendResearch(request: CompanyResearchWorkerRequest) { requests.push(structuredClone(request)); if (request.stage === "structure") { const persisted = db.repos.companyResearchRuns.getByIdForTarget(item.id, company.id, request.runId as ResearchRunId); persistedBeforeStructure.push(persisted?.schemaVersion === "company-research-report-v1" && persisted.rawReportText === "原始报告"); } return (async function* () { if (request.stage === "raw" && rawCompletionGate) await rawCompletionGate; yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : structureText } as const; })(); }, cancelResearch: vi.fn() };
+  const profiles = { activeLlm: llm, activeSearch: search, llmCalls: 0, searchCalls: 0, resolveActiveLlm: async () => { profiles.llmCalls++; return profiles.activeLlm; }, resolveActiveSearch: async () => { profiles.searchCalls++; return profiles.activeSearch; } };
   // These isolated service fixtures have no successful source-bearing tools.
   // Simulate a real complete zero-material request receipt, never missing evidence.
   let send = worker.sendResearch;
@@ -248,11 +248,14 @@ describe("CompanyResearchService profile snapshots", () => {
     const f = setup();
     const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
+    expect(f.requests[0]).toMatchObject({ llm, search });
+    f.profiles.activeLlm = { ...llm, id: "l2", modelId: "model-b" };
+    f.profiles.activeSearch = { ...search, id: "s2", options: { searchEngine: "search_pro" } };
     f.requests.length = 0;
     const retried = await f.service.retryFailed(f.item.id, f.company.id, run.id, { direction: "market_and_commercialization", asOfDate: "2026-09-10", focusScope: "新范围" });
     expect(retried).toMatchObject({ id: run.id, status: "researching", searchStatus: "none", direction: "market_and_commercialization", focusScope: "新范围", asOfDate: "2026-09-10" });
     await waitUntil(() => !f.service.isRunning());
-    expect(f.requests[0]).toMatchObject({ stage: "raw", context: { focusScope: "新范围" } });
+    expect(f.requests[0]).toMatchObject({ stage: "raw", llm: f.profiles.activeLlm, search: f.profiles.activeSearch, context: { focusScope: "新范围" } });
   });
 
   it("reruns raw research for unchanged structure failure without search success", async () => {
@@ -265,7 +268,14 @@ describe("CompanyResearchService profile snapshots", () => {
   });
 
   it("uses one LLM/Search snapshot across raw and structure after persisting raw Markdown", async () => {
-    const f = setup(); const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    let release!: () => void;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const f = setup(undefined, paused);
+    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await waitUntil(() => f.requests.length === 1);
+    f.profiles.activeLlm = { ...llm, id: "l2", modelId: "model-b" };
+    f.profiles.activeSearch = { ...search, id: "s2" };
+    release();
     for (let i = 0; i < 10 && f.requests.length < 2; i++) await flush();
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 1 });
     expect(f.requests[0]).toMatchObject({ stage: "raw", llm, search, toolAccess: RAW_RESEARCH_POLICY });
@@ -277,10 +287,14 @@ describe("CompanyResearchService profile snapshots", () => {
     const f = setup("invalid"); const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
     for (let i = 0; i < 10 && f.service.getRun(f.item.id, f.company.id, run.id)?.status !== "structure_failed"; i++) await flush();
     f.db.db.prepare("UPDATE company_research_runs SET search_status = 'unknown' WHERE id = ?").run(run.id);
+    expect(f.requests[0]).toMatchObject({ llm, search });
+    f.profiles.activeLlm = { ...llm, id: "l2", modelId: "model-b" };
+    f.profiles.activeSearch = { ...search, id: "s2" };
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await f.service.retryStructuring(f.item.id, f.company.id, run.id); await flush();
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 0 });
-    expect(f.requests.at(-1)).toMatchObject({ stage: "structure", toolAccess: STRUCTURE_RESEARCH_POLICY });
+    expect(f.requests.at(-1)).toMatchObject({ stage: "structure", llm: f.profiles.activeLlm, toolAccess: STRUCTURE_RESEARCH_POLICY });
+    expect(f.requests.at(-1)).not.toHaveProperty("search");
   });
 
   it("retryStructuring always reuses persisted raw even when search was never successful", async () => {

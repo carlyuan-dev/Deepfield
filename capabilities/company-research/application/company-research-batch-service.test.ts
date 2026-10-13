@@ -257,6 +257,11 @@ it("starts research while profile enrichment is unresolved and resumes later pro
 });
 it("waits for terminal worker iterator release before starting the next company", async () => {
   const f = setup(); let release!: () => void;
+  const llmA = await f.profiles.resolveActiveLlm(); const searchA = await f.profiles.resolveActiveSearch();
+  const llmB = { ...llmA, contextWindow: 64000 }; const searchB = { ...searchA, options: { searchEngine: "search_pro" } };
+  let activeLlm = llmA; let activeSearch = searchA;
+  f.profiles.resolveActiveLlm = async () => activeLlm;
+  f.profiles.resolveActiveSearch = async () => activeSearch;
   f.worker.sendResearch = request => (async function* () {
     f.requests.push(request);
     try { yield* zeroEvidenceEvents(request); yield { type: "completed", requestId: request.requestId, runId: request.runId, stage: request.stage, text: request.stage === "raw" ? "原始报告" : structured } as const; }
@@ -265,8 +270,16 @@ it("waits for terminal worker iterator release before starting the next company"
   f.batch.start(f.item.id, f.entries); await flush();
   expect(f.research.listRuns(f.item.id, f.companies[0]!.id)[0]?.status).toBe("completed");
   expect(f.requests.map(r => r.stage)).toEqual(["raw", "structure"]);
+  expect(f.requests[0]).toMatchObject({ llm: activeLlm, search: activeSearch });
+  expect(f.requests[1]).toMatchObject({ llm: activeLlm });
+  activeLlm = llmB;
+  activeSearch = searchB;
   await expect(f.research.start(f.item.id, f.companies[1]!.id, input)).rejects.toMatchObject({ code: "BUSINESS.CONFLICT" });
   release(); await flush(); expect(f.requests.map(r => r.stage)).toEqual(["raw", "structure", "raw", "structure"]);
+  expect(f.requests[0]).toMatchObject({ llm: llmA, search: searchA });
+  expect(f.requests[0]?.search).toEqual(searchA);
+  expect(f.requests[2]).toMatchObject({ llm: activeLlm, search: activeSearch });
+  expect(f.requests[3]).toMatchObject({ llm: activeLlm });
   expect(f.snapshots.at(-1)).toMatchObject({ status: "completed", succeeded: 2 });
 });
 it("persists owned run identity before first dispatch and cancels before dispatch without creating later reports", async () => {
