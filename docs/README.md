@@ -10,7 +10,8 @@
 | [按风险选测指南](testing.md) | 可复用的必要检查路径，不记录某一批“测试已通过” |
 | [Base 总览](base/base.overview.设计文档.md) | Chat／Capability → Base 的单向依赖、能力目录与真实状态 |
 | [Base 抽取设计](base/base.extraction.设计文档.md) | 已确认的八域边界、当前归属 → 目标归属及迁移取舍 |
-| [Base.Errors](base/base.errors.设计文档.md) | 已实现并接入旧接口的中立错误契约与兼容边界；用户手测待验收 |
+| [Base.Errors](base/base.errors.设计文档.md) | 已实现并接入旧接口的中立错误契约与兼容边界；已通过用户手测 |
+| [Base.Config](base/base.config.设计文档.md) | 已实现的通用配置声明与作用域接入、可选 Profile 及旧接口兼容；待用户手测验收 |
 | [Base.Usage](base/base.usage.设计文档.md) | 已实现的用量账本、统计口径、采集与看板 |
 | [Chat 运行机制](chat/chat.runtime.设计文档.md) | Pi 循环、工具许可、联网额度、历史与配置调用边界 |
 | [Chat 人机交互](chat/chat.interaction.设计文档.md) | 询问／确认、真实表单共同编辑、任务范围授权与恢复 |
@@ -27,7 +28,7 @@
 - `apps/desktop/src/worker/agent/`：共享 Pi 执行器及窄执行契约；`worker/chat/`：Chat 提示词、历史、溯源与 checkpoint 适配；`worker/tools/`：工具运行和活动投影。
 - `apps/desktop/src/worker/capabilities/agent-runtime.ts`：Capability 直接装配共享执行器，不经过 Chat 上下文工厂。
 - `capabilities/company-research/`：独立公司调研包，包含 application、runtime、ui、export 与 contracts。
-- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage 与 Errors，Errors 已接入 contracts 旧接口、用户手测待验收；其余抽取未做。
+- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors 与 Config。Errors 已通过用户手测；Config 已实现，待用户手测验收，后续抽取未做。
 - `packages/contracts/`、`packages/tool-platform/`、`packages/retrieval/`、`packages/persistence/`：当前配置／错误契约、工具执行、搜索与存储；迁移边界以 Base 抽取设计为准。
 
 共享执行器已有独立契约和注入边界，但仍包含联网／调研场景策略及部分 SDK、desktop shared 依赖，不能称为已中立化的 Base.Agent。

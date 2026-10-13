@@ -37,6 +37,47 @@ v2 清单使用 `protocolVersion: 2`、`hostApiVersion: 2`。`entries.main` 必�
 
 可选模块按实际需要添加：有页面才声明 `ui`/`views` 并注册页面解析器；有后台任务才声明 `worker` 或在 main 中接入自己的任务执行器并注册 TaskProvider；有可读长结果才注册 ArtifactProvider。小结果直接作为 `completed.data` 返回，不要求为它创建产物。LLM、Search、Usage 只能通过宿主明确提供的服务接口使用；不能读取整个配置或密钥。v1 旧包仍可服务原 UI，但不会自动获得 v2 Chat 动作入口。
 
+### 包私有配置
+
+在清单 `requirements` 中加入 `"config.v1"`，主进程 `bootstrap` 即可取得宿主限定到本包 ID 的配置服务。当前 Worker 不提供此服务；包不能自行传 scope、读取目录或创建全局管理器。全局模型／搜索仍通过原 `model.configuration` 等显式服务使用，私有配置不会覆盖它们。Config 核心、作用域接入及旧 LLM／Search 兼容适配已实现，待用户手测验收。
+
+```ts
+import { Type } from "typebox";
+import { defineConfig, type ScopedConfigService } from "@deepfield/base/config";
+import type { CapabilityHostServices, CapabilityRegistrar } from "@deepfield/capability-sdk";
+
+const documentService = defineConfig({
+  key: "document-service", schemaVersion: 1,
+  schema: Type.Object({ endpoint: Type.String(), timeoutMs: Type.Integer({ minimum: 1 }) },
+    { additionalProperties: false }),
+  defaults: { endpoint: "", timeoutMs: 30_000 },
+  secrets: { apiToken: { requiredForExecution: true } },
+});
+const outputPreferences = defineConfig({
+  key: "output-preferences", schemaVersion: 1,
+  schema: Type.Object({ language: Type.String() }, { additionalProperties: false }),
+  defaults: { language: "zh-CN" },
+});
+
+export async function bootstrap(_registrar: CapabilityRegistrar, services: CapabilityHostServices) {
+  const config = services.get<ScopedConfigService>("config.v1");
+  const document = config.bind(documentService);
+  const preferences = config.bind(outputPreferences);
+  // 将句柄注入包自己的配置／业务服务；按需读取，不在启动时解析执行凭据。
+  const view = await document.getView();
+  const preferencesView = await preferences.getView();
+  // view.values 与 view.secretStatus 可经包自己的输出 Schema 返回页面。
+  // 保存：document.save({ values: { endpoint, timeoutMs: 30_000 }, secrets: { apiToken } })
+  // 可信后端执行：document.resolveSnapshot()；未保存诊断：document.resolveDraft(draft)
+}
+```
+
+定义归包维护，普通值顶层是 JSON 对象；defaults 必须通过 Schema。缺字段只补显式顶层默认值，嵌套对象整体替换。循环引用、Date、函数、BigInt、非有限数字、显式 undefined 等不能无损 JSON 往返的值会被拒绝；Schema 元数据也遵守该限制，标准 TypeBox 标记由定义处理。token／密码必须列在 `secrets`，不能放进普通 values 或明文 defaults。省略 secret 表示保留，非空字符串表示替换；保存可缺凭据，执行解析检查 `requiredForExecution`。View 只含普通值和凭据存在状态；snapshot 含明文凭据，仅在可信后端消费，不能整份返回页面、日志或 Usage。
+
+持久结构变化提高 `schemaVersion`，以 `migrations: { 1: values => /* 转为版本 2 */ values }` 声明从旧版本到下一版本的纯普通值迁移；函数必须返回满足目标 Schema 的 JSON 对象。缺迁移、高版本或校验失败保留原记录并报错，不支持自动改名凭据。首次操作按需读取／迁移，默认值读取不落盘；未启用包不读取私有配置。宿主在激活失败或实际卸载时清理作用域，旧句柄再调用会报失效；勾选变化仅影响下次启动，禁用／移除保留数据。
+
+只有需要多套配置及当前选择时才用 `config.bindProfiles(definition)`，其集合提供 `getView/save/activate/delete/resolveActive/resolveDraft`；保存不自动激活，active 实例不能删除。普通 bind 与 bindProfiles 不能共享同一 key。完整接口、迁移和兼容边界以 [Base.Config](../base/base.config.设计文档.md) 为准。
+
 ### 可选真实表单与 Chat 共同编辑
 
 若公开动作已有真实编辑页，在 `bootstrap` 中与 `registerAction` 一起调用可选的 `registrar.registerFormProvider?.([{ id: "note-edit", actionIds: ["notes.save"], description: "编辑便签" }], provider)`。`actionIds` 必须是本包实际注册的公开动作；一个表单可覆盖多个阶段动作。提供方实现 `prepare/read/update/transition/validate/submission/release`，返回含 `DraftRef`、真实 `ViewRef`、当前值、输入约束、步骤、可转换项与可提交状态的快照。业务数据只存在包自己的草稿里，`submission` 从已校验草稿产生现有动作输入，实际执行仍经公共动作网关。多阶段流程可实现 `afterAction`，依据真实成功回执更新草稿并要求下一动作重新确认；普通步骤切换不执行动作。

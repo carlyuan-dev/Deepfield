@@ -2,7 +2,7 @@
 
 版本：0.7 · 更新日期：2026-10-13
 
-状态：Usage 已用于当前产品；Errors 中立核心与 contracts 兼容接线已实现，用户手测待验收。八域抽取设计及 Database 通用 CRUD 边界已确认，其余抽取尚未实施。
+状态：Usage 已用于当前产品；Errors 中立核心与 contracts 兼容接线已实现，已通过用户手测。Config 通用核心、Capability 主进程接入及旧兼容适配已实现，待用户手测验收。其余抽取尚未实施。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
@@ -38,22 +38,22 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 
 ## 3. 能力域目录
 
-| 能力域 | 公开入口（除 Usage、Errors 外均为目标入口） | 职责 | 当前状态 |
+| 能力域 | 公开入口（除 Usage、Errors、Config 外均为目标入口） | 职责 | 当前状态 |
 | --- | --- | --- | --- |
-| Config | `@deepfield/base/config` | 配置读取与校验、Profile 管理、当前选择、调用快照 | 待从现有配置实现抽取 |
+| Config | `@deepfield/base/config`、`@deepfield/base/config/runtime` | 通用配置声明／存取／校验、可选 Profile 管理、调用快照 | 已实现，待用户手测验收；见[设计](base.config.设计文档.md) |
 | Model | `@deepfield/base/model` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 待从模型网关抽取 |
 | Search | `@deepfield/base/search` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 待从 retrieval 与计量适配抽取 |
 | Tools | `@deepfield/base/tools` | 工具注册、参数校验、执行与授权检查、预算及审计机制 | 待从 tool-platform 等抽取 |
 | Agent | `@deepfield/base/agent` | 基于 Pi 的有界模型—工具循环、取消、事件与最终输出 | 待从共享执行器分离通用机制 |
 | Database | `@deepfield/base/database` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 待从 persistence 抽取，不含业务仓储 |
 | Usage | `@deepfield/base/usage` | 用量记录、幂等持久化契约与汇总查询 | 已实现；采集与 SQLite 适配仍分布在应用及 persistence |
-| Errors | `@deepfield/base/errors` | 中立错误结构、公共分类及安全传输约定 | 核心及 contracts 兼容接线已实现；用户手测待验收 |
+| Errors | `@deepfield/base/errors` | 中立错误结构、公共分类及安全传输约定 | 核心及 contracts 兼容接线已实现；已通过用户手测 |
 
 Config 管配置，不负责执行 Model／Search 调用；Search 提供能力，不负责决定何时搜索；Tools 执行调用方给定的授权，不授予授权；Agent 提供执行机制，不接管 Chat 的记忆与 Capability 的业务流程。
 
 Database 封装“怎样读写数据”，可以提供参数化查询、写入和轻量单表 CRUD；表结构、领域映射及业务条件由使用方负责，不将公司、报告等业务操作下沉。
 
-`packages/base` 当前公开 Usage 与 Errors，其余目标入口尚不可用。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
+`packages/base` 当前公开 Usage、Errors 与 Config，其余目标入口尚不可用。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config 的公开声明入口可供 UI 使用，运行入口只在可信端装配；主进程 Capability 通过 `config.v1` 取得作用域句柄。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
 
 Usage 的字段、恢复机制和看板细节见 [Base.Usage 设计文档](base.usage.设计文档.md)。底层保留 Profile ID 和调用时配置身份快照，不保存密钥；看板按 LLM 的 Provider → 模型、Search 的 Provider 汇总。模型与搜索在实际请求边界统一计量，上层不手工累加。当前主进程与 Worker 各绑定记录器的接线在抽取时保持行为兼容，不引入配置或业务全局单例。
 
@@ -65,7 +65,7 @@ Usage 的字段、恢复机制和看板细节见 [Base.Usage 设计文档](base.
 4. 抽取应保留业务语义；公司调研必须实际使用新的基础能力，不能只新增目录而保留另一套旧实现。
 5. 未实现能力明确注明状态，不将设计目标写成已具备功能。
 
-首批 [Base.Errors](base.errors.设计文档.md) 已接入现有调用链，用户手测验收后再推进后续批次；其余抽取未做。逐步实施计划留本地，正式设计维护接口和长期边界。
+首批 [Base.Errors](base.errors.设计文档.md) 已接入现有调用链并通过用户手测验收；第二批 Config 已实现，待用户手测验收，后续抽取未做。逐步实施计划留本地，正式设计维护接口和长期边界。
 
 ## 5. 参考与取舍
 

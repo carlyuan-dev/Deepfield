@@ -2,7 +2,7 @@
 
 版本：0.4 · 日期：2026-10-13
 
-状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，用户手测待验收；其余抽取未做。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
+状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，已通过用户手测；第二批 Config 通用核心、Capability 主进程接入及旧兼容适配已实现，待用户手测验收；后续抽取未做。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
 
 当前 Errors 实现在 `packages/base/src/errors/`，旧接口在 `packages/contracts/src/errors.ts` 保留薄兼容适配；其他模块的当前归属见下表。
 
@@ -25,14 +25,14 @@
 
 | 当前归属 | 目标归属 | 留在原职责方的内容 |
 | --- | --- | --- |
-| `apps/desktop/src/main/profile-store.ts`；`packages/contracts/src/model-config.ts` | Config：Profile、选择、草稿／视图／快照及中立配置定义 | Electron 密钥加密、Settings UI、IPC 和诊断编排留桌面应用 |
+| `packages/base/src/config/` 实际核心；`apps/desktop/src/main/profile-store.ts` 与 `packages/contracts/src/model-config.ts` 为旧入口薄适配 | Config 已抽取：通用配置、可选 Profile、选择、草稿／视图／快照及中立定义 | Electron 密钥加密、Settings UI、IPC 和诊断编排留桌面应用 |
 | `apps/desktop/src/shared/model-gateway.ts`、`model-request-observation.ts` | Model：调用与请求观察；中立观察契约随之下沉 | 公司证据如何接收、冻结、使用请求记录留 Capability |
 | `packages/retrieval` 的 Provider／读取解析实现；`shared/usage-search.ts` | Search：服务能力与计量接入 | 联网许可、检索任务策略不进入 Search；web 工具定义归工具适配 |
 | `packages/tool-platform`；Worker 工具运行时中的通用部分 | Tools：定义、注册、执行、准入与审计端口 | Chat 会话工具实现、HITL 授权、业务工具及应用装配留上层 |
 | `apps/desktop/src/worker/agent` 的共享执行器；SDK 中中立 execution 契约 | Agent：Pi 循环与运行控制 | Chat 上下文和调研专属收口策略留各自适配器 |
 | `packages/persistence/src/database.ts`、`transactions.ts`、迁移执行机制及仓储重复的参数化执行 | Database：连接、通用读写／CRUD、事务和迁移执行 | Chat／公司／报告表与仓储归各自模块；旧迁移保留兼容 |
 | `packages/base/src/usage`；`shared/usage-collection.ts`；`persistence/usage-repository.ts` | Usage 核心保留；通用采集和 SQLite 适配逐步归位 | Settings 展示、主进程／Worker 传输与初始化留应用 |
-| `packages/base/src/errors/`；`packages/contracts/src/errors.ts` 兼容适配 | Errors 核心及旧公共出口接线已实现；用户手测待验收 | 业务错误码、恢复动作、用户文案与边界白名单归各模块 |
+| `packages/base/src/errors/`；`packages/contracts/src/errors.ts` 兼容适配 | Errors 核心及旧公共出口接线已实现；已通过用户手测 | 业务错误码、恢复动作、用户文案与边界白名单归各模块 |
 
 当前必须承认的边界缺口：
 
@@ -47,7 +47,7 @@
 
 Config 统一管理“使用哪个配置、字段是否合法、如何保存、怎样生成一次调用的快照”。首批保留 LLM／Search 两类配置；相关 Schema、Profile 契约与默认值放在 Config 的独立子域，不与服务执行代码绑定。
 
-新增配置沿用公共存取与校验机制，提供自己的声明式定义；不要求所有配置都有 Profile，也不让新增配置把业务流程带入 Config。先支持实际需要的两类，不预建复杂配置注册平台、YAML 继承系统或自动环境变量扫描。
+新增配置沿用公共存取与校验机制，提供自己的声明式定义；不要求所有配置都有 Profile，也不让新增配置把业务流程带入 Config。第二批[细化设计](base.config.设计文档.md)中的 `defineConfig`、`bind`／`bindProfiles` 与主进程 `config.v1` 已实现，支持包内新增多组配置而不改 Base。LLM／Search 已经 legacy codec 实际组合通用 Profile 集合与记录核心，保持旧 JSON v1 和接口形状；旧 `model.configuration` 服务保持不变。不预建复杂配置注册平台、YAML 继承系统或自动环境变量扫描。
 
 - Model 消费 LLM 快照，处理 OpenAI／Anthropic 协议、普通及流式请求、错误和请求观察。
 - Search 消费 Search 快照，处理 Provider 请求、结果统一、网页读取和解析；不是完整 RAG，也不负责多轮搜索决策。
@@ -134,7 +134,7 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 | 批次 | 本批闭环 | 最小验证重点 |
 | --- | --- | --- |
 | 1. Errors | 中立错误结构及安全序列化下沉，旧公共错误出口保持兼容 | 错误映射／脱敏／未知对象处理、IPC 原有形状、依赖边界 |
-| 2. Config | Profile 逻辑与配置定义下沉，Settings 与任务解析切换 | 保存／激活／切换、未保存诊断、密钥保留、快照隔离；沿用配置测试 |
+| 2. Config | 通用配置及可选 Profile 管理下沉，旧入口兼容切换，Capability 作用域接入 | 多组配置／版本／作用域隔离、保存／激活／切换、未保存诊断、密钥保留、快照隔离；沿用配置测试 |
 | 3. Model | 模型网关、观察契约、通用采集归位，Chat 和 Capability 真正使用 | 普通／流式调用与取消、每次实际请求只计一次、请求观察不丢失 |
 | 4. Search | Provider／读取解析与计量归位，保留工具入口 | 选定 Provider 的请求契约、失败／超时、URL 安全检查、Search 不依赖 Tools |
 | 5. Tools | 通用注册与执行归位，应用工具和授权留上层 | 工具准入、额度／重试／取消、审计；网络额度耗尽不撤下其他类别工具 |
@@ -144,7 +144,7 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 批次 8 涉及多种数据所有者，实施时可再拆成“公司仓储迁移”“其余仓储归位”两个小闭环，不要求一次提交全部完成。模块私有新增迁移规则应在本批前评审，不能先改旧库再补协议。
 
-首个实际开发批次只做 Errors，不同时改 Profile、Loop、数据库或提示词。后续中立契约随对应模块迁移，不在第一批一口气搬空 contracts／SDK。
+首批 Errors 已验收；当前 Config 批次不同时改 Loop、数据库或提示词。后续中立契约随对应模块迁移，不一口气搬空 contracts／SDK。
 
 ## 6. 验收不变量与风险控制
 
@@ -157,4 +157,4 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 优先复用测试：配置存储／诊断、tool-platform 的准入与预算、`pi-agent-executor` 的历史隔离、persistence 的事务与旧库读取、公司证据集成、Capability runtime／loader 及 production boundary。仅对本批新增风险补必要回归保护；构建通过不替代关键行为验证。
 
-首批 Errors 代码已接入现有调用链，长期契约见 [Base.Errors 设计](base.errors.设计文档.md)；用户手测待验收，其余批次尚未实施。逐步计划和派工记录只留本地；本文件只维护模块边界、迁移顺序和验收不变量。纯文档整理不运行产品构建、不调用付费服务或生成测试包。
+首批 Errors 代码已接入现有调用链，长期契约见 [Base.Errors 设计](base.errors.设计文档.md)；已通过用户手测。Config 已实现，待用户手测验收，后续批次尚未实施。逐步计划和派工记录只留本地；本文件只维护模块边界、迁移顺序和验收不变量。纯文档整理不运行产品构建、不调用付费服务或生成测试包。

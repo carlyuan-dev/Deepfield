@@ -6,6 +6,10 @@ Chat、Capability 壳层、有限功能测试、E2E 与本地打包流程。
 当前阅读顺序与历史文档定位见[文档阅读地图](README.md)。本机正式工作目录为
 `/Users/carl/Project/Deepfield`，日常开发使用 `develop`；worktree 是临时隔离目录，完成验证并合并后整理，不把历史 worktree 名称写成固定开发入口。
 
+## 项目 Agent 约定
+
+全仓所有模块、阶段与工作窗口的主／子 Agent 分工、派工模型及推理强度遵循根目录 [AGENTS.md](../AGENTS.md)。这是项目开发约定，不是产品 LLM 配置，也不修改用户全局 Codex 配置。
+
 ## 分支与版本管理
 
 三个长期分支按 `develop → staging → main` 流转：
@@ -118,6 +122,8 @@ macOS E2E 需先确认 GUI 权限，并显式设置 `DEEPFIELD_ALLOW_ELECTRON_E2
 - `deepfield.sqlite` —— Capability 条目、公司关联、对话、消息与 Tool 审计（SQLite，Node `node:sqlite`）
 - `secrets.json` —— 加密的 secrets（内容经 `safeStorage` 加密，对应 macOS Keychain；
   应用从不把 key 写回 UI/日志/错误文案）
+- `settings.json` —— 兼容的 LLM／Search Profile JSON v1
+- `capability-config/` —— 宿主管理的包私有配置，scope/key 映射为哈希目录／文件名；仅存普通值及内部凭据引用，凭据仍进入同一加密 SecretStore。包通过 `config.v1` 访问，不直接操作目录；禁用／移除包不删除配置。契约见 [Base.Config](base/base.config.设计文档.md)。
 - `attachments/` —— 附件目录
 
 ## 对话（Conversation-first）与 Chat Skill 手动检查
@@ -186,6 +192,14 @@ code points 的文本，确认在发出任何识别请求前显示长度错误�
 npm run dist:dir     # build + electron-builder --mac --arm64 --dir → release/mac-arm64/Deepfield.app
 npm run dist:local   # build + electron-builder --mac dmg zip --arm64（identity=null）
 ```
+
+若源码已构建成功，但打包下载 Electron 被网络或本地代理阻断，可复用已安装的 Electron；仅在 `node_modules/electron/dist` 与项目声明版本、目标 arm64 架构一致时执行：
+
+```bash
+node_modules/.bin/electron-builder --mac --arm64 --dir --config.electronDist=node_modules/electron/dist
+```
+
+此命令复用当前构建输出，不重复 build、不修改依赖或代理，也不启动 GUI。
 
 - 配置：`electron-builder.yml`（appId `com.deepfield.desktop`、asar、产物
   `Deepfield-${version}-${arch}.${ext}`）
