@@ -142,6 +142,13 @@ export function createLegacyProfileManager(options: LegacyProfileManagerOptions)
       const input = portCall("read_document", {}, () => options.documents.read());
       if (input !== undefined) {
         if (!Value.Check(StoredSettingsSchema, input)) throw new ConfigError("invalid_document");
+        // Reject semantic corruption before any revision/model migration can write it back.
+        for (const group of [input.llm, input.search]) {
+          const ids = new Set(group.profiles.map((profile) => profile.id));
+          if (ids.size !== group.profiles.length || (group.activeProfileId !== null && !ids.has(group.activeProfileId))) {
+            throw new ConfigError("invalid_document");
+          }
+        }
         settings = structuredClone(input);
         let migrated = false;
         for (const profile of settings.llm.profiles) {

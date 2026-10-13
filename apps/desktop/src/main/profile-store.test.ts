@@ -13,6 +13,21 @@ const llm = { name: "DeepSeek Flash", provider: "deepseek", protocol: "openai_co
 const search = { name: "Tavily", provider: "tavily", baseUrl: "https://api.tavily.com", options: {}, apiKey: "search-secret" } as const;
 
 describe("ProfileStore", () => {
+  it.each(["duplicate-id", "dangling-active"])("rejects %s before migrating revisions or model IDs", async (damage) => {
+    const { root, secrets } = fixture();
+    const { apiKey: _key, ...values } = llm;
+    const profile = { ...values, id: "legacy-id", modelId: "deepseek-v4-flash", credentialRef: "deepseek.apiKey" };
+    const original = JSON.stringify({ schemaVersion: 1,
+      llm: { activeProfileId: damage === "dangling-active" ? "missing-id" : profile.id,
+        profiles: damage === "duplicate-id" ? [profile, { ...profile, name: "Duplicate" }] : [profile] },
+      search: { activeProfileId: null, profiles: [] },
+    }, null, 2);
+    const file = join(root, "settings.json"); writeFileSync(file, original);
+    const store = new ProfileStore(file, secrets);
+    await expect(store.initialize()).rejects.toMatchObject({ code: "STORAGE.FAILED" });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
   it("keeps permissive Search option keys and revises changes even when their values are undefined", async () => {
     const { store } = fixture(); await store.initialize();
     const options = { conditional: undefined, constructor: "provider-owned" };
