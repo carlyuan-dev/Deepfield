@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>一起把事情做完 · Deepfield 协作使用守则</title>
+  <style>
+    :root { --paper:#f5f2eb; --card:#fffdf8; --ink:#292f2b; --muted:#626b62; --line:#dcded3; --green:#355b46; --soft:#e8eee3; --accent:#9c542f; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:28px; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    a { color:var(--green); text-underline-offset:4px; }
+    a:hover { color:var(--accent); }
+    :focus-visible { outline:3px solid var(--accent); outline-offset:5px; }
+    .layout { display:grid; grid-template-columns:205px minmax(0,850px); gap:64px; max-width:1250px; padding:56px 40px 32px; margin:auto; }
+    .sidebar { position:sticky; top:40px; align-self:start; }
+    .brand { font-size:13px; letter-spacing:.16em; color:var(--green); font-weight:750; }
+    .sidebar p { margin:5px 0 26px; font-size:13px; color:var(--muted); }
+    nav { display:grid; gap:4px; border-top:1px solid var(--line); padding-top:16px; }
+    nav a { padding:7px 0; text-decoration:none; font-size:14px; }
+    nav span { display:inline-block; width:28px; color:var(--muted); font-size:11px; }
+    .offline { margin-top:26px; color:var(--muted); font-size:12px; }
+    .eyebrow { color:var(--accent); font-size:12px; letter-spacing:.13em; font-weight:700; }
+    h1 { margin:14px 0 20px; font-size:clamp(32px,4.5vw,52px); line-height:1.25; letter-spacing:-.04em; font-weight:700; }
+    .intro { max-width:660px; font-size:18px; color:var(--muted); }
+    .flow { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; margin:30px 0 14px; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--line); }
+    .flow div { padding:18px 14px; background:var(--card); font-size:14px; line-height:1.6; }
+    .flow b { display:block; color:var(--accent); margin-bottom:5px; font-size:11px; letter-spacing:.06em; }
+    .small { color:var(--muted); font-size:13px; }
+    section { padding-top:42px; }
+    h2 { margin:0 0 20px; font-size:25px; line-height:1.4; letter-spacing:-.02em; }
+    h2 .number { display:block; font-size:11px; font-weight:600; color:var(--accent); letter-spacing:.13em; margin-bottom:8px; }
+    h3 { font-size:17px; margin:0 0 8px; }
+    p { margin:0 0 14px; }
+    .card { padding:24px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .card ul { padding-left:20px; margin:10px 0 0; }
+    li + li { margin-top:7px; }
+    .minute { list-style:none; counter-reset:steps; padding:0; margin:0; }
+    .minute li { display:grid; grid-template-columns:34px 1fr; gap:12px; margin:0; padding:16px 0; border-bottom:1px solid var(--line); }
+    .minute li:first-child { padding-top:0; }
+    .minute li:last-child { border:0; padding-bottom:0; }
+    .minute li::before { counter-increment:steps; content:counter(steps); display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:var(--soft); color:var(--green); font-size:13px; font-weight:700; }
+    .minute strong { display:block; }
+    .note { padding:16px 20px; background:var(--soft); border-radius:8px; margin-top:16px; font-size:14px; }
+    .agreement { margin:0; }
+    .agreement div { display:grid; grid-template-columns:120px 1fr; gap:22px; padding:18px 0; border-bottom:1px solid var(--line); }
+    .agreement div:first-child { padding-top:0; }
+    .agreement div:last-child { border:0; padding-bottom:0; }
+    dt { font-weight:700; color:var(--green); }
+    dd { margin:0; }
+    .template { margin-top:16px; }
+    .template-head { display:flex; gap:16px; align-items:center; justify-content:space-between; margin-bottom:14px; }
+    .template-head h3 { margin:0; }
+    button { border:1px solid var(--green); border-radius:7px; background:var(--green); color:white; font:inherit; font-size:13px; padding:7px 13px; cursor:pointer; white-space:nowrap; }
+    button:hover { background:#284635; }
+    button:disabled { cursor:wait; opacity:.65; }
+    pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; color:#3d483f; font:14px/1.9 ui-monospace,SFMono-Regular,Consolas,"PingFang SC",monospace; background:#f2f3ec; border-radius:8px; padding:20px; }
+    .copy-status { min-height:1.8em; margin:8px 0 0; color:var(--muted); font-size:12px; }
+    .checklist { list-style:none; padding:0; margin:0; }
+    .checklist li { position:relative; padding-left:28px; }
+    .checklist li::before { content:"□"; position:absolute; left:0; color:var(--green); }
+    .references { display:grid; gap:12px; font-size:14px; }
+    .references p { margin:0; }
+    footer { margin-top:42px; padding-top:22px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .skip { position:absolute; top:-100px; left:16px; padding:10px; background:var(--card); z-index:2; }
+    .skip:focus { top:10px; }
+    @media(max-width:900px) { .layout { grid-template-columns:1fr; gap:28px; max-width:780px; padding:28px 22px; } .sidebar { position:static; } .sidebar p,.offline { display:none; } nav { display:flex; flex-wrap:wrap; gap:0 20px; margin-top:14px; padding-top:8px; } nav span { width:22px; } }
+    @media(max-width:520px) { .grid { grid-template-columns:1fr; } .flow { grid-template-columns:1fr 1fr; } .agreement div { grid-template-columns:1fr; gap:5px; } .card { padding:19px; } section { padding-top:34px; } pre { padding:14px; } }
+    @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+    @media print { body { background:white; font-size:11pt; } .layout { display:block; max-width:none; padding:0; } .sidebar,.skip,button,.copy-status { display:none; } h1 { font-size:28pt; } section { padding-top:22px; } h2 { break-after:avoid; } .card,.flow,.note { break-inside:avoid; } .card { padding:16px; } pre { font-size:10pt; } a { color:inherit; } footer { margin-top:24px; } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">跳到正文</a>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">DEEPFIELD / FIELD GUIDE</div>
+      <p>人与 Agent 的协作使用守则</p>
+      <nav aria-label="本页导航">
+        <a href="#quickstart"><span>01</span>一分钟使用法</a>
+        <a href="#roles"><span>02</span>双方分工</a>
+        <a href="#agreement"><span>03</span>五项批次约定</a>
+        <a href="#templates"><span>04</span>可复制的模板</a>
+        <a href="#acceptance"><span>05</span>集中验收</a>
+        <a href="#memory"><span>06</span>经验如何生效</a>
+        <a href="#sources"><span>07</span>规则与参考</a>
+      </nav>
+      <div class="offline">可离线阅读 · 可打印<br>外部参考链接需联网</div>
+    </aside>
+    <main id="main">
+      <header>
+        <div class="eyebrow">协作的节奏，比反复催促更重要</div>
+        <h1>一起把事情做完。</h1>
+        <p class="intro">先把目标与边界说清楚，一次授权一个可验收批次。让 Agent 负责实现与自验，把你的注意力留给产品效果和关键取舍。</p>
+        <div class="flow" aria-label="协作四步">
+          <div><b>01 / 讨论</b>集中讨论决策</div>
+          <div><b>02 / 授权</b>确认一个批次</div>
+          <div><b>03 / 实现</b>内部小步交付与自验</div>
+          <div><b>04 / 验收</b>集中交付与手测</div>
+        </div>
+        <p class="small">小步实现发生在批次内部。每个小步完成后，Agent 继续推进已授权工作；到达约定成果或真正的暂停条件时，再集中交接。</p>
+      </header>
+
+      <section id="quickstart">
+        <h2><span class="number">01 / QUICK START</span>一分钟使用法</h2>
+        <div class="card">
+          <ol class="minute">
+            <li><div><strong>说清你想看到什么</strong>给出使用场景、期望结果与当前问题。用具体操作描述成功，例如“返回列表后，筛选条件仍然保留”。</div></li>
+            <li><div><strong>把关键选择一次谈拢</strong>和 Agent 确认本批范围、成果、必须保留的行为、验证方式及暂停条件，然后明确授权执行。</div></li>
+            <li><div><strong>让 Agent 完成工程闭环</strong>Agent 实现、检查、定位失败并修复，汇报有意义的进展。普通修复无需再次审批，进度消息无需回复，也无需反复说“继续”。</div></li>
+            <li><div><strong>拿着交付结果集中体验</strong>沿约定路径手测，反馈阻塞、本批优化和下批想法。确认效果后结束这一批，下一批再约定范围。</div></li>
+          </ol>
+        </div>
+        <p class="note">“继续推进”以当前任务运行和已有授权为前提。关闭或退出对话后是否继续，取决于实际运行环境；这份约定本身不会创建后台任务。</p>
+      </section>
+
+      <section id="roles">
+        <h2><span class="number">02 / OWNERSHIP</span>各自负责最擅长的判断</h2>
+        <div class="grid">
+          <div class="card"><h3>你：产品目标与效果</h3><ul><li>提供场景、优先级、限制与可用资料。</li><li>决定会改变方向或范围的关键取舍。</li><li>体验交付成果，判断是否解决实际问题。</li><li>反馈期望、实际和复现路径。</li></ul></div>
+          <div class="card"><h3>主 Agent：工程验收与交付</h3><ul><li>澄清契约、规划批次，组织实现并复核。</li><li>按风险选择有效验证，持续处理相关失败。</li><li>保留定位证据，说明真实阻塞与未验证项。</li><li>交付可检查的成果、验证结果和手测入口。</li></ul></div>
+        </div>
+        <p class="note">构建通过只证明构建成功。Agent 先核验受影响的关键路径，再请你验收产品体验；验证结论始终有适用范围，剩余风险需要明确说明。</p>
+      </section>
+
+      <section id="agreement">
+        <h2><span class="number">03 / BATCH AGREEMENT</span>开始前，约定这五件事</h2>
+        <div class="card"><dl class="agreement">
+          <div><dt>目标与范围</dt><dd>本批解决哪个用户问题，涉及哪些场景；优先级如何，做到哪里算完成。</dd></div>
+          <div><dt>可见成果</dt><dd>你最终能打开、操作或检查什么：页面、功能、文档或可运行版本，并给出可观察的成功标准。</dd></div>
+          <div><dt>不变量</dt><dd>哪些已有行为、数据、接口或架构边界必须保持。把兼容要求写成具体条件。</dd></div>
+          <div><dt>验证方式</dt><dd>Agent 如何证明关键行为成立，你如何手测效果。验证投入随风险选择，未覆盖项在交付时说明。</dd></div>
+          <div><dt>真正暂停条件</dt><dd>关键需求存在无法推断的分歧、需扩大授权范围、触及额度或权限边界、存在破坏性风险，或提交归属／合并冲突无法安全解决时，说明证据和所需决定。普通实现选择、范围内修复由 Agent 推进。</dd></div>
+        </dl></div>
+      </section>
+
+      <section id="templates">
+        <h2><span class="number">04 / READY TO USE</span>把下一条消息写得更有效</h2>
+        <p>填入方括号内容即可。短任务可以压缩成几句话；复杂任务保留五项约定。</p>
+        <div class="card template">
+          <div class="template-head"><h3>提需求 · 授权一个批次</h3><button type="button" data-copy="request-template" aria-describedby="request-status">复制需求模板</button></div>
+          <pre id="request-template" tabindex="0">使用场景：[谁在什么情况下做什么]
+本批目标与范围：[要解决的问题、涉及路径、优先级]
+可见成果：[交付什么；怎样算达到预期]
+必须保持：[已有行为、数据或接口约束]
+验证与验收：[Agent 自验重点；我会手测的路径]
+真正暂停条件：[需要我决定或重新授权的具体边界]
+
+请先简要核对以上约定；约定明确后，按这个批次执行。
+在范围内自行完成小步实现、自验、问题定位、修复和重验。
+进度简报无需等我回复；达到成果或遇到真正阻塞时集中交接。</pre>
+          <p id="request-status" class="copy-status" role="status" aria-live="polite">也可直接选中上方文字，手动复制。</p>
+        </div>
+        <div class="card template">
+          <div class="template-head"><h3>给反馈 · 区分优先级</h3><button type="button" data-copy="feedback-template" aria-describedby="feedback-status">复制反馈模板</button></div>
+          <pre id="feedback-template" tabindex="0">测试版本／入口：[版本或文件、页面与模式]
+
+【阻塞】影响本批验收，优先处理
+期望：[应发生什么]
+实际：[实际看到了什么；必要时附错误或截图]
+复现：[从哪里开始，依次做了什么，是否每次出现]
+
+【本批优化】与已约定目标相关的体验调整
+[具体位置、期望效果、优先级]
+
+【下批想法】留作下一批讨论
+[新需求或更大范围的改进]
+
+可能的线索：[可选；我的根因猜测，请先验证]
+请先复现并核对证据，修复本批相关问题，再重验原失败路径。
+若反馈超出本批范围，请集中列出需要我决定的取舍。</pre>
+          <p id="feedback-status" class="copy-status" role="status" aria-live="polite">也可直接选中上方文字，手动复制。</p>
+        </div>
+        <p class="small" style="margin-top:14px">最有用的是“期望／实际／复现”。你对根因的猜测是排查线索，Agent 应先验证，再决定修改位置。</p>
+      </section>
+
+      <section id="acceptance">
+        <h2><span class="number">05 / HANDOFF</span>一次集中交付，一次有重点的验收</h2>
+        <div class="grid">
+          <div class="card"><h3>交付时，Agent 应给出</h3><ul class="checklist"><li>本批完成的成果与可打开的入口。</li><li>关键路径的验证结果和必要证据。</li><li>已知限制、未验证部分和相关阻塞。</li><li>简短手测步骤与预期现象。</li><li>按项目约定完成的提交、同步或产物状态。</li></ul></div>
+          <div class="card"><h3>手测时，你重点判断</h3><ul class="checklist"><li>原始场景是否真正得到解决。</li><li>关键操作是否自然、反馈是否清楚。</li><li>约定必须保持的行为是否仍成立。</li><li>阻塞与可后置优化是否分清。</li><li>明确反馈“本批通过”或具体待修问题。</li></ul></div>
+        </div>
+        <p class="note">目标达到、必要检查完成后结束这一批。产品功能按项目交付规则提供体验产物；纯文档以内容、链接与必要静态检查验收。</p>
+      </section>
+
+      <section id="memory">
+        <h2><span class="number">06 / PROJECT MEMORY</span>让经验进入下一次行动</h2>
+        <p>项目把可复用的教训集中在<a href="engineering-lessons.md">工程经验索引</a>中。经验生效靠每次任务实际读取、执行与更新。</p>
+        <div class="card"><ol class="minute">
+          <li><div><strong>开始时，按场景查经验</strong>Agent 查阅与本次任务相关的条目及正式文档，派工时带上相关经验、预期结果和失败停止条件。</div></li>
+          <li><div><strong>执行时，让流程带着经验走</strong>一个项目 <a href="../.agents/skills/deepfield-delivery/SKILL.md">deepfield-delivery Skill</a> 串起读取、派工、验证和收尾；<a href="../AGENTS.md">AGENTS.md</a> 提供必须遵守的约束。项目交付流程集中维护在这个 Skill 中。</div></li>
+          <li><div><strong>完成时，把证实的教训留下</strong>对有复发价值的发现，优先补充或合并到原条目，并尽量落实为脚本检查或回归保护，让下次执行更可靠。</div></li>
+        </ol></div>
+        <p class="note">这些机制帮助减少重复失误，不能保证绝对不犯错。实际执行仍需证据、复核与必要验证；你发现偏差时，提供具体事实即可。</p>
+      </section>
+
+      <section id="sources">
+        <h2><span class="number">07 / SOURCES</span>规则的依据与延伸阅读</h2>
+        <div class="card references">
+          <p><strong>项目规则</strong> · <a href="../AGENTS.md">AGENTS.md</a> · <a href="development.md">开发指南</a> · <a href="testing.md">测试指南</a> · <a href="engineering-lessons.md">工程经验</a><br><span class="small">本文是面向使用者的摘要。分支交付、费用额度、权限和验证细则以仓库约定为准；相对链接需与仓库文档一起保留。</span></p>
+          <p><a href="https://learn.chatgpt.com/guides/best-practices">OpenAI · Best practices</a><br><span class="small">延伸阅读：如何提供清晰的目标与上下文。</span></p>
+          <p><a href="https://developers.openai.com/blog/skills-agents-sdk">OpenAI · Skills 与 Agents SDK</a><br><span class="small">延伸阅读：用 Skill 组织可复用的任务流程。</span></p>
+          <p><a href="https://addyosmani.com/blog/ai-coding-workflow/">Addy Osmani · AI coding workflow</a><br><span class="small">延伸阅读：将 AI 辅助开发组织成可检查的工作流程。</span></p>
+          <p><a href="https://simonwillison.net/guides/agentic-engineering-patterns/agentic-manual-testing/">Simon Willison · Agentic manual testing</a><br><span class="small">延伸阅读：让 Agent 实际操作并检查实现效果。</span></p>
+        </div>
+      </section>
+      <footer>Deepfield · 协作使用守则<br>无需联网即可阅读正文与使用模板；复制权限由浏览器决定，失败时请手动复制。可通过浏览器打印保存。</footer>
+    </main>
+  </div>
+  <script>
+    document.querySelectorAll('[data-copy]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        var source = document.getElementById(button.dataset.copy);
+        var status = document.getElementById(button.getAttribute('aria-describedby'));
+        button.disabled = true;
+        status.textContent = '正在尝试复制…';
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) {
+            throw new Error('Clipboard API unavailable');
+          }
+          await navigator.clipboard.writeText(source.textContent);
+          status.textContent = '已复制，可粘贴到对话中填写。';
+        } catch (error) {
+          source.focus();
+          var selection = window.getSelection();
+          if (selection) {
+            var range = document.createRange();
+            range.selectNodeContents(source);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+          status.textContent = '自动复制未成功。请选中模板文字，按 ⌘C（Mac）或 Ctrl+C 手动复制。';
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  </script>
+</body>
+</html>

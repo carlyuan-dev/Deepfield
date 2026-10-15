@@ -9,6 +9,7 @@ export default defineConfig({
   timeout: 120_000,
   retries: 0,
   workers: 1,
+  maxFailures: 1,
   reporter: [["list"]],
   use: {
     viewport: { width: 1440, height: 900 },

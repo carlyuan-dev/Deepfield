@@ -1,7 +1,5 @@
-import { _electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { cleanupElectronUserData, createElectronUserData, launchElectronE2E } from "./electron-launch.js";
 
 const E2E_KEY = "sk-e2e-dummy-not-real-987654321";
 const SCREENSHOT_COMPANY_LIST = "/private/tmp/deepfield-p4t7-company-list.png";
@@ -12,18 +10,7 @@ const SCREENSHOT_IMPORT_CANDIDATES = "/private/tmp/deepfield-p4t7-import-candida
 interface RunningApp { app: ElectronApplication; page: Page; }
 
 async function launchApp(userDataRoot: string): Promise<RunningApp> {
-  const executablePath = process.env.DEEPFIELD_E2E_EXECUTABLE;
-  const app = await _electron.launch({
-    ...(executablePath === undefined ? { args: ["out/main/index.js"] } : { executablePath }),
-    env: {
-      ...process.env,
-      DEEPFIELD_AGENT_MODE: "fake",
-      DEEPFIELD_E2E: "1",
-      DEEPFIELD_USER_DATA_DIR: userDataRoot,
-    },
-  });
-  const page = await app.firstWindow();
-  await page.waitForLoadState("domcontentloaded");
+  const { app, page } = await launchElectronE2E({ userDataDir: userDataRoot });
   await expect(page.getByText("Deepfield").first()).toBeVisible({ timeout: 30_000 });
   return { app, page };
 }
@@ -57,7 +44,7 @@ async function addDraft(page: Page, name: string, country: string): Promise<void
 }
 
 test("agent-first chat and industry research main path survive a restart", async () => {
-  const userDataRoot = mkdtempSync(join(tmpdir(), "deepfield-p4t7-"));
+  const userDataRoot = createElectronUserData();
   try {
     const first = await launchApp(userDataRoot);
     let page = first.page;
@@ -170,12 +157,12 @@ test("agent-first chat and industry research main path survive a restart", async
     await expect(page.locator(".message.user")).toContainText("第一行");
     await closeAppGracefully(second);
   } finally {
-    rmSync(userDataRoot, { recursive: true, force: true });
+    cleanupElectronUserData(userDataRoot);
   }
 });
 
 test("research navigation stays visible while only its content scrolls", async () => {
-  const userDataRoot = mkdtempSync(join(tmpdir(), "deepfield-navigation-"));
+  const userDataRoot = createElectronUserData();
   let running: RunningApp | undefined;
   try {
     running = await launchApp(userDataRoot);
@@ -249,6 +236,6 @@ test("research navigation stays visible while only its content scrolls", async (
 
   } finally {
     if (running !== undefined) await running.app.close();
-    rmSync(userDataRoot, { recursive: true, force: true });
+    cleanupElectronUserData(userDataRoot);
   }
 });

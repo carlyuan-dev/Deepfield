@@ -2,6 +2,8 @@
 
 本文件适用于 Deepfield 全仓所有模块、开发阶段和工作窗口，后续任务均遵守。
 
+开发与修复先读取项目 Skill [deepfield-delivery](.agents/skills/deepfield-delivery/SKILL.md)；当前会话未发现该 Skill 时直接读取该 Skill 文件。它负责执行路由，具体约束仍以本文件和正式文档为准；泛泛咨询、只读分析不因此获得改码授权。
+
 ## 分工与模型
 
 主 Agent 负责规划、协调和复核，实现工作交给子 Agent。每次派工必须显式指定模型和推理强度：

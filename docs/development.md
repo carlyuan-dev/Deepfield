@@ -2,6 +2,8 @@
 
 Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本文维护环境、运行、分支与交付约定；功能契约见[文档阅读地图](README.md)，验证路径见[按风险选测指南](testing.md)。项目 Agent 分工、模型与文字约定统一遵循 [AGENTS.md](../AGENTS.md)。
 
+开发与修复入口见 [项目交付 Skill](../.agents/skills/deepfield-delivery/SKILL.md)。按任务触发场景读取[工程经验索引](engineering-lessons.md)中的相关条目，再进入对应正式契约和实现。
+
 ## 分支与版本管理
 
 三个长期分支按 `develop → staging → main` 流转：
@@ -76,6 +78,8 @@ DEEPFIELD_ALLOW_ELECTRON_E2E=1 npm run test:e2e
 ```
 
 脚本先构建，再由 Playwright 驱动真实 Electron；配置在 `playwright.config.ts`，串行运行且不重试。启动保护禁止在 macOS Seatbelt sandbox 内运行，不能绕过或反复重试。测试使用 Fake Agent 和独立临时 userData，只清理自身目录。规格与覆盖范围以 `tests/e2e/` 为准；手动补验路径见[测试指南](testing.md)。
+
+统一启动入口为 [electron-launch.ts](../tests/e2e/electron-launch.ts)：先用 `createElectronUserData()` 新建隔离目录，再由 `launchElectronE2E({ userDataDir })` 启动并等待首窗口。默认 Fake，可显式选 real；打包执行文件通过 `executablePath` 或 `DEEPFIELD_E2E_EXECUTABLE` 指定。必须复制应用时使用 `copyElectronAppForE2E()`。调用者关闭 app 后使用 `cleanupElectronUserData()` 清理；进程退出未确认时保留目录供排查。入口检查包内链接与关键资源，首次失败锁止本轮启动并做有界关闭；诊断只报告实际取得的脱敏证据，helper 独立退出信息可能不可用。
 
 优先复用已验证的启动入口；必须复制 `.app` 时保留相对 symlink（如 `fs.cpSync` 设置 `verbatimSymlinks: true`），启动前只读核对 Framework 资源及目标隔离 userData。首次启动失败即停止重试，先收集 main/helper 的 stderr 与退出状态并定位原因，主 Agent 复核依据后才再次启动；不得仅修改日志或猜改包布局后反复启动。
 

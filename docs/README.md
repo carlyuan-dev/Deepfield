@@ -6,6 +6,8 @@
 
 | 文档 | 维护内容 |
 | --- | --- |
+| [协作使用守则](collaboration-guide.html) | 面向用户的项目协作与自主交付说明 |
+| [工程经验索引](engineering-lessons.md) | 按触发场景检索已证实、可复用的工程经验与保护入口 |
 | [开发指南](development.md) | 环境、运行、配置、分支、交付与文档维护规则 |
 | [按风险选测指南](testing.md) | 可复用的必要检查路径，不记录某一批“测试已通过” |
 | [Base 总览](base/base.overview.设计文档.md) | Chat／Capability → Base 的单向依赖、能力目录与真实状态 |
@@ -38,7 +40,7 @@
 
 | 类型 | 存放与提交规则 |
 | --- | --- |
-| 长期项目知识 | `docs/base/`、`docs/chat/`、`docs/capabilities/`、开发／验证指南及必要版本决策；随代码提交 |
+| 长期项目知识 | `docs/base/`、`docs/chat/`、`docs/capabilities/`、工程经验索引、开发／验证指南及必要版本决策；随代码提交 |
 | 逐步实施计划、Agent 派工／复核、草稿 | 默认放 `docs/superpowers/plans/`、`docs/superpowers/specs/` 或 `docs/local/`；仅本地，已 ignore |
 | 日期型手测批次记录、窗口交接／专项审查原件 | 本地保留；可复用步骤归入验证指南，长期结论归入相应正式设计 |
 | 外部项目参考、真实请求／抓取、实验原件 | 仅本地；沿用忽略目录，不嵌入正式文档或随提交上传 |

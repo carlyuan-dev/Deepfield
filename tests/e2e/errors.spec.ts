@@ -1,15 +1,13 @@
-import { _electron, expect, test, type ElectronApplication } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { expect, test, type ElectronApplication } from "@playwright/test";
+import { cleanupElectronUserData, createElectronUserData, launchElectronE2E } from "./electron-launch.js";
 
 test("public error DTOs survive the real Electron contextBridge without Error properties", async () => {
-  const root = mkdtempSync(join(tmpdir(), "deepfield-errors-"));
+  const root = createElectronUserData();
   let app: ElectronApplication | undefined;
   try {
-    app = await _electron.launch({ args: ["out/main/index.js"], env: { ...process.env, DEEPFIELD_AGENT_MODE: "fake", DEEPFIELD_E2E: "1", DEEPFIELD_USER_DATA_DIR: root } });
-    const page = await app.firstWindow();
-    await page.waitForLoadState("domcontentloaded");
+    const running = await launchElectronE2E({ userDataDir: root });
+    app = running.app;
+    const page = running.page;
     const result = await page.evaluate(async () => {
       const api = window.deepfield;
       const invalid = await api.capabilities.invoke({ capabilityId: "company-research", operation: "companyResearch.start", requestId: "invalid", input: ["i", "c", {}] }).catch((error: unknown) => error);
@@ -29,7 +27,7 @@ test("public error DTOs survive the real Electron contextBridge without Error pr
         await closed;
       }
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      cleanupElectronUserData(root);
     }
   }
 });
