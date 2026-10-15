@@ -5,6 +5,7 @@ import { withUsageContext } from "../shared/usage-collection.js";
 import { ModelGatewayError, type ModelGateway } from "../shared/model-gateway.js";
 import type { ProfileStore } from "./profile-store.js";
 import { chatInteractionToolDeclarations } from "../shared/chat-interaction-tool-declarations.js";
+import { toSettingsModelDiagnostic } from "../shared/model-http-diagnostic.js";
 
 type ProfileConfigurationStore = Pick<ProfileStore, "getView" | "saveLlmProfile" | "activateLlmProfile" | "deleteLlmProfile" | "saveSearchProfile" | "activateSearchProfile" | "deleteSearchProfile" | "resolveLlmDraft" | "resolveSearchDraft">;
 
@@ -62,7 +63,7 @@ export class ConfigurationService {
       : normalized.code === "EXTERNAL.TIMEOUT" ? "network"
       : normalized.category === "configuration" ? "invalid_config" : "provider_error";
     return { ok: false, latencyMs: Math.max(0, this.now() - started), code, message: "连接不可用", error: normalized,
-      ...(service === "llm" && error instanceof ModelGatewayError && error.diagnostic ? { diagnostic: error.diagnostic } : {}),
+      ...(service === "llm" && error instanceof ModelGatewayError && error.diagnostic ? { diagnostic: toSettingsModelDiagnostic(error.diagnostic, chatInteractionToolDeclarations.map(tool => tool.name)) } : {}),
     };
   }
 }

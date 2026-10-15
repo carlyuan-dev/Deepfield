@@ -1,8 +1,8 @@
 # Deepfield Base 抽取设计文档
 
-版本：0.5 · 日期：2026-10-15
+版本：0.6 · 日期：2026-10-15
 
-状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，已通过用户手测；第二批 Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成，证据为当前配置下 Chat 可用、资料更新与两阶段调研完成，不表示所有配置功能均逐项手测；下一批 Model 及后续抽取未做。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
+状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，已通过用户手测；第二批 Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成，证据为当前配置下 Chat 可用、资料更新与两阶段调研完成，不表示所有配置功能均逐项手测；第三批 Model 安全契约、runtime、Usage collector 及实际消费者接线已实现，本阶段自动验证与真实链路端测完成，可交付 staging，等待用户体验验收。Search 及后续抽取尚未实施。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
 
 当前 Errors 实现在 `packages/base/src/errors/`，旧接口在 `packages/contracts/src/errors.ts` 保留薄兼容适配；其他模块的当前归属见下表。
 
@@ -12,12 +12,7 @@
 
 主 Chat／主 Agent 的完善优先：允许按需使用 Base.Model、Base.Tools、Base.Usage 等，不强制使用 Base.Agent。当前 Chat 与 Capability 已经共用 Pi 执行器，保留有价值的复用，不另起一套循环；会话、上下文清理、记忆、Skill、RAG 使用策略和人机确认仍由 Chat 管理。
 
-选择“沿现有边界逐批替换实现”：每批切换真实调用点，旧入口必要时单向转出兼容，验证后移除重复实现。暂不选择以下方案：
-
-- 仅把现有包整体改名为 Base：变更少，但会把业务分支和上层依赖一起搬进去。
-- 先设计完整通用框架再重写：扩展空间大，但会同时改变配置、Loop、存储和业务行为，难以定位回归。
-
-本轮不新增平台适配层、不替换 Pi、不引入新数据库或工作流框架，不顺带修改产品交互、提示词效果、搜索策略和报告规则。
+沿现有边界逐批替换实现：每批切换真实调用点，旧入口必要时单向转出兼容，验证后移除重复实现。迁移保持现有 Pi、SQLite、产品交互和业务规则。
 
 ## 2. 当前归属 → 目标归属
 
@@ -26,18 +21,18 @@
 | 当前归属 | 目标归属 | 留在原职责方的内容 |
 | --- | --- | --- |
 | `packages/base/src/config/` 实际核心；`apps/desktop/src/main/profile-store.ts` 与 `packages/contracts/src/model-config.ts` 为旧入口薄适配 | Config 已抽取：通用配置、可选 Profile、选择、草稿／视图／快照及中立定义 | Electron 密钥加密、Settings UI、IPC 和诊断编排留桌面应用 |
-| `apps/desktop/src/shared/model-gateway.ts`、`model-request-observation.ts` | Model：调用与请求观察；中立观察契约随之下沉 | 公司证据如何接收、冻结、使用请求记录留 Capability |
+| `packages/base/src/model/` 实际核心；`apps/desktop/src/shared/model-gateway.ts`、`model-request-observation.ts` 为单向薄装配／转出 | Model 已抽取：调用、请求观察、HTTP 诊断及 LLM transport；SDK 精确特化中立契约 | 公司证据如何接收、冻结、使用请求记录留 Capability |
 | `packages/retrieval` 的 Provider／读取解析实现；`shared/usage-search.ts` | Search：服务能力与计量接入 | 联网许可、检索任务策略不进入 Search；web 工具定义归工具适配 |
 | `packages/tool-platform`；Worker 工具运行时中的通用部分 | Tools：定义、注册、执行、准入与审计端口 | Chat 会话工具实现、HITL 授权、业务工具及应用装配留上层 |
 | `apps/desktop/src/worker/agent` 的共享执行器；SDK 中中立 execution 契约 | Agent：Pi 循环与运行控制 | Chat 上下文和调研专属收口策略留各自适配器 |
 | `packages/persistence/src/database.ts`、`transactions.ts`、迁移执行机制及仓储重复的参数化执行 | Database：连接、通用读写／CRUD、事务和迁移执行 | Chat／公司／报告表与仓储归各自模块；旧迁移保留兼容 |
-| `packages/base/src/usage`；`shared/usage-collection.ts`；`persistence/usage-repository.ts` | Usage 核心保留；通用采集和 SQLite 适配逐步归位 | Settings 展示、主进程／Worker 传输与初始化留应用 |
+| `packages/base/src/usage` 含实例化 collector；`shared/usage-collection.ts` 为 ALS／recorder 桥接；`persistence/usage-repository.ts` | Usage 通用采集已归位；SQLite 适配待后续归位 | Settings 展示、主进程／Worker 传输与初始化留应用 |
 | `packages/base/src/errors/`；`packages/contracts/src/errors.ts` 兼容适配 | Errors 核心及旧公共出口接线已实现；已通过用户手测 | 业务错误码、恢复动作、用户文案与边界白名单归各模块 |
 
 当前必须承认的边界缺口：
 
 1. 共享 Agent 不依赖 Chat 历史实现，但仍内置 `WEB_CHAT_POLICY`、搜索／读取额度及 Capability 分支，不能整体视为已中立化。
-2. Model 和 Agent 的部分中立契约仍来自 Capability SDK；下层依赖插件 SDK 的方向需要调整。
+2. Agent 的部分中立契约仍来自 Capability SDK；Model 的中立观察契约已下沉，SDK 单向精确特化。
 3. 主进程仍组装 `company-research.repositories`，能力包依赖 persistence 的聚合仓储类型；公司数据层尚未完全回到包内。
 4. 现有 `schema_migrations` 1–32 混合多模块表结构，不能因归属变化重排、重跑或删除历史迁移。
 
@@ -47,14 +42,14 @@
 
 Config 统一管理“使用哪个配置、字段是否合法、如何保存、怎样生成一次调用的快照”。首批保留 LLM／Search 两类配置；相关 Schema、Profile 契约与默认值放在 Config 的独立子域，不与服务执行代码绑定。
 
-新增配置沿用公共存取与校验机制，提供自己的声明式定义；不要求所有配置都有 Profile，也不让新增配置把业务流程带入 Config。第二批[细化设计](base.config.设计文档.md)中的 `defineConfig`、`bind`／`bindProfiles` 与主进程 `config.v1` 已实现，支持包内新增多组配置而不改 Base。LLM／Search 已经 legacy codec 实际组合通用 Profile 集合与记录核心，保持旧 JSON v1 和接口形状；旧 `model.configuration` 服务保持不变。不预建复杂配置注册平台、YAML 继承系统或自动环境变量扫描。
+新增配置提供自己的声明式定义，沿用公共存取、校验与可选 Profile 机制。`defineConfig`、`bind`／`bindProfiles`、主进程 `config.v1` 及旧 LLM／Search 兼容适配已实现；公开接口、存储格式与快照规则见 [Config 设计](base.config.设计文档.md)。
 
 - Model 消费 LLM 快照，处理 OpenAI／Anthropic 协议、普通及流式请求、错误和请求观察。
 - Search 消费 Search 快照，处理 Provider 请求、结果统一、网页读取和解析；不是完整 RAG，也不负责多轮搜索决策。
 - Config 不调用 Model／Search；“测试连接”继续由应用编排 Config 的草稿解析与对应服务调用。
 - 默认 URL、Provider 元数据等以中立配置定义提供，Config 不反向导入 Model／Search 运行时。
 
-维持三个数据视图：可编辑 Draft、脱敏 View、可信执行端 RuntimeSnapshot。未保存可诊断、保存与激活分开、切换 Profile、未修改密钥时复用已有凭据等行为保持不变。执行中不得重新读取 active Profile 偷换配置；新任务及显式重试按现有时机解析新快照，不借本次迁移改变队列和阶段的配置读取时机。快照中的嵌套选项也不能被后续编辑污染。
+配置区分可编辑 Draft、脱敏 View 与可信执行端 RuntimeSnapshot。执行中不得重新读取 active Profile 偷换配置，已返回快照不受后续编辑影响；各入口解析时机见 [Config 读取时机](base.config.设计文档.md#42-配置读取时机不变)。
 
 密钥通过注入的 SecretStore 端口管理，Electron `safeStorage` 实现留桌面。明文密钥仅进入可信运行端，不能进入 Renderer、日志、错误详情或 Usage；Usage 保留的是不含凭据的配置身份快照。
 
@@ -92,7 +87,7 @@ Usage 保持现有账本语义：LLM 在实际 fetch 边界、Search 在实际 d
 
 Errors 抽取中立错误结构、公共分类和脱敏序列化；各模块维护自身错误码、上下文、校验器和恢复策略，Renderer 决定面向用户的文案。现有错误集合含 Capability 专属码和只接受 LLM／Search 的上下文，不能整体冒充通用契约。迁移保留旧 IPC 白名单与公共错误映射，不通过接受任意对象或暴露 cause／密钥换取“通用”。
 
-错误码可由模块独立扩展，不等于可直接穿过所有公共出口；每个出口仍需校验并明确允许的字段。错误分类只说明故障类别，不隐含可重试性或重试动作。内部异常保留 cause，公开结果与内部异常分离；首批不复制服务端 HTTP 异常树、不新增重试策略，也不统一现有 Tool／SDK／Provider 的独立错误协议。
+错误码可由模块独立扩展；每个公共出口仍需校验并明确允许字段。错误分类只说明故障类别，不隐含重试动作。内部异常与公开结果分离，具体接口和旧出口兼容要求见 [Errors 设计](base.errors.设计文档.md)。
 
 ## 4. 目标组织与依赖
 
@@ -104,7 +99,7 @@ Errors 抽取中立错误结构、公共分类和脱敏序列化；各模块维�
 | Config | Errors；配置存储和密钥存储端口 |
 | Database | Errors；数据库驱动，不依赖业务 Schema 或仓储 |
 | Usage | 中立元数据、存储／时钟等端口；SQLite 适配可使用 Database，核心不反向导入适配器 |
-| Model | Config 的 LLM 契约、Usage 采集接口、Errors、Pi；中立观察器 |
+| Model | Config 的 LLM 契约、Usage 采集接口、Pi；中立观察器及自身模型错误契约 |
 | Search | Config 的 Search 契约、Usage 采集接口、Errors；安全传输与解析依赖 |
 | Tools | Errors、中立工具契约；具体 web 工具适配可使用 Search，核心不反向导入具体工具 |
 | Agent | Model／Tools 的公开契约与 Pi；注入上下文、工具集合、运行策略和事件接收者 |
@@ -117,7 +112,7 @@ Errors 抽取中立错误结构、公共分类和脱敏序列化；各模块维�
 
 ### 4.1 公开契约与 Capability 兼容
 
-Capability 只依赖稳定公开契约，不依赖 Base 内部目录、实现类型或宿主内部对象；Base 不反向依赖业务。模型、搜索、数据库等运行服务继续由现有 SDK／宿主注入与接线。接口保持小而明确，Capability 显式声明所需依赖，宿主只提供契约所需能力，不传入完整全局对象。兼容适配沿现有边界处理，不另设架构层级，不预建完整服务注册框架、重复基础设施或多版本 Base 并行运行机制。
+Capability 只依赖稳定公开契约，不依赖 Base 内部目录、实现类型或宿主内部对象；Base 不反向依赖业务。模型、搜索、数据库等运行服务由现有 SDK／宿主注入与接线。Capability 显式声明所需依赖，宿主只提供契约所需能力，不传入完整全局对象；兼容适配沿现有边界处理。
 
 公开契约包含参数、返回值以及取消、错误、事件、事务、重试等可观察行为。Base 内部替换实现或搬迁目录须保持这些约定，不因内部变化要求 Capability 升级。新增可选字段也不能默认视为兼容：旧校验器可能拒绝未知字段，须结合实际消费者检查。现有服务获取的 `get<T>` 只是类型断言，`requirements` 只检查服务名，均不能证明运行时契约或版本兼容；这些约束是实施和验收要求，不表示当前兼容能力已充分实现。
 
@@ -144,7 +139,7 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 批次 8 涉及多种数据所有者，实施时可再拆成“公司仓储迁移”“其余仓储归位”两个小闭环，不要求一次提交全部完成。模块私有新增迁移规则应在本批前评审，不能先改旧库再补协议。
 
-首批 Errors 已验收；当前 Config 批次不同时改 Loop、数据库或提示词。后续中立契约随对应模块迁移，不一口气搬空 contracts／SDK。
+后续中立契约随对应模块迁移，按各批兼容边界替换 contracts／SDK 中的相关引用。
 
 ## 6. 验收不变量与风险控制
 
@@ -157,4 +152,4 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 优先复用测试：配置存储／诊断、tool-platform 的准入与预算、`pi-agent-executor` 的历史隔离、persistence 的事务与旧库读取、公司证据集成、Capability runtime／loader 及 production boundary。仅对本批新增风险补必要回归保护；构建通过不替代关键行为验证。
 
-首批 Errors 代码已接入现有调用链，长期契约见 [Base.Errors 设计](base.errors.设计文档.md)；已通过用户手测。Config 已实现并完成本轮验收，具体证据与范围见 [Base.Config 设计](base.config.设计文档.md#7-迁移顺序与最小验收)；下一批 Model 尚未实施。逐步计划和派工记录只留本地；本文件只维护模块边界、迁移顺序和验收不变量。纯文档整理不运行产品构建、不调用付费服务或生成测试包。
+已实现模块的长期契约见 [Base.Errors 设计](base.errors.设计文档.md)、[Base.Config 设计](base.config.设计文档.md)、[Base.Model 设计](base.model.设计文档.md)和 [Base.Usage 设计](base.usage.设计文档.md)。Model 已完成本地协议回归、限定冻结旧包服务兼容、生产边界与打包验证；当前 DeepSeek `deepseek-flash`／Tavily 下的配置诊断、Chat、资料更新和完整两阶段调研真实链路端测通过，证据与 Usage 对齐。其他真实 Provider／模型、用户体验验收及冻结旧包 GUI／完整生命周期仍待验证；取消行为沿用本地回归证据。后续批次为 Search，尚未启动。

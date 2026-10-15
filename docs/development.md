@@ -77,6 +77,8 @@ DEEPFIELD_ALLOW_ELECTRON_E2E=1 npm run test:e2e
 
 脚本先构建，再由 Playwright 驱动真实 Electron；配置在 `playwright.config.ts`，串行运行且不重试。启动保护禁止在 macOS Seatbelt sandbox 内运行，不能绕过或反复重试。测试使用 Fake Agent 和独立临时 userData，只清理自身目录。规格与覆盖范围以 `tests/e2e/` 为准；手动补验路径见[测试指南](testing.md)。
 
+优先复用已验证的启动入口；必须复制 `.app` 时保留相对 symlink（如 `fs.cpSync` 设置 `verbatimSymlinks: true`），启动前只读核对 Framework 资源及目标隔离 userData。首次启动失败即停止重试，先收集 main/helper 的 stderr 与退出状态并定位原因，主 Agent 复核依据后才再次启动；不得仅修改日志或猜改包布局后反复启动。
+
 ## 数据与资源目录
 
 | 环境 | `DEEPFIELD_USER_DATA_DIR` |

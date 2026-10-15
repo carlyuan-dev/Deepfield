@@ -18,7 +18,10 @@
     "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
+      "@deepfield/base/model": ["./packages/base/src/model/index.ts"],
+      "@deepfield/base/model/runtime": ["./packages/base/src/model/runtime.ts"],
       "@deepfield/base/usage": ["./packages/base/src/usage/index.ts"],
+      "@deepfield/base/usage/runtime": ["./packages/base/src/usage/runtime.ts"],
       "@deepfield/base/errors": ["./packages/base/src/errors/index.ts"],
       "@deepfield/base/config": ["./packages/base/src/config/index.ts"],
       "@deepfield/base/config/runtime": ["./packages/base/src/config/runtime.ts"],

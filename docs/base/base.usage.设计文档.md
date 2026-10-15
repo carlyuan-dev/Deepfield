@@ -1,10 +1,11 @@
 # Deepfield Base.Usage 设计文档
 
-版本：0.3 · 更新日期：2026-09-18  
-状态：首版已实现并完成代码审查、自动验证与测试包构建，待用户真实调用验收。  
+版本：0.3 · 更新日期：2026-09-18
+
+状态：已实现，包含统计投影、完整性提示与投递恢复。Model／collector 本阶段自动验证完成，可交付 staging；当前 DeepSeek `deepseek-flash`／Tavily 的真实链路已验证用量对齐与无重复计量，等待用户体验验收。其他真实 Provider／模型的返回情况仍待验证。
 上位文档：[Base.overview 设计文档](base.overview.设计文档.md)。
 
-## 1. 目标与非目标
+## 1. 目标与统计边界
 
 ### 1.1 目标
 
@@ -14,7 +15,7 @@
 - 记录接口实际返回的用量，并明确缺失、失败、取消及记录异常的边界。
 - 历史数据独立于对话、公司、报告和 Profile 的删除而保留。
 
-### 1.2 非目标
+### 1.2 统计与隐私边界
 
 - 不计算金额，不维护价格表，不判断免费额度剩余，不对接服务商账单。
 - 不控制任务搜索上限、Token 预算、重试策略或是否开放联网工具。
@@ -76,7 +77,7 @@
 | Search 指标 | `resultCount?` | 每条有效搜索尝试计一次，条数另存 |
 | 完整性 | `attemptCountStatus`、`errorCode?` | 记录可观测性状态和安全错误码，不存原始异常正文 |
 
-`serviceKind` 第一版仅支持 `llm`、`search`，不提前建设任意指标插件系统。未来增加资源类型时扩展契约及该资源适配器，不修改已接入的业务模块。
+`serviceKind` 当前支持 `llm`、`search`。未来增加资源类型时扩展契约及该资源适配器。
 
 ### 3.1 Profile、Key 与服务商的区别
 
@@ -91,7 +92,9 @@
 
 ### 4.1 采集职责
 
-统一调用入口持有注入的 `UsageRecorder`。业务只提供上下文，调用入口负责生成尝试标识、捕获开始/结束、归一化指标并上报。LLM SDK 和各 Search 协议的差异由采集适配层处理，Usage 不导入第三方模型 SDK 类型。
+`@deepfield/base/usage/runtime` 的 `createUsageCollector` 接收 `now`、`createId`、`getRecorder` 端口，负责尝试身份、配置 revision、增量 metrics 和幂等终态；开始时捕获 recorder。安全入口 `@deepfield/base/usage` 提供 `UsageCollector`、`UsageAttemptHandle`、`UsageMetadata`、`UsageContext` 和 `ModelUsagePort` 等契约。业务提供上下文，调用入口在实际请求边界开始和结束 attempt。LLM 传输与 SSE 用量解析属于 [Model runtime](base.model.设计文档.md)，Search dispatch 保持原适配，Usage 不导入第三方模型 SDK 类型。
+
+桌面每个 main／Worker 进程共享一个 collector、ALS context 来源和 snapshot opaque identity mapper。旧 `startUsageAttempt`、Model 注入的 `modelUsagePort` 与 Search 桥接委托同一实例；ALS、recorder 绑定、投递队列、健康和恢复仍由应用管理。传入 collector 的 metadata 只含无凭据身份；fallback revision 按 opaque token 缓存，同一快照跨网关调用保持稳定。
 
 ```text
 Chat / Capability / 应用服务
@@ -105,19 +108,19 @@ Chat / Capability / 应用服务
 Settings → 应用 IPC 查询接口 → UsageQueryService → 同一账本
 ```
 
-图中是运行数据流。Worker 到主进程的传输适配、IPC 和 SQLite 驱动不属于 Base 核心；由现有应用初始化代码连接具体实现，暂不单列“应用装配与平台适配”架构层级。Base 仅定义通用记录、查询和存储端口，不调用上层业务。
+图中是运行数据流。Worker 到主进程的传输适配、IPC 和 SQLite 驱动由应用初始化代码连接；Base 定义通用记录、查询和存储端口，不调用上层业务。
 
 ### 4.2 当前代码接入点
 
 | 现有路径 | 接入要求 |
 | --- | --- |
-| `apps/desktop/src/shared/model-gateway.ts` 直接生成 | 在丢弃 SDK usage 前采集，覆盖标题、识别、结构化及其修正重试 |
+| `packages/base/src/model/runtime.ts` 与 LLM transport；`apps/desktop/src/shared/model-gateway.ts` 薄装配 | 在实际 fetch 边界采集，覆盖标题、识别、结构化及其修正重试 |
 | `apps/desktop/src/worker/pi-chat-agent.ts` 流式生成 | 收拢模型 stream 入口并采集每轮终态，包括工具阶段和最终收口；不能只观察最终回答 |
 | `packages/retrieval/src/providers/provider-registry.ts` 及 Provider 公共调用边界 | 注入统一采集包装，保持 provider 协议实现不感知业务来源 |
 | `apps/desktop/src/main/configuration-service.ts` | 诊断使用同一采集入口，覆盖已保存 Profile 和未保存草稿 |
 | 主进程 / Worker 装配入口 | 注入相同契约的记录器及明确来源，主进程统一持久化 |
 
-不能仅在 `web_search` 展示层计数，也不能仅在 `completeText` 计数。当前这两种做法都会漏掉其他调用路径。实施时盘点 SDK、HTTP 客户端及工厂构造点，限制正式业务绕过统一入口。
+计量覆盖实际模型传输与 Search dispatch 边界；仅观察工具展示或 completion 便利方法会漏掉其他调用路径。新增正式调用需检查 SDK、HTTP 客户端及工厂构造点，保持统一采集。
 
 ### 4.3 公共接口职责
 
@@ -134,7 +137,7 @@ Settings → 应用 IPC 查询接口 → UsageQueryService → 同一账本
 
 ## 5. 持久化与异常恢复
 
-第一版复用本地 SQLite，通过现有迁移机制新增独立用量表；主进程为唯一写入者。不新建服务、不引入消息队列，也不跨进程共享数据库写连接。
+复用本地 SQLite，通过现有迁移机制维护独立用量表；主进程为唯一写入者，不跨进程共享数据库写连接。
 
 - 主表以 `attemptId` 为唯一键，存放快照、状态和归一化指标；按时间、Profile、服务类型建立必要索引。
 - 开始与终态允许乱序：终态携带完整公共快照，可以独立 upsert；迟到的开始不能覆盖终态。
@@ -147,6 +150,13 @@ Settings → 应用 IPC 查询接口 → UsageQueryService → 同一账本
 
 记录器在数据进入队列前做白名单校验；诊断日志仅含尝试 ID、安全错误码和失败阶段。不能把整个 runtime snapshot 序列化入账本，因为其中包含 Key。
 
+### 5.1 完整性提示与修复
+
+- 原始账本与提示投影独立。删除只适用于终态异常且所有 Token 指标为空的版本快照；成功未知、部分用量和尝试数不完整只做持久确认，不删除记录，也不改变统计。每条保留记录的确认随记录生命周期保留；新记录不会被旧确认覆盖。
+- 当前故障与历史计数分离。只有当前存储／传输失败显示红色；累计失败次数本身不构成当前故障。超过 3 秒的正常待写入仅显示灰色同步状态。不可恢复的丢弃／中断是可持久确认的黄色历史缺口，确认不清零账本计数；计数增长会产生新提示。
+- 投递失败记录在内存中按 `attemptId` 合并新修订并受容量限制。显式“修复”先做回滚式本地存储读写探测，再幂等重投保留事件；它不重发业务请求、不调用 Provider、不初始化仓库、不关闭／重启 Worker，也不使用关闭队列的 `flush`。旧修订不能覆盖新修订；退出时仍未恢复的记录转为历史缺口。
+- 红色当前故障可收起为单行状态，但始终保留修复入口；恢复后自动消失。界面只显示安全的人类可读说明，不暴露底层异常文本。
+
 ## 6. 查询与看板
 
 ### 6.1 查询规则
@@ -156,6 +166,8 @@ Settings → 应用 IPC 查询接口 → UsageQueryService → 同一账本
 - 默认包含全部来源，包括诊断、连接检查和未保存草稿调用。界面提供时间范围和 LLM／Search 切换；LLM 趋势另按 Provider＋模型选择，顶部总览和下方 Provider 汇总保持全部模型。没有 Profile 或来源筛选器。
 - 汇总返回已知指标及未知/部分用量数量。没有完整数据时使用“已记录 Token”，不显示成精确总消耗。
 - `running`、`interrupted` 与明确失败分开；结果未知不能自动算成功或失败。
+- LLM 概览、日序列、趋势、Provider、模型汇总和自动模型选项使用同一投影：排除 `running`，以及失败、取消或中断且五项 Token 指标全部为 `null` 的终态记录。成功但未知用量仍计请求数；任一已知指标（包括明确的 `0`）均保留。Search 按实际发起次数统计。
+- 运行中的 LLM 不进入数字或图表，`inFlightRequests` 单独驱动看板轮询；Search 的运行数仍进入统计并驱动轮询。
 - 历史开始时间为本功能启用时间；上线前显示“未统计”，而不是零消耗。
 
 ### 6.2 Settings 呈现
@@ -190,33 +202,13 @@ Tokens 按每次调用拆分命中缓存输入、未命中缓存输入、输出�
 | 新增最小测试 Capability | 只使用统一调用入口和来源上下文即可入账，不修改 Usage |
 | 依赖检查 | Base 反向导入上层时检查失败 |
 
-使用小范围协议 fixture、调用链集成和 UI 测试证明关键语义；不以消耗大量真实额度换取测试覆盖。真实 Key 的最终可用性由用户手测验证。
+使用小范围协议 fixture、调用链集成和 UI 测试证明关键语义，并以限定 Provider／模型的真实链路核对请求与用量；用户体验另行验收。
 
-## 8. 实施顺序与动态维护
-
-1. 明确归一化契约，建立 Base 公开入口与依赖边界检查。
-2. 建设 Usage 记录/查询服务、SQLite 适配与跨进程传输。
-3. 收拢全部 LLM、Search 调用入口并采集；验证重试、取消、未知值与防重复。
-4. 接入 Settings 用量看板。
-5. 验收后再盘点其他共用能力，逐个决定是否进入 Base。
-
-本文维护 Usage 专属契约、统计口径和看板设计。Base 的总体边界与能力域目录见 [Base.overview 设计文档](base.overview.设计文档.md)。其他能力域独立成文，不堆入本文或总览；未实现能力不得描述为已具备。
-
-## 9. 首版落地边界
+## 8. 当前落地边界
 
 - 已接入桌面端 Chat 各轮、标题、公司识别与补全、两轮调研及修正、配置诊断与连接检查；独立开发诊断 CLI 保持隔离，不写用户账本。
-- Base 服务通过仓储端口显式注入；桌面适配器在每个进程绑定一个记录器，未来新功能应复用 `PiModelGateway` 与 `createMeteredSearchProvider`，不绕过统一入口自行构造 SDK 或未采集的 Search Provider。
+- Base 服务通过仓储端口显式注入；桌面适配器在每个进程绑定一个记录器与 collector，未来新功能应复用 `PiModelGateway` 与 `createMeteredSearchProvider`，不绕过统一入口自行构造 SDK 或未采集的 Search Provider。Model／collector 本批已完成自动验证与限定真实链路端测，用户体验验收待执行。
 - SQLite 为 migration 20。主进程统一写入，单进程投递队列上限 256、每条最多尝试 3 次；正常退出有界等待，未确认 Worker 落盘会持久化完整性告警，不推算丢失条数。
 - 原始流式 usage 在 SDK 映射前采集，保留缺失值；观察器单行上限 65,536 字符，过大或无法解析的事件不影响原始响应，但对应指标可能未知。Anthropic 兼容端若缺少缓存子项，不能确认的总输入保持未知。
-- Settings 的统计周期、趋势交互与模型选择按第 6 节演进；首次启用前标为未统计，无历史用量回填。
-- 自动测试使用协议 fixture 和内存 SQLite；服务商真实用量返回情况与用户最终交互仍由手测确认，不将本地统计视为账单。
-# 2026-09-22 统计投影、提示与恢复规则（覆盖旧规则）
-
-以下规则覆盖本文中与之冲突的旧统计与健康描述：
-
-- LLM 看板的概览、日序列、趋势、Provider、模型汇总和自动模型选项使用同一投影。排除 `running`，并排除失败、取消或中断且五项 Token 指标全部为 `null` 的终态记录；成功但未知用量仍计请求数，任一已知指标（明确的 `0` 也算）保留。Search 仍按实际发起次数统计。
-- 原始账本与提示投影独立。删除只适用于终态异常且所有 Token 指标为空的版本快照；成功未知、部分用量和尝试数不完整只做持久确认，不删除记录，也不改变任何统计。每条保留记录的确认随记录生命周期保留；新记录不会被旧确认覆盖。
-- 运行中的 LLM 不进入任何数字或图表，但 `inFlightRequests` 单独驱动看板轮询。Search 的运行数仍按原口径呈现并驱动轮询。
-- 当前故障与历史计数分离。只有当前存储/传输失败显示红色；累计失败次数本身不构成当前故障。超过 3 秒的正常待写入仅显示灰色同步状态。不可恢复的丢弃/中断是可持久确认的黄色历史缺口，确认不清零账本计数；计数增长会产生新提示。
-- 投递失败记录在内存中按 `attemptId` 合并新修订并受容量限制。显式“修复”先做回滚式本地存储读写探测，再幂等重投保留事件；它不重发业务请求、不调用 Provider、不初始化仓库、不关闭/重启 Worker，也不使用关闭队列的 `flush`。旧修订不能覆盖新修订；退出时仍未恢复的记录转为真实历史缺口。
-- 红色当前故障可收起为单行状态，但始终保留修复入口；实际恢复后自动消失。界面只显示安全的人类可读说明，不暴露底层异常文本。
+- Settings 的统计周期、趋势交互与模型选择见第 6 节；首次启用前标为未统计，无历史用量回填。
+- 协议 fixture 和内存 SQLite 覆盖异常与边界；当前 DeepSeek `deepseek-flash`／Tavily 的 Chat、配置诊断及公司调研真实链路已核对 Usage，其他 Provider／模型与用户体验仍待验证。本地统计不等同账单。

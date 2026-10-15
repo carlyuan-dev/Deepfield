@@ -2,7 +2,7 @@
 
 版本：0.2 · 更新日期：2026-10-13
 
-状态：Errors 中立核心已实现并公开，现有 contracts 错误 API 已接入；本批于 2026-10-13 通过用户手测验收。Config 已实现并完成本轮验收，范围见 [Base.Config 设计](base.config.设计文档.md)；其余后续 Base 抽取尚未实施。本文件是长期契约，不包含开发派工和逐步执行记录。
+状态：Errors 中立核心已实现并公开，现有 contracts 错误 API 已接入；本批于 2026-10-13 通过用户手测验收。整体迁移状态见 [Base 总览](base.overview.设计文档.md)。
 
 ## 1. 职责与取舍
 
@@ -41,7 +41,7 @@ type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 function captureResult<T, E>(work: () => T | Promise<T>, toError: (error: unknown) => E): Promise<Result<T, E>>;
 ```
 
-`BaseError` 的 name 为 `BaseError`、message 为 code，保留 ErrorOptions 的 cause 供内部定位。context 只是候选信息，不意味着其任意字段均获准公开。不添加自动 `toJSON`、全局错误注册中心或庞大异常子类树。
+`BaseError` 的 name 为 `BaseError`、message 为 code，保留 ErrorOptions 的 cause 供内部定位。context 只是候选信息，其公开字段由出口 codec 校验。
 
 ## 3. 公开转换与安全边界
 
@@ -64,6 +64,6 @@ function captureResult<T, E>(work: () => T | Promise<T>, toError: (error: unknow
 
 ## 5. 后续维护
 
-后续变更须同步本页状态和真实导出，使用必要的独立错误码、兼容转换、敏感信息隔离及既有 IPC 检查验证。具体派工、测试运行输出和命令执行清单只留本地，不作为本页的依赖。
+后续变更须同步本页状态和真实导出，使用必要的独立错误码、兼容转换、敏感信息隔离及既有 IPC 检查验证。
 
 其他能力域的归属与迁移边界见 [Base 抽取设计](base.extraction.设计文档.md)，总目录见 [Base 总览](base.overview.设计文档.md)。未来确需扩展传输协议时单独设计，不能通过放宽旧白名单“顺便兼容”。

@@ -1,6 +1,6 @@
 # Chat Runtime 设计文档
 
-更新日期：2026-10-13 · 状态：按当前代码维护的正式设计；本文整理不新增功能，也不代表重新验收安装包。
+更新日期：2026-10-13 · 状态：按当前代码维护的正式设计。
 
 ## 1. 定位与产品边界
 
@@ -15,7 +15,7 @@ Chat 负责会话、历史与上下文策略、每轮工具开放、Skill 使用
 Settings 分别维护 LLM 和 Search Profile；允许保存多份，每类只有一个当前项，保存与激活是不同操作。一次运行解析请求范围内的配置快照，运行中切换设置不改变已开始的请求。
 
 - LLM 使用 OpenAI-compatible Chat Completions 或 Anthropic Messages，协议与 Provider 预设不是同一概念。模型网关复用 Pi 的协议能力，不依赖 DeepSeek Responses 或服务商原生搜索。
-- Search 独立于 LLM，通过 Registry 创建当前 Provider。可用项以 `packages/retrieval/src/providers/provider-registry.ts` 的 manifest 和 `packages/contracts/src/model-config.ts` 的配置 Schema 为事实源，包含已接入的豆包搜索 Custom；早期 benchmark 的候选淘汰、免费额度和价格记录不构成生产配置契约。
+- Search 独立于 LLM，通过 Registry 创建当前 Provider。可用项以 `packages/retrieval/src/providers/provider-registry.ts` 的 manifest 和 `packages/contracts/src/model-config.ts` 的配置 Schema 为事实源，包含已接入的豆包搜索 Custom。
 - API Key 经主进程 SecretStore 与系统加密能力保存；Renderer 不读取已保存明文，普通配置、历史、审计和错误不保存密钥或认证头。
 - 未开启联网时不开放 `web_search`、`read_webpage`；开启只授予本轮网络工具权限，模型自行决定是否调用，不要求每条消息必须搜索。
 - 连接诊断检查连接，不证明答案质量或来源可信。当前没有模型路由、Search 自动故障转移或多个 Provider 混合检索。
@@ -33,7 +33,7 @@ Settings 分别维护 LLM 和 Search Profile；允许保存多份，每类只有
 3. 每轮刷新可用工具与运行预算。网络类别耗尽或鉴权失败只撤下对应网络工具，不连带关闭计算、会话读取或 Capability 等其他工具。
 4. 达到总模型轮次边界时预留最后一轮，移除全部工具并禁止 tool calling，保留完整调用/结果历史生成流式答案。
 
-Capability 的专用调研收口仍可使用独立文本证据上下文；它不改变上述通用 Chat 契约。不能把早期“任何无工具输出都进入独立成稿阶段”“最终轮清除所有工具历史”套回 Chat。
+Capability 的专用调研收口可使用独立文本证据上下文；通用 Chat 遵循上述循环契约。
 
 工具开放由本轮授权、已启用能力目录和剩余额度决定。模型只能选择已提供的工具；联网关闭不等于所有工具关闭，Capability 被禁用不等于整个主 Agent 不可用。能力发现与业务动作由包协议提供，Chat 不硬编码公司字段或公司流程。
 
@@ -97,4 +97,4 @@ Search 层只标准化能力和结果，不负责证据覆盖、预算、循环�
 | 持久化会话记录 | `packages/persistence/src/chat-session-repository.ts` |
 | Search 标准契约及日期适配 | `packages/retrieval/src/search-provider.ts`、`search-tool.ts` |
 
-改动上述行为时同步本文；具体交互与 Base 边界只维护其对应正式文档。长期研究产品路线、早期 benchmark 过程和尚未实施的多 Agent 编排不应作为当前 Chat Runtime 的实现声明。
+改动上述行为时同步本文；具体交互与 Base 边界只维护其对应正式文档。

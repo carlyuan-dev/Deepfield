@@ -10,8 +10,9 @@
 | [按风险选测指南](testing.md) | 可复用的必要检查路径，不记录某一批“测试已通过” |
 | [Base 总览](base/base.overview.设计文档.md) | Chat／Capability → Base 的单向依赖、能力目录与真实状态 |
 | [Base 抽取设计](base/base.extraction.设计文档.md) | 已确认的八域边界、当前归属 → 目标归属及迁移取舍 |
-| [Base.Errors](base/base.errors.设计文档.md) | 已实现并接入旧接口的中立错误契约与兼容边界；已通过用户手测 |
-| [Base.Config](base/base.config.设计文档.md) | 已实现的通用配置声明与作用域接入、可选 Profile 及旧接口兼容；本轮验收完成，覆盖当前配置 Chat、资料更新与两阶段调研 |
+| [Base.Errors](base/base.errors.设计文档.md) | 已实现并接入旧接口的中立错误契约；验收范围与兼容边界见正文 |
+| [Base.Config](base/base.config.设计文档.md) | 已实现的通用配置、作用域接入与旧接口兼容；当前配置消费链路已验收，证据范围见正文 |
+| [Base.Model](base/base.model.设计文档.md) | 模型安全契约、可信端 runtime 与实际接线；本阶段自动验证完成，可交付 staging，待用户体验验收 |
 | [Base.Usage](base/base.usage.设计文档.md) | 已实现的用量账本、统计口径、采集与看板 |
 | [Chat 运行机制](chat/chat.runtime.设计文档.md) | Pi 循环、工具许可、联网额度、历史与配置调用边界 |
 | [Chat 人机交互](chat/chat.interaction.设计文档.md) | 询问／确认、真实表单共同编辑、任务范围授权与恢复 |
@@ -28,7 +29,7 @@
 - `apps/desktop/src/worker/agent/`：共享 Pi 执行器及窄执行契约；`worker/chat/`：Chat 提示词、历史、溯源与 checkpoint 适配；`worker/tools/`：工具运行和活动投影。
 - `apps/desktop/src/worker/capabilities/agent-runtime.ts`：Capability 直接装配共享执行器，不经过 Chat 上下文工厂。
 - `capabilities/company-research/`：独立公司调研包，包含 application、runtime、ui、export 与 contracts。
-- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors 与 Config。Errors 已通过用户手测；Config 已实现并完成本轮验收，范围见 [Base.Config 设计](base/base.config.设计文档.md)，后续抽取未做。
+- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors、Config 与 Model，含 Model 和 Usage 的 runtime 入口。Errors、Config 已验收，Model 本阶段自动验证与限定真实链路端测完成，可交付 staging，待用户体验验收；Search 及后续域尚未迁移。各域的实现与验收范围见对应设计。
 - `packages/contracts/`、`packages/tool-platform/`、`packages/retrieval/`、`packages/persistence/`：当前配置／错误契约、工具执行、搜索与存储；迁移边界以 Base 抽取设计为准。
 
 共享执行器已有独立契约和注入边界，但仍包含联网／调研场景策略及部分 SDK、desktop shared 依赖，不能称为已中立化的 Base.Agent。
@@ -50,4 +51,4 @@
 4. 正式文档不得依赖本地计划、交接或参考材料才能读懂，不链接这些忽略文件。远端读者应能只用已提交文件理解项目。
 5. `.gitignore` 不会自动取消已跟踪文件；转换为本地材料时须取消版本跟踪并保留本地副本，不重写 Git 历史。之后的提交／推送才会更新远端当前目录。
 
-本次将历史 plans、specs、日期型手测及两份交接／审查原件保留本地并移出跟踪；没有物理删除这些资料。后续过程记录使用上述本地目录，避免重新进入正式文档树。
+文字取舍遵循 [AGENTS.md 的文字与文档约定](../AGENTS.md#文字与文档)。

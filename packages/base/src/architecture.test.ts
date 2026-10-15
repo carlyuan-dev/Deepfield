@@ -18,6 +18,14 @@ function checkBoundary(entries: string[], read: (path: string) => string, root: 
       if (literal?.type !== "StringLiteral" || typeof literal.value !== "string") throw new Error("Unverifiable dynamic dependency");
       const name = literal.value;
       if (name === "typebox" || name === "typebox/value") return;
+      if (name === "node:crypto" && path === resolve(root, "usage/collector.ts")) return;
+      if (name === "node:crypto" && path === resolve(root, "model/request-observation.ts")) return;
+      const piImports: Record<string, readonly string[]> = {
+        "model/contracts.ts": ["@earendil-works/pi-ai"],
+        "model/request-observation.ts": ["@earendil-works/pi-ai"],
+        "model/runtime.ts": ["@earendil-works/pi-ai", "@earendil-works/pi-ai/compat", "@earendil-works/pi-ai/api/anthropic-messages.lazy", "@earendil-works/pi-ai/api/openai-completions.lazy"],
+      };
+      if (Object.entries(piImports).some(([file, names]) => path === resolve(root, file) && names.includes(name))) return;
       if (!name.startsWith(".")) throw new Error(`Forbidden Base dependency: ${name}`);
       visit(resolve(dirname(path), name.replace(/\.js$/, ".ts")));
     }

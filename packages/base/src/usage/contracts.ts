@@ -145,6 +145,24 @@ export interface UsageDashboardApi {
   repair(): Promise<{ repaired: boolean; recoveredRecords: number; errorCode: string | null }>;
 }
 export interface UsageRecorder { recordStart(start: UsageStart): Promise<boolean>; recordFinish(finish: UsageFinish): Promise<boolean> }
+/** Explicit, credential-free identity supplied by the caller. */
+export interface UsageMetadata {
+  profileId?: string; draftSessionId?: string; profileName: string;
+  providerId: string; modelId?: string; configRevisionId?: string; serviceKind: UsageServiceKind;
+}
+export interface UsageContext { sourceId: string; operationId?: string; taskId?: string; stageId?: string }
+export interface UsageAttemptHandle {
+  readonly operationId: string;
+  readonly attemptId: string;
+  update(metrics: UsageMetrics): void;
+  finish(outcome: UsageFinish["outcome"], errorCode?: string | null, resultCount?: number | null): void;
+}
+export interface UsageCollector {
+  startAttempt(metadata: UsageMetadata, context?: UsageContext, identity?: object): UsageAttemptHandle;
+}
+export interface ModelUsagePort {
+  startAttempt(metadata: UsageMetadata, identity?: object): UsageAttemptHandle;
+}
 export interface UsageRepository {
   initialize(now: string): UsageHealth;
   upsert(attempt: UsageAttempt): "inserted" | "updated" | "ignored";

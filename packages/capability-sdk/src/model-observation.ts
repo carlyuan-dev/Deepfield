@@ -1,3 +1,5 @@
+import type * as BaseModel from "@deepfield/base/model";
+
 export interface SourceDateMetadata {
   provider: string;
   fieldName?: string;
@@ -23,14 +25,7 @@ export interface ModelEvidenceSource {
   sourceDate?: SourceDateMetadata;
 }
 
-export interface ModelTextClipping {
-  version: string;
-  beforeBytes: number;
-  beforeHash: string;
-  afterBytes: number;
-  afterHash: string;
-  omittedItems: number | null;
-}
+export type ModelTextClipping = BaseModel.ModelTextClipping;
 
 export interface ModelToolOrigin {
   toolName: string;
@@ -38,48 +33,8 @@ export interface ModelToolOrigin {
   formatting?: ModelTextClipping;
 }
 
-/** UTF-16 offsets in one program-produced input message, not generated assistant text. */
-export interface ModelRequestOriginRange {
-  messageIndex: number;
-  toolCallId: string;
-  origin: ModelToolOrigin;
-  start: number;
-  end: number;
-  modelClipping?: ModelTextClipping;
-  sourceLocatorText?: string;
-}
-
-export interface ModelRequestObservationInput {
-  requestId: string;
-  phase: "ordinary" | "synthesis";
-  origins: ModelRequestOriginRange[];
-}
-
-export interface EvidenceProjection {
-  projectionId: string;
-  toolCallId: string;
-  /** Position in the serialized adapter messages array. */
-  messageIndex: number;
-  contentBlockIndex?: number;
-  origin: ModelToolOrigin;
-  mapping: "mapped" | "unmapped";
-  text: string;
-  start: number;
-  end: number;
-  visibleBytes: number;
-  visibleHash: string;
-  modelClipping?: ModelTextClipping;
-  sourceLocatorText?: string;
-}
-
-export interface ModelRequestObservation {
-  modelRequestId: string;
-  requestId: string;
-  phase: "ordinary" | "synthesis";
-  state: "prepared" | "dispatched" | "failed";
-  responseState: "pending" | "succeeded" | "failed" | "not_sent";
-  responseStatus?: number;
-  projections: EvidenceProjection[];
-}
-
-export type ModelRequestObserver = (event: ModelRequestObservation) => void;
+export type ModelRequestOriginRange = BaseModel.ModelRequestOriginRange<ModelToolOrigin>;
+export type ModelRequestObservationInput = BaseModel.ModelRequestObservationInput<ModelToolOrigin, "ordinary" | "synthesis">;
+export type EvidenceProjection = BaseModel.EvidenceProjection<ModelToolOrigin>;
+export type ModelRequestObservation = BaseModel.ModelRequestObservation<ModelToolOrigin, "ordinary" | "synthesis">;
+export type ModelRequestObserver = BaseModel.ModelRequestObserver<ModelToolOrigin, "ordinary" | "synthesis">;

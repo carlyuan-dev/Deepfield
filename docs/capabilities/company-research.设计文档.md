@@ -7,7 +7,7 @@
 
 产品提供带来源、供记者核验的研究素材收集与整理。结构合规、来源编号存在、搜索调用成功、证据可追溯均不能证明事实正确，报告不可直接视为可发布稿。
 
-Chat 与 UI 共用公司调研业务动作、队列与报告，不创建隐藏 Conversation，不把调研正文写成 Chat 消息历史。包负责主题、公司、模板、两阶段状态机、Harness 和产物；宿主负责通用授权、模型/Search 服务及传输。早期“Chat 暂不调用 Capability”和固定 DeepSeek Responses API 的约束已被公共动作与运行配置替代。
+Chat 与 UI 共用公司调研业务动作、队列与报告，不创建隐藏 Conversation，不把调研正文写成 Chat 消息历史。包负责主题、公司、模板、两阶段状态机、Harness 和产物；宿主负责通用授权、模型/Search 服务及传输。
 
 ## 公司主体与主题关联
 
@@ -49,7 +49,7 @@ Chat 与 UI 共用公司调研业务动作、队列与报告，不创建隐藏 C
 
 进度是已处理/总条目数，包含失败；失败数另列，不把处理数写成成功数。全局队列可能跨主题，控制入口必须明确队列或条目 ID。
 
-实现与动作：[队列服务](../../capabilities/company-research/application/company-research-batch-service.ts)、[queue.get](../../capabilities/company-research/docs/actions/queue.get.md)、[queue.cancel](../../capabilities/company-research/docs/actions/queue.cancel.md)。早期“单公司不排队”“只能 ready 公司”“不允许追加批次”的设计不再作为当前约束。
+实现与动作：[队列服务](../../capabilities/company-research/application/company-research-batch-service.ts)、[queue.get](../../capabilities/company-research/docs/actions/queue.get.md)、[queue.cancel](../../capabilities/company-research/docs/actions/queue.cancel.md)。
 
 ## 版本、失败重试与删除
 
@@ -72,7 +72,7 @@ Chat 与 UI 共用公司调研业务动作、队列与报告，不创建隐藏 C
 
 完整重跑重置搜索状态，仅结构化重试保留。报告及导出对 `none` 给出联网状态提示，不从模型正文网址、调用计数或来源编号推断联网成功。
 
-Prompt 要求来源归属、时间范围与忠实摘录：保留判断主体、型号范围、数字口径、时间、条件和预测语气；摘要同样受限。不得把材料缺口写成现实不存在，或跨片段拼出新关系。移除例行缺口评价不意味着增强结论或删除原有限定。
+Prompt 要求来源归属、时间范围与忠实摘录：保留判断主体、型号范围、数字口径、时间、条件和预测语气；摘要同样受限。不得把材料缺口写成现实不存在，或跨片段拼出新关系。
 
 ## 证据留存、日期与二轮一致性
 
@@ -98,7 +98,7 @@ Provider 原始日期字段在规范化前留存，区分发表时间、未知�
 
 ## 验证与未实现边界
 
-验证按风险覆盖状态/事务、重试与取消竞争、跨轮包一致性、来源类型/日期、预算及关键 UI；使用本地固定工具结果可验证工程契约，不替代真实报告质量评阅。文档整理仅核对内容与链接，不重跑产品测试。
+验证按风险覆盖状态/事务、重试与取消竞争、跨轮包一致性、来源类型/日期、预算及关键 UI；使用本地固定工具结果可验证工程契约，不替代真实报告质量评阅。
 
 证据留存不等于自动事实判断、可信度评分或日期准入。报告编辑、人工核验状态、跨版本差异、模板管理及重启自动续跑付费工作不属于当前承诺。
 

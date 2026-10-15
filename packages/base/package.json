@@ -3,11 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./model": "./src/model/index.ts",
+    "./model/runtime": "./src/model/runtime.ts",
     "./usage": "./src/usage/index.ts",
+    "./usage/runtime": "./src/usage/runtime.ts",
     "./errors": "./src/errors/index.ts",
     "./config": "./src/config/index.ts",
     "./config/runtime": "./src/config/runtime.ts"
   },
-  "dependencies": { "typebox": "1.3.7" },
+  "dependencies": { "@earendil-works/pi-ai": "0.84.3", "typebox": "1.3.7" },
   "devDependencies": { "@babel/parser": "7.29.8" }
 }

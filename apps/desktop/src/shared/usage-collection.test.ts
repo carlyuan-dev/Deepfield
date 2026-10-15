@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { UsageAttempt } from "@deepfield/base/usage";
 import { PiModelGateway } from "./model-gateway.js";
-import { configureUsageRecorder, createLlmUsageTransport } from "./usage-collection.js";
+import { configureUsageRecorder, createLlmUsageTransport, modelUsagePort, snapshotIdentity, startUsageAttempt, withUsageContext } from "./usage-collection.js";
 import { defaultPiRuntime } from "../worker/agent/pi-chat-agent.js";
 
 const snapshot = { id: "中文 profile", name: "测试", provider: "openai" as const, protocol: "openai_compatible" as const, baseUrl: "https://fixture.invalid/v1", modelId: "model", contextWindow: 32000, apiKey: "secret-never-record", configRevisionId: "revision-1" };
@@ -14,6 +14,55 @@ function recording() {
 function response(usage?: unknown) {
   return new Response(`data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }], ...(usage === undefined ? {} : { usage }) })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
 }
+it("shares snapshot identity and isolates concurrent contexts across Model and legacy Search attempts", async () => {
+  const records = recording();
+  const { configRevisionId: _revision, ...legacy } = snapshot;
+  const token = snapshotIdentity(legacy);
+  expect(token).toBe(snapshotIdentity(legacy));
+  expect(Object.keys(token)).toEqual([]);
+  expect(token).not.toBe(snapshotIdentity({ ...legacy }));
+  await Promise.all(["one", "two"].map((sourceId) => withUsageContext({ sourceId }, async () => {
+    await Promise.resolve();
+    const model = modelUsagePort.startAttempt({ profileId: legacy.id, profileName: legacy.name, providerId: legacy.provider, modelId: legacy.modelId, serviceKind: "llm" }, token);
+    const oldLlm = startUsageAttempt(legacy, "llm");
+    const search = startUsageAttempt({ id: "search", name: "Search", provider: "tavily", apiKey: "search-secret", baseUrl: "https://search.invalid", options: {} }, "search");
+    await Promise.resolve();
+    model.finish("succeeded"); oldLlm.finish("succeeded"); search.finish("succeeded", null, 2);
+  })));
+  const ends = records.filter((record) => record.outcome !== "running");
+  expect(ends).toHaveLength(6);
+  for (const sourceId of ["one", "two"]) {
+    const group = ends.filter((record) => record.sourceId === sourceId);
+    expect(group).toHaveLength(3);
+    expect(new Set(group.map((record) => record.operationId)).size).toBe(1);
+    expect(group.filter((record) => record.serviceKind === "llm").map((record) => record.configRevisionId)).toEqual([ends[0]!.configRevisionId, ends[0]!.configRevisionId]);
+    const search = group.find((record) => record.serviceKind === "search");
+    expect(search).toMatchObject({ resultCount: 2 });
+    expect(search).not.toHaveProperty("modelId");
+  }
+  expect(new Set(ends.map((record) => record.operationId)).size).toBe(2);
+  expect(JSON.stringify(records)).not.toContain("search-secret");
+});
+it("shares fallback revisions between actual gateway instances and counts each fetch exactly once", async () => {
+  const records = recording();
+  const { configRevisionId: _revision, ...legacy } = snapshot;
+  let calls = 0;
+  vi.stubGlobal("fetch", async () => { calls++; return response(); });
+  await withUsageContext({ sourceId: "gateway-pair" }, async () => {
+    await new PiModelGateway().completeText(legacy, "s", "p");
+    await new PiModelGateway().completeText(legacy, "s", "p");
+    await new PiModelGateway().completeText({ ...legacy }, "s", "p");
+  });
+  const starts = records.filter(record => record.outcome === "running");
+  const ends = records.filter(record => record.outcome !== "running");
+  expect(calls).toBe(3);
+  expect(starts).toHaveLength(calls);
+  expect(ends).toHaveLength(calls);
+  expect(starts[0]!.configRevisionId).toBe(starts[1]!.configRevisionId);
+  expect(starts[2]!.configRevisionId).not.toBe(starts[0]!.configRevisionId);
+  expect(new Set(starts.map(record => record.operationId)).size).toBe(1);
+  expect(new Set(starts.map(record => record.attemptId)).size).toBe(3);
+});
 it.each(["direct", "stream"])("collects %s raw cache usage once, normalizes legacy IDs, and preserves business output", async (mode) => {
   const records = recording();
   vi.stubGlobal("fetch", async () => response({ prompt_tokens: 20, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 8 } }));

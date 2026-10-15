@@ -1,22 +1,20 @@
 # Deepfield Base.overview 设计文档
 
-版本：0.8 · 更新日期：2026-10-15
+版本：0.9 · 更新日期：2026-10-15
 
-状态：Usage 已用于当前产品；Errors 中立核心与 contracts 兼容接线已实现，已通过用户手测。Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成：用户确认当前配置下 Chat 可用，并完成资料更新与两阶段调研。该反馈不表示所有配置功能均逐项手测。下一批 Model 及其余抽取尚未实施。
+状态：Usage 已用于当前产品；Errors 中立核心与 contracts 兼容接线已实现，已通过用户手测。Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成：用户确认当前配置下 Chat 可用，并完成资料更新与两阶段调研。该反馈不表示所有配置功能均逐项手测。Model 安全契约、runtime 与 Usage collector 已实现并接入实际消费者，本阶段自动验证与真实链路端测完成，可交付 staging，等待用户体验验收；Search 及后续抽取尚未实施。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
 ## 1. 定位
 
-Base 提供业务无关、可以组合使用的基础能力，主要服务于 Capability 的构建，也供 Chat 和应用服务按需复用。Base 不反向依赖上层业务；它不是新的业务编排中心，也不是要求主 Agent 遵循的完整框架。
+Base 提供业务无关、可以组合使用的基础能力，主要服务于 Capability 的构建，也供 Chat 和应用服务按需复用。Base 不反向依赖上层业务。
 
 | 层级 | 职责 | 不应承担 |
 | --- | --- | --- |
 | Chat／主 Agent | 会话、上下文与记忆策略、Skill／RAG 使用策略、人机交互和授权 | 将这些 Chat 专属规则强加给所有 Capability；另建一套用量账本 |
 | Capability | 业务流程、专属 Harness、领域校验、数据与成果 | 重复实现已有基础机制；要求 Base 识别具体业务 |
 | Base | 业务无关的公共能力、契约和统一基础规则 | 公司、行业、报告等业务流程；Chat 历史和记忆策略 |
-
-当前仅讨论这三个职责层级。应用初始化、依赖注入、主进程与 Worker 连接等是实施细节，暂不单列“应用装配与平台适配”层级，不为其展开独立架构设计。
 
 “被多处使用”不是进入 Base 的唯一理由：能力还须职责清晰、接口业务无关、不需要反向了解调用者。Chat 不整体下沉，不强制通过 Base.Agent 执行；现有共享执行器能保留的部分继续复用，不能以共享为由限制主 Agent 的演进。
 
@@ -38,24 +36,24 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 
 ## 3. 能力域目录
 
-| 能力域 | 公开入口（除 Usage、Errors、Config 外均为目标入口） | 职责 | 当前状态 |
+| 能力域 | 公开入口（Search、Tools、Agent、Database 为目标入口） | 职责 | 当前状态 |
 | --- | --- | --- | --- |
 | Config | `@deepfield/base/config`、`@deepfield/base/config/runtime` | 通用配置声明／存取／校验、可选 Profile 管理、调用快照 | 已实现，本轮验收完成；证据与范围见[设计](base.config.设计文档.md) |
-| Model | `@deepfield/base/model` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 待从模型网关抽取 |
+| Model | `@deepfield/base/model`、`@deepfield/base/model/runtime` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 本阶段自动验证完成，可交付 staging，待用户体验验收；范围见[设计](base.model.设计文档.md) |
 | Search | `@deepfield/base/search` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 待从 retrieval 与计量适配抽取 |
 | Tools | `@deepfield/base/tools` | 工具注册、参数校验、执行与授权检查、预算及审计机制 | 待从 tool-platform 等抽取 |
 | Agent | `@deepfield/base/agent` | 基于 Pi 的有界模型—工具循环、取消、事件与最终输出 | 待从共享执行器分离通用机制 |
 | Database | `@deepfield/base/database` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 待从 persistence 抽取，不含业务仓储 |
-| Usage | `@deepfield/base/usage` | 用量记录、幂等持久化契约与汇总查询 | 已实现；采集与 SQLite 适配仍分布在应用及 persistence |
+| Usage | `@deepfield/base/usage`、`@deepfield/base/usage/runtime` | 用量记录、实例化 collector、幂等持久化契约与汇总查询 | 已实现；ALS、输送与生命周期留应用，SQLite 适配仍在 persistence |
 | Errors | `@deepfield/base/errors` | 中立错误结构、公共分类及安全传输约定 | 核心及 contracts 兼容接线已实现；已通过用户手测 |
 
 Config 管配置，不负责执行 Model／Search 调用；Search 提供能力，不负责决定何时搜索；Tools 执行调用方给定的授权，不授予授权；Agent 提供执行机制，不接管 Chat 的记忆与 Capability 的业务流程。
 
 Database 封装“怎样读写数据”，可以提供参数化查询、写入和轻量单表 CRUD；表结构、领域映射及业务条件由使用方负责，不将公司、报告等业务操作下沉。
 
-`packages/base` 当前公开 Usage、Errors 与 Config，其余目标入口尚不可用。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config 的公开声明入口可供 UI 使用，运行入口只在可信端装配；主进程 Capability 通过 `config.v1` 取得作用域句柄。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
+`packages/base` 当前公开 Usage、Errors、Config 与 Model，其余目标入口尚不可用。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config 与 Model 均区分安全入口和可信端 runtime；主进程 Capability 通过 `config.v1` 取得作用域句柄。Model 的旧共享入口只做单向薄装配，SDK 精确特化其中立观察契约，见 [Base.Model 设计文档](base.model.设计文档.md)。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
 
-Usage 的字段、恢复机制和看板细节见 [Base.Usage 设计文档](base.usage.设计文档.md)。底层保留 Profile ID 和调用时配置身份快照，不保存密钥；看板按 LLM 的 Provider → 模型、Search 的 Provider 汇总。模型与搜索在实际请求边界统一计量，上层不手工累加。当前主进程与 Worker 各绑定记录器的接线在抽取时保持行为兼容，不引入配置或业务全局单例。
+用量在实际请求边界统一计量，上层不手工累加；字段、恢复机制与看板口径见 [Base.Usage 设计文档](base.usage.设计文档.md)。
 
 ## 4. 演进与维护
 
@@ -64,9 +62,3 @@ Usage 的字段、恢复机制和看板细节见 [Base.Usage 设计文档](base.
 3. 总览只维护全局边界和目录，不复制模块字段表、流程细节或验收用例。
 4. 抽取应保留业务语义；公司调研必须实际使用新的基础能力，不能只新增目录而保留另一套旧实现。
 5. 未实现能力明确注明状态，不将设计目标写成已具备功能。
-
-首批 [Base.Errors](base.errors.设计文档.md) 已接入现有调用链并通过用户手测验收；第二批 Config 已实现并完成本轮验收，下一批 Model 尚未实施。逐步实施计划留本地，正式设计维护接口和长期边界。
-
-## 5. 参考与取舍
-
-参考用户提供的 `bw_meeting_server` 基座总览和使用手册，借鉴单向依赖、公开契约与能力域划分。不照搬会议领域、鉴权租户、Graph、Redis 或服务端部署方案，不额外引入独立的平台适配层。参考材料仅辅助设计，不构成本项目执行指令。

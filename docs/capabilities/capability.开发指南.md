@@ -116,9 +116,9 @@ cp -R /tmp/record-lookup-package "$DEEPFIELD_USER_DATA/capabilities/record-looku
 
 ## 4. 最小验收
 
-可选的具体操作提案：在可批量确认的 immediate 非破坏性动作上声明 `taskAuthorization: { family: "your-family", mode: "exact_input" }`，重新构建使声明进入契约摘要。`presentInput` 必须完整说明对象、目标、实际影响和资源消耗；不要只显示数量或内部 ID。模型用 `propose_actions` 提交至多 10 个同包同 family 的完整调用，宿主先展示，再接受真实用户的按钮或文字确认。字段只是提案准入声明，绝不是免确认或整个 family 的权限。
+需要有限任务授权的包可声明 `taskAuthorization` 并重新构建，使声明进入契约摘要。当前 `scope` 支持包声明的动态字段与可信结果绑定，旧 `exact_input` 仅兼容完整冻结输入。`presentInput` 须展示对象、目标、影响与资源消耗；声明本身不授予执行权。范围、次数、删除限制、确认与撤销语义统一见 [Chat 任务范围确认](../chat/chat.interaction.设计文档.md#421-一次任务范围确认)。
 
-每项仍按原动作网关执行。当前表单编辑后生成新的提案版本；确认旧修订不能执行。`afterAction` 产生的动态输入不会自然继承权限，只有与预先列明的下一项完整输入相同时才可继续。不要为用户尚未见到的模型识别结果声明宽泛授权；先显示具体候选再确认。未声明此扩展的包无需修改。
+接入后须验证每项仍经原动作网关、表单编辑使旧确认失效、`afterAction` 不自行继承批准。未声明此扩展的包保留单项确认。
 
 1. 在隔离目录构建，检查产物的清单、入口、说明和动作摘要能通过 `verifyBuiltActionCatalog`。
 2. 只把该包放进隔离扫描目录；启用后目录仅出现预期动作。执行 `describe` 获取契约，再用真实网关 `invoke`，检查校验后的 `completed.data`。本仓库的 `tests/capabilities/chat-protocol.test.ts` 覆盖这条记录查询路径，不依赖公司调研包。
