@@ -39,7 +39,7 @@ v2 清单使用 `protocolVersion: 2`、`hostApiVersion: 2`。`entries.main` 必�
 
 ### 包私有配置
 
-在清单 `requirements` 中加入 `"config.v1"`，主进程 `bootstrap` 即可取得宿主限定到本包 ID 的配置服务。当前 Worker 不提供此服务；包不能自行传 scope、读取目录或创建全局管理器。全局模型／搜索仍通过原 `model.configuration` 等显式服务使用，私有配置不会覆盖它们。Config 核心、作用域接入及旧 LLM／Search 兼容适配已实现，待用户手测验收。
+在清单 `requirements` 中加入 `"config.v1"`，主进程 `bootstrap` 即可取得宿主限定到本包 ID 的配置服务。当前 Worker 不提供此服务；包不能自行传 scope、读取目录或创建全局管理器。全局模型／搜索仍通过原 `model.configuration` 等显式服务使用，私有配置不会覆盖它们。Config 核心、作用域接入及旧 LLM／Search 兼容适配已实现并完成本轮验收，范围见 [Base.Config 设计](../base/base.config.设计文档.md)。
 
 ```ts
 import { Type } from "typebox";
