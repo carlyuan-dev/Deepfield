@@ -48,6 +48,18 @@ it("rejects an old resume proposal after the user approved its pending action", 
   expect(f.executed).toEqual(["first"]); expect(f.host.coordinator.active(f.conversation.id)).toBeUndefined();
 });
 
+it("rejects empty, mixed and incomplete proposals before creating approval or executing", async () => {
+  const f = await fixture();
+  const call = f.call("first");
+  const scope = { firstCall: call, endCondition: "加入记录", rules: [{ id: "add", call, maxExecutions: 1 }] };
+  for (const invalid of [{}, { calls: [] }, { calls: [call], ...scope }, { firstCall: call, rules: scope.rules }, { firstCall: call, endCondition: scope.endCondition }]) {
+    await expect(f.host.call("original", "invalid-proposal", "proposal.create", invalid)).rejects.toThrow("Invalid concrete proposal");
+  }
+  expect(f.executed).toEqual([]);
+  expect(f.host.list(f.conversation.id)).toEqual([]);
+  expect(f.host.taskScope(f.conversation.id)).toBeUndefined();
+});
+
 it("executes future dynamic parameters only after visible scope confirmation and stops on new task", async () => {
   const f = await fixture({ taskAuthorization: { mode: "scope", dynamicFields: ["value"], resourceFields: [], outputBindings: [] } });
   const proposal = await f.host.call("original", "scope", "proposal.create", { endCondition: "加入找到的记录", firstCall: f.call("first"), rules: [

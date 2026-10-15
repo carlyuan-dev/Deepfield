@@ -88,6 +88,10 @@ Completions 和 Anthropic Messages，可配置 Provider、Base URL、Model ID、
 及凭据；保存与“设为当前”是两个操作。联网功能还需可用的当前 Search Profile。
 凭据经 `safeStorage` 加密保存，页面不回显已保存的 key。可先诊断草稿连接，再保存、启用。
 
+LLM“测试连接”会携带 Chat 的三个交互工具声明进行单次兼容性检查，输出上限为 64 tokens、
+超时为 20 秒、不重试，也不执行模型返回的工具调用。失败时只展示 HTTP 状态及已识别的脱敏原因；
+诊断通过不代表所有业务工具、搜索或长对话路径均已验证。
+
 “用量信息”展示 Base Usage 采集的 LLM / Search 调用，按 LLM Provider → 模型及
 Search Provider 汇总；用量账本不等同于任务额度、业务进度或 Tool 审计。详见
 [Base Usage](base/base.usage.设计文档.md)。
@@ -160,7 +164,7 @@ macOS E2E 需先确认 GUI 权限，并显式设置 `DEEPFIELD_ALLOW_ELECTRON_E2
 行业研究的真实 LLM 长文本识别由用户手测：分别粘贴超过 4000 code points 的多块
 文本，确认界面只显示通用识别状态、失败时保留已成功候选且重试不重复成功请求；再输入超过 48000
 code points 的文本，确认在发出任何识别请求前显示长度错误。单次识别请求使用 2048 tokens
-输出预算和专用 20 秒超时；连接检查与标题生成仍为 7 秒。自动 E2E 只使用 Fake recognizer，
+输出预算和专用 20 秒超时；LLM 连接诊断为 20 秒，标题生成为 7 秒。自动 E2E 只使用 Fake recognizer，
 不会调用真实 LLM。
 
 标题检查：真实模式首条消息应优先显示当前 LLM 生成的短中文标题；若请求超时、失败或返回空结果，应保留 deterministic fallback，且后续消息不重新生成标题。Fake 模式只验证接线、离线 fallback 和界面状态，不验证答案、标题质量或 Skill 指令效果。

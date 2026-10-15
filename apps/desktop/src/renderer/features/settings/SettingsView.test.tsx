@@ -80,6 +80,15 @@ describe("SettingsView", () => {
     await user.click(screen.getByRole("button", { name: "测试连接" }));
     expect(await screen.findByText(/LLM.*认证失败/)).toBeTruthy();
   });
+  it("shows safe schema diagnostics beside the failure without displaying provider text", async () => {
+    const api = makeFakeApi(); api.settings.get.mockResolvedValue(settings);
+    api.settings.diagnoseLlm.mockResolvedValueOnce({ ok: false, latencyMs: 0, code: "provider_error", message: "secret token", diagnostic: { httpStatus: 400, reason: "invalid_tool_schema", toolName: "propose_actions", rootObjectRequired: true } } as never);
+    render(<SettingsView api={api} onKeySaved={() => {}} onBack={() => {}} />);
+    await screen.findByDisplayValue("主模型");
+    await userEvent.setup().click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText(/HTTP 400.*工具参数格式不兼容.*根结构须为对象/)).toBeTruthy();
+    expect(screen.queryByText(/secret token/)).toBeNull();
+  });
   it.each(["LLM", "Search"] as const)("allows saving %s without a key while explaining it is unavailable", async (module) => {
     const api = makeFakeApi();
     const view = { ...multiProfileSettings, llm: { ...multiProfileSettings.llm, profiles: multiProfileSettings.llm.profiles.map((profile) => ({ ...profile, hasCredential: false })) }, search: { ...multiProfileSettings.search, profiles: multiProfileSettings.search.profiles.map((profile) => ({ ...profile, hasCredential: false })) } };

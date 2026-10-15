@@ -1,8 +1,8 @@
 # Deepfield Base 抽取设计文档
 
-版本：0.4 · 日期：2026-10-13
+版本：0.5 · 日期：2026-10-15
 
-状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，已通过用户手测；第二批 Config 通用核心、Capability 主进程接入及旧兼容适配已实现，待用户手测验收；后续抽取未做。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
+状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，已通过用户手测；第二批 Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成，证据为当前配置下 Chat 可用、资料更新与两阶段调研完成，不表示所有配置功能均逐项手测；下一批 Model 及后续抽取未做。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
 
 当前 Errors 实现在 `packages/base/src/errors/`，旧接口在 `packages/contracts/src/errors.ts` 保留薄兼容适配；其他模块的当前归属见下表。
 
@@ -157,4 +157,4 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 优先复用测试：配置存储／诊断、tool-platform 的准入与预算、`pi-agent-executor` 的历史隔离、persistence 的事务与旧库读取、公司证据集成、Capability runtime／loader 及 production boundary。仅对本批新增风险补必要回归保护；构建通过不替代关键行为验证。
 
-首批 Errors 代码已接入现有调用链，长期契约见 [Base.Errors 设计](base.errors.设计文档.md)；已通过用户手测。Config 已实现，待用户手测验收，后续批次尚未实施。逐步计划和派工记录只留本地；本文件只维护模块边界、迁移顺序和验收不变量。纯文档整理不运行产品构建、不调用付费服务或生成测试包。
+首批 Errors 代码已接入现有调用链，长期契约见 [Base.Errors 设计](base.errors.设计文档.md)；已通过用户手测。Config 已实现并完成本轮验收，具体证据与范围见 [Base.Config 设计](base.config.设计文档.md#7-迁移顺序与最小验收)；下一批 Model 尚未实施。逐步计划和派工记录只留本地；本文件只维护模块边界、迁移顺序和验收不变量。纯文档整理不运行产品构建、不调用付费服务或生成测试包。

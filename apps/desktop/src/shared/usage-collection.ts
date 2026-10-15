@@ -51,7 +51,7 @@ const counter = (value: unknown): number | undefined => typeof value === "number
 const object = (value: unknown): Record<string, any> => typeof value === "object" && value !== null ? value as Record<string, any> : {};
 
 /** Inline, bounded SSE observation. No clone, tee, extra consumer, or persisted body. */
-export function createLlmUsageTransport(snapshot: LlmRuntimeSnapshot, signal?: AbortSignal, fetcher: typeof fetch = globalThis.fetch) {
+export function createLlmUsageTransport(snapshot: LlmRuntimeSnapshot, signal?: AbortSignal, fetcher: typeof fetch = globalThis.fetch, onResponseBodyError?: (error: unknown) => void) {
   const attempts: ReturnType<typeof startUsageAttempt>[] = [];
   const cleanups: (() => void)[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -104,8 +104,15 @@ export function createLlmUsageTransport(snapshot: LlmRuntimeSnapshot, signal?: A
       const reader = response.body.getReader();
       const body = new ReadableStream<Uint8Array>({
         async pull(controller) {
-          try { const result = await reader.read(); if (result.done) { consume(decoder.decode() + "\n"); controller.close(); } else { consume(decoder.decode(result.value, { stream: true })); controller.enqueue(result.value); } }
-          catch (error) { attempt.finish(abort?.aborted ? "cancelled" : "failed", abort?.aborted ? "cancelled" : "stream_failed"); controller.error(error); }
+          let result: ReadableStreamReadResult<Uint8Array>;
+          try { result = await reader.read(); }
+          catch (error) {
+            if (!abort?.aborted) { try { onResponseBodyError?.(error); } catch { /* Diagnostics must not change body consumption. */ } }
+            attempt.finish(abort?.aborted ? "cancelled" : "failed", abort?.aborted ? "cancelled" : "stream_failed");
+            controller.error(error);
+            return;
+          }
+          if (result.done) { consume(decoder.decode() + "\n"); controller.close(); } else { consume(decoder.decode(result.value, { stream: true })); controller.enqueue(result.value); }
         },
         async cancel(reason) { if (abort?.aborted) attempt.finish("cancelled", "cancelled"); await reader.cancel(reason); },
       }, { highWaterMark: 0 });

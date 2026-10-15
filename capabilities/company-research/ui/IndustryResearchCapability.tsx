@@ -136,12 +136,15 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
   const companyProfileStatuses = useRef(new Map<string, ItemCompanyView["profileStatus"]>());
 
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId);
+  const selectedCompanyIdentityUnresolved = selectedCompany?.profileStatus === "failed" && (
+    selectedCompany.profileProvenance?.identity.disposition === "ambiguous" || selectedCompany.profileProvenance?.identity.disposition === "unresolved"
+  );
   const selectedCompanyNeedsIdentityConfirmation = selectedCompany?.profileStatus === "failed" && (
     selectedCompany.profileIdentityHint !== undefined ||
-    (selectedCompany.profileProvenance?.identity.disposition !== undefined && selectedCompany.profileProvenance.identity.disposition !== "matched")
+    selectedCompanyIdentityUnresolved
   );
   const profileUpdatePending = selectedCompany?.profileStatus === "pending" || selectedCompany?.profileStatus === "enriching";
-  const profileUpdateHint = profileUpdateError ?? (profileUpdatePending ? "信息更新中" : selectedCompany?.profileStatus === "failed" ? "更新未完成，可再次更新信息" : selectedCompany && hasUnknownCompanyProfileFields(selectedCompany) ? "部分信息未知，可更新信息" : "信息已更新");
+  const profileUpdateHint = profileUpdateError ?? (profileUpdatePending ? "信息更新中" : selectedCompanyIdentityUnresolved ? "公司主体待确认，请确认主体" : selectedCompany?.profileStatus === "failed" ? "更新未完成，可再次更新信息" : selectedCompany && hasUnknownCompanyProfileFields(selectedCompany) ? "部分信息未知，可更新信息" : "信息已更新");
   const sortedItems = useMemo(() => newestFirst(items), [items]);
   const listVisible = active && selectedCompanyId === undefined && selectedItem !== undefined;
   const operation = useOperationProgress(api, selectedItem?.id ?? "", listVisible);

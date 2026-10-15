@@ -18,9 +18,34 @@ function gatewayWithCompleteText(completeText: ModelGateway["completeText"]): Mo
 }
 
 describe("profile capability generic Agent run", () => {
+  it.each(["company", "brand", "product"] as const)("handles a brand input with a recorded %s candidate without bypassing the identity gate", async (subjectType) => {
+    const raw = rawResearchRequest();
+    const tools = createToolRuntime({ audit: new FakeAuditSink() });
+    const ref = { evidenceId: "e1" };
+    const candidate = {
+      identity: { disposition: "matched", subjectType, matchedName: subjectType === "company" ? "示例科技" : "示例助手", reason: "本轮来源说明示例助手由示例科技公司研发运营。", sources: [ref] },
+      fields: { businessTags: ["人工智能"] }, fieldEvidence: { businessTags: [ref] },
+    };
+    const completeText = vi.fn(async () => { throw new Error("unexpected repair request"); });
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant("", { stopReason: "toolUse", content: [{ type: "toolCall", id: "search", name: "web_search", arguments: { query: "示例助手 运营公司" } }] }),
+      assistant(JSON.stringify(candidate)),
+      assistant(JSON.stringify(candidate)),
+    ]);
+    const events: CompanyProfileWorkerEvent[] = [];
+    await createCompanyProfileAgent({ piRuntime: recording.runtime, gateway: gatewayWithCompleteText(completeText), toolSessions: { ...tools,
+      bindSearchProvider: (trace, _provider, limits) => tools.bindSearchProvider(trace, { id: "fixture", capabilities: { timeRange: false }, search: async () => ({ provider: "fixture", results: [{ title: "示例科技", url: "https://example.com", snippet: "示例助手由示例科技公司研发运营，示例科技从事人工智能业务。", rank: 1, provider: "fixture" }] }) }, limits),
+    } }).run({ kind: "company-profile.enrich", requestId: `brand-${subjectType}`, companyId: "c1", name: "示例助手", researchTopics: ["人工智能"], existingFields: {}, llm: raw.llm, search: raw.search }, (event) => events.push(event), new AbortController().signal);
+    const completed = events.find(event => event.type === "completed");
+    expect(completed).toMatchObject({ type: "completed", result: subjectType === "company" ? {
+      identity: { disposition: "matched", matchedName: "示例科技" }, fields: { businessTags: ["人工智能"] },
+    } : { identity: { disposition: "unresolved" }, fields: {}, fieldEvidence: {} } });
+    expect(completeText).not.toHaveBeenCalled();
+  });
   it.each([
     ["json_parse", "这是中文资料说明，但不是JSON。公司资料已经核实。sk-secret"],
-    ["agent_failed", "English only sk-secret"],
+    ["json_parse", "English only sk-secret"],
+    ["agent_failed", "<|DSML|>协议内容 sk-secret"],
     ["schema_invalid", JSON.stringify({ identity: { disposition: "matched", subjectType: "company", matchedName: "公司", reason: "证据", sources: [{ url: "https://example.com", kind: "search_snippet" }] }, fields: { legalName: "公司" }, fieldEvidence: { legalName: ["sk-secret"] } })],
   ])("reports safe %s after successful retrieval", async (code, output) => {
     const raw = rawResearchRequest(); const tools = createToolRuntime({ audit: new FakeAuditSink() });
@@ -37,7 +62,7 @@ describe("profile capability generic Agent run", () => {
     expect(events[1]).toMatchObject({ type: "failed", code: code === "agent_failed" ? "agent_failed" : "invalid_evidence" });
     expect(JSON.stringify(events)).not.toContain("sk-secret");
     if (code === "schema_invalid") expect(events[0]).toMatchObject({ schemaIssues: expect.arrayContaining([expect.objectContaining({ path: "/fieldEvidence/legalName/0", actual: "string" })]) });
-    if (code === "agent_failed") expect(events[0]).toMatchObject({ piError: "invalid_final_language", model: { errorCategory: "invalid_final_language" } });
+    if (code === "agent_failed") expect(events[0]).toMatchObject({ piError: "invalid_final_protocol", model: { errorCategory: "invalid_final_protocol" } });
     expect(completeText).toHaveBeenCalledTimes(code === "agent_failed" ? 0 : 1);
   });
   it.each(["no_search", "empty_search", "failed_search"])("cannot complete from model memory when %s", async (mode) => {

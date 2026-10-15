@@ -39,7 +39,7 @@ describe("ConfigurationService diagnostics", () => {
 
     await expect(service.diagnoseLlm({ ...llm, apiKey: undefined } as never)).resolves.toMatchObject({ ok: true });
     await expect(service.diagnoseSearch({ ...search, apiKey: undefined } as never)).resolves.toMatchObject({ ok: true });
-    expect(gateway.completeText).toHaveBeenCalledWith(llm, "只回复 OK。", "Deepfield connection test");
+    expect(gateway.completeText).toHaveBeenCalledWith(llm, "只回复 OK，不调用工具。", "检查连接。", expect.any(AbortSignal), { maxTokens: 64, tools: expect.arrayContaining([expect.objectContaining({ name: "propose_actions" })]) });
     expect(provider.search).toHaveBeenCalledWith({ query: "Deepfield connection test", maxResults: 1 }, expect.any(AbortSignal));
     expect(store.saveLlmProfile).not.toHaveBeenCalled();
     expect(store.saveSearchProfile).not.toHaveBeenCalled();

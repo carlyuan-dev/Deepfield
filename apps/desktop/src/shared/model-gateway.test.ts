@@ -4,6 +4,9 @@ import type { LlmRuntimeSnapshot } from "@deepfield/contracts";
 import { ModelGatewayError, PiModelGateway, classifyModelGatewayError } from "./model-gateway.js";
 import type { ModelRequestObservation } from "@deepfield/capability-sdk";
 import type { ObservedStreamOptions } from "./model-request-observation.js";
+import { ConfigurationService } from "../main/configuration-service.js";
+import { createPiChatInteractionTools } from "../worker/tools/pi-chat-interaction-tools.js";
+import { Check } from "typebox/value";
 
 const snapshot = (protocol: LlmRuntimeSnapshot["protocol"]): LlmRuntimeSnapshot => ({
   id: `profile-${protocol}`,
@@ -25,7 +28,9 @@ function captureCompletionRequests(modelId: string, finishReason = "stop"): Reco
       object: "chat.completion.chunk",
       created: 1,
       model: modelId,
-      choices: [{ index: 0, delta: { role: "assistant", content: "Report body" }, finish_reason: finishReason }],
+      choices: [{ index: 0, delta: finishReason === "tool_calls"
+        ? { role: "assistant", tool_calls: [{ index: 0, id: "provider-call", type: "function", function: { name: "request_user_input", arguments: '{"question":"confirm?"}' } }] }
+        : { role: "assistant", content: "Report body" }, finish_reason: finishReason }],
       usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
     };
     return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
@@ -129,6 +134,41 @@ describe.each(["agent stream", "completeText"] as const)("PiModelGateway %s requ
 });
 
 describe("PiModelGateway", () => {
+  it("probes the real Chat tool declarations in one short request without executing tools", async () => {
+    const input = { ...snapshot("openai_compatible"), provider: "deepseek" as const };
+    const requests = captureCompletionRequests(input.modelId, "tool_calls");
+    const host = { request: vi.fn() };
+    const tools = createPiChatInteractionTools({ requestId: "probe" } as never, host as never, { request: vi.fn() } as never);
+    const service = new ConfigurationService({ resolveLlmDraft: async () => input } as never, new PiModelGateway());
+    await expect(service.diagnoseLlm({} as never)).resolves.toMatchObject({ ok: true });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ max_tokens: 64, thinking: { type: "disabled" } });
+    expect((requests[0]!.tools as any[]).map(t => t.function.name)).toEqual(["request_user_input", "interaction_draft", "propose_actions"]);
+    const proposalSchema = (requests[0]!.tools as any[])[2].function.parameters;
+    expect(proposalSchema.type).toBe("object");
+    expect(proposalSchema).not.toHaveProperty("anyOf");
+    const call = { capabilityId: "records", actionId: "add", contractDigest: `sha256:${"a".repeat(64)}`, input: { name: "甲" } };
+    expect(Check(proposalSchema, { calls: [call] })).toBe(true);
+    expect(Check(proposalSchema, { firstCall: call, endCondition: "加入记录", rules: [{ id: "add", call, maxExecutions: 1 }] })).toBe(true);
+    expect((requests[0]!.tools as any[]).map(t => t.function)).toEqual(tools.map(t => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)), strict: false })));
+    expect(host.request).not.toHaveBeenCalled();
+  });
+  it.each([
+    [401, "secret-value", { reason: "auth" }],
+    [400, "Invalid schema for function 'propose_actions': schema must be a JSON Schema of 'type: object', got 'type: None'. secret-value", { reason: "invalid_tool_schema", toolName: "propose_actions", rootObjectRequired: true }],
+    [400, "secret-value arbitrary failure", { reason: "unknown" }],
+    [400, "Invalid schema for function 'untrusted-secret-tool': missing properties", { reason: "invalid_tool_schema" }],
+    [429, "secret-value", { reason: "rate_limit" }],
+    [400, "maximum context length exceeded secret-value", { reason: "context" }],
+  ])("returns only safe diagnostic fields for HTTP %s", async (status, body, detail) => {
+    const fetch = vi.fn(async () => new Response(body as string, { status: status as number }));
+    vi.stubGlobal("fetch", fetch);
+    const service = new ConfigurationService({ resolveLlmDraft: async () => snapshot("openai_compatible") } as never, new PiModelGateway());
+    const result = await service.diagnoseLlm({} as never);
+    expect(result).toMatchObject({ ok: false, diagnostic: { httpStatus: status, ...detail } });
+    expect(JSON.stringify(result)).not.toMatch(/secret-value|untrusted-secret-tool|missing properties/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it.each([
     [429, "rate_limit", true],
     [401, "authentication", false],

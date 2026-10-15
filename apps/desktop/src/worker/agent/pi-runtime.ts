@@ -14,6 +14,7 @@ import type {
 import type { ToolBudgetSnapshot } from "@deepfield/tool-platform/budget-contract";
 import type { SearchProvider } from "@deepfield/retrieval/search-provider";
 import type { ModelRequestObserver } from "@deepfield/capability-sdk";
+import type { ModelGatewayError } from "../../shared/model-gateway.js";
 
 export class PiChatAgentError extends Error {
   constructor(
@@ -34,6 +35,7 @@ export interface SkillCatalogProvider {
 export interface PiSession {
   model: Model<Api>;
   streamFn: StreamFn;
+  getModelFailure?(): ModelGatewayError | undefined;
 }
 
 export interface PiAgentHandle {

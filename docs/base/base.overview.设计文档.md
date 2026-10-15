@@ -1,8 +1,8 @@
 # Deepfield Base.overview 设计文档
 
-版本：0.7 · 更新日期：2026-10-13
+版本：0.8 · 更新日期：2026-10-15
 
-状态：Usage 已用于当前产品；Errors 中立核心与 contracts 兼容接线已实现，已通过用户手测。Config 通用核心、Capability 主进程接入及旧兼容适配已实现，待用户手测验收。其余抽取尚未实施。
+状态：Usage 已用于当前产品；Errors 中立核心与 contracts 兼容接线已实现，已通过用户手测。Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成：用户确认当前配置下 Chat 可用，并完成资料更新与两阶段调研。该反馈不表示所有配置功能均逐项手测。下一批 Model 及其余抽取尚未实施。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
@@ -40,7 +40,7 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 
 | 能力域 | 公开入口（除 Usage、Errors、Config 外均为目标入口） | 职责 | 当前状态 |
 | --- | --- | --- | --- |
-| Config | `@deepfield/base/config`、`@deepfield/base/config/runtime` | 通用配置声明／存取／校验、可选 Profile 管理、调用快照 | 已实现，待用户手测验收；见[设计](base.config.设计文档.md) |
+| Config | `@deepfield/base/config`、`@deepfield/base/config/runtime` | 通用配置声明／存取／校验、可选 Profile 管理、调用快照 | 已实现，本轮验收完成；证据与范围见[设计](base.config.设计文档.md) |
 | Model | `@deepfield/base/model` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 待从模型网关抽取 |
 | Search | `@deepfield/base/search` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 待从 retrieval 与计量适配抽取 |
 | Tools | `@deepfield/base/tools` | 工具注册、参数校验、执行与授权检查、预算及审计机制 | 待从 tool-platform 等抽取 |
@@ -65,7 +65,7 @@ Usage 的字段、恢复机制和看板细节见 [Base.Usage 设计文档](base.
 4. 抽取应保留业务语义；公司调研必须实际使用新的基础能力，不能只新增目录而保留另一套旧实现。
 5. 未实现能力明确注明状态，不将设计目标写成已具备功能。
 
-首批 [Base.Errors](base.errors.设计文档.md) 已接入现有调用链并通过用户手测验收；第二批 Config 已实现，待用户手测验收，后续抽取未做。逐步实施计划留本地，正式设计维护接口和长期边界。
+首批 [Base.Errors](base.errors.设计文档.md) 已接入现有调用链并通过用户手测验收；第二批 Config 已实现并完成本轮验收，下一批 Model 尚未实施。逐步实施计划留本地，正式设计维护接口和长期边界。
 
 ## 5. 参考与取舍
 

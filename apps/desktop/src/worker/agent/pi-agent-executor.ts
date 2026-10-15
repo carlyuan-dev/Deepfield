@@ -1056,7 +1056,8 @@ export function createPiAgentExecutor(
 
         if (providerFailure) {
           failActiveActivities();
-          throw new PiChatAgentError("provider_failed", "agent execution failed");
+          const code = session.getModelFailure?.()?.stage === "response_body" ? "stream_failed" : "provider_failed";
+          throw new PiChatAgentError(code, "agent execution failed");
         }
         if (!startedEmitted || !sawAgentEnd) {
           failActiveActivities();

@@ -16,7 +16,10 @@ const searchDraft = (p: SettingsData["search"]["profiles"][number]): SearchProfi
 function Diagnostic({ value, service }: { service: ConfigurationModule; value: DiagnosticResult | "testing" | undefined }) {
   if (!value) return <span className="diagnostic idle">未检测</span>;
   if (value === "testing") return <span className="diagnostic testing">检测中…</span>;
-  return value.ok ? <span className="diagnostic success">连接正常 · {value.latencyMs}ms</span> : <span className="diagnostic failure">连接失败 · {diagnosticErrorText(value.error, service)}</span>;
+  if (value.ok) return <span className="diagnostic success">连接正常 · {value.latencyMs}ms</span>;
+  const detail = value.diagnostic;
+  const reasons = { invalid_tool_schema: "工具参数格式不兼容", auth: "认证失败", rate_limit: "请求受限", context: "上下文超出限制", unknown: "服务拒绝请求，原因未识别" };
+  return <span className="diagnostic failure">连接失败 · {diagnosticErrorText(value.error, service)}{detail && <> · HTTP {detail.httpStatus} · {reasons[detail.reason]}{detail.toolName && `（${detail.toolName}）`}{detail.rootObjectRequired && " · 根结构须为对象"}</>}</span>;
 }
 
 export function SettingsView({ api, onKeySaved, onBack, initialModule = "llm" }: SettingsViewProps) {

@@ -6,17 +6,21 @@ import {
   type MutableModels,
   type Provider,
   type ProviderStreams,
+  type Tool,
 } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import type { LlmRuntimeSnapshot } from "@deepfield/contracts";
+import type { LlmRuntimeSnapshot, ModelDiagnostic } from "@deepfield/contracts";
+import { classifyModelHttpDiagnostic, readModelErrorPrefix } from "./model-http-diagnostic.js";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { createLlmUsageTransport } from "./usage-collection.js";
 import type { ModelRequestObserver } from "@deepfield/capability-sdk";
 import { observeSerializedRequest, type ObservedStreamOptions } from "./model-request-observation.js";
 
+export interface ModelCompletionOptions { maxTokens: number; tools?: readonly Tool[] }
+
 export interface ModelGateway {
-  createStream?(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver): typeof streamSimple;
+  createStream?(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver, onModelFailure?: (error: ModelGatewayError) => void): typeof streamSimple;
   createModel(snapshot: LlmRuntimeSnapshot): Model<any>;
   getApiKey(snapshot: LlmRuntimeSnapshot, providerId: string): Promise<string>;
   completeText(
@@ -24,14 +28,14 @@ export interface ModelGateway {
     system: string,
     prompt: string,
     signal?: AbortSignal,
-    options?: { maxTokens: number },
+    options?: ModelCompletionOptions,
   ): Promise<string>;
   completeTextResult?(
     snapshot: LlmRuntimeSnapshot,
     system: string,
     prompt: string,
     signal?: AbortSignal,
-    options?: { maxTokens: number },
+    options?: ModelCompletionOptions,
   ): Promise<ModelCompletionResult>;
 }
 
@@ -60,6 +64,8 @@ export class ModelGatewayError extends Error {
   constructor(
     readonly category: ModelGatewayErrorCategory = "unknown",
     readonly retryable = false,
+    readonly diagnostic?: ModelDiagnostic,
+    readonly stage?: "response_body",
   ) {
     super("model request failed");
     this.name = "ModelGatewayError";
@@ -79,7 +85,7 @@ export function classifyModelGatewayError(error: unknown): ModelGatewayError {
   if (status !== undefined && status >= 500 && status <= 599) return new ModelGatewayError("server", true);
   if (status !== undefined && status >= 400 && status <= 499) return new ModelGatewayError("request", false);
   if (record.name === "AbortError" || record.name === "TimeoutError") return new ModelGatewayError("timeout", true);
-  const retryableNetworkCodes = new Set(["ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "EAI_AGAIN"]);
+  const retryableNetworkCodes = new Set(["ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "EAI_AGAIN", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]);
   if (typeof record.code === "string" && retryableNetworkCodes.has(record.code)) {
     return new ModelGatewayError("network", true);
   }
@@ -92,6 +98,14 @@ export function classifyModelGatewayError(error: unknown): ModelGatewayError {
   return new ModelGatewayError();
 }
 
+function classifyResponseBodyError(error: unknown): ModelGatewayError {
+  const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : {};
+  const cause = typeof record.cause === "object" && record.cause !== null ? record.cause as Record<string, unknown> : {};
+  // Only stable names/codes participate; raw provider text and causes never survive.
+  const classified = classifyModelGatewayError({ name: record.name, code: record.code, cause: { code: cause.code } });
+  return new ModelGatewayError(classified.category, classified.retryable, undefined, "response_body");
+}
+
 export class PiModelGateway implements ModelGateway {
   constructor(private readonly factories: ModelGatewayFactories = defaultFactories) {}
 
@@ -99,15 +113,21 @@ export class PiModelGateway implements ModelGateway {
     return this.createSession(snapshot).model;
   }
 
-  createStream(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver): typeof streamSimple {
+  createStream(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver, onModelFailure?: (error: ModelGatewayError) => void): typeof streamSimple {
     return (model, context, options) => {
-      const usage = createLlmUsageTransport(snapshot, options?.signal, options?.fetch ?? globalThis.fetch);
+      let bodyFailure: ModelGatewayError | undefined;
+      const usage = createLlmUsageTransport(snapshot, options?.signal, options?.fetch ?? globalThis.fetch, error => { bodyFailure = classifyResponseBodyError(error); });
       const observation = observer ? observeSerializedRequest(context, options as ObservedStreamOptions, observer, usage.fetch) : undefined;
       const stream = streamSimple(model, context, { ...options, maxRetries: 0, fetch: usage.fetch, ...(observation ? { onPayload: observation.onPayload, fetch: observation.fetch } : {}) });
-      const finished = stream.result().then((message) => { usage.finish(message.stopReason); observation?.finish(message.stopReason); return message; }, error => { usage.finish("error"); observation?.finish("error"); throw error; });
+      const finished = stream.result().then((message) => {
+        usage.finish(message.stopReason);
+        observation?.finish(message.stopReason);
+        if (!options?.signal?.aborted && bodyFailure && (message.stopReason === "error" || message.stopReason === "aborted")) onModelFailure?.(bodyFailure);
+        return message;
+      }, error => { usage.finish("error"); observation?.finish("error"); throw error; });
       // Pi represents provider failures as messages; observer/storage failures
       // must still reject the execution result instead of appearing successful.
-      if (observation) stream.result = () => finished;
+      stream.result = () => finished;
       void finished.catch(() => undefined);
       return stream;
     };
@@ -123,8 +143,9 @@ export class PiModelGateway implements ModelGateway {
     system: string,
     prompt: string,
     signal?: AbortSignal,
+    options?: ModelCompletionOptions,
   ): Promise<string> {
-    return (await this.completeTextResult(snapshot, system, prompt, signal)).text;
+    return (await this.completeTextResult(snapshot, system, prompt, signal, options)).text;
   }
 
   async completeTextResult(
@@ -132,14 +153,19 @@ export class PiModelGateway implements ModelGateway {
     system: string,
     prompt: string,
     signal?: AbortSignal,
-    options?: { maxTokens: number },
+    options?: ModelCompletionOptions,
   ): Promise<ModelCompletionResult> {
-    const usage = createLlmUsageTransport(snapshot, signal);
     let transportFailure: ModelGatewayError | undefined;
+    const usage = createLlmUsageTransport(snapshot, signal, globalThis.fetch, error => { transportFailure = classifyResponseBodyError(error); });
     const captureFetch: typeof globalThis.fetch = async (input, init) => {
       try {
         const response = await usage.fetch(input, init);
-        if (!response.ok) transportFailure = classifyModelGatewayError({ status: response.status, message: (await response.clone().text()).slice(0, 8192) });
+        if (!response.ok) {
+          const prefix = await readModelErrorPrefix(response, signal);
+          const classified = classifyModelGatewayError({ status: response.status, message: prefix });
+          transportFailure = new ModelGatewayError(classified.category, classified.retryable,
+            classifyModelHttpDiagnostic(response.status, prefix, options?.tools?.map(tool => tool.name) ?? []));
+        }
         return response;
       } catch (error) {
         transportFailure = classifyModelGatewayError(error);
@@ -153,6 +179,7 @@ export class PiModelGateway implements ModelGateway {
         {
           systemPrompt: system,
           messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+          ...(options?.tools ? { tools: [...options.tools] } : {}),
         },
         {
           apiKey: await this.getApiKey(snapshot, model.provider),
@@ -163,6 +190,7 @@ export class PiModelGateway implements ModelGateway {
         },
       );
       usage.finish(message.stopReason);
+      if (signal?.aborted) throw new ModelGatewayError("timeout", true);
       if (message.stopReason === "error") {
         throw transportFailure ?? new ModelGatewayError();
       }
@@ -179,7 +207,7 @@ export class PiModelGateway implements ModelGateway {
       return { text, stopReason };
     } catch (error) {
       usage.finish(signal?.aborted ? "aborted" : "error");
-      throw classifyModelGatewayError(error);
+      throw signal?.aborted ? new ModelGatewayError("timeout", true) : classifyModelGatewayError(error);
     }
   }
 

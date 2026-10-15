@@ -4,6 +4,7 @@ import { createMeteredSearchProvider } from "../shared/usage-search.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { ModelGatewayError, type ModelGateway } from "../shared/model-gateway.js";
 import type { ProfileStore } from "./profile-store.js";
+import { chatInteractionToolDeclarations } from "../shared/chat-interaction-tool-declarations.js";
 
 type ProfileConfigurationStore = Pick<ProfileStore, "getView" | "saveLlmProfile" | "activateLlmProfile" | "deleteLlmProfile" | "saveSearchProfile" | "activateSearchProfile" | "deleteSearchProfile" | "resolveLlmDraft" | "resolveSearchDraft">;
 
@@ -27,7 +28,8 @@ export class ConfigurationService {
     const started = this.now();
     try {
       const snapshot = await this.store.resolveLlmDraft(input);
-      await withUsageContext({ sourceId: "settings-diagnosis" }, () => this.gateway.completeText(snapshot, "只回复 OK。", "Deepfield connection test"));
+      const signal = AbortSignal.timeout(20_000);
+      await withUsageContext({ sourceId: "settings-diagnosis" }, () => this.gateway.completeText(snapshot, "只回复 OK，不调用工具。", "检查连接。", signal, { maxTokens: 64, tools: chatInteractionToolDeclarations }));
       return { ok: true, latencyMs: Math.max(0, this.now() - started), summary: "模型连接正常" };
     } catch (error) { return this.diagnosticFailure(error, "llm", started); }
   }
@@ -51,7 +53,7 @@ export class ConfigurationService {
       };
       normalized = toPublicError(new AppError(codes[error.code] ?? "EXTERNAL.UNAVAILABLE"));
     } else if (error instanceof ModelGatewayError) {
-      // Pi exposes an opaque failure, not a trustworthy HTTP/authentication reason.
+      // Keep the existing error identity; optional HTTP evidence is a separate safe DTO.
       normalized = toPublicError(new AppError("EXTERNAL.UNAVAILABLE"));
     }
     normalized.context = { service };
@@ -59,6 +61,8 @@ export class ConfigurationService {
     const code = normalized.code === "EXTERNAL.AUTHENTICATION_FAILED" ? "unauthorized"
       : normalized.code === "EXTERNAL.TIMEOUT" ? "network"
       : normalized.category === "configuration" ? "invalid_config" : "provider_error";
-    return { ok: false, latencyMs: Math.max(0, this.now() - started), code, message: "连接不可用", error: normalized };
+    return { ok: false, latencyMs: Math.max(0, this.now() - started), code, message: "连接不可用", error: normalized,
+      ...(service === "llm" && error instanceof ModelGatewayError && error.diagnostic ? { diagnostic: error.diagnostic } : {}),
+    };
   }
 }

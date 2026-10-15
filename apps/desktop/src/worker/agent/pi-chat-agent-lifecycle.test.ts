@@ -49,7 +49,10 @@ describe("pi chat agent lifecycle", () => {
     const options = fake.receivedOptions!;
     const initialState = options.initialState!;
     expect(initialState.systemPrompt).toMatch(/^sys\n当前日期：/u);
-    expect(initialState.systemPrompt).toContain("本轮未启用联网搜索");
+    expect(initialState.systemPrompt).toContain("本轮未启用 Chat 的直接网页搜索");
+    expect(initialState.systemPrompt).toContain("不调用 web_search 或 read_webpage");
+    expect(initialState.systemPrompt).toContain("Capability 动作有自己的影响和资源声明，本开关不撤销其授权");
+    expect(initialState.systemPrompt).toContain("会联网的动作不可用于绕开该要求");
     expect(initialState.thinkingLevel).toBe("off");
     expect(initialState.tools).toEqual([]);
     const messages = initialState.messages as unknown as Array<{
