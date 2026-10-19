@@ -15,6 +15,9 @@ benchmark-results/
 **/.DS_Store
 
 # Local development plans, drafts, handoffs and dated verification records
+/docs/collaboration-guide.html
+/docs/engineering-lessons.md
+/.agents/skills/
 /docs/local/
 /docs/superpowers/plans/
 /docs/superpowers/specs/

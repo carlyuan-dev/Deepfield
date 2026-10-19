@@ -2,7 +2,7 @@
 
 Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本文维护环境、运行、分支与交付约定；功能契约见[文档阅读地图](README.md)，验证路径见[按风险选测指南](testing.md)。项目 Agent 分工、模型与文字约定统一遵循 [AGENTS.md](../AGENTS.md)。
 
-开发与修复入口见 [项目交付 Skill](../.agents/skills/deepfield-delivery/SKILL.md)。按任务触发场景读取[工程经验索引](engineering-lessons.md)中的相关条目，再进入对应正式契约和实现。
+开发与修复按本次任务进入对应正式契约、实现和现有回归保护；正式入口见[文档阅读地图](README.md)。
 
 ## 分支与版本管理
 
