@@ -29,6 +29,8 @@ export const TOOL_FAILURE_CODES: ReadonlySet<string> = new Set([
   "redirect_blocked",
   "response_too_large",
   "unsupported_content_type",
+  "access_restricted",
+  "content_unavailable",
   "parse_failed",
   "invalid_output",
   "executor_failed",

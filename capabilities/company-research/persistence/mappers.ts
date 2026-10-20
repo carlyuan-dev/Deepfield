@@ -30,11 +30,7 @@ export function toCompany(row: CompanyRow): Company {
     ...(row.profile_identity_hint_json ? { profileIdentityHint: JSON.parse(row.profile_identity_hint_json) } : {}),
     ...(row.legal_name !== null ? { legalName: row.legal_name } : {}),
     ...(aliases !== undefined ? { aliases } : {}),
-    ...(row.headquarters !== null
-      ? { headquarters: row.headquarters }
-      : row.country_or_region !== null
-        ? { headquarters: row.country_or_region }
-        : {}),
+    ...(row.headquarters !== null ? { headquarters: row.headquarters } : {}),
     ...(row.founded_at !== null ? { foundedAt: row.founded_at } : {}),
     ...(officialWebsite !== undefined ? { officialWebsite } : {}),
     ...(stockListings !== undefined ? { stockListings } : {}),

@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { userEvent } from "@testing-library/user-event";
 import type { CapabilityItemId, CompanyId, ResearchRunId } from "@deepfield/contracts";
 import type { CapabilityItem, ItemCompanyView, ResearchRun, CompanyResearchState } from "../../../../capabilities/company-research/contracts/index.js";
-import { researchRun, researchSummary, activeResearch } from "../../../../capabilities/company-research/ui/company-research-test-fixtures.js";
+import { moduleResearchRun as researchRun, researchSummary, activeResearch } from "../../../../capabilities/company-research/ui/company-research-test-fixtures.js";
 import { App } from "./App.js";
 import { companyManagementFixture, loadCompanyFixture } from "./capabilities/company-test-fixture.js";
 import { configuredSettings } from "./features/settings/settings-test-fixtures.js";
@@ -244,6 +244,7 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "查看 恢复公司" }));
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
     const dialog = screen.getByRole("dialog", { name: "公司调研" });
+    await user.click(within(dialog).getByLabelText("主要产品与定位"));
     const focus = within(dialog).getByLabelText("关注范围（可选）") as HTMLTextAreaElement;
     await user.type(focus, "必须保留的恢复草稿");
     await user.click(within(dialog).getByRole("button", { name: "开始调研" }));
@@ -524,14 +525,9 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "研究主题" }));
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
 
-    expect((screen.getByRole("button", { name: "查看 待处理公司" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "查看 补全中公司" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByLabelText("待处理公司 基本信息补全中")).toBeNull();
-    const activeSpinner = screen.getByLabelText("补全中公司 基本信息补全中");
-    expect(activeSpinner).toBeTruthy();
-    expect(screen.getByLabelText("失败公司 基本信息补全失败")).toBeTruthy();
-    const retryButton = screen.getByRole("button", { name: "重试补全 失败公司" });
-    expect(retryButton.compareDocumentPosition(screen.getByLabelText("失败公司 基本信息补全失败")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((screen.getByRole("button", { name: "查看 待处理公司" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "查看 补全中公司" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: /重试补全/ })).toBeNull();
     expect((screen.getByRole("button", { name: "查看 失败公司" }) as HTMLButtonElement).disabled).toBe(false);
     expect(document.body.textContent).not.toMatch(/正在补全\s*\d+\s*\/\s*\d+/u);
 
@@ -542,11 +538,13 @@ describe("app three-pane shell", () => {
       await fake.emitProfile({ companyId: companyId as CompanyId, status: "pending" });
       return true;
     });
-    await user.click(retryButton);
-    expect(screen.queryByLabelText("失败公司 基本信息补全中")).toBeNull();
-    await act(async () => fake.emitProfile({ companyId: "failed", status: "enriching" }));
-    expect(screen.getByLabelText("失败公司 基本信息补全中")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "重试补全 失败公司" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "查看 已有公司" }));
+    await user.click(screen.getByRole("button", { name: "自动填写" }));
+    expect(fake.industryResearch.retryCompanyProfile).toHaveBeenCalledWith("ready");
+    expect((screen.getByRole("button", { name: "自动填写中…" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => fake.emitProfile({ companyId: "ready", status: "enriching" }));
+    expect((screen.getByRole("button", { name: "自动填写中…" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: /返回公司列表/ }));
 
     companies = companies.map((company) => company.name === "待处理公司"
       ? { ...company, profileStatus: "ready", headquarters: "上海" }
@@ -556,7 +554,7 @@ describe("app three-pane shell", () => {
     expect(screen.getByText("上海")).toBeTruthy();
   });
 
-  it("keeps an early enrichment event and shows a spinner only for the active queued company", async () => {
+  it("keeps an early enrichment event while both imported companies remain accessible", async () => {
     const fake = makeFakeApi();
     const active = conversation("c-profile-race", "队列状态", true);
     const item = capabilityItem({ id: "item-profile-race", industry: "智能眼镜" });
@@ -582,10 +580,10 @@ describe("app three-pane shell", () => {
     await user.click(screen.getByRole("button", { name: "添加到待确认" }));
     await user.click(screen.getByRole("button", { name: "确认新增" }));
 
-    expect(await screen.findByLabelText("公司甲 基本信息补全中")).toBeTruthy();
-    expect(screen.queryByLabelText("公司乙 基本信息补全中")).toBeNull();
-    expect((screen.getByRole("button", { name: "查看 公司甲" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "查看 公司乙" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole("button", { name: "查看 公司甲" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "查看 公司乙" }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole("button", { name: "查看 公司甲" }));
+    expect((screen.getByRole("button", { name: "自动填写中…" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("edits company basic information inline without opening a modal", async () => {
@@ -620,10 +618,11 @@ describe("app three-pane shell", () => {
     expect(screen.queryByRole("dialog", { name: "编辑公司基本信息" })).toBeNull();
     const headquarters = screen.getByLabelText("总部（可选）");
     await user.clear(headquarters);
-    await user.type(headquarters, "山景城，美国");
+    await user.type(headquarters, "美国／加利福尼亚州／山景城");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
-    expect(await screen.findByText("山景城，美国")).toBeTruthy();
+    expect(await screen.findByText("美国／加利福尼亚州／山景城")).toBeTruthy();
+    expect(fake.industryResearch.updateCompany).toHaveBeenCalledWith(company.id, expect.objectContaining({ headquarters: "美国／加利福尼亚州／山景城" }));
     expect(screen.queryByLabelText("总部（可选）")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /返回公司列表/ }));
@@ -719,15 +718,15 @@ describe("app three-pane shell", () => {
     const dialog = screen.getByRole("dialog", { name: "公司调研" });
     expect(within(dialog).getByText("智能眼镜")).toBeTruthy();
     expect(within(dialog).getByText("小米")).toBeTruthy();
-    expect((screen.getByLabelText("研究方向") as HTMLSelectElement).options).toHaveLength(4);
-    await user.selectOptions(screen.getByLabelText("研究方向"), "product_and_technology");
+    expect((within(dialog).getByRole("button", { name: "开始调研" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(within(dialog).getByLabelText("主要产品与定位"));
     await user.type(screen.getByLabelText("关注范围（可选）"), "关注新品");
     await user.click(within(screen.getByRole("dialog", { name: "公司调研" })).getByRole(
       "button",
       { name: "开始调研" },
     ));
     const firstRun = state.active!.run;
-    expect(fake.companyResearch.start).toHaveBeenCalledWith(item.id, company.id, expect.objectContaining({ direction: "product_and_technology", focusScope: "关注新品" }));
+    expect(fake.companyResearch.start).toHaveBeenCalledWith(item.id, company.id, expect.objectContaining({ moduleIds: ["products_and_positioning"], focusScope: "关注新品" }));
     act(() => {
       fake.emitResearch({
         requestId: "request-1",

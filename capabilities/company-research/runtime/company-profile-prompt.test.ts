@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 import { CompanyProfileFieldsSchema } from "../contracts/index.js";
 import { CompanyProfileModelCandidateSchema } from "./company-profile-model.js";
-import { buildCompanyProfileRequestPrompt, companyProfileOutputInstructions, companyProfileOutputExamples } from "./company-profile-prompt.js";
+import { buildCompanyProfileRequestPrompt, companyProfileOutputInstructions, companyProfileOutputExamples, companyProfileUnlistedOutputExample } from "./company-profile-prompt.js";
 
 describe("company profile structured output instructions", () => {
   it("shows a schema-valid matched example with every field and object source references", () => {
@@ -23,6 +23,13 @@ describe("company profile structured output instructions", () => {
       expect(example.fields).toEqual({}); expect(example.fieldEvidence).toEqual({});
       expect(companyProfileOutputInstructions).toContain(JSON.stringify(example));
     }
+  });
+  it("shows evidenced unlisted status as a structured field rather than an identity-only explanation", () => {
+    const example = companyProfileUnlistedOutputExample;
+    expect(Value.Check(CompanyProfileModelCandidateSchema, example)).toBe(true);
+    expect(example.fields.stockListings).toEqual([]);
+    expect(example.fieldEvidence.stockListings).toEqual(example.identity.sources);
+    expect(companyProfileOutputInstructions).toContain(JSON.stringify(example));
   });
   it("carries topics and the optional identity hint as explicit user intent", () => {
     const prompt = JSON.parse(buildCompanyProfileRequestPrompt({

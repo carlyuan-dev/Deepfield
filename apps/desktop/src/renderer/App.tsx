@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { DesktopApi, InteractionRecord } from "@deepfield/contracts";
-import type { CapabilityInteractionEditor } from "@deepfield/capability-sdk";
+import type { CapabilityInteractionEditor, DraftRef, ViewRef } from "@deepfield/capability-sdk";
 import { createChatEventHub } from "./state/chat-event-hub.js";
 import { createRequestId } from "./request-id.js";
 import {
@@ -57,7 +57,7 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
   const selected = readyUi.find(item => item.id === workspace.activeCapability);
   const interaction = useMemo(createCapabilityInteractionState, []);
   const [blockedNavigation, setBlockedNavigation] = useState<string>();
-  const [editorBinding, setEditorBinding] = useState<{ conversationId: string; interactionId: string; capabilityId: string }>();
+  const [editorBinding, setEditorBinding] = useState<{ conversationId: string; interactionId: string; capabilityId: string; view?: ViewRef; draft?: DraftRef }>();
   const [editorContinuation, setEditorContinuation] = useState<{ conversationId: string; interactionId: string; capabilityId: string; draftId: string }>();
   const editorOpenSequence = useRef(0);
   useEffect(() => {
@@ -109,6 +109,13 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
     const sequence = ++editorOpenSequence.current;
     const ownerId = item.conversationId;
     if (expectedGeneration !== undefined && (manualNavigationGeneration.current !== expectedGeneration || conversations.activeConversation?.id !== ownerId)) return;
+    if (editorBinding?.conversationId === ownerId && editorBinding.interactionId === item.id
+      && workspace.activeCapability === editorBinding.capabilityId) {
+      setSettingsOpen(false);
+      setBlockedNavigation(undefined);
+      dispatchWorkspace({ type: "OPEN_CAPABILITY_FROM_CHAT", capabilityId: editorBinding.capabilityId });
+      return;
+    }
     if (item.payload.kind === "approval" && !item.payload.operation.draftRef) {
       if (expectedGeneration !== undefined) await api.chat.autoOpenInteractionEditor(ownerId, item.id);
       return;
@@ -124,9 +131,9 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
       throw new Error(result?.message ?? "editor_navigation_failed");
     }
     if (sequence !== editorOpenSequence.current || (expectedGeneration !== undefined && manualNavigationGeneration.current !== expectedGeneration)) return;
-    setEditorBinding({ conversationId: ownerId, interactionId: item.id, capabilityId });
+    setEditorBinding({ conversationId: ownerId, interactionId: item.id, capabilityId, view: value.form.view, draft: value.form.draft });
     setEditorContinuation({ conversationId: ownerId, interactionId: item.id, capabilityId, draftId: value.form.draft.draftId });
-  }, [api, conversations.activeConversation?.id]);
+  }, [api, conversations.activeConversation?.id, editorBinding, workspace.activeCapability]);
   const onNewInteraction = useCallback((item: InteractionRecord) => {
     const generation = requestNavigationGeneration.current.get(item.requestId);
     if (generation === undefined || generation !== manualNavigationGeneration.current || conversations.activeConversation?.id !== item.conversationId) return;
@@ -142,6 +149,7 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
     const unsubscribe = bridge.subscribe(event => {
       if (event.kind === "cancel") { cancelled.add(event.requestId); interaction.cancel(event.requestId); return; }
       const previous = navigationContext.current.selected?.id;
+      const generation = manualNavigationGeneration.current;
       void (async () => {
         // A result may reach navigation before React processes the terminal interaction event.
         // Release only that completed editor; a still-pending human form keeps its dirty guard.
@@ -150,6 +158,27 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
           const items = await api.chat.listInteractions(binding.conversationId).catch(() => []);
           if (!subscribed || cancelled.delete(event.requestId) || Date.now() >= event.expiresAt) return;
           const item = items.find(item => item.id === binding.interactionId);
+          if (item && ["waiting", "editing"].includes(item.status) && binding.view && binding.draft
+            && navigationContext.current.selected?.id === binding.capabilityId
+            && JSON.stringify(event.target) === JSON.stringify(binding.view)) {
+            const current = await api.chat.readInteractionEditor(binding.conversationId, binding.interactionId).catch(() => undefined);
+            if (!subscribed || cancelled.delete(event.requestId) || Date.now() >= event.expiresAt) return;
+            // A focus acknowledgement must describe the exact mounted draft and view.
+            // Changed revisions and other forms still take the guarded replacement path.
+            if (current && navigationContext.current.editorBinding === binding
+              && manualNavigationGeneration.current === generation
+              && current.interaction.id === binding.interactionId
+              && current.interaction.conversationId === binding.conversationId
+              && ["waiting", "editing"].includes(current.interaction.status)
+              && JSON.stringify(current.form.draft) === JSON.stringify(binding.draft)
+              && JSON.stringify(current.form.view) === JSON.stringify(binding.view)) {
+              setSettingsOpen(false);
+              setBlockedNavigation(undefined);
+              dispatchWorkspace({ type: "OPEN_CAPABILITY_FROM_CHAT", capabilityId: binding.capabilityId });
+              await bridge.ack(event.requestId, event.target.capabilityId, { status: "opened" }).catch(() => false);
+              return;
+            }
+          }
           if (item && !["waiting", "editing", "executing"].includes(item.status)) {
             flushSync(() => setEditorBinding(current => current?.interactionId === binding.interactionId ? undefined : current));
           }
@@ -160,7 +189,7 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
           dispatchWorkspace({ type: "OPEN_CAPABILITY_FROM_CHAT", capabilityId: id });
           return () => dispatchWorkspace(previous ? { type: "OPEN_CAPABILITY_FROM_CHAT", capabilityId: previous } : { type: "CLOSE_CAPABILITY" });
         }) : { status: "not_found" as const, message: "ui_unavailable" };
-        if (result.status === "opened") setSettingsOpen(false);
+        if (result.status === "opened") { setSettingsOpen(false); setBlockedNavigation(undefined); }
         const accepted = await bridge.ack(event.requestId, event.target.capabilityId, result).catch(() => false);
         if (accepted && result.status === "blocked" && result.message === "unsaved_input") setBlockedNavigation(event.requestId);
       })();
@@ -281,10 +310,6 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
         onOpenSettings={() => { noteManualNavigation(); setSettingsModule("llm"); setSettingsOpen(true); }}
       />
       <main className="workspace">
-        {blockedNavigation && <div role="status">当前页面有未保存输入。<button onClick={() => {
-          const id = blockedNavigation; setBlockedNavigation(undefined);
-          void api.capabilityNavigation?.retry(id).catch(() => {});
-        }}>打开</button></div>}
         {settingsOpen && (
           <SettingsView
             api={api}
@@ -304,6 +329,10 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
               capabilityOpen={capabilityOpen}
               onToggle={toggleChatPane}
             />
+            {blockedNavigation && <div className="chat-navigation-notice" role="status">请先保存或关闭右侧当前表单。<button onClick={() => {
+              const id = blockedNavigation; setBlockedNavigation(undefined);
+              void api.capabilityNavigation?.retry(id).catch(() => {});
+            }}>重新打开</button></div>}
             {conversations.loading ? (
               <p className="muted pane-message">加载对话…</p>
             ) : conversations.error !== undefined ? (
@@ -322,6 +351,7 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
                 savingWebSearch={conversations.savingWebSearch}
                 settingError={conversations.settingError}
                 openInteractionEditor={openInteractionEditor}
+                activeEditorInteractionId={capabilityOpen ? editorBinding?.interactionId : undefined}
                 onNewInteraction={onNewInteraction}
                 onRequestStart={rememberRequestGeneration}
               />

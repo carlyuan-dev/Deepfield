@@ -153,7 +153,7 @@ describe("offline company research Chat protocol", () => {
       expect(repositories.capabilityItems.getById(item.id as never)).toBeDefined();
       expect(await host.call("chat-1", "describe-prepare", "describe", { capabilityId: "company-research", actionId: "research.prepare" })).toMatchObject({ status: "described" });
       const draft = await host.call("chat-1", "prepare", "invoke", actionCall("research.prepare", {
-        itemId: item.id, companyId: company.id, direction: "product_and_technology", asOfDate: "2026-09-21",
+        itemId: item.id, companyId: company.id, moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2026-09-21",
       })) as { status: string; data: unknown };
       expect(draft.status).toBe("completed");
       expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toEqual([]);

@@ -17,8 +17,9 @@ describe("explicit capability follow-up", () => {
     const worker = new FakeWorker();
     const service = new ChatService(db.repos, new ContextBuilder(db.repos), makeSecrets("test"), worker, { capabilityDirectory: () => [] });
     await service.send(a.id, "取消刚才任务", "cancel", () => {});
-    expect(worker.requests[0]?.context.systemPrompt).toContain("approved-task");
-    expect(worker.requests[0]?.context.systemPrompt).not.toContain("other-task");
+    expect(JSON.stringify(worker.requests[0]?.context.messages)).toContain("approved-task");
+    expect(JSON.stringify(worker.requests[0]?.context.messages)).not.toContain("other-task");
+    expect(worker.requests[0]?.context.systemPrompt).not.toContain("approved-task");
     expect(worker.requests[0]?.context.capabilityDirectory ?? []).toEqual([]);
     service.dispose();
   });

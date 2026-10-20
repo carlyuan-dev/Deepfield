@@ -3,13 +3,13 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { ChatInteractionCoordinator, classifyExplicitDecision, classifyTaskDecision, snapshotExactTaskCalls, exactTaskCallDigest, TaskGrantStore, freezeTaskScope, TaskScopeStore, type FrozenTaskScope, type ScopeClaim, type ExactTaskCall, type TaskGrantClaim, type OperationAdapter } from "@deepfield/application";
 import type { InteractionEditorState, InteractionOwner, InteractionRecord, OperationRef, OperationResult, RespondCommand } from "@deepfield/contracts";
-import { ActionCallSchema, canonicalActionJson, TaskScopeProposalSchema, ViewRefSchema, type TaskScopeProposal, type ActionCall, type CapabilityFormSnapshot, type DraftRef, type ViewRef } from "@deepfield/capability-sdk";
+import { ActionCallSchema, canonicalActionJson, DraftRefSchema, TaskScopeProposalSchema, ViewRefSchema, type TaskScopeProposal, type ActionCall, type CapabilityFormSnapshot, type DraftRef, type ViewRef } from "@deepfield/capability-sdk";
 import type { Repositories } from "@deepfield/persistence";
 import type { CapabilityRegistry } from "../capabilities/registry.js";
 import type { CapabilityRuntime } from "../capabilities/runtime.js";
 
 type TaskProposal = { id: string; calls: ExactTaskCall[]; remainingSummary: string };
-type Binding = { owner: InteractionOwner; capabilityId: string; actionId: string; contractDigest: string; packageVersion: string; formId?: string; input?: unknown; taskProposal?: TaskProposal; taskScope?: { scope: FrozenTaskScope; summary: string }; scopeAuthority?: { grantId: string; authorityId: string } };
+type Binding = { owner: InteractionOwner; capabilityId: string; actionId: string; contractDigest: string; packageVersion: string; formId?: string; input?: unknown; sourceDraftRefs?: DraftRef[]; taskProposal?: TaskProposal; taskScope?: { scope: FrozenTaskScope; summary: string }; scopeAuthority?: { grantId: string; authorityId: string } };
 const permissions = ["read", "execute", "write", "cancel"] as const;
 const hash = (value: unknown) => createHash("sha256").update(canonicalActionJson(value)).digest("hex");
 const questionSchema = Type.Object({ question: Type.String({ minLength: 1, maxLength: 4000 }), options: Type.Optional(Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), label: Type.String({ minLength: 1 }) }, { additionalProperties: false }), { maxItems: 6 })) }, { additionalProperties: false });
@@ -52,6 +52,10 @@ export class ChatInteractionHost {
         return "unknown";
       },
       release: async ref => { const binding = this.binding(ref); if (ref.draftRef) await this.provider(binding).release(JSON.parse(ref.draftRef)); },
+      shouldResumeAfterCancel: ref => {
+        const binding = JSON.parse(ref.operationId) as Binding;
+        return Boolean(binding.taskProposal || binding.taskScope || binding.scopeAuthority);
+      },
     });
     this.coordinator = new ChatInteractionCoordinator(repositories.chatInteractions, this.adapters, item => {
       const pending = item.receiptId ? this.pendingOutcomes.get(item.receiptId) : undefined;
@@ -90,6 +94,14 @@ export class ChatInteractionHost {
   }
   onChanged(listener: (conversationId: string) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   list(conversationId: string) { return this.coordinator.list(conversationId); }
+  interactionForSourceDraft(conversationId: string, draft: DraftRef): string | undefined {
+    return this.list(conversationId).findLast(item => {
+      if (item.payload.kind !== "approval" || item.payload.operation.provider !== "capability") return false;
+      const binding = JSON.parse(item.payload.operation.operationId) as Binding;
+      return binding.capabilityId === draft.capabilityId && binding.owner.conversationId === conversationId
+        && binding.sourceDraftRefs?.some(ref => canonicalActionJson(ref) === canonicalActionJson(draft));
+    })?.id;
+  }
   revokeTask(conversationId: string, invalidateRequests = true): void {
     if (invalidateRequests) this.interactionEpochs.set(conversationId, (this.interactionEpochs.get(conversationId) ?? 0) + 1);
     this.taskGrants.revoke(conversationId);
@@ -319,10 +331,14 @@ export class ChatInteractionHost {
       return this.coordinator.create({ conversationId, requestId, toolCallId }, { kind: "question", ...args, allowFreeText: true });
     }
     const item = this.coordinator.active(conversationId);
-    if (!item || item.payload.kind !== "approval") throw new Error("No bound approval draft");
+    if (!item || item.payload.kind !== "approval") return { status: "no_active_draft",
+      message: "当前没有待确认的操作草稿。已取消或完成的操作不再等待确认。",
+      recovery: "仅在用户仍要求新操作时准备新的确认；不要重试已取消的操作。" };
     if (operation === "draft.read") return this.readEditor(conversationId, item.id);
     const input = args as { expectedRevision?: number; patch?: unknown; transitionId?: string };
-    if (item.status !== "waiting" || !Number.isInteger(input?.expectedRevision)) throw new Error("Draft is being edited");
+    if (item.status !== "waiting") return { status: "error", error: { code: "draft_editing", message: "草稿正在编辑，请等待同步后重新读取。" } };
+    if (!Number.isInteger(input?.expectedRevision) || input.expectedRevision !== item.revision) return { status: "error", error: {
+      code: "revision_changed", message: "草稿修订已变化，请重新读取当前草稿后更新。", recovery: "Read the current interaction draft, then use its current interaction revision." } };
     if (operation === "draft.transition" && !input.transitionId) throw new Error("Transition required");
     return this.updateEditor(conversationId, item.id, input.expectedRevision!, input.patch, operation === "draft.transition" ? input.transitionId : undefined, true);
   }
@@ -366,6 +382,12 @@ export class ChatInteractionHost {
       ...(this.scopes.authority(owner.conversationId) ? { scopeAuthority: this.scopes.authority(owner.conversationId)! } : {}),
       ...(form ? { formId: form.id } : { input: structuredClone(call.input) }), ...(taskProposal ? { taskProposal } : {}), ...(taskScope ? { taskScope } : {}) };
     const snapshot = form ? await this.provider(binding).prepare(form.id, call.actionId, call.input) : undefined;
+    if (snapshot?.sourceDraftRefs) {
+      const owned = this.repositories.chatCapabilities.views(owner.conversationId)
+        .map(view => canonicalActionJson(view.target));
+      binding.sourceDraftRefs = snapshot.sourceDraftRefs.filter(ref => Value.Check(DraftRefSchema, ref)
+        && ref.capabilityId === binding.capabilityId && owned.includes(canonicalActionJson(ref))).map(ref => structuredClone(ref));
+    }
     const ref = this.ref(binding, snapshot);
     if (snapshot) this.repositories.chatCapabilities.saveViews(owner.conversationId, owner.requestId, [snapshot.view]);
     return this.coordinator.create(owner, { kind: "approval", summary: "", operation: ref }, requestBound ? () => this.assertFreshRequest(owner.requestId) : undefined);

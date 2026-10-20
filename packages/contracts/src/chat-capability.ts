@@ -23,6 +23,7 @@ export const ChatCapabilityConfirmationSchema = Type.Object({ confirmationRef: i
 export type ChatCapabilityConfirmation = Static<typeof ChatCapabilityConfirmationSchema>;
 export const ChatCapabilityOperationCardSchema = Type.Object({ conversationId: id, sourceRequestId: id, invocationId: id,
   interactionId: Type.Optional(id),
+  interactionRole: Type.Optional(Type.Union([Type.Literal("preparation"), Type.Literal("execution")])),
   status: Type.Union([Type.Literal("awaiting_confirmation"), Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled"), Type.Literal("interrupted"), Type.Literal("uncertain")]),
   title: Type.String(), presentation: Type.Optional(OperationPresentationSchema) }, { additionalProperties: false });
 export type ChatCapabilityOperationCard = Static<typeof ChatCapabilityOperationCardSchema>;

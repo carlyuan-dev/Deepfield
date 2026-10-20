@@ -1,8 +1,8 @@
-import { getCompanyResearchTemplate, type KeyResearchRun, type ResearchRun, type ResearchRunSummary, type CompanyResearchState, type CompanyResearchBatchState } from "../contracts/index.js";
+import { getCompanyResearchTemplate, createCompanyResearchTemplate, isModuleResearchRun, type ModuleResearchRun, type KeyResearchRun, type ResearchRun, type ResearchRunSummary, type CompanyResearchState, type CompanyResearchBatchState } from "../contracts/index.js";
 
-export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearchRun {
+export function researchRun(overrides: Partial<Exclude<KeyResearchRun, ModuleResearchRun>> = {}): Exclude<KeyResearchRun, ModuleResearchRun> {
   const template = getCompanyResearchTemplate("product_and_technology");
-  const run: KeyResearchRun = {
+  const run: Exclude<KeyResearchRun, ModuleResearchRun> = {
     id: "run-1" as KeyResearchRun["id"], itemId: "item-research" as KeyResearchRun["itemId"],
     companyId: "company-research" as KeyResearchRun["companyId"],
     schemaVersion: "company-research-report-v1", status: "completed",
@@ -34,6 +34,21 @@ export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearc
   return run;
 }
 
+export function moduleResearchRun(overrides: Partial<ModuleResearchRun> = {}): ModuleResearchRun {
+  const old = researchRun();
+  const { direction: _direction, ...base } = old;
+  const { direction: _contextDirection, ...context } = old.researchContext;
+  const moduleIds = overrides.moduleIds ?? ["products_and_positioning"];
+  const template = createCompanyResearchTemplate(moduleIds);
+  const run: ModuleResearchRun = { ...base, moduleIds, template, harnessVersion: 2,
+    researchContext: { ...context, moduleIds },
+    structuredContent: { coreSummary: ["新品已发布"], sections: template.sections.map((section, index) => ({ sectionId: section.sectionId, status: "found", summary: null, facts: index === 0 ? old.structuredContent!.sections[0]!.facts : [] })) },
+    ...overrides };
+  if (run.status !== "completed") { delete run.structuredContent; delete run.completedAt; }
+  if (run.status === "researching" || run.status === "research_failed") { delete run.rawReportText; delete run.rawCompletedAt; run.structuringAttempts = 0; }
+  return run;
+}
+
 export function researchSummary(run: ResearchRun): ResearchRunSummary {
   if (run.schemaVersion === "legacy-freeform-v1") {
     const { reportText: _body, ...summary } = run;
@@ -45,6 +60,7 @@ export function researchSummary(run: ResearchRun): ResearchRunSummary {
 }
 
 export function activeResearch(run: KeyResearchRun, draftText = ""): CompanyResearchState {
+  if (!isModuleResearchRun(run)) run = moduleResearchRun({ id: run.id, status: run.status, ...(run.lastFailureCode ? { lastFailureCode: run.lastFailureCode } : {}) });
   if (run.status !== "researching" && run.status !== "structuring") throw new Error("active only");
   const { rawReportText: _raw, structuredContent: _content, researchContext: _context, template: _template, harnessVersion: _version, ...summary } = run;
   return { runs: [], globalActiveRun: { runId: run.id, itemId: run.itemId, companyId: run.companyId, stage: run.status === "researching" ? "raw" : "structure" }, active: { run: { ...summary, status: run.status }, draftText } };
@@ -53,7 +69,7 @@ export function activeResearch(run: KeyResearchRun, draftText = ""): CompanyRese
 export function researchQueue(run: KeyResearchRun): CompanyResearchBatchState {
   return {
     batchId: "queue-1", itemId: run.itemId, status: "running",
-    entries: [{ entryId: "entry-1", itemId: run.itemId, companyId: run.companyId, mode: "new", input: { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) }, status: "running", runId: run.id, stage: run.status === "structuring" ? "structure" : "raw" }],
+    entries: [{ entryId: "entry-1", itemId: run.itemId, companyId: run.companyId, mode: "new", input: { moduleIds: isModuleResearchRun(run) ? run.moduleIds : ["products_and_positioning"], asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) }, status: "running", runId: run.id, stage: run.status === "structuring" ? "structure" : "raw" }],
     processed: 0, succeeded: 0, failed: 0, total: 1,
   };
 }

@@ -154,7 +154,7 @@ export function createCompanyRepository(db: Database): CompanyRepository {
       // update changes status to ready, invalidating an obsolete completion.
       const result = db.prepare(`UPDATE companies SET
         legal_name = COALESCE(legal_name, ?), aliases_json = COALESCE(aliases_json, ?),
-        headquarters = COALESCE(headquarters, country_or_region, ?), founded_at = COALESCE(founded_at, ?),
+        headquarters = COALESCE(headquarters, ?), founded_at = COALESCE(founded_at, ?),
         official_website_json = COALESCE(official_website_json, ?), stock_listings_json = COALESCE(stock_listings_json, ?),
         business_tags_json = COALESCE(business_tags_json, ?), profile_status = ?, profile_provenance_json = ?, profile_issue_json = NULL,
         profile_identity_hint_json = CASE WHEN ? = 'ready' THEN NULL ELSE profile_identity_hint_json END, updated_at = ?

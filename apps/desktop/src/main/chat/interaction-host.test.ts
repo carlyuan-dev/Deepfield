@@ -12,6 +12,45 @@ const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 function database() { const db = openDatabase(":memory:"); migrate(db); cleanups.push(() => db.close()); return createRepositories(db); }
 
+it("reports current draft availability and revision conflicts without pretending audit failed", async () => {
+  const f = await editableFixture();
+  expect(await f.host.call("r", "stale", "draft.update", { expectedRevision: 99, patch: { value: "wrong" } }))
+    .toMatchObject({ status: "error", error: { code: "revision_changed" } });
+  expect(f.snapshot().values).toEqual({ value: "before" });
+  await f.host.respond(f.conversation.id, { interactionId: f.item.id, expectedRevision: 1, response: { kind: "decision", decision: "cancel" } }, "chat_button");
+  expect(await f.host.call("r", "read", "draft.read", {})).toMatchObject({ status: "no_active_draft" });
+});
+
+it("groups preparation across requests using exact conversation-owned drafts and preserves cancellation", async () => {
+  const source = { capabilityId: "public-package", draftId: "source", revision: "1" };
+  const unknown = { ...source, draftId: "unknown" };
+  const foreign = { ...source, draftId: "foreign" };
+  const f = await editableFixture([source, unknown, foreign]);
+  const other = f.repos.conversations.create();
+  await f.host.respond(f.conversation.id, { interactionId: f.item.id, expectedRevision: 1, response: { kind: "decision", decision: "cancel" } }, "chat_button");
+  f.repos.chatCapabilities.saveViews(f.conversation.id, "prepare-r1", [source]);
+  f.repos.chatCapabilities.saveViews(other.id, "foreign-r1", [foreign]);
+  f.host.begin("next", f.conversation.id);
+  const item = await f.host.requestApproval({ conversationId: f.conversation.id, requestId: "next", toolCallId: "submit" }, f.fixture.call);
+  for (const [requestId, conversationId, draftRef] of [
+    ["prepare-r1", f.conversation.id, source], ["unknown-r1", f.conversation.id, unknown], ["foreign-r1", other.id, foreign],
+  ] as const) {
+    const id = `prepare-${requestId}`;
+    f.repos.capabilityInvocations.issue({ id, capabilityId: "public-package", actionId: "prepare", bindingDigest: id, issuedAt: 1, expiresAt: 100 });
+    f.repos.capabilityInvocations.claim(id, 2);
+    f.repos.capabilityInvocations.complete(id, { status: "completed", data: { draftRef } }, undefined, 3);
+    f.repos.chatCapabilities.bindInvocation({ conversationId, sourceRequestId: requestId, toolCallId: id, callDigest: id, invocationId: id });
+    f.repos.chatCapabilities.saveOperation({ conversationId, sourceRequestId: requestId, invocationId: id, status: "completed", title: "Prepared" });
+  }
+  const chat = new CapabilityChatHost(() => f.fixture.runtime, f.fixture.registry, f.repos, f.host);
+  expect(chat.operations(f.conversation.id)).toMatchObject([{ interactionId: item.id, interactionRole: "preparation" }, { invocationId: "prepare-unknown-r1" }]);
+  expect(chat.operations(f.conversation.id)[1]).not.toHaveProperty("interactionId");
+  expect(chat.operations(other.id)[0]).not.toHaveProperty("interactionId");
+  await f.host.respond(f.conversation.id, { interactionId: item.id, expectedRevision: item.revision, response: { kind: "decision", decision: "cancel" } }, "chat_button");
+  expect(f.host.coordinator.get(item.id)?.status).toBe("cancelled");
+  expect(chat.operations(f.conversation.id)[0]).toMatchObject({ interactionId: item.id, interactionRole: "preparation" });
+  chat.dispose();
+});
 it("opens a no-form destructive approval's package context without executing it", async () => {
   const repos = database(); const conversation = repos.conversations.create();
   const target = { capabilityId: "public-package", viewId: "home", input: {} };
@@ -44,10 +83,10 @@ it("publishes results only after the interaction becomes terminal, preserving it
   expect(generations).toEqual([generation]);
 });
 
-async function editableFixture() {
+async function editableFixture(sourceDraftRefs?: CapabilityFormSnapshot["sourceDraftRefs"]) {
   const repos = database(); const conversation = repos.conversations.create();
   let version = 1; let value = "before";
-  const snapshot = (): CapabilityFormSnapshot => ({ draft: { capabilityId: "public-package", draftId: "draft", revision: String(version) },
+  const snapshot = (): CapabilityFormSnapshot => ({ draft: { capabilityId: "public-package", draftId: "draft", revision: String(version) }, ...(sourceDraftRefs ? { sourceDraftRefs } : {}),
     view: { capabilityId: "public-package", viewId: "editor", input: { version } }, values: { value }, inputSchema: {}, transitions: [{ id: "next", label: "Next" }], readyToSubmit: true, summary: value });
   const provider: CapabilityFormProvider = { prepare: async () => snapshot(), read: async () => snapshot(),
     update: async (_ref, patch) => { const next = (patch as { value: string }).value; if (!next) throw new Error("Invalid value"); value = next; version++; return snapshot(); },

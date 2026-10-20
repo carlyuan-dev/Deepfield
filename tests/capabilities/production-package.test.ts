@@ -96,7 +96,7 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     const prepare = active.registry.publicAction("company-research", "research.prepare")!;
     const submit = active.registry.publicAction("company-research", "research.submit")!;
     expect(submit.requiresConfirmation).toBe(true);
-    const prepared = await prepare.handler({ itemId: item.id, companyId: company.id, direction: "product_and_technology", asOfDate: "2026-09-21" }, { invocationId: "offline-prepare", source: "chat" });
+    const prepared = await prepare.handler({ itemId: item.id, companyId: company.id, moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2026-09-21" }, { invocationId: "offline-prepare", source: "chat" });
     if (prepared.status !== "completed") throw new Error("draft not prepared");
     expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toEqual([]);
     const accepted = await submit.handler(prepared.data, { invocationId: "offline-submit", source: "chat" });

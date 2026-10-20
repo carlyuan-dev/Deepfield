@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { createRepositories, migrate } from "./testing/repositories.js";
-import { getCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
+import { createCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
 import { evidenceHash, snapshotManifest, type EvidenceReceipt } from "../../../capabilities/company-research/persistence/research-evidence-data.js";
 import { ResearchEvidenceCollector } from "../../../capabilities/company-research/runtime/company-research-evidence-collector.js";
 import { installZeroEvidenceRawFixture } from "./research-evidence-test-fixtures.js";
@@ -10,8 +10,8 @@ import { EvidenceReceiptSchema } from "../../../capabilities/company-research/co
 function lifecycleFixture() {
   const db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys = ON"); migrate(db); const repos = createRepositories(db);
   const item = repos.capabilityItems.create({ industry: "主题" }); const company = repos.companies.upsert({ name: "公司" }); repos.itemCompanies.add(item.id, company.id);
-  const input = { direction: "product_and_technology" as const, asOfDate: "2026-10-09" };
-  const create = () => repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: input.asOfDate, companyName: company.name, topicName: item.industry }, getCompanyResearchTemplate(input.direction));
+  const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const], asOfDate: "2026-10-09" };
+  const create = () => repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: input.asOfDate, companyName: company.name, topicName: item.industry }, createCompanyResearchTemplate(input.moduleIds));
   const run = create();
   const receipt: EvidenceReceipt = { sequence: 1, modelRequestId: "model", requestId: "request", phase: "ordinary", state: "prepared", responseState: "not_sent", projections: [] };
   return { db, repos, item, company, input, run, create, receipt };
@@ -117,7 +117,7 @@ it.each(["report", "membership", "company", "topic"] as const)("cleans only owne
   const f = lifecycleFixture(); installZeroEvidenceRawFixture(f.db, f.repos);
   f.repos.companyResearchRuns.completeRaw(f.run.id, "原报告"); f.repos.companyResearchRuns.failStructuring(f.run.id);
   const otherItem = f.repos.capabilityItems.create({ industry: "其他主题" }); const otherCompany = f.repos.companies.upsert({ name: "其他公司" }); f.repos.itemCompanies.add(otherItem.id, otherCompany.id);
-  const kept = f.repos.companyResearchRuns.createResearching(otherItem.id, otherCompany.id, f.input, { ...f.input, currentDate: f.input.asOfDate, companyName: otherCompany.name, topicName: otherItem.industry }, getCompanyResearchTemplate(f.input.direction));
+  const kept = f.repos.companyResearchRuns.createResearching(otherItem.id, otherCompany.id, f.input, { ...f.input, currentDate: f.input.asOfDate, companyName: otherCompany.name, topicName: otherItem.industry }, createCompanyResearchTemplate(f.input.moduleIds));
   f.repos.companyResearchRuns.completeRaw(kept.id, "保留报告"); f.repos.companyResearchRuns.failStructuring(kept.id);
   f.repos.runInTransaction(() => {
     if (entry === "report") f.repos.companyResearchRuns.deleteTerminal(f.item.id, f.company.id, f.run.id);
@@ -131,8 +131,8 @@ it.each(["report", "membership", "company", "topic"] as const)("cleans only owne
 it("freezes complete zero manifests atomically, rejects missing/different manifests and preserves immutable packets", () => {
   const db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys = ON"); migrate(db); const repos = createRepositories(db);
   const item = repos.capabilityItems.create({ industry: "主题" }); const company = repos.companies.upsert({ name: "公司" }); repos.itemCompanies.add(item.id, company.id);
-  const input = { direction: "product_and_technology" as const, asOfDate: "2026-10-09" };
-  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: "2026-10-09", companyName: "公司", topicName: "主题" }, getCompanyResearchTemplate(input.direction));
+  const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const], asOfDate: "2026-10-09" };
+  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: "2026-10-09", companyName: "公司", topicName: "主题" }, createCompanyResearchTemplate(input.moduleIds));
   const manifest = snapshotManifest([]);
   expect(() => repos.companyResearchEvidence.freeze(run.id, run.attemptId!, { ...manifest, lastSequence: 1 })).toThrow("evidence_incomplete");
   expect(() => repos.runInTransaction(() => { repos.companyResearchEvidence.freeze(run.id, run.attemptId!, manifest); throw new Error("injected write failure"); })).toThrow("injected");
@@ -152,8 +152,8 @@ it("freezes complete zero manifests atomically, rejects missing/different manife
 it("archives Unicode safely and stores repeated request projections as one blob, rejecting unmapped receipts", () => {
   const db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys = ON"); migrate(db); const repos = createRepositories(db);
   const item = repos.capabilityItems.create({ industry: "主题" }); const company = repos.companies.upsert({ name: "公司" }); repos.itemCompanies.add(item.id, company.id);
-  const input = { direction: "product_and_technology" as const, asOfDate: "2026-10-09" };
-  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: "2026-10-09", companyName: "公司", topicName: "主题" }, getCompanyResearchTemplate(input.direction));
+  const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const], asOfDate: "2026-10-09" };
+  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: "2026-10-09", companyName: "公司", topicName: "主题" }, createCompanyResearchTemplate(input.moduleIds));
   const text = "中文🌱".repeat(3000);
   const collector = new ResearchEvidenceCollector("request", receipt => repos.companyResearchEvidence.append(run.id, run.attemptId!, receipt));
   for (let index = 0; index < 4; index++) collector.observe({ requestId: "request", modelRequestId: `model_${index}`, phase: "ordinary", state: "dispatched", responseState: "succeeded", projections: [{
@@ -186,8 +186,8 @@ it("lets an unmapped observer sentinel reach the evidence boundary and refuses f
 it("first packet creation after a budget failure atomically marks ready, forbidding later reconstruction authority", () => {
   const db = new DatabaseSync(":memory:"); migrate(db); const repos = createRepositories(db);
   const item = repos.capabilityItems.create({ industry: "主题" }); const company = repos.companies.upsert({ name: "公司" }); repos.itemCompanies.add(item.id, company.id);
-  const input = { direction: "product_and_technology" as const, asOfDate: "2026-10-09" };
-  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: "2026-10-09", companyName: "公司", topicName: "主题" }, getCompanyResearchTemplate(input.direction));
+  const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const], asOfDate: "2026-10-09" };
+  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, { ...input, currentDate: "2026-10-09", companyName: "公司", topicName: "主题" }, createCompanyResearchTemplate(input.moduleIds));
   repos.runInTransaction(() => {
     repos.companyResearchEvidence.freeze(run.id, run.attemptId!, snapshotManifest([]));
     repos.companyResearchRuns.completeRawWithEvidence(run.id, run.attemptId!, "原报告", "budget_exceeded");

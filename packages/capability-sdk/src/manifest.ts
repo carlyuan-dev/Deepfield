@@ -79,6 +79,7 @@ const declarationSchema = Type.Cyclic({ Declaration: Type.Object({
   maxLength: Type.Optional(Type.Integer({ minimum: 0 })),
   minItems: Type.Optional(Type.Integer({ minimum: 0 })),
   maxItems: Type.Optional(Type.Integer({ minimum: 0 })),
+  uniqueItems: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false }) }, "Declaration");
 
 const actionV1Schema = Type.Object({

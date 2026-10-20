@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const app = readFileSync(new URL("./app.css", import.meta.url), "utf8");
-const capability = readFileSync(new URL("./capability.css", import.meta.url), "utf8");
+const capability = readFileSync(new URL("../../../../capabilities/company-research/ui/capability.css", import.meta.url), "utf8");
 const chat = readFileSync(new URL("./chat.css", import.meta.url), "utf8");
 const settings = readFileSync(new URL("./settings.css", import.meta.url), "utf8");
 const rail = readFileSync(new URL("./rail.css", import.meta.url), "utf8");
@@ -27,7 +27,7 @@ describe("responsive action buttons", () => {
     expect(chat).toMatch(/\.chat-content-status\s*\{[^}]*flex-wrap:\s*wrap;/su);
     expect(chat).toMatch(/\.markdown-link-actions\s*\{[^}]*flex-wrap:\s*wrap;/su);
     expect(chat).toMatch(/\.tool-activity-toggle,[\s\S]*?\.tool-activity-batch-toggle\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/u);
-    expect(chat).toMatch(/\.tool-activity-summary\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/su);
+    expect(chat).toMatch(/\.tool-activity-summary\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/su);
   });
 
   it("keeps Settings actions intact and profile names elastic", () => {

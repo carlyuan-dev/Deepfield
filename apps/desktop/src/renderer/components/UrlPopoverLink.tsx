@@ -3,9 +3,11 @@ import {
   type ComponentPropsWithoutRef,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 const POPOVER_HIDE_DELAY_MS = 140;
 
@@ -28,6 +30,9 @@ export function UrlPopoverLink({
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const anchorRef = useRef<HTMLAnchorElement>(null);
+  const popoverRef = useRef<HTMLSpanElement>(null);
+  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxHeight: 0 });
 
   const cancelHide = () => {
     if (hideTimer.current !== undefined) {
@@ -49,6 +54,41 @@ export function UrlPopoverLink({
   };
 
   useEffect(() => cancelHide, []);
+  useLayoutEffect(() => {
+    if (!popoverOpen) return;
+    const positionPopover = () => {
+      const anchor = anchorRef.current;
+      const popup = popoverRef.current;
+      if (!anchor || !popup) return;
+      const rect = anchor.getBoundingClientRect();
+      const pane = anchor.closest(".chat-pane, .capability-pane")?.getBoundingClientRect();
+      const leftBound = Math.max(8, (pane?.left ?? 0) + 8);
+      const rightBound = Math.min(window.innerWidth - 8, (pane?.right ?? window.innerWidth) - 8);
+      const width = Math.max(0, Math.min(520, rightBound - leftBound));
+      const left = Math.max(leftBound, Math.min(rect.left, rightBound - width));
+      const below = window.innerHeight - rect.bottom - 14;
+      const above = rect.top - 14;
+      // Measure wrapped content at its final width before choosing a side.
+      popup.style.width = `${width}px`;
+      const height = popup.scrollHeight;
+      const placeAbove = below < Math.min(height, 180) && above > below;
+      const maxHeight = Math.max(0, placeAbove ? above : below);
+      const top = placeAbove ? Math.max(8, rect.top - Math.min(height, maxHeight) - 6) : rect.bottom + 6;
+      setPosition({ left, top, width, maxHeight });
+    };
+    positionPopover();
+    window.addEventListener("scroll", positionPopover, true);
+    window.addEventListener("resize", positionPopover);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(positionPopover);
+    if (anchorRef.current) observer?.observe(anchorRef.current);
+    const pane = anchorRef.current?.closest(".chat-pane, .capability-pane");
+    if (pane) observer?.observe(pane);
+    return () => {
+      window.removeEventListener("scroll", positionPopover, true);
+      window.removeEventListener("resize", positionPopover);
+      observer?.disconnect();
+    };
+  }, [popoverOpen, copyStatus]);
 
   const external = isSafeHttpUrl(href);
   const labelParts = Children.toArray(children);
@@ -69,6 +109,7 @@ export function UrlPopoverLink({
   return (
     <span className={`markdown-link-shell${bareUrlLabel ? " markdown-link-shell--bare" : ""}`}>
       <a
+        ref={anchorRef}
         {...safeProps}
         className={[safeProps.className, bareUrlLabel ? "markdown-link-label--bare" : undefined].filter(Boolean).join(" ") || undefined}
         href={href}
@@ -77,11 +118,20 @@ export function UrlPopoverLink({
         onMouseLeave={scheduleHide}
         onFocus={showPopover}
         onBlur={scheduleHide}
+        onKeyDown={event => {
+          if (event.key === "Escape") setPopoverOpen(false);
+          if (event.key === "ArrowDown" || (event.key === "Tab" && !event.shiftKey && popoverOpen)) {
+            event.preventDefault();
+            popoverRef.current?.querySelector("button")?.focus();
+          }
+        }}
       >
         {children}
       </a>
-      {popoverOpen && (
+      {popoverOpen && createPortal(
         <span
+          ref={popoverRef}
+          style={position}
           className="markdown-link-popover"
           role="dialog"
           aria-label="链接详情"
@@ -89,6 +139,10 @@ export function UrlPopoverLink({
           onMouseLeave={scheduleHide}
           onFocus={showPopover}
           onBlur={scheduleHide}
+          onKeyDown={event => {
+            if (event.key === "Escape") { anchorRef.current?.focus(); setPopoverOpen(false); }
+            if (event.key === "Tab" && event.shiftKey) { event.preventDefault(); anchorRef.current?.focus(); }
+          }}
         >
           <span className="markdown-link-url">{href}</span>
           <span className="markdown-link-actions">
@@ -101,7 +155,7 @@ export function UrlPopoverLink({
               </span>
             )}
           </span>
-        </span>
+        </span>, document.body
       )}
     </span>
   );

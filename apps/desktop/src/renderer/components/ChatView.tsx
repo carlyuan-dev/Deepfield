@@ -30,6 +30,7 @@ export interface ChatViewProps {
   openInteractionEditor?(interaction: InteractionRecord): Promise<void>;
   onNewInteraction?(interaction: InteractionRecord): void;
   onRequestStart?(requestId: string): void;
+  activeEditorInteractionId?: string | undefined;
 }
 
 export function ChatView({
@@ -44,6 +45,7 @@ export function ChatView({
   openInteractionEditor,
   onNewInteraction,
   onRequestStart,
+  activeEditorInteractionId,
 }: ChatViewProps) {
   const { state, submit, reload } = useChat(api, conversation.id, eventHub, requestIdFactory, onRequestStart);
   const [draft, setDraft] = useState("");
@@ -63,6 +65,7 @@ export function ChatView({
   const autoRequestIds = useRef(new Set<string>());
   const messagesRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
+  const [showLatest, setShowLatest] = useState(false);
   const messages = visibleMessages(state);
 
   useEffect(() => {
@@ -120,15 +123,40 @@ export function ChatView({
   }, [api, conversation.id, reload, state.sending]);
 
   useLayoutEffect(() => {
+    followOutput.current = true;
+    setShowLatest(false);
+  }, [conversation.id]);
+
+  const scrollToLatest = () => {
+    followOutput.current = true;
+    setShowLatest(false);
+    const element = messagesRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  };
+
+  useLayoutEffect(() => {
     const element = messagesRef.current;
     if (element !== null && followOutput.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [conversation.id, state.loadState, messages.length, messages.at(-1)?.content, taskCards, confirmations, operations, interactions]);
+  }, [conversation.id, state.loadState, messages, taskCards, confirmations, operations, interactions]);
+
+  useLayoutEffect(() => {
+    const element = messagesRef.current;
+    const content = element?.firstElementChild;
+    if (!element || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (followOutput.current) element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(content);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [conversation.id, state.loadState]);
 
   const handleMessagesScroll = (element: HTMLDivElement): void => {
     followOutput.current =
       element.scrollHeight - element.scrollTop - element.clientHeight <= 40;
+    setShowLatest(!followOutput.current);
   };
 
   // Load once on mount. A loading failure must leave ordinary Chat usable, so
@@ -181,6 +209,7 @@ export function ChatView({
             messagesRef={messagesRef}
             onScroll={handleMessagesScroll}
             interactionCards={{ interactions: interactions.filter(item => item.conversationId === conversation.id),
+              activeEditorInteractionId,
               respond: async (_item, command: RespondCommand) => {
                 const ownerId = conversation.id;
                 const result = await api.chat.respondInteraction!(ownerId, command);
@@ -208,6 +237,7 @@ export function ChatView({
               if (currentConversationId.current === ownerId) { setConfirmations(pending ?? []); setOperations(resolved ?? []); } },
             open: async target => { const result = await api.chatCapability?.open(conversation.id, target); if (result?.status !== "opened") throw new Error(result?.message ?? "open failed"); },
             }} />
+          {showLatest && <button className="chat-latest" onClick={scrollToLatest}>回到最新</button>}
           <Composer
             value={draft}
             onChange={setDraft}
@@ -233,6 +263,7 @@ export function ChatView({
             onSubmit={(content) => {
               if (savingWebSearch) return;
               lastSubmitted.current = content;
+              scrollToLatest();
               setDraft("");
               const options: ChatRequestOptions = {
                 webSearch: webSearchEnabled,

@@ -25,6 +25,25 @@ const content = () => ({
 const identity = { id: "run-1", itemId: "item-1", companyId: "company-1", createdAt: "2026-09-11T00:00:00Z" };
 
 describe("company research template registry", () => {
+  it("snapshots selected modules in catalog order as version two without changing historical templates", () => {
+    const moduleIds: contracts.ResearchModuleId[] = ["technology_and_metrics", "products_and_positioning"];
+    const template = contracts.createCompanyResearchTemplate(moduleIds);
+    expect(template).toMatchObject({ templateId: "selected_modules", templateVersion: 2 });
+    expect(template.sections.map(({ sectionId }) => sectionId)).toEqual(["products_and_positioning", "technology_and_metrics"]);
+    expect(Value.Check(contracts.CompanyResearchTemplateSnapshotSchema, template)).toBe(true);
+    expect(contracts.getCompanyResearchTemplate("product_and_technology").sections).toHaveLength(5);
+    const { direction: _direction, ...baseContext } = context;
+    const moduleInput = { moduleIds, focusScope: input.focusScope, asOfDate: input.asOfDate };
+    const run = {
+      ...identity, ...moduleInput, schemaVersion: "company-research-report-v1", status: "completed",
+      researchContext: { ...baseContext, ...moduleInput }, template, harnessVersion: 2,
+      structuringAttempts: 1, rawReportText: "原始报告", rawCompletedAt: identity.createdAt, completedAt: identity.createdAt,
+      structuredContent: { coreSummary: ["模块摘要"], sections: template.sections.map(({ sectionId }) => ({ sectionId, status: "found", summary: "模块信息", facts: [fact] })) },
+    };
+    expect(Value.Check(contracts.ResearchRunSchema, run)).toBe(true);
+    expect(Value.Check(contracts.ResearchRunSchema, { ...run, direction: input.direction })).toBe(false);
+    expect(Value.Check(contracts.ResearchRunSchema, { ...run, harnessVersion: 1 })).toBe(false);
+  });
   it("defines exactly four version-one templates with the twenty ordered module IDs", () => {
     expect(contracts.COMPANY_RESEARCH_TEMPLATES).toBeDefined();
     expect(contracts.RESEARCH_DIRECTIONS).toEqual(Object.keys(expectedSections));
@@ -56,12 +75,16 @@ describe("company research template registry", () => {
 });
 
 describe("read-only research JSON contracts", () => {
-  it("accepts direction, optional focus and a date-shaped cutoff only", () => {
-    expectTypeOf<contracts.StartCompanyResearchInput["direction"]>().toEqualTypeOf<contracts.ResearchDirection>();
+  it("accepts one to four unique modules, optional focus and a date-shaped cutoff only", () => {
+    expectTypeOf<contracts.StartCompanyResearchInput["moduleIds"][number]>().toEqualTypeOf<contracts.ResearchModuleId>();
+    const input = { moduleIds: ["products_and_positioning", "technology_and_metrics"], focusScope: "手机硅碳负极电池", asOfDate: "2026-09-11" };
     expect(Value.Check(contracts.StartCompanyResearchInputSchema, input)).toBe(true);
-    expect(Value.Check(contracts.StartCompanyResearchInputSchema, { direction: input.direction, asOfDate: input.asOfDate })).toBe(true);
+    expect(Value.Check(contracts.StartCompanyResearchInputSchema, { moduleIds: input.moduleIds, asOfDate: input.asOfDate })).toBe(true);
     for (const invalid of [
-      { ...input, direction: "all" }, { ...input, asOfDate: "tomorrow" },
+      { ...input, moduleIds: [] }, { ...input, moduleIds: ["all"] },
+      { ...input, moduleIds: ["products_and_positioning", "products_and_positioning"] },
+      { ...input, moduleIds: expectedSections.product_and_technology },
+      { ...input, direction: "product_and_technology" }, { ...input, asOfDate: "tomorrow" },
       { ...input, asOfDate: "2026-9-11" }, { ...input, timeScope: "近一年" },
       { ...input, customRequirements: "extra" }, { ...input, focusScope: "x".repeat(1001) },
     ]) expect(Value.Check(contracts.StartCompanyResearchInputSchema, invalid)).toBe(false);
@@ -71,11 +94,13 @@ describe("read-only research JSON contracts", () => {
   });
 
   it("validates complete context snapshots without conflating topicScope and focusScope", () => {
-    expect(Value.Check(contracts.CompanyResearchContextSchema, context)).toBe(true);
+    const { direction: _direction, ...historicalContext } = context;
+    const moduleContext = { ...historicalContext, moduleIds: ["products_and_positioning", "technology_and_metrics"] };
+    expect(Value.Check(contracts.CompanyResearchContextSchema, moduleContext)).toBe(true);
     for (const invalid of [
-      { ...context, topicName: "" }, { ...context, industry: "legacy" },
-      { ...context, researchScope: "legacy" }, { ...context, apiKey: "secret" },
-      { ...context, stockListings: [{ exchange: "HKEX", ticker: 1810 }] },
+      { ...moduleContext, topicName: "" }, { ...moduleContext, industry: "legacy" },
+      { ...moduleContext, researchScope: "legacy" }, { ...moduleContext, apiKey: "secret" },
+      { ...moduleContext, stockListings: [{ exchange: "HKEX", ticker: 1810 }] },
     ]) expect(Value.Check(contracts.CompanyResearchContextSchema, invalid)).toBe(false);
   });
 
@@ -102,7 +127,7 @@ describe("read-only research JSON contracts", () => {
     for (const invalid of [
       { ...valid, coreSummary: [] }, { ...valid, coreSummary: Array(5).fill("summary") },
       { ...valid, coreSummary: [""] }, { ...valid, coreSummary: ["x".repeat(4001)] },
-      { ...valid, sections: valid.sections.slice(1) },
+      { ...valid, sections: [] },
     ]) expect(Value.Check(contracts.StructuredResearchContentSchema, invalid)).toBe(false);
     const section = valid.sections[0]!;
     for (const field of ["text", "timeContext"] as const) {
@@ -199,10 +224,12 @@ describe("read-only research JSON contracts", () => {
     expect(Value.Check(contracts.CompanyResearchStateSchema, { runs: [] })).toBe(false);
     expect(Value.Check(contracts.CompanyResearchStateSchema, { ...state, runs: [{ ...summary, status: "researching" }] })).toBe(false);
     expect(Value.Check(contracts.CompanyResearchStateSchema, { ...state, globalActiveRun: { ...state.globalActiveRun, stage: "completed" } })).toBe(false);
-    expect(Value.Check(contracts.CompanyResearchStateSchema, { runs: [], globalActiveRun: state.globalActiveRun, active: { run: { ...summary, status: "structuring" }, draftText: "" } })).toBe(true);
+    const { direction: _direction, ...moduleSummary } = summary;
+    expect(Value.Check(contracts.CompanyResearchStateSchema, { runs: [], globalActiveRun: state.globalActiveRun, active: { run: { ...moduleSummary, moduleIds: ["products_and_positioning"], status: "structuring" }, draftText: "" } })).toBe(true);
   });
 
   it("requires exact retry and deletion arguments and exposes only summary history through DesktopApi", () => {
+    const input = { moduleIds: ["products_and_positioning"], asOfDate: "2026-09-11" };
     expect(ipc.CompanyResearchGetRunArgsSchema).toBeDefined();
     expect(ipc.CompanyResearchRetryFailedArgsSchema).toBeDefined();
     expect(ipc.CompanyResearchDeleteRunArgsSchema).toBeDefined();

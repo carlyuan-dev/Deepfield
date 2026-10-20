@@ -1,18 +1,19 @@
 import type { ResearchRun, ResearchRunSummary, StartCompanyResearchInput } from "./research.js";
+import { normalizeResearchModuleIds } from "./company-research-templates.js";
 
 export type ResearchRetryMode = "unavailable" | "raw" | "structure";
 export function normalizeResearchInput(input: StartCompanyResearchInput): StartCompanyResearchInput {
   const focusScope = input.focusScope?.trim();
-  return { direction: input.direction, asOfDate: input.asOfDate, ...(focusScope ? { focusScope } : {}) };
+  return { moduleIds: normalizeResearchModuleIds(input.moduleIds), asOfDate: input.asOfDate, ...(focusScope ? { focusScope } : {}) };
 }
 
 /** Domain policy only; callers retain validation, readiness and atomic ownership guards. */
 export function researchRetryMode(saved: ResearchRun | ResearchRunSummary | undefined, latest?: StartCompanyResearchInput): ResearchRetryMode {
-  if (saved?.schemaVersion !== "company-research-report-v1") return "unavailable";
+  if (saved?.schemaVersion !== "company-research-report-v1" || !("moduleIds" in saved)) return "unavailable";
   if (saved.status !== "research_failed" && saved.status !== "structure_failed" && !(saved.status === "completed" && saved.searchStatus === "none")) return "unavailable";
   if (saved.lastFailureCode === "evidence_incomplete") return "raw";
   const input = normalizeResearchInput(latest ?? saved);
   const previous = normalizeResearchInput(saved);
-  if (saved.status === "structure_failed" && saved.searchStatus !== "none" && previous.direction === input.direction && previous.asOfDate === input.asOfDate && previous.focusScope === input.focusScope) return "structure";
+  if (saved.status === "structure_failed" && saved.searchStatus !== "none" && JSON.stringify(previous.moduleIds) === JSON.stringify(input.moduleIds) && previous.asOfDate === input.asOfDate && previous.focusScope === input.focusScope) return "structure";
   return "raw";
 }

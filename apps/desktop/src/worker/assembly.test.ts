@@ -4,7 +4,7 @@ import { createUtilityAssembly } from "./assembly.js";
 import { activate as activateCompanyResearch } from "../../../../capabilities/company-research/worker.js";
 import { createCapabilityAgentRuntime } from "./capabilities/agent-runtime.js";
 import { withUsageContext } from "../shared/usage-collection.js";
-import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, RESEARCH_DIRECTIONS, getCompanyResearchTemplate, type CompanyResearchWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
+import { CompanyResearchWorkerEventSchema, StructuredResearchContentSchema, createCompanyResearchTemplate, buildStructuredResearchOutputSchema, type ResearchModuleId, type CompanyResearchWorkerEvent } from "../../../../capabilities/company-research/contracts/index.js";
 import { Value } from "typebox/value";
 import { renderChatHelp } from "@deepfield/application";
 import { availableChatTools } from "./tools/tool-runtime.js";
@@ -23,7 +23,7 @@ import {
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 
 describe("utility worker assembly (focused revision)", () => {
-  it.each(RESEARCH_DIRECTIONS)("fake research completes both stages for %s without structure deltas", async (direction) => {
+  it.each([1, 2, 3, 4])("fake research completes both stages for %s modules without structure deltas", async (moduleCount) => {
     const endpoint = new InMemoryEndpoint();
     const hostClient = new HostClient({ postMessage: () => {}, timeoutMs: 1000 });
     const { loop } = createUtilityAssembly({ endpoint, agentMode: "fake", hostClient,
@@ -33,18 +33,19 @@ describe("utility worker assembly (focused revision)", () => {
     await flushPending();
     expect(endpoint.posted).toEqual([{ kind: "capability.activated", capabilityId: "company-research", requestId: "activate", ok: true }]);
     endpoint.posted = [];
-    const template = getCompanyResearchTemplate(direction);
-    const raw = { ...rawResearchRequest(), context: { ...rawResearchRequest().context, direction }, template };
+    const moduleIds = rawResearchRequest().context.moduleIds.slice(0, moduleCount) as ResearchModuleId[];
+    const template = createCompanyResearchTemplate(moduleIds);
+    const raw = { ...rawResearchRequest(), context: { ...rawResearchRequest().context, moduleIds }, template };
     endpoint.emit({ kind: "capability.run", capabilityId: "company-research", operation: "research", requestId: raw.requestId, input: raw });
     await flushPending();
     const rawEvents = endpoint.posted.map(value => (value as { payload: CompanyResearchWorkerEvent }).payload);
     expect(rawEvents.map((event) => event.type)).toEqual(["started", "text_delta", "completed"]);
     const terminal = rawEvents.at(-1);
     if (terminal?.type !== "completed") throw new Error("raw did not complete");
-    for (const section of template.sections) expect(terminal.text).toContain(section.sectionId);
+    for (const [index, section] of template.sections.entries()) expect(terminal.text).toContain(`## ${index + 1}. ${section.title}`);
     const rawReportText = terminal.text;
     endpoint.posted = [];
-    endpoint.emit({ kind: "capability.run", capabilityId: "company-research", operation: "research", requestId: structureResearchRequest().requestId, input: { ...structureResearchRequest(), context: raw.context, template, rawReportText } });
+    endpoint.emit({ kind: "capability.run", capabilityId: "company-research", operation: "research", requestId: structureResearchRequest().requestId, input: { ...structureResearchRequest(), context: raw.context, template, rawReportText, outputSchema: buildStructuredResearchOutputSchema(template) } });
     await flushPending();
     const events = endpoint.posted.map(value => (value as { payload: CompanyResearchWorkerEvent }).payload);
     expect(events.map((event) => event.type)).toEqual(["started", "completed"]);
@@ -97,6 +98,9 @@ describe("utility worker assembly (focused revision)", () => {
       ),
     ).toEqual([
       "view_available_features",
+      "request_user_input",
+      "interaction_draft",
+      "propose_actions",
       "get_current_datetime",
       "calculator",
       "convert_timezone",

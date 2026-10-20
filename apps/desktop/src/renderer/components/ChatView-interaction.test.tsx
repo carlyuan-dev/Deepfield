@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { DesktopApi, InteractionRecord } from "@deepfield/contracts";
 import { createChatEventHub } from "../state/chat-event-hub.js";
 import { conversation, makeFakeApi } from "../renderer-test-helpers.js";
@@ -13,6 +13,49 @@ const question: InteractionRecord = {
 };
 
 describe("ChatView interaction ownership", () => {
+  it("follows content resize, preserves reading position and resets follow on send and conversation change", async () => {
+    let resized = () => {};
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      const api = makeFakeApi();
+      const hub = createChatEventHub();
+      const props = { api, eventHub: hub, requestIdFactory: () => "resize-request",
+        acceptUpdated: () => {}, setWebSearchEnabled: async () => {}, savingWebSearch: false, settingError: undefined };
+      const view = render(<ChatView {...props} conversation={conversation("old")} />);
+      await waitFor(() => expect(view.container.querySelector(".messages")).toBeTruthy());
+      const list = view.container.querySelector(".messages") as HTMLDivElement;
+      let height = 600;
+      Object.defineProperties(list, {
+        clientHeight: { configurable: true, value: 200 },
+        scrollHeight: { configurable: true, get: () => height },
+      });
+      act(() => resized());
+      expect(list.scrollTop).toBe(600);
+      list.scrollTop = 150;
+      fireEvent.scroll(list);
+      height = 900;
+      act(() => resized());
+      expect(list.scrollTop).toBe(150);
+      fireEvent.click(screen.getByRole("button", { name: "回到最新" }));
+      expect(list.scrollTop).toBe(900);
+      list.scrollTop = 150;
+      fireEvent.scroll(list);
+      fireEvent.change(screen.getByLabelText("消息输入"), { target: { value: "新消息" } });
+      fireEvent.click(screen.getByRole("button", { name: "发送" }));
+      expect(list.scrollTop).toBe(900);
+      list.scrollTop = 150;
+      fireEvent.scroll(list);
+      view.rerender(<ChatView {...props} conversation={conversation("new")} />);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "回到最新" })).toBeNull());
+      hub.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("offers a newly arrived approval for one automatic editor open but never reopens history", async () => {
     const api = makeFakeApi();
     const onNewInteraction = vi.fn();

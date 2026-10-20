@@ -100,9 +100,26 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
     const { hostRequestId, method } = request;
     try {
       if (method === "chat.interaction") {
-        if (!options.chatInteraction) throw new Error("interaction_unavailable");
-        const result = await options.chatInteraction.call(request.payload.chatRequestId, request.payload.toolCallId,
-          request.payload.operation, request.payload.arguments);
+        let result: unknown;
+        try {
+          if (!options.chatInteraction) throw new Error("interaction_unavailable");
+          result = await options.chatInteraction.call(request.payload.chatRequestId, request.payload.toolCallId,
+            request.payload.operation, request.payload.arguments);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "";
+          const candidate = error && typeof error === "object" && "code" in error ? error.code : undefined;
+          const code = typeof candidate === "string" && ["revision_changed", "contract_changed", "not_found", "expired", "INPUT.INVALID", "proposal_mode_unsupported"].includes(candidate) ? candidate
+            : message.startsWith("Stale request") || message === "Stale editor revision" ? "revision_changed"
+            : message === "Inactive request" || message === "interaction_unavailable" ? "interaction_unavailable"
+            : message === "Contract changed" ? "contract_changed"
+            : message === "Package has no editable form bridge" ? "draft_unavailable" : "interaction_failed";
+          result = { status: "error", error: { code, operation: request.payload.operation,
+            message: code === "revision_changed" ? "交互状态已推进，请读取最新草稿或操作结果。"
+              : code === "proposal_mode_unsupported" ? "当前提案形式不适用于该操作，尚未创建确认或执行操作。"
+              : "交互操作未完成，请核对当前状态与输入后重试。",
+            ...(code === "proposal_mode_unsupported" ? { recovery: "Do not retry the same calls proposal. For a single action, use capability_invoke with the described action, current contractDigest and input; the host prepares its ordinary confirmation and editable form before execution. If the user requested a bounded multi-action task, read each action's taskAuthorization: scope requires firstCall, rules and endCondition; calls is only for compatible exact_input actions. A corrected proposal still requires fresh user confirmation." } : {}),
+            retryable: false } };
+        }
         if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { result } });
         return;
       }

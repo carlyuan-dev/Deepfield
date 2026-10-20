@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getCompanyResearchTemplate, type CompanyDraft } from "../contracts/index.js";
+import { createCompanyResearchTemplate, type CompanyDraft } from "../contracts/index.js";
 import { IndustryResearchService } from "./industry-research-service.js";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
@@ -58,7 +58,7 @@ describe("IndustryResearchService", () => {
     db.repos.itemCompanies.add(second.id, shared.id);
     const enrichment = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => ({
       identity: { disposition: "matched", matchedName: "共享公司", reason: "已确认", sources: [{ url: "https://example.test", kind: "search_snippet" }] },
-      fields: { headquarters: "北京" }, fieldEvidence: { headquarters: [{ url: "https://example.test", kind: "search_snippet" }] },
+      fields: { headquarters: "中国／北京市" }, fieldEvidence: { headquarters: [{ url: "https://example.test", kind: "search_snippet" }] },
       sources: [{ url: "https://example.test", kind: "search_snippet", title: "来源", excerpt: "地点" }],
     }) }, {
       getTopicIds: () => [first.id, second.id],
@@ -80,7 +80,7 @@ describe("IndustryResearchService", () => {
     db.repos.itemCompanies.add(item.id, second.id);
     const enrichment = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => async () => ({
       identity: { disposition: "matched", matchedName: "已补全公司", reason: "已确认", sources: [{ url: "https://example.test", kind: "search_snippet" }] },
-      fields: { headquarters: "北京" }, fieldEvidence: { headquarters: [{ url: "https://example.test", kind: "search_snippet" }] },
+      fields: { headquarters: "中国／北京市" }, fieldEvidence: { headquarters: [{ url: "https://example.test", kind: "search_snippet" }] },
       sources: [{ url: "https://example.test", kind: "search_snippet", title: "来源", excerpt: "地点" }],
     }) }, {
       getTopicIds: () => [item.id], getTopicCompanyIds: () => db.repos.itemCompanies.listByItem(item.id).map(entry => entry.companyId),
@@ -128,8 +128,8 @@ describe("IndustryResearchService", () => {
     const b = service.addCompany(item.id, { name: "B" });
     service.addCompany(other.id, { name: "A" });
     const repo = db.repos.companyResearchRuns;
-    const input = { direction: "product_and_technology", asOfDate: "2026-09-17" } as const;
-    const template = getCompanyResearchTemplate(input.direction);
+    const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-17" };
+    const template = createCompanyResearchTemplate(input.moduleIds);
     const create = (topic = item.id, company = a.id) => repo.createResearching(topic, company, input, { ...input, currentDate: input.asOfDate, companyName: "A", topicName: "Robotics" }, template);
     const complete = (id: Parameters<typeof repo.completeRaw>[0]) => { repo.completeRaw(id, "可用原文"); repo.completeStructured(id, { coreSummary: ["总结"], sections: template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found", summary: null, facts: [] })) }); };
     const first = create(); complete(first.id);
@@ -286,7 +286,7 @@ describe("IndustryResearchService", () => {
       name: " ACME Corporation ",
       legalName: " ACME Corporation Ltd. ",
       aliases: [],
-      headquarters: " Boston, US ",
+      headquarters: " 美国 ／ 马萨诸塞州 ／ 波士顿 ",
       foundedAt: "1998",
       officialWebsite: null,
       stockListings: [],
@@ -295,7 +295,7 @@ describe("IndustryResearchService", () => {
     expect(updated).toMatchObject({
       name: "ACME Corporation",
       legalName: "ACME Corporation Ltd.",
-      headquarters: "Boston, US",
+      headquarters: "美国／马萨诸塞州／波士顿",
       businessTags: ["工业机器人", "机器视觉"],
     });
     expect(service.listCompanies(firstItem.id)[0]).toMatchObject(updated);

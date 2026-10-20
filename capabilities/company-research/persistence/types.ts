@@ -1,5 +1,5 @@
 import type { CapabilityItemId, CompanyId, PublicAppError, ResearchRunId } from "./contracts.js";
-import type { CapabilityItem, Company, CompanyDraft, CompanyProfileInput, CompanyProfileFields, CompanyProfileIdentityHint, CompanyProfileResult, CompanyProfileDiagnostic, CompanyProfileStatus, CreateIndustryResearchItemInput, ResearchRun, ActiveResearchRunSummary, CompanyResearchContext, CompanyResearchModelDiagnostic, CompanyResearchTemplateSnapshot, KeyResearchRun, ResearchRunSummary, StructuredResearchContent, ResearchFailureCode, StartCompanyResearchInput, ItemCompany, UpdateIndustryResearchItemInput } from "./contracts.js";
+import type { CapabilityItem, Company, CompanyDraft, CompanyProfileInput, CompanyProfileFields, CompanyProfileIdentityHint, CompanyProfileResult, CompanyProfileDiagnostic, CompanyProfileStatus, CreateIndustryResearchItemInput, ResearchRun, ActiveResearchRunSummary, CompanyResearchContext, CompanyResearchModelDiagnostic, ModuleCompanyResearchTemplateSnapshot, ModuleResearchRun, ResearchRunSummary, StructuredResearchContent, ResearchFailureCode, StartCompanyResearchInput, ItemCompany, UpdateIndustryResearchItemInput } from "./contracts.js";
 
 export interface CapabilityItemRepository {
   create(input: CreateIndustryResearchItemInput): CapabilityItem;
@@ -30,8 +30,8 @@ export interface ItemCompanyRepository {
 }
 
 export interface CompanyResearchRunRepository {
-  markEvidencePacketReady(runId: ResearchRunId, attemptId: string): KeyResearchRun;
-  completeRawWithEvidence(runId: ResearchRunId, attemptId: string, rawReportText: string, packetState: "ready" | "budget_exceeded"): KeyResearchRun;
+  markEvidencePacketReady(runId: ResearchRunId, attemptId: string): ModuleResearchRun;
+  completeRawWithEvidence(runId: ResearchRunId, attemptId: string, rawReportText: string, packetState: "ready" | "budget_exceeded"): ModuleResearchRun;
   /** Topic-wide usable report counts; excludes active work and report bodies. */
   summarizeByItem(itemId: CapabilityItemId): Array<{ companyId: CompanyId; count: number; latestCreatedAt: string }>;
   createResearching(
@@ -39,22 +39,22 @@ export interface CompanyResearchRunRepository {
     companyId: CompanyId,
     input: StartCompanyResearchInput,
     context: CompanyResearchContext,
-    template: CompanyResearchTemplateSnapshot,
-  ): KeyResearchRun;
-  completeRaw(runId: ResearchRunId, rawReportText: string): KeyResearchRun;
+    template: ModuleCompanyResearchTemplateSnapshot,
+  ): ModuleResearchRun;
+  completeRaw(runId: ResearchRunId, rawReportText: string): ModuleResearchRun;
   /** Records a trusted raw search completion; only researching runs are eligible. */
-  markSearchSucceeded(runId: ResearchRunId): KeyResearchRun;
-  failResearching(runId: ResearchRunId, code: ResearchFailureCode): KeyResearchRun;
-  failStructuring(runId: ResearchRunId, code?: "structuring_failed" | "evidence_incomplete" | "context_budget_exceeded" | "storage_failed"): KeyResearchRun;
+  markSearchSucceeded(runId: ResearchRunId): ModuleResearchRun;
+  failResearching(runId: ResearchRunId, code: ResearchFailureCode): ModuleResearchRun;
+  failStructuring(runId: ResearchRunId, code?: "structuring_failed" | "evidence_incomplete" | "context_budget_exceeded" | "storage_failed"): ModuleResearchRun;
   retryResearching(
     runId: ResearchRunId,
     input: StartCompanyResearchInput,
     context: CompanyResearchContext,
-    template: CompanyResearchTemplateSnapshot,
+    template: ModuleCompanyResearchTemplateSnapshot,
     startedAt: string,
-  ): KeyResearchRun;
-  retryStructuring(runId: ResearchRunId, startedAt?: string): KeyResearchRun;
-  completeStructured(runId: ResearchRunId, content: StructuredResearchContent): KeyResearchRun;
+  ): ModuleResearchRun;
+  retryStructuring(runId: ResearchRunId, startedAt?: string): ModuleResearchRun;
+  completeStructured(runId: ResearchRunId, content: StructuredResearchContent): ModuleResearchRun;
   /** Throws unless the run is researching or structuring. */
   deleteActive(runId: ResearchRunId): boolean;
   /** Throws unless the specified target owns a terminal run. */

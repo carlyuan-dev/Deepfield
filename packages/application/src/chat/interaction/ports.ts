@@ -9,6 +9,7 @@ export interface OperationAdapter {
   execute(ref: OperationRef, revision: number, receiptId: string, expectedContentVersion: string): Promise<OperationResult>;
   reconcile(receiptId: string): Promise<OperationResult | "unknown">;
   release?(ref: OperationRef): Promise<void>;
+  shouldResumeAfterCancel?(ref: OperationRef): boolean;
 }
 
 export interface TrustedInteractionContext {

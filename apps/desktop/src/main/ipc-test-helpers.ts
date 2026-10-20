@@ -1,6 +1,6 @@
 import type { AgentWorkerEvent, CapabilityItemId, ChatMessage, ChatRequestOptions, CompanyId, Conversation, ConversationId, SkillSummary, LlmProfileDraft, SearchProfileDraft, SettingsView, DiagnosticResult, ResearchRunId } from "@deepfield/contracts";
 import type { CompanyResearchWordExportResult, CapabilityItem, CompanyDraft, Company, CompanyResearchState, CompanyResearchEvent, CompanyResearchBatchState, KeyResearchRun, ResearchRunSummary, CompanyProfileEvent, ItemCompanyView, ResearchRun, StartCompanyResearchInput } from "../../../../capabilities/company-research/contracts/index.js";
-import { getCompanyResearchTemplate } from "../../../../capabilities/company-research/contracts/index.js";
+import { createCompanyResearchTemplate } from "../../../../capabilities/company-research/contracts/index.js";
 import { vi } from "vitest";
 import { CapabilityRegistry } from "./capabilities/registry.js";
 import { registerCompanyResearchOperations, type CompanyResearchOperationServices } from "../../../../capabilities/company-research/main.js";
@@ -411,10 +411,10 @@ export class FakeCompanyResearchWordExportService {
 }
 
 export const RESEARCH_INPUT: StartCompanyResearchInput = {
-  direction: "product_and_technology", focusScope: "整机", asOfDate: "2026-09-11",
+  moduleIds: ["products_and_positioning", "technology_and_metrics"], focusScope: "整机", asOfDate: "2026-09-11",
 };
 
-export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearchRun {
+export function researchRun(overrides: Partial<import("../../../../capabilities/company-research/contracts/index.js").ModuleResearchRun> = {}): import("../../../../capabilities/company-research/contracts/index.js").ModuleResearchRun {
   return {
     id: "run-1" as ResearchRunId,
     itemId: "item-1" as CapabilityItemId,
@@ -423,8 +423,8 @@ export function researchRun(overrides: Partial<KeyResearchRun> = {}): KeyResearc
     status: "researching",
     ...RESEARCH_INPUT,
     researchContext: { ...RESEARCH_INPUT, currentDate: "2026-09-11", companyName: "ACME", topicName: "机器人" },
-    template: getCompanyResearchTemplate(RESEARCH_INPUT.direction),
-    harnessVersion: 1,
+    template: createCompanyResearchTemplate(RESEARCH_INPUT.moduleIds),
+    harnessVersion: 2,
     structuringAttempts: 0,
     createdAt: "2026-09-11T00:00:00.000Z",
     ...overrides,

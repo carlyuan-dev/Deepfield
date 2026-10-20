@@ -44,11 +44,19 @@ describe("company profile evidence gate", () => {
     ["schema_invalid", { ...candidate, fieldEvidence: { legalName: ["https://example.com"] } }],
     ["source_missing", { ...candidate, fieldEvidence: {} }],
     ["kind_mismatch", { ...candidate, fieldEvidence: { legalName: [{ ...ref, kind: "opened_page" }] } }],
-    ["empty_field", { ...candidate, fields: { aliases: [] }, fieldEvidence: { aliases: [ref] } }],
     ["identity", { ...candidate, fields: {}, fieldEvidence: {} }],
   ])("retains safe %s diagnostic identity", (reason, value) => {
     try { searched().validate(value); throw new Error("expected rejection"); }
     catch (error) { expect(error).toMatchObject({ code: "invalid_evidence", reason }); }
+  });
+  it("accepts evidenced absence but rejects unsupported absence and failed searches", () => {
+    const ledger = new ProfileEvidenceLedger();
+    ledger.record("web_search", { query: "上市资料", provider: "test", results: [{ title: "公司登记", url: ref.url, snippet: "示例公司未上市，无别名，无官网。", rank: 1, provider: "test" }] });
+    const fields = { aliases: [], stockListings: [], officialWebsite: null };
+    const absent = { ...candidate, fields, fieldEvidence: { aliases: [ref], stockListings: [ref], officialWebsite: [ref] } };
+    expect(ledger.validate(absent).fields).toEqual(fields);
+    expect(() => ledger.validate({ ...absent, fieldEvidence: {} })).toThrow();
+    expect(() => new ProfileEvidenceLedger().validate(absent)).toThrow();
   });
   it("rejects no search and empty search, regardless of model claims", () => {
     expect(() => new ProfileEvidenceLedger().validate(candidate)).toThrow();

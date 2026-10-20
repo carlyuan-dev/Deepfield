@@ -12,19 +12,22 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 describe("company profile Agent queue", () => {
   it("retries an incomplete ready profile once and preserves manual facts and provenance", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Incomplete" });
-    const first = profileResult({ headquarters: "北京", aliases: [] });
+    const first = profileResult({ headquarters: "中国／北京市", aliases: [] });
     first.sources[0] = { ...first.sources[0]!, url: "https://old.example.test/company" };
     db.repos.companies.setProfileStatus(company.id, "enriching");
     db.repos.companies.completeProfile(company.id, first.fields, first);
-    const run = vi.fn(async () => profileResult({ headquarters: "上海", legalName: "新全称", aliases: ["不应覆盖"] }));
+    const updated = profileResult({ headquarters: "中国／上海市", legalName: "新全称", aliases: ["不应覆盖"], stockListings: [] });
+    const run = vi.fn(async () => updated);
     const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => run });
     expect(service.retry(company.id)).toBe(true);
-    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fields).toEqual({ headquarters: "北京", aliases: [] });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fields).toEqual({ headquarters: "中国／北京市", aliases: [] });
+    expect(db.repos.companies.getById(company.id)?.stockListings).toBeUndefined();
     expect(service.retry(company.id)).toBe(false);
     await service.whenIdle();
     expect(run).toHaveBeenCalledTimes(1);
-    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", headquarters: "北京", aliases: [], legalName: "新全称" });
-    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fields).toEqual({ headquarters: "北京", aliases: [], legalName: "新全称" });
+    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", headquarters: "中国／北京市", aliases: [], legalName: "新全称", stockListings: [] });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fields).toEqual({ headquarters: "中国／北京市", aliases: [], legalName: "新全称", stockListings: [] });
+    expect(db.repos.companies.getById(company.id)?.profileProvenance?.fieldEvidence.stockListings).toEqual(updated.fieldEvidence.stockListings);
     expect(db.repos.companies.getById(company.id)?.profileProvenance?.sources.map(source => source.url)).toEqual(expect.arrayContaining([
       "https://old.example.test/company", "https://example.test/company",
     ]));
@@ -32,14 +35,14 @@ describe("company profile Agent queue", () => {
 
   it("updates a complete profile while retaining manually known facts", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Known" });
-    db.repos.companies.update(company.id, { name: company.name, legalName: "已知", aliases: [], headquarters: "北京", foundedAt: "2020", officialWebsite: null, stockListings: [], businessTags: ["软件"] });
-    const run = vi.fn(async () => profileResult({ legalName: "模型名称", headquarters: "上海" }));
+    db.repos.companies.update(company.id, { name: company.name, legalName: "已知", aliases: [], headquarters: "中国／北京市", foundedAt: "2020", officialWebsite: null, stockListings: [], businessTags: ["软件"] });
+    const run = vi.fn(async () => profileResult({ legalName: "模型名称", headquarters: "中国／上海市" }));
     const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async () => run });
     expect(service.retry(company.id)).toBe(true);
     expect(service.retry(company.id)).toBe(false);
     await service.whenIdle();
     expect(run).toHaveBeenCalledTimes(1);
-    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", legalName: "已知", headquarters: "北京" });
+    expect(db.repos.companies.getById(company.id)).toMatchObject({ profileStatus: "ready", legalName: "已知", headquarters: "中国／北京市" });
   });
   it("retains existing facts and provenance when a requested update fails", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Existing" });
@@ -56,7 +59,7 @@ describe("company profile Agent queue", () => {
   });
   it("keeps new identity and field evidence attached when old provenance has 40 sources", async () => {
     const db = database(); const company = db.repos.companies.upsert({ name: "Sources" });
-    const old = profileResult({ headquarters: "北京" });
+    const old = profileResult({ headquarters: "中国／北京市" });
     old.sources = Array.from({ length: 40 }, (_, index) => ({ ...old.sources[0]!, url: `https://old.example.test/${index}` }));
     old.identity.sources = [{ url: old.sources[0]!.url, kind: "search_snippet" }];
     old.fieldEvidence.headquarters = old.identity.sources;
@@ -73,7 +76,7 @@ describe("company profile Agent queue", () => {
     expect(saved?.sources).toHaveLength(40);
     expect(urls.has("https://old.example.test/0")).toBe(true);
     expect(urls.has("https://new.example.test/company")).toBe(true);
-    expect(saved?.fields).toMatchObject({ headquarters: "北京", legalName: "新法定名称" });
+    expect(saved?.fields).toMatchObject({ headquarters: "中国／北京市", legalName: "新法定名称" });
     for (const ref of [...(saved?.identity.sources ?? []), ...Object.values(saved?.fieldEvidence ?? {}).flatMap(refs => refs ?? [])]) {
       expect(urls.has(ref.url)).toBe(true);
     }
@@ -269,7 +272,7 @@ describe("company profile Agent queue", () => {
     const db = database(); const first = db.repos.companies.upsert({ name: "First" }); const second = db.repos.companies.upsert({ name: "Ambiguous" });
     db.repos.companies.update(first.id, { name: "First", headquarters: "已知地点" }); db.repos.companies.setProfileStatus(first.id, "pending");
     const service = new CompanyProfileEnrichmentService(db.repos.companies, { prepare: async (company) => async () => company.id === first.id
-      ? profileResult({ headquarters: "新地点", legalName: "确认全称" })
+      ? profileResult({ headquarters: "中国／上海市", legalName: "确认全称" })
       : { ...profileResult({}), identity: { disposition: "ambiguous", reason: "同名主体待确认", sources: profileResult().identity.sources } } });
     service.start(); await service.whenIdle();
     expect(db.repos.companies.getById(first.id)).toMatchObject({ headquarters: "已知地点", legalName: "确认全称", profileProvenance: { fields: { legalName: "确认全称" } } });

@@ -4,7 +4,7 @@ import { activate, createActionDefinitions, viewDeclarations, type CompanyResear
 import { compileActionCatalog } from "../../../scripts/capabilities/build-actions.js";
 import { fileURLToPath } from "node:url";
 import { CapabilityRegistry, activateRegisteredCapability } from "../../../apps/desktop/src/main/capabilities/registry.js";
-import { getCompanyResearchTemplate } from "../contracts/index.js";
+import { createCompanyResearchTemplate } from "../contracts/index.js";
 import { CompanyResearchService } from "./company-research-service.js";
 import { AgentWorkerClient } from "../../../apps/desktop/src/main/agent-worker-client.js";
 import { FakeEndpoint } from "../../../apps/desktop/src/main/agent-worker-client-test-helpers.js";
@@ -47,7 +47,7 @@ it("interrupts registered business services before Worker exit rejects their liv
     onWorkerUnavailable: listener => client.subscribeUnavailable(listener),
   });
   await registry.call({ capabilityId: "company-research", operation: "companyResearchBatch.start", requestId: "start",
-    input: [item.id, companies.map(company => ({ companyId: company.id, input: { direction: "product_and_technology", asOfDate: "2026-09-01" } }))],
+    input: [item.id, companies.map(company => ({ companyId: company.id, input: { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-01" } }))],
   });
   await new Promise<void>(resolve => setImmediate(resolve));
   const batch = db.repos.companyResearchBatches.getActive()!;
@@ -73,9 +73,9 @@ it("leaves actual active batch and raw report untouched until successful Worker 
   const db = openTestDb(); dbs.push(db);
   const item = db.repos.capabilityItems.create({ industry: "test" });
   const company = db.repos.companies.upsert({ name: "company" }); db.repos.itemCompanies.add(item.id, company.id);
-  const input = { direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
+  const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-01" };
   const run = db.repos.companyResearchRuns.createResearching(item.id, company.id, input,
-    { ...input, currentDate: input.asOfDate, companyName: company.name, topicName: item.industry }, getCompanyResearchTemplate(input.direction));
+    { ...input, currentDate: input.asOfDate, companyName: company.name, topicName: item.industry }, createCompanyResearchTemplate(input.moduleIds));
   db.repos.companyResearchRuns.completeRaw(run.id, "preserved raw report");
   db.repos.companyResearchBatches.save({ batchId: "active", itemId: item.id, status: "running",
     entries: [{ companyId: company.id, input, status: "running", runId: run.id, stage: "structure" }], total: 1, processed: 0, succeeded: 0, failed: 0 });

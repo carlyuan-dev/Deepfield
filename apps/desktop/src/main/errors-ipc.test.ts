@@ -9,7 +9,7 @@ describe("selected public error IPC boundary", () => {
     const { ipcMain, companyResearchBatch } = makeDeps();
     const sender = new FakeWebContents(1);
     const api = createPreloadApi({ invoke: async (channel, ...args) => structuredClone(await ipcMain.invoke(channel, event(sender), ...args)), on: () => () => {} });
-    const input = { direction: "product_and_technology", asOfDate: "2026-09-11" } as const;
+    const input = { moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2026-09-11" } satisfies import("../../../../capabilities/company-research/contracts/index.js").StartCompanyResearchInput;
     expect(await createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).toMatchObject({ batchId: "batch-1", status: "running" });
     vi.spyOn(companyResearchBatch, "start").mockImplementation(() => { throw new AppError("CONFIG.CREDENTIAL_MISSING", { service: "search" }, { cause: new Error("secret token") }); });
     await expect(createCompanyResearchApi(api.capabilities).companyResearch.start("item-1", "company-1", input)).rejects.toEqual({ code: "CONFIG.CREDENTIAL_MISSING", category: "configuration", context: { service: "search" } });

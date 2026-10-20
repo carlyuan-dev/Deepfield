@@ -8,6 +8,21 @@ import { makeFakeApi } from "../../../apps/desktop/src/renderer/renderer-test-he
 import { CompanyProfileForm } from "./CompanyProfileModal.js";
 
 describe("CompanyProfileForm", () => {
+  it("validates bound edits and guards concurrent confirmations", async () => {
+    const user = userEvent.setup();
+    let complete!: () => void;
+    const control = { values: {}, edit: vi.fn(), flush: vi.fn(), transition: vi.fn(), cancel: vi.fn(), confirm: vi.fn(() => new Promise<void>(resolve => { complete = resolve; })) };
+    const company = { id: "company-1" as CompanyId, name: "公司", normalizedName: "公司", profileStatus: "ready" as const, createdAt: "", updatedAt: "" };
+    render(<CompanyProfileForm api={makeFakeApi()} company={company} control={control} onCancel={() => {}} onSaved={() => {}} />);
+    await user.type(screen.getByLabelText(/成立时间/), "2024-02-31");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(control.confirm).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText(/成立时间/));
+    await user.type(screen.getByLabelText(/成立时间/), "2024");
+    await user.dblClick(screen.getByRole("button", { name: "保存" }));
+    expect(control.confirm).toHaveBeenCalledOnce();
+    complete();
+  });
   it("replaces all eight structured fields while preserving confirmed-empty states", async () => {
     const user = userEvent.setup();
     const api = makeFakeApi();
@@ -32,7 +47,7 @@ describe("CompanyProfileForm", () => {
     await user.type(screen.getByLabelText("公司名称"), "ACME Corporation");
     await user.type(screen.getByLabelText("法定名称（可选）"), "ACME Corporation Ltd.");
     await user.click(screen.getByLabelText("已确认无别名"));
-    await user.type(screen.getByLabelText("总部（可选）"), "Boston, US");
+    await user.type(screen.getByLabelText("总部（可选）"), "美国／马萨诸塞州／波士顿");
     await user.type(screen.getByLabelText(/成立时间/), "1998");
     await user.selectOptions(screen.getByLabelText("官方网站状态"), "none");
     await user.click(screen.getByLabelText("已确认未上市"));
@@ -43,7 +58,7 @@ describe("CompanyProfileForm", () => {
       name: "ACME Corporation",
       legalName: "ACME Corporation Ltd.",
       aliases: [],
-      headquarters: "Boston, US",
+      headquarters: "美国／马萨诸塞州／波士顿",
       foundedAt: "1998",
       officialWebsite: null,
       stockListings: [],

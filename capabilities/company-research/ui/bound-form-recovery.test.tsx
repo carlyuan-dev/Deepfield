@@ -38,7 +38,7 @@ async function binding(formId: string, actionId: string, input: any) {
 }
 
 it("corrects a rejected date under its own lock and retains other unsent fields", async () => {
-  const f = await binding("research", "research.submit", { itemId: "topic", companyId: "company", direction: "product_and_technology", asOfDate: "2026-09-01" });
+  const f = await binding("research", "research.submit", { itemId: "topic", companyId: "company", moduleIds: ["products_and_positioning"], asOfDate: "2026-09-01" });
   function Form() { const { control, error } = useInteractionForm(f.editor); return control ? <><CompanyResearchModal topicName="主题" companyName="公司" control={scopeControl(control, "parameters")!} onClose={() => {}} onStart={() => control.confirm()} />{error && <p role="alert">{error}</p>}</> : null; }
   render(<Form />);
   fireEvent.change(await screen.findByLabelText("截至日期"), { target: { value: "" } });
@@ -48,13 +48,15 @@ it("corrects a rejected date under its own lock and retains other unsent fields"
   await waitFor(() => expect(screen.getByText("invalid_research_date")).toBeTruthy());
   fireEvent.change(screen.getByLabelText("截至日期"), { target: { value: "2026-09-02" } });
   await waitFor(async () => expect((await f.editor.read()).status).toBe("waiting"));
+  fireEvent.click(screen.getByLabelText("核心财务表现"));
+  await waitFor(async () => expect((await f.editor.read()).snapshot.values).toMatchObject({ parameters: { moduleIds: ["products_and_positioning", "financial_performance"] } }));
   fireEvent.click(screen.getByRole("button", { name: "开始调研" }));
   await waitFor(() => expect(f.submit).toHaveBeenCalledOnce());
-  expect(f.submit).toHaveBeenCalledWith(expect.objectContaining({ parameters: expect.objectContaining({ asOfDate: "2026-09-02", focusScope: "用户保留的范围" }) }));
+  expect(f.submit).toHaveBeenCalledWith(expect.objectContaining({ parameters: expect.objectContaining({ moduleIds: ["products_and_positioning", "financial_performance"], asOfDate: "2026-09-02", focusScope: "用户保留的范围" }) }));
 });
 
 it("does not recover a lock whose revision another writer replaced", async () => {
-  const f = await binding("research", "research.submit", { itemId: "topic", companyId: "company", direction: "product_and_technology", asOfDate: "2026-09-01" });
+  const f = await binding("research", "research.submit", { itemId: "topic", companyId: "company", moduleIds: ["products_and_positioning"], asOfDate: "2026-09-01" });
   function Form() { const { control, error } = useInteractionForm(f.editor); return control ? <><CompanyResearchModal topicName="主题" companyName="公司" control={scopeControl(control, "parameters")!} onClose={() => {}} onStart={() => control.confirm()} />{error && <p role="alert">{error}</p>}</> : null; }
   render(<Form />);
   fireEvent.change(await screen.findByLabelText("截至日期"), { target: { value: "" } });

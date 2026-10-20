@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
+import { createCompanyResearchTemplate, getCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
 import { profileResult } from "../../application/src/testing/company-profile-test-fixtures.js";
 import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 
@@ -321,9 +321,9 @@ describe("Capability A persistence", () => {
     const item = repos.capabilityItems.create({ industry: "Robotics" });
     const company = repos.companies.upsert({ name: "ACME" });
     repos.itemCompanies.add(item.id, company.id);
-    const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-16" };
+    const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const], asOfDate: "2026-09-16" };
     const context = { ...input, currentDate: "2026-09-16", companyName: "ACME", topicName: "Robotics" };
-    const template = getCompanyResearchTemplate(input.direction);
+    const template = createCompanyResearchTemplate(input.moduleIds);
     const completed = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, template);
     db.prepare("UPDATE company_research_runs SET evidence_policy = 'legacy_optional' WHERE id = ?").run(completed.id);
     repos.companyResearchRuns.completeRaw(completed.id, "raw report");
@@ -343,8 +343,10 @@ describe("Capability A persistence", () => {
         structuring_attempts, last_failure_code, created_at
       ) VALUES (?, ?, ?, 'company-research-report-v1', 'research_failed', ?, NULL, ?, ?, ?, ?, ?, 1, 0, ?, ?)
     `);
-    insertFailed.run("raw-failed", item.id, company.id, input.direction, input.asOfDate,
-      JSON.stringify(context), template.templateId, template.templateVersion, JSON.stringify(template), "tool_failed", "2026-09-16T00:00:00.000Z");
+    const historicalTemplate = getCompanyResearchTemplate("product_and_technology");
+    const { moduleIds: _moduleIds, ...historicalContext } = context;
+    insertFailed.run("raw-failed", item.id, company.id, "product_and_technology", input.asOfDate,
+      JSON.stringify({ ...historicalContext, direction: "product_and_technology" }), historicalTemplate.templateId, historicalTemplate.templateVersion, JSON.stringify(historicalTemplate), "tool_failed", "2026-09-16T00:00:00.000Z");
     expect(repos.companyResearchRuns.listRuns(item.id, company.id).map((run) => run.id)).toEqual(
       expect.arrayContaining([completed.id, structured.id, "raw-failed"]),
     );

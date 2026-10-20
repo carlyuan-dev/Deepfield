@@ -1,7 +1,7 @@
 import type { CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
 import type { CompanyResearchPrompt } from "./company-research-prompt.js";
 
-export const COMPANY_RESEARCH_STRUCTURING_PROMPT_VERSION = "company-research-structure-v4" as const;
+export const COMPANY_RESEARCH_STRUCTURING_PROMPT_VERSION = "company-research-structure-v5" as const;
 
 export function buildCompanyResearchStructuringPrompt(
   request: CompanyResearchStructureWorkerRequest,
@@ -24,9 +24,9 @@ export function buildCompanyResearchStructuringPrompt(
     "仅当原始报告明确记载用户所问关键问题未获回答，或关键来源冲突影响答案时，在相关模块 summary 简短说明一次，并保持本次检索范围的限定；资料未包含定价不等于公司未披露定价。不得新增缺口，不重复提醒，不用缺口评价代替已知信息。not_found、not_disclosed 和 conflicting 仍遵守下述状态规则。",
     "source.title 和 source.url 必须作为配对逐字复制自原始报告中的同一来源链接；不得新增、猜测、修正、标准化或替换标题和 URL。",
     "不重新换算相对时间，只继承首次报告已确定的绝对日期或期间；无法确认时 timeContext 为 null，不推测。",
-    "按所选模板顺序返回且仅返回全部五个 section，sectionId 与模板完全一致，不新增、删除或改名。每模块通常保留 3 至 6 条高价值原子事实，最多 8 条，不足时允许更少或为空。",
+    `按所选模板顺序返回且仅返回全部 ${request.template.sections.length} 个 section，sectionId 与模板完全一致，不新增、删除或改名。每模块通常保留 3 至 6 条高价值原子事实，最多 8 条，不足时允许更少或为空。`,
     "模块 summary 归纳本模块最终保留的 facts；唯一的缺口说明例外是原始报告已经明确记载的用户关键问题未获回答，可在相关 summary 简短说明，不将该缺口写进 facts 或 coreSummary。coreSummary 含 1 至 4 条结论字符串，每条 1 至 2 句，只能基于最终保留的模块事实。摘要与结论不得引入新数据、新事件或新来源。",
-    "只有五个模块 facts 全部为空时，coreSummary 才且必须是 [\"现有公开信息不足以形成可靠的核心判断。\"]。",
+    "只有所选模块 facts 全部为空时，coreSummary 才且必须是 [\"现有公开信息不足以形成可靠的核心判断。\"]。",
     "状态 found：事实足以回答核心问题，summary 必须非空，facts 至少一条。",
     "状态 partial：有可靠事实但关键部分缺失，summary 必须非空且概括已知事实，facts 至少一条；partial 状态本身不要求在 summary 或 coreSummary 罗列缺口。",
     "状态 not_found：没有找到可靠信息，summary 为 null，facts 为空。",

@@ -3,7 +3,7 @@ import type { CompanyProfileFields } from "../../../../capabilities/company-rese
 import { profileResult } from "../../../../packages/application/src/testing/company-profile-test-fixtures.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_DEEPSEEK_MODEL_ID, type LlmRuntimeSnapshot, type SearchRuntimeSnapshot } from "@deepfield/contracts";
-import { getCompanyResearchTemplate, type CompanyResearchWorkerRequest } from "../../../../capabilities/company-research/contracts/index.js";
+import { createCompanyResearchTemplate, type CompanyResearchWorkerRequest } from "../../../../capabilities/company-research/contracts/index.js";
 import { createApplicationRuntime } from "../../../../capabilities/company-research/runtime/test-application-runtime.js";
 import { AgentWorkerClient } from "../../../../capabilities/company-research/runtime/test-host-adapter.js";
 import { FakeEndpoint } from "./agent-worker-client-test-helpers.js";
@@ -57,13 +57,13 @@ describe("application runtime composition", () => {
       repositories: db.repos, secrets: { get: () => "sk-test" }, worker: client,
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: profileCompleter({ complete: async (name) => { profiles.push(name); return { headquarters: "中国北京" }; } }),
+      companyCompleter: profileCompleter({ complete: async (name) => { profiles.push(name); return { headquarters: "中国／北京市" }; } }),
     });
     const events: unknown[] = [];
     runtime.companyResearch.subscribe((event) => events.push(event));
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     try {
-      const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+      const run = await runtime.companyResearch.start(item.id, company.id, { moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2024-02-29" });
       await flush();
       if (stage === "structure") {
         const request = (endpoint.posted[0] as { input: CompanyResearchWorkerRequest }).input;
@@ -80,7 +80,7 @@ describe("application runtime composition", () => {
       const cancellation = terminal === "cancelled" ? runtime.companyResearch.cancel(run.id) : undefined;
       const valid = {
         coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
-        sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+        sections: ["products_and_positioning", "technology_and_metrics"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
       };
       endpoint.emit({ requestId: request.requestId, runId: run.id, stage, type: terminal, ...(terminal === "completed" ? { text: stage === "raw" ? "原始报告" : JSON.stringify(valid) } : {}) });
       await cancellation; await flush(); await runtime.companyProfiles.whenIdle();
@@ -118,7 +118,7 @@ describe("application runtime composition", () => {
     };
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     try {
-      const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+      const run = await runtime.companyResearch.start(item.id, company.id, { moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2024-02-29" });
       await flush();
       const rawRequest = (endpoint.posted[0] as { input: CompanyResearchWorkerRequest }).input;
       expect(rawRequest.stage).toBe("raw");
@@ -137,7 +137,7 @@ describe("application runtime composition", () => {
       expect(structureRequest.stage).toBe("structure");
       const valid = {
         coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
-        sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+        sections: ["products_and_positioning", "technology_and_metrics"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
       };
       emitCompletion(structureRequest, JSON.stringify(valid)); await flush();
       expect(runtime.companyResearch.getRun(item.id, company.id, run.id)).toMatchObject({ status: "completed", rawReportText: "原始报告", structuredContent: valid });
@@ -157,10 +157,10 @@ describe("application runtime composition", () => {
     const item = db.repos.capabilityItems.create({ industry: "智能眼镜" });
     const company = db.repos.companies.upsert({ name: "待补全公司" });
     db.repos.itemCompanies.add(item.id, company.id);
-    const input = { direction: "product_and_technology", asOfDate: "2026-09-11" } as const;
+    const input = { moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2026-09-11" } satisfies import("../../../../capabilities/company-research/contracts/index.js").StartCompanyResearchInput;
     const run = db.repos.companyResearchRuns.createResearching(item.id, company.id, input, {
       ...input, companyName: company.name, topicName: item.industry, currentDate: "2026-09-11",
-    }, getCompanyResearchTemplate(input.direction));
+    }, createCompanyResearchTemplate(input.moduleIds));
     if (status === "structuring") db.repos.companyResearchRuns.completeRaw(run.id, "已保存原始报告");
     const observed: unknown[] = [];
     const runtime = createApplicationRuntime({
@@ -169,7 +169,7 @@ describe("application runtime composition", () => {
       companyRecognizer: { recognize: async () => [] },
       companyCompleter: profileCompleter({ complete: async () => {
         observed.push(db.repos.companyResearchRuns.getActive());
-        return { headquarters: "中国北京" };
+        return { headquarters: "中国／北京市" };
       } }),
       worker: {
         send: () => ({ async *[Symbol.asyncIterator]() {} }),
@@ -201,7 +201,7 @@ describe("application runtime composition", () => {
       repositories: db.repos, secrets: { get: () => "sk-runtime" },
       profiles: runtimeProfiles(),
       companyRecognizer: { recognize: async () => [] },
-      companyCompleter: profileCompleter({ complete: async (name) => { completedProfiles.push(name); return { headquarters: "中国北京" }; } }),
+      companyCompleter: profileCompleter({ complete: async (name) => { completedProfiles.push(name); return { headquarters: "中国／北京市" }; } }),
       worker: {
         send: (request) => ({ async *[Symbol.asyncIterator]() {
           yield { requestId: request.requestId, type: "completed", text: "独立 Chat" } as const;
@@ -217,7 +217,7 @@ describe("application runtime composition", () => {
         cancelResearch: () => {},
       },
     });
-    const run = await runtime.companyResearch.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2024-02-29" });
+    const run = await runtime.companyResearch.start(item.id, company.id, { moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2024-02-29" });
     await new Promise((resolve) => setImmediate(resolve));
     expect(completedProfiles).toEqual([]);
     const conversation = runtime.conversationService.create();
@@ -232,7 +232,7 @@ describe("application runtime composition", () => {
     expect(runtime.companyResearch.isRunning()).toBe(true);
     const valid = {
       coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
-      sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
+      sections: ["products_and_positioning", "technology_and_metrics"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
     };
     finish.get(requests[1]!.requestId)!(terminal === "completed" ? JSON.stringify(valid) : "invalid candidate");
     await new Promise((resolve) => setImmediate(resolve));

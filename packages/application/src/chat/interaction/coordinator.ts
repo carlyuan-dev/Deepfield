@@ -46,6 +46,11 @@ export class ChatInteractionCoordinator {
   get(id: string): InteractionRecord | undefined { return this.repository.get(id); }
   list(conversationId: string): InteractionRecord[] { return this.repository.list(conversationId); }
   active(conversationId: string): InteractionRecord | undefined { return this.repository.active(conversationId); }
+  shouldResume(interactionId: string): boolean {
+    const item = this.repository.get(interactionId);
+    if (!item || item.status !== "cancelled" || item.payload.kind === "question") return true;
+    return this.adapters.get(item.payload.operation.provider)?.shouldResumeAfterCancel?.(item.payload.operation) ?? false;
+  }
 
   async respond(command: RespondCommand, trustedContext: TrustedInteractionContext): Promise<InteractionRecord> {
     const item = this.repository.get(command.interactionId);

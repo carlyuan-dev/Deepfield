@@ -15,7 +15,22 @@ export const ResearchDirectionSchema = Type.Union([
   Type.Literal(RESEARCH_DIRECTIONS[3]),
 ]);
 
-export const CompanyResearchTemplateSnapshotSchema = Type.Immutable(Type.Object({
+export const ResearchModuleIdSchema = Type.Union([
+  Type.Literal("products_and_positioning"), Type.Literal("technology_and_metrics"),
+  Type.Literal("development_and_readiness"), Type.Literal("competitive_position"),
+  Type.Literal("constraints_and_roadmap"), Type.Literal("target_market_and_customers"),
+  Type.Literal("commercialization_progress"), Type.Literal("sales_and_adoption"),
+  Type.Literal("pricing_and_business_model"), Type.Literal("drivers_barriers_and_outlook"),
+  Type.Literal("value_chain_position"), Type.Literal("key_relationships"),
+  Type.Literal("competitors_and_differentiation"), Type.Literal("supply_cost_and_resources"),
+  Type.Literal("opportunities_and_risks"), Type.Literal("financial_performance"),
+  Type.Literal("business_mix_and_topic_contribution"), Type.Literal("operating_indicators"),
+  Type.Literal("performance_drivers"), Type.Literal("guidance_and_risks"),
+]);
+export type ResearchModuleId = Static<typeof ResearchModuleIdSchema>;
+export const ResearchModuleIdsSchema = Type.Array(ResearchModuleIdSchema, { minItems: 1, maxItems: 4, uniqueItems: true });
+
+export const HistoricalCompanyResearchTemplateSnapshotSchema = Type.Immutable(Type.Object({
   templateId: ResearchDirectionSchema,
   templateVersion: Type.Literal(1),
   title: Type.String({ minLength: 1, maxLength: 1000 }),
@@ -27,11 +42,25 @@ export const CompanyResearchTemplateSnapshotSchema = Type.Immutable(Type.Object(
     boundary: Type.String({ minLength: 1, maxLength: 4000 }),
   }, { additionalProperties: false }), { minItems: 5, maxItems: 5 }),
 }, { additionalProperties: false }));
+export type HistoricalCompanyResearchTemplateSnapshot = Static<typeof HistoricalCompanyResearchTemplateSnapshotSchema>;
+export const ModuleCompanyResearchTemplateSnapshotSchema = Type.Immutable(Type.Object({
+  templateId: Type.Literal("selected_modules"),
+  templateVersion: Type.Literal(2),
+  title: Type.String({ minLength: 1, maxLength: 1000 }),
+  sections: Type.Array(Type.Object({
+    ...HistoricalCompanyResearchTemplateSnapshotSchema.properties.sections.items.properties,
+    sectionId: ResearchModuleIdSchema,
+  }, { additionalProperties: false }), { minItems: 1, maxItems: 4 }),
+}, { additionalProperties: false }));
+export const CompanyResearchTemplateSnapshotSchema = Type.Union([
+  HistoricalCompanyResearchTemplateSnapshotSchema, ModuleCompanyResearchTemplateSnapshotSchema,
+]);
 export type CompanyResearchTemplateSnapshot = Static<typeof CompanyResearchTemplateSnapshotSchema>;
+export type ModuleCompanyResearchTemplateSnapshot = Static<typeof ModuleCompanyResearchTemplateSnapshotSchema>;
 
 // Section IDs, titles and semantics follow the approved discussion §6;
 // concise question/coverage/boundary wording follows its prompt assembly §21.3.
-const templates: Record<ResearchDirection, CompanyResearchTemplateSnapshot> = {
+const templates: Record<ResearchDirection, HistoricalCompanyResearchTemplateSnapshot> = {
   product_and_technology: {
     templateId: "product_and_technology", templateVersion: 1, title: "产品与技术",
     sections: [
@@ -182,6 +211,50 @@ for (const template of Object.values(templates)) {
 export const COMPANY_RESEARCH_TEMPLATES = Object.freeze(templates);
 
 /** Safe to share: each plain-data snapshot and all its descendants are frozen. */
-export function getCompanyResearchTemplate(direction: ResearchDirection): CompanyResearchTemplateSnapshot {
+export function getCompanyResearchTemplate(direction: ResearchDirection): HistoricalCompanyResearchTemplateSnapshot {
   return COMPANY_RESEARCH_TEMPLATES[direction];
+}
+
+// Historical snapshots retain their original semantics. New module boundaries
+// permit cross-group selection and assign overlapping evidence only once.
+const moduleBoundaryOverrides: Partial<Record<ResearchModuleId, string>> = {
+  products_and_positioning: "聚焦产品与定位；同一事实与其他已选模块重叠时，只在最相关模块展开。",
+  development_and_readiness: "以可核查节点判断成熟度，区分规划与已经完成的进展；与其他已选模块避免重复。",
+  competitive_position: "围绕目标公司的技术竞争力比较，保留指标条件与证据；与其他已选模块避免重复。",
+  constraints_and_roadmap: "说明瓶颈与路线之间的关系，区分计划与已实现进展；与其他已选模块避免重复。",
+  pricing_and_business_model: "明确价格条件、时间和变现方式；与其他已选模块避免重复。",
+  drivers_barriers_and_outlook: "目标与预测必须标明性质；同一增长因素与其他已选模块重叠时只在最相关模块展开。",
+  opportunities_and_risks: "所有行业事实必须回扣目标公司；同一风险与其他已选模块重叠时只在最相关模块展开。",
+  guidance_and_risks: "规划、目标和预测必须与已实现数据分开；与其他已选模块避免重复。",
+};
+export const RESEARCH_MODULE_GROUPS = Object.freeze(RESEARCH_DIRECTIONS.map((groupId) => Object.freeze({
+  groupId,
+  title: templates[groupId].title,
+  modules: Object.freeze(templates[groupId].sections.map((section) => Object.freeze({
+    ...section,
+    sectionId: section.sectionId as ResearchModuleId,
+    boundary: moduleBoundaryOverrides[section.sectionId as ResearchModuleId] ?? section.boundary,
+  }))),
+})));
+const researchModules = RESEARCH_MODULE_GROUPS.flatMap((group) => group.modules);
+export function normalizeResearchModuleIds(ids: readonly ResearchModuleId[]): ResearchModuleId[] {
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 4 || new Set(ids).size !== ids.length
+    || ids.some((id) => !researchModules.some((module) => module.sectionId === id))) {
+    throw new Error("Select 1–4 unique research modules");
+  }
+  return researchModules.filter((module) => ids.includes(module.sectionId)).map((module) => module.sectionId);
+}
+export function researchModuleSelectionLabel(input: readonly ResearchModuleId[] | { moduleIds: readonly ResearchModuleId[] }): string {
+  const ids = normalizeResearchModuleIds(Array.isArray(input) ? input : (input as { moduleIds: readonly ResearchModuleId[] }).moduleIds);
+  return ids.map((id) => researchModules.find((module) => module.sectionId === id)!.title).join("、");
+}
+export function createCompanyResearchTemplate(ids: readonly ResearchModuleId[]): ModuleCompanyResearchTemplateSnapshot {
+  const moduleIds = normalizeResearchModuleIds(ids);
+  const template: ModuleCompanyResearchTemplateSnapshot = {
+    templateId: "selected_modules", templateVersion: 2,
+    title: researchModuleSelectionLabel(moduleIds),
+    sections: moduleIds.map((id) => researchModules.find((module) => module.sectionId === id)!),
+  };
+  Object.freeze(template.sections);
+  return Object.freeze(template);
 }

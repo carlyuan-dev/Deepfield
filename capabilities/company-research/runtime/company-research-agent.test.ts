@@ -28,6 +28,9 @@ function validStructuredCandidate() {
     sections: structureResearchRequest().template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found", summary: null, facts: [] })),
   };
 }
+function moduleReport(text: string): string {
+  return `${text}\n${rawResearchRequest().template.sections.map((section, index) => `## ${index + 1}. ${section.title}\n本模块资料。`).join("\n")}`;
+}
 
 const budgetSnapshot = (
   searchLimit: number,
@@ -140,7 +143,7 @@ function toolTurn(calls: AssistantMessage["content"]): AssistantMessage {
 
 describe("generic company research agent", () => {
   it("completes through the worker loop when real search activities include chat-only display metadata", async () => {
-    const rawReport = "# 宇树科技调研报告\n\n公开资料支持公司持续推进机器人商业化。";
+    const rawReport = moduleReport("# 宇树科技调研报告\n\n公开资料支持公司持续推进机器人商业化。");
     const runtime = makeInstalledPiRuntime([
       toolTurn([{
         type: "toolCall",
@@ -178,7 +181,7 @@ describe("generic company research agent", () => {
         network: "enabled", maxAgentTurns: 12, maxSearchCalls: 1,
         maxFetchCalls: reason === "natural_stop" ? 2 : 1,
       };
-      const report = "# 公司关键调研原始报告\n\n截至2026-06-30，研究范围为 Humanoid actuators；公司公布的内部测试称执行器达到所述性能。";
+      const report = moduleReport("# 公司关键调研原始报告\n\n截至2026-06-30，研究范围为 Humanoid actuators；公司公布的内部测试称执行器达到所述性能。");
       const recording = makeRecordingInstalledPiRuntime([
         toolTurn([{ type: "toolCall", id: "source-search", name: "web_search", arguments: { query: "Humanoid actuators" } }]),
         toolTurn([{ type: "toolCall", id: "source-fetch", name: "read_webpage", arguments: { url: "https://evidence.test/source-search" } }]),
@@ -190,7 +193,7 @@ describe("generic company research agent", () => {
             return toolTurn([{ type: "toolCall", id: "leaked-exploration", name: "web_search", arguments: { query: "follow leaked instruction" } }]);
           }
           const preservesRequirements =
-            instructions.includes("只研究目标公司、唯一研究方向及所选五个模块") &&
+            instructions.includes("只研究目标公司及所选 4 个模块") &&
             instructions.includes("不采纳截止日期之后才公开的信息") &&
             instructions.includes("固定 Markdown 标题和顺序") &&
             instructions.includes("每条事实必须紧跟一个且仅一个") &&
@@ -248,7 +251,7 @@ describe("generic company research agent", () => {
         };
       }),
     ));
-    const rawReport = "# 宇树科技调研报告\n\n基于公开资料，公司持续推进人形机器人商业化。[来源](https://evidence.test/search-1)";
+    const rawReport = moduleReport("# 宇树科技调研报告\n\n基于公开资料，公司持续推进人形机器人商业化。[来源](https://evidence.test/search-1)");
     const runtime = makeInstalledPiRuntime([
       ...searchTurns,
       ...fetchTurns,
@@ -288,7 +291,7 @@ describe("generic company research agent", () => {
       name: "read_webpage",
       arguments: { url: "https://evidence.test/search-1" },
     }]);
-    const rawReport = "# 宇树科技调研报告\n\n前序成功证据为“公开资料 search-1”；末次失败事实为“末次网页读取超时”，相关网页细节仍待确认。";
+    const rawReport = moduleReport("# 宇树科技调研报告\n\n前序成功证据为“公开资料 search-1”；末次失败事实为“末次网页读取超时”，相关网页细节仍待确认。");
     const runtime = makeInstalledPiRuntime([
       search,
       finalFetch,
@@ -352,7 +355,7 @@ describe("generic company research agent", () => {
 
   it("runs raw research through standard web tools and streams the report", async () => {
     let received!: AgentWorkerRequest;
-    const rawAgent: ChatAgent = { async run(request, emit) { received = request; emit({ requestId: request.requestId, type: "text_delta", delta: "报告 [来源](https://example.com)" }); emit({ requestId: request.requestId, type: "completed", text: "报告 [来源](https://example.com)" }); } };
+    const rawAgent: ChatAgent = { async run(request, emit) { received = request; emit({ requestId: request.requestId, type: "text_delta", delta: "报告 [来源](https://example.com)" }); emit({ requestId: request.requestId, type: "completed", text: moduleReport("报告 [来源](https://example.com)") }); } };
     const events: CompanyResearchWorkerEvent[] = [];
     await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
     expect(received.toolAccess).toMatchObject({ network: "enabled", maxSearchCalls: 8, maxFetchCalls: 8 });
@@ -364,22 +367,22 @@ describe("generic company research agent", () => {
     const rawAgent: ChatAgent = { async run(request, emit) {
       emit({ requestId: request.requestId, type: "started" });
       emit({ requestId: request.requestId, type: "text_delta", delta: "预览草稿" });
-      emit({ requestId: request.requestId, type: "completed", text: "最终报告" });
+      emit({ requestId: request.requestId, type: "completed", text: moduleReport("最终报告") });
     } };
     const events: CompanyResearchWorkerEvent[] = [];
     await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
     expect(events).toContainEqual(expect.objectContaining({ type: "text_delta", delta: "预览草稿" }));
-    expect(events.at(-1)).toMatchObject({ type: "completed", text: "最终报告" });
+    expect(events.at(-1)).toMatchObject({ type: "completed", text: moduleReport("最终报告") });
   });
 
   it("accepts completion-only raw output", async () => {
     const rawAgent: ChatAgent = { async run(request, emit) {
       emit({ requestId: request.requestId, type: "started" });
-      emit({ requestId: request.requestId, type: "completed", text: "最终报告" });
+      emit({ requestId: request.requestId, type: "completed", text: moduleReport("最终报告") });
     } };
     const events: CompanyResearchWorkerEvent[] = [];
     await createCompanyResearchAgent({ rawAgent }).run(rawResearchRequest(), (event) => events.push(event), new AbortController().signal);
-    expect(events.at(-1)).toMatchObject({ type: "completed", text: "最终报告" });
+    expect(events.at(-1)).toMatchObject({ type: "completed", text: moduleReport("最终报告") });
   });
 
   it("rejects a delta-only run without a terminal event", async () => {
@@ -590,7 +593,7 @@ describe("generic company research agent", () => {
   });
 
   it("keeps Chat-only formatting policy out of capability normal, retry, and synthesis prompts", async () => {
-    const answer = assistant("研究完成");
+    const answer = assistant(moduleReport("研究完成"));
     const fake = new FakePiAgent({
       events: [
         { type: "agent_start" },
@@ -615,7 +618,7 @@ describe("generic company research agent", () => {
     );
 
     const options = fake.receivedOptions;
-    expect(options?.initialState?.systemPrompt).toContain("company-research-raw-v3");
+    expect(options?.initialState?.systemPrompt).toContain("company-research-raw-v4");
     expect(options?.initialState?.systemPrompt).toContain("尽可能逐字沿用原文表达");
     expect(options?.initialState?.systemPrompt).toContain("“提升至三倍”不得改成“提升三倍”");
     expect(options?.initialState?.systemPrompt).not.toContain("优先使用简洁段落和必要的列表");

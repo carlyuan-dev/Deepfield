@@ -44,7 +44,7 @@ export class ResearchSubmission {
     if (retry) {
       if (entries.length !== 1) throw protocolError("not_found");
       const run = this.research.getRun(itemId, entries[0]!.companyId, retry.runId);
-      if (!run || run.schemaVersion !== "company-research-report-v1") throw protocolError("not_found");
+      if (!run || run.schemaVersion !== "company-research-report-v1" || !("moduleIds" in run)) throw protocolError("not_found");
       search = !retry.structureOnly && researchRetryMode(run, entries[0]!.input) === "raw";
     }
     await this.ready(search);
@@ -77,7 +77,7 @@ export class ResearchSubmission {
     let search = true;
     if (retry) {
       const run = this.research.getRun(itemId, entries[0]!.companyId, retry.runId);
-      if (!run || run.schemaVersion !== "company-research-report-v1") throw protocolError("not_found");
+      if (!run || run.schemaVersion !== "company-research-report-v1" || !("moduleIds" in run)) throw protocolError("not_found");
       search = !retry.structureOnly && researchRetryMode(run, entries[0]!.input) === "raw";
     }
     await this.ready(search);
@@ -96,8 +96,8 @@ export class ResearchSubmission {
   }
   async retryStructureUi(itemId: string, companyId: string, runId: string) {
     const run = this.research.getRun(itemId, companyId, runId);
-    if (!run || run.schemaVersion !== "company-research-report-v1") throw protocolError("not_found");
-    const input: StartCompanyResearchInput = { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope ? { focusScope: run.focusScope } : {}) };
+    if (!run || run.schemaVersion !== "company-research-report-v1" || !("moduleIds" in run)) throw protocolError("not_found");
+    const input: StartCompanyResearchInput = { moduleIds: run.moduleIds, asOfDate: run.asOfDate, ...(run.focusScope ? { focusScope: run.focusScope } : {}) };
     return this.submitUi(itemId, [{ companyId, input }], { runId, structureOnly: true });
   }
   private async ready(search: boolean): Promise<void> {
@@ -114,11 +114,11 @@ export class ResearchSubmission {
       return { ...(topicName ? { topicName } : {}), ...(companyName ? { companyName } : {}) };
     } catch { return {}; }
   }
-  private record(state: CompanyResearchBatchState, taskId: string, invocationId: string, parentTaskId?: string, parameters?: { direction: string; asOfDate: string }): void {
+  private record(state: CompanyResearchBatchState, taskId: string, invocationId: string, parentTaskId?: string, parameters?: StartCompanyResearchInput): void {
     const entry = state.entries.find(candidate => candidate.entryId === taskId)!;
     const now = new Date().toISOString();
     const receipt: ResearchReceipt = { invocationId, itemId: entry.itemId!, companyId: entry.companyId, ...(parentTaskId ? { parentTaskId } : {}),
-      ...this.displayNames(entry.itemId!, entry.companyId), ...(parameters ? { direction: parameters.direction, asOfDate: parameters.asOfDate } : {}),
+      ...this.displayNames(entry.itemId!, entry.companyId), ...(parameters ? { moduleIds: parameters.moduleIds, asOfDate: parameters.asOfDate } : {}),
       snapshot: { taskRef: { capabilityId: CAPABILITY_ID, taskId }, status: "queued", createdAt: now, updatedAt: now, cancellable: true } };
     this.drafts.store.saveTask(taskId, invocationId, JSON.stringify(receipt));
   }

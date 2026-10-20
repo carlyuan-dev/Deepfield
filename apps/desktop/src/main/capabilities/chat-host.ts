@@ -20,8 +20,8 @@ const wantsCancellation = (text: string): boolean =>
   !/(?:不要|别|不必).{0,8}(?:取消|停止)|(?:do not|don't).{0,12}cancel/iu.test(text)
   && /(?:取消|停止).{0,12}(?:任务|操作|执行|作业)|(?:任务|操作|执行|作业).{0,12}(?:取消|停止)|(?:cancel|stop).{0,12}(?:task|job|operation)|(?:task|job|operation).{0,12}(?:cancel|stop)/iu.test(text);
 const wantsOpen = (text: string): boolean =>
-  !/(?:不要|别|不必).{0,8}(?:打开|查看|展示|显示)|(?:do not|don't).{0,12}(?:open|show|view)/iu.test(text)
-  && /(?:打开|查看|展示|显示|给我看|填写|open|show|view|display|fill)/iu.test(text);
+  !/(?:不要|别|不必).{0,8}(?:打开|进入|查看|展示|显示)|\b(?:do not|don't)\b.{0,12}\b(?:open|show|view|display|fill|enter)\b/iu.test(text)
+  && /(?:打开|进入|查看|展示|显示|给我看|填写)|\b(?:open|show|view|display|fill|enter)\b/iu.test(text);
 
 /** Main owns every identity and gateway. Worker/model arguments carry no authority. */
 export class CapabilityChatHost {
@@ -106,7 +106,14 @@ export class CapabilityChatHost {
     return this.repositories.chatCapabilities.operations(conversationId).filter(item => item.status !== "awaiting_confirmation").map(item => {
       const binding = bindings.find(binding => binding.invocationId === item.invocationId);
       const interaction = interactions.find(interaction => interaction.receiptId && binding?.toolCallId === `interaction:${interaction.receiptId}`);
-      return { ...item, ...(interaction ? { interactionId: interaction.id } : {}) };
+      const receipt = this.repositories.capabilityInvocations.get(item.invocationId);
+      const result = receipt?.result as { status?: string; data?: { draftRef?: unknown } } | undefined;
+      const draft = result?.status === "completed" ? result.data?.draftRef : undefined;
+      const preparedInteraction = binding && Value.Check(DraftRefSchema, draft) && receipt?.capabilityId === draft.capabilityId
+        ? this.interactions?.interactionForSourceDraft(conversationId, draft) : undefined;
+      const interactionId = interaction?.id ?? preparedInteraction;
+      return { ...item, ...(interactionId ? { interactionId,
+        interactionRole: interaction ? "execution" as const : "preparation" as const } : {}) };
     });
   }
   views(conversationId: string) { return this.repositories.chatCapabilities.views(conversationId); }
@@ -255,8 +262,14 @@ export class CapabilityChatHost {
         const call = candidate as ActionCall;
         this.interactions?.assertInvocationAllowed(chatRequestId, call);
         const entry = runtime.actionCatalog.find(call.capabilityId, call.actionId);
-        if (!entry || !this.repositories.chatCapabilities.description(session.conversationId, call.capabilityId,
-          entry.packageVersion, call.actionId, call.contractDigest)) throw { code: "contract_changed" };
+        if (!entry) throw { code: "capability_unavailable" };
+        if (entry.declaration.contractDigest !== call.contractDigest) throw { code: "contract_changed" };
+        if (!this.repositories.chatCapabilities.description(session.conversationId, call.capabilityId,
+          entry.packageVersion, call.actionId, call.contractDigest)) {
+          const outdated = this.repositories.chatCapabilities.descriptions(session.conversationId)
+            .some(description => description.capabilityId === call.capabilityId && description.actionId === call.actionId);
+          throw { code: outdated ? "contract_changed" : "action_not_described" };
+        }
         const key = `${chatRequestId}\0${toolCallId}`;
         const callDigest = createHash("sha256").update(canonicalActionJson(call)).digest("hex");
         let issued = this.invocations.get(key);

@@ -5,11 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import { makeFakeApi } from "../../../apps/desktop/src/renderer/renderer-test-helpers.js";
 import { configuredSettings } from "../../../apps/desktop/src/renderer/features/settings/settings-test-fixtures.js";
 import { CompanyResearchPanel } from "./CompanyResearchPanel.js";
-import { researchRun, researchSummary } from "./company-research-test-fixtures.js";
+import { moduleResearchRun as researchRun, researchSummary } from "./company-research-test-fixtures.js";
 import { useCompanyResearch } from "./use-company-research.js";
 import { assertResearchReady } from "./research-readiness.js";
 
-const input = { direction: "product_and_technology", focusScope: "关注新品", asOfDate: "2026-09-09" } as const;
+const input = { moduleIds: ["products_and_positioning" as const], focusScope: "关注新品", asOfDate: "2026-09-09" };
 
 describe("research configuration readiness", () => {
   it("distinguishes absent active profiles from absent credentials", async () => {
@@ -27,7 +27,8 @@ describe("research configuration readiness", () => {
     settings.search.profiles[0]!.hasCredential = false;
     api.settings.get.mockResolvedValue(settings);
     const error = await assertResearchReady(api, { search: true }).catch((error: unknown) => error);
-    expect(error).toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING", context: undefined });
+    expect(error).toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING" });
+    expect((error as { context?: unknown }).context).toBeUndefined();
   });
   it("displays backend credential DTOs even when renderer preflight was ready", async () => {
     const api = makeFakeApi(); api.settings.get.mockResolvedValue(configuredSettings());
@@ -37,6 +38,7 @@ describe("research configuration readiness", () => {
     render(<CompanyResearchPanel api={api} itemId="item-research" companyId="company-research" topicName="主题" companyName="公司" onOpenSettings={onOpenSettings} />);
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
     const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByLabelText("主要产品与定位"));
     await user.type(within(dialog).getByLabelText("关注范围（可选）"), "保留这段草稿");
     await user.click(within(dialog).getByRole("button", { name: "开始调研" }));
     expect(await within(dialog).findByText(/填写当前 Search Profile 的 API Key/)).toBeTruthy();
@@ -97,6 +99,7 @@ describe("research configuration readiness", () => {
     render(<CompanyResearchPanel api={api} itemId="item-research" companyId="company-research" topicName="主题" companyName="公司" />);
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
     const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByLabelText("主要产品与定位"));
     await user.click(within(dialog).getByRole("button", { name: "开始调研" }));
     expect(await within(dialog).findByText("无法读取配置，请稍后重试或前往设置检查。" )).toBeTruthy();
     expect(screen.queryByText(/secret/)).toBeNull();

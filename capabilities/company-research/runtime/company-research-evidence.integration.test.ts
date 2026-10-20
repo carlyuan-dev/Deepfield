@@ -23,7 +23,7 @@ import { WorkerCapabilityRegistry } from "../../../apps/desktop/src/worker/capab
 import { activate } from "../worker.js";
 import { createCompanyResearchWorkerClient } from "../worker-client.js";
 import { CompanyResearchService } from "../application/company-research-service.js";
-import { getCompanyResearchTemplate } from "../contracts/index.js";
+import { createCompanyResearchTemplate } from "../contracts/index.js";
 import { validateStructuredResearch } from "../application/company-research-harness.js";
 afterEach(() => vi.unstubAllGlobals());
 function response(text: string, call: false | "web_search" | "read_webpage" = false): Response {
@@ -36,9 +36,9 @@ it.each(["existing", "doubao", "tavily", "redirect"])("real executor → activat
   const item = repos.capabilityItems.create({ industry: "智能眼镜" }); const company = repos.companies.upsert({ name: "甲公司" }); repos.itemCompanies.add(item.id, company.id);
   let llm: LlmRuntimeSnapshot = { id: "fixture", name: "fixture", provider: "custom", protocol: "openai_compatible", modelId: "fixture", baseUrl: "https://fixture.invalid/v1", contextWindow: 128000, apiKey: "local-fixture" };
   const search = { id: "search", name: "search", provider: "zhipu" as const, baseUrl: "https://fixture.invalid", apiKey: "local-search", options: { searchEngine: "search_std" } };
-  const raw = "# 调研报告\n[甲来源](https://a.test/source)"; const material = "实际发送的中文检索依据🌱".repeat(1800);
+  const raw = "# 调研报告\n## 1. 主要产品与定位\n[甲来源](https://a.test/source)\n## 2. 核心技术与指标\n本次未找到。\n## 3. 研发与产品阶段\n本次未找到。\n## 4. 竞争力与替代方案\n本次未找到。"; const material = "实际发送的中文检索依据🌱".repeat(1800);
   const requests: any[] = []; const structureRequests: any[] = []; let rawCalls = 0; let searchCalls = 0; let fetchCalls = 0; let structureCalls = 0;
-  const template = getCompanyResearchTemplate("product_and_technology");
+  const template = createCompanyResearchTemplate(["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position"]);
   const valid = JSON.stringify({ coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: template.sections.map(s => ({ sectionId: s.sectionId, status: "not_found", summary: null, facts: [] })) });
   vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit) => {
     const body = JSON.parse(init.body as string); requests.push(body);
@@ -82,7 +82,7 @@ it.each(["existing", "doubao", "tavily", "redirect"])("real executor → activat
   let sequence = 0;
   const service = new CompanyResearchService(repos, { resolveActiveLlm: async () => llm, resolveActiveSearch: async () => search }, client, { requestIdFactory: () => `request_${++sequence}`, now: () => new Date("2026-10-09T00:00:00Z") });
   try {
-    const run = await service.start(item.id, company.id, { direction: "product_and_technology", asOfDate: "2026-10-09" }); await service.whenSettled();
+    const run = await service.start(item.id, company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-10-09" }); await service.whenSettled();
     expect(service.getRun(item.id, company.id, run.id)).toMatchObject({ status: "structure_failed", evidencePolicy: "required_v1" });
     const frozen = repos.companyResearchEvidence.getFrozen(run.id, run.attemptId!)!;
     expect(frozen).toBeDefined();

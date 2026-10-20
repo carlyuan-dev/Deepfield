@@ -37,7 +37,7 @@ it("preserves a dirty page across packages and opens the retained target only on
   expect(input.value).toBe("unsaved");
   expect(screen.queryByLabelText("input-b")).toBeNull();
   fireEvent.change(input, { target: { value: "" } });
-  fireEvent.click(await screen.findByRole("button", { name: "打开" }));
+  fireEvent.click(await screen.findByRole("button", { name: "重新打开" }));
   await waitFor(() => expect(screen.getByText("b:detail")).toBeTruthy());
   expect(screen.queryByLabelText("input-a")).toBeNull();
   navigation.dispose();

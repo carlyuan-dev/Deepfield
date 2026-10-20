@@ -24,10 +24,12 @@ export function ChatInteractionCard({ interaction, respond, openEditor, operatio
   const editing = interaction.status === "editing";
   const selectedLabel = payload.kind === "question" ? payload.options?.find(option => option.id === choice)?.label : undefined;
   const displayResult = interaction.resultSummary && !/^[\s]*[\[{]/.test(interaction.resultSummary) ? interaction.resultSummary : undefined;
-  const presentation = task?.snapshot.presentation ?? operation?.presentation;
+  const abandoned = interaction.status === "cancelled" || interaction.status === "invalidated";
+  const presentation = abandoned ? undefined : task?.snapshot.presentation
+    ?? (operation?.interactionRole !== "preparation" ? operation?.presentation : undefined);
   // Immediate interaction receipts may include recovery guidance absent from package copy.
   // Once a task is running, its live presentation supersedes the original submission receipt.
-  const resultText = task ? presentation?.text ?? displayResult : displayResult ?? presentation?.text;
+  const resultText = abandoned ? undefined : task ? presentation?.text ?? displayResult : displayResult ?? presentation?.text;
   const taskLabels: Record<string, string> = { queued: "排队中", running: "进行中", paused: "已暂停", succeeded: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断" };
   const decide = (response: RespondCommand["response"]) => {
     if (busy) return;
@@ -51,21 +53,25 @@ export function ChatInteractionCard({ interaction, respond, openEditor, operatio
           <button disabled={busy} onClick={() => decide({ kind: "decision", decision: "cancel" })}>取消</button></div>
       </> : <>
         {openEditor && payload.operation.draftRef && <button className="capability-card-link" disabled={busy}
-          onClick={() => { setError(undefined); void openEditor().catch(() => setError("打开表单失败。")); }}>查看或编辑表单</button>}
+          onClick={() => { setError(undefined); void openEditor().catch(cause => setError(
+            cause instanceof Error && cause.message === "unsaved_input"
+              ? "请先保存或关闭右侧当前表单，再打开此表单。"
+              : "暂时无法打开表单，请稍后重试。",
+          )); }}>查看或编辑表单</button>}
         {editing && <p role="status">正在同步编辑，请稍候…</p>}
         <div className="capability-card-actions">
           <button disabled={!waiting || busy} onClick={() => decide({ kind: "decision", decision: "approve" })}>确认执行</button>
           <button disabled={busy} onClick={() => decide({ kind: "decision", decision: "cancel" })}>取消</button>
         </div>
       </>}
-    </> : <><span className="capability-card-status">{task ? taskLabels[task.snapshot.status] : terminalLabels[interaction.status]} · </span>
+    </> : <><span className="capability-card-status">{task && !abandoned ? taskLabels[task.snapshot.status] : terminalLabels[interaction.status]} · </span>
       <span>{payload.kind === "question" ? interaction.answer ?? payload.question : resultText ?? payload.summary}</span>
       {presentation?.target && open && <button className="capability-card-link" onClick={() => {
         void open(presentation.target!).catch(() => setError("打开页面失败。"));
       }}>{presentation.linkLabel ?? "查看"}</button>}
-      {task?.snapshot.error && <p role="alert">{task.snapshot.error.message}</p>}
-      {task?.analysisState === "pending" && <span>等待当前对话空闲后分析</span>}
-      {task?.analysisState === "interrupted" && <span>分析已中断，可在对话中重新要求</span>}
+      {!abandoned && task?.snapshot.error && <p role="alert">{task.snapshot.error.message}</p>}
+      {!abandoned && task?.analysisState === "pending" && <span>等待当前对话空闲后分析</span>}
+      {!abandoned && task?.analysisState === "interrupted" && <span>分析已中断，可在对话中重新要求</span>}
       {interaction.failureReason && <p role="alert">操作未完成，请检查状态后重试。</p>}
     </>}
     {error && <p role="alert">{error}</p>}

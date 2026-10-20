@@ -6,6 +6,9 @@ import type { ActionCall, CapabilityFormProvider, CapabilityFormSnapshot } from 
 import { ChatService, ContextBuilder } from "@deepfield/application";
 import { FakeWorker, makeSecrets } from "../../../../../packages/application/src/chat/chat-service-helpers.js";
 import type { AgentWorkerRequest, AgentWorkerEvent } from "@deepfield/contracts";
+import { CapabilityChatHost } from "../capabilities/chat-host.js";
+import { createToolWorkerHost } from "../tool-worker-host.js";
+import { HostClient } from "../../worker/host-client.js";
 const cleanups: (() => unknown)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); });
 
@@ -39,6 +42,21 @@ it("shows the full fixed bundle before approval and executes each exact input on
   expect(f.executed).toHaveLength(2);
 });
 
+it("resumes a cancelled task proposal once from its durable binding after revoking grants", async () => {
+  const f = await fixture(); const proposal = await f.propose([f.call("one"), f.call("two")]);
+  await f.host.respond(f.conversation.id, { interactionId: proposal.id, expectedRevision: proposal.revision,
+    response: { kind: "decision", decision: "cancel" } }, "chat_button");
+  expect(f.host.coordinator.shouldResume(proposal.id)).toBe(true);
+  const worker = new FakeWorker();
+  const service = new ChatService(f.repos, new ContextBuilder(f.repos), makeSecrets("key"), worker, { interactions: f.host.coordinator });
+  cleanups.push(() => service.dispose());
+  service.recoverInteractionResumes();
+  await vi.waitFor(() => expect(worker.requests).toHaveLength(1));
+  await vi.waitFor(() => expect(f.repos.chatInteractions.claimedEvents()).toHaveLength(0));
+  service.recoverInteractionResumes();
+  expect(worker.requests).toHaveLength(1); expect(f.executed).toEqual([]);
+});
+
 it("rejects an old resume proposal after the user approved its pending action", async () => {
   const f = await fixture();
   const proposal = await f.propose([f.call("first")]);
@@ -58,6 +76,45 @@ it("rejects empty, mixed and incomplete proposals before creating approval or ex
   expect(f.executed).toEqual([]);
   expect(f.host.list(f.conversation.id)).toEqual([]);
   expect(f.host.taskScope(f.conversation.id)).toBeUndefined();
+});
+
+it("returns actionable RPC recovery for an exact-call proposal against a scope action and preserves single-action confirmation", async () => {
+  const f = await fixture({ taskAuthorization: { mode: "scope", dynamicFields: [], resourceFields: [], outputBindings: [] } });
+  const capabilities = new CapabilityChatHost(() => f.runtime, f.registry, f.repos, f.host);
+  cleanups.push(() => capabilities.dispose());
+  capabilities.begin("original", f.conversation.id, "准备一项修改，等待确认");
+  let client: HostClient;
+  const rpc = createToolWorkerHost({
+    chatInteraction: f.host, capabilityChat: capabilities,
+    audit: { start: async () => {}, finish: async () => {}, recordSynthetic: async () => {} },
+    secrets: { get: () => undefined }, postMessage: value => client.handleReply(value),
+  });
+  client = new HostClient({ postMessage: value => rpc.handleRequest(value) });
+  cleanups.push(() => { client.dispose(); rpc.dispose(); });
+  const call = f.call("修改内容");
+  const rejected = await client.request("chat.interaction", {
+    chatRequestId: "original", toolCallId: "bad-proposal", operation: "proposal.create", arguments: { calls: [call] },
+  });
+  expect(rejected).toMatchObject({ result: { status: "error", error: {
+    code: "proposal_mode_unsupported", operation: "proposal.create", retryable: false,
+    recovery: expect.stringContaining("capability_invoke"),
+  } } });
+  expect(f.host.list(f.conversation.id)).toEqual([]);
+  expect(f.executed).toEqual([]);
+  await client.request("capability.call", {
+    chatRequestId: "original", toolCallId: "describe", operation: "describe",
+    arguments: { capabilityId: call.capabilityId, actionId: call.actionId },
+  });
+  expect(await client.request("capability.call", {
+    chatRequestId: "original", toolCallId: "recover", operation: "invoke", arguments: call,
+  })).toMatchObject({ result: { status: "awaiting_user" } });
+  expect(f.host.list(f.conversation.id)).toMatchObject([{ status: "waiting" }]);
+  expect(f.host.taskScope(f.conversation.id)).toBeUndefined();
+  expect(f.executed).toEqual([]);
+  const pending = f.host.list(f.conversation.id)[0]!;
+  await f.host.respond(f.conversation.id, { interactionId: pending.id, expectedRevision: pending.revision,
+    response: { kind: "decision", decision: "approve" } }, "chat_button");
+  expect(f.executed).toEqual(["修改内容"]);
 });
 
 it("executes future dynamic parameters only after visible scope confirmation and stops on new task", async () => {

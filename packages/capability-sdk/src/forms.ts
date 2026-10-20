@@ -12,6 +12,8 @@ export interface CapabilityFormSnapshot {
   view: ViewRef;
   /** Optional package-owned page displayed underneath the shared form. */
   parentView?: ViewRef;
+  /** Draft receipts that prepared this form; used only to group the same operation's UI. */
+  sourceDraftRefs?: readonly DraftRef[];
   values: unknown;
   inputSchema: unknown;
   step?: string;

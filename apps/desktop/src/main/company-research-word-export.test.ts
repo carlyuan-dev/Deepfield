@@ -30,7 +30,7 @@ describe("company research Word export service", () => {
     f.showSaveDialog.mockImplementation(async (rawOptions) => {
       const options = rawOptions as { defaultPath: string };
       (f.run as { rawReportText?: string }).rawReportText = "被并发修改";
-      expect(options.defaultPath).toBe("ACME-产品与技术-2026-09-11.docx");
+      expect(options.defaultPath).toBe("ACME-主要产品与定位、核心技术与指标-2026-09-11.docx");
       return { canceled: false, filePath: "/chosen/报告.docx" };
     });
     await expect(f.service.export("item-1", "company-1", "run-1", { raw: true, structured: true })).resolves.toEqual({ status: "saved" });

@@ -4,6 +4,17 @@ import { createCompanyResearchAgent, type CompanyResearchAgent } from "./runtime
 import { createCompanyProfileAgent } from "./runtime/company-profile-agent.js";
 import type { CompanyAgentRuntime } from "./runtime/ports.js";
 import { snapshotManifest } from "./persistence/research-evidence-data.js";
+import { canonicalActionJson } from "@deepfield/capability-sdk";
+import { buildStructuredResearchOutputSchema, normalizeResearchModuleIds } from "./contracts/index.js";
+
+export function validateResearchWorkerContract(request: import("./contracts/index.js").CompanyResearchWorkerRequest): void {
+  const ids = normalizeResearchModuleIds(request.context.moduleIds);
+  if (JSON.stringify(ids) !== JSON.stringify(request.context.moduleIds)
+    || JSON.stringify(ids) !== JSON.stringify(request.template.sections.map((section) => section.sectionId))
+    || (request.stage === "structure" && canonicalActionJson(request.outputSchema) !== canonicalActionJson(buildStructuredResearchOutputSchema(request.template)))) {
+    throw new Error("invalid_research_contract");
+  }
+}
 
 const fakeCompanyResearchAgent: CompanyResearchAgent = {
   async run(request, emit, signal) {
@@ -21,16 +32,16 @@ const fakeCompanyResearchAgent: CompanyResearchAgent = {
         "", "## 调研任务", "Fake 公司调研报告（离线测试）",
         `研究主题：${request.context.topicName}`,
         `目标公司：${request.context.companyName}`,
-        `研究方向：${request.template.title}`,
+        `研究模块：${request.template.title}`,
         `具体研究范围：${request.context.focusScope || "未填写"}`,
         `调研截止日期：${request.context.asOfDate}`,
         ...request.template.sections.map((section, index) => [
-          "", `## ${index + 1}. ${section.title} \`${section.sectionId}\``,
+          "", `## ${index + 1}. ${section.title}`,
           "", "### 关键事实", "暂未找到可靠公开信息。",
           "", "### 模块缺口", "缺少可靠公开信息。",
         ].join("\n")),
         "", "## 信息冲突", "未发现影响核心判断的未解决冲突。",
-        "", "## 未找到或明确未披露的信息", "五个模块均暂未找到，不表示事实不存在或明确未披露。",
+        "", "## 未找到或明确未披露的信息", "所选模块均暂未找到，不表示事实不存在或明确未披露。",
       ].join("\n")
       : JSON.stringify({
         coreSummary: ["现有公开信息不足以形成可靠的核心判断。"],
@@ -59,6 +70,7 @@ export function activate(registrar: CapabilityWorkerRegistrar, ports: CompanyRes
   const research = ports.mode === "fake" ? fakeCompanyResearchAgent : createCompanyResearchAgent({ runtime: ports.runtime });
   const profile = createCompanyProfileAgent({ runtime: ports.runtime });
   registrar.register("research", CompanyResearchWorkerRequestSchema, CompanyResearchWorkerEventSchema, async (request, emit, signal) => {
+    validateResearchWorkerContract(request);
     await ports.withUsage({ sourceId: `company-research-${request.stage}`, taskId: request.requestId, operationId: request.runId, stageId: request.stage }, () =>
       research.run(request, event => {
         if (event.requestId !== request.requestId || event.runId !== request.runId || event.stage !== request.stage) throw new Error("invalid_correlation");

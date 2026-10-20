@@ -3,8 +3,8 @@ import type { CompanyResearchBatchService } from "../application/company-researc
 import type { CompanyResearchService } from "../application/company-research-service.js";
 import type { CompanyResearchBatchState, ResearchRun } from "../contracts/index.js";
 import { CAPABILITY_ID, protocolError, revision, type ProtocolStore } from "./drafts.js";
-import { getCompanyResearchTemplate, RESEARCH_DIRECTIONS, type ResearchDirection } from "../contracts/index.js";
-export interface ResearchReceipt { invocationId: string; itemId: string; companyId: string; runId?: string; parentTaskId?: string; entryIds?: string[]; topicName?: string; companyName?: string; direction?: string; asOfDate?: string; snapshot: TaskSnapshot }
+import { getCompanyResearchTemplate, RESEARCH_DIRECTIONS, isModuleResearchRun, researchModuleSelectionLabel, type ResearchModuleId, type ResearchDirection } from "../contracts/index.js";
+export interface ResearchReceipt { invocationId: string; itemId: string; companyId: string; runId?: string; parentTaskId?: string; entryIds?: string[]; topicName?: string; companyName?: string; direction?: string; moduleIds?: ResearchModuleId[]; asOfDate?: string; snapshot: TaskSnapshot }
 export function artifactRef(run: ResearchRun): ArtifactRef {
   return { capabilityId: CAPABILITY_ID, artifactId: Buffer.from(JSON.stringify([run.itemId, run.companyId, run.id])).toString("base64url"), revision: revision(run) };
 }
@@ -85,7 +85,7 @@ export class TaskArtifactAdapter {
   }
   private singlePresentation(receipt: ResearchReceipt, run?: ResearchRun): OperationPresentation {
     const name = receipt.companyName ?? (run?.schemaVersion === "company-research-report-v1" ? run.researchContext.companyName : "当前公司");
-    const direction = receipt.direction && RESEARCH_DIRECTIONS.includes(receipt.direction as ResearchDirection) ? getCompanyResearchTemplate(receipt.direction as ResearchDirection).title : run?.schemaVersion === "company-research-report-v1" ? run.template.title : "公司";
+    const direction = run?.schemaVersion === "company-research-report-v1" ? run.template.title : receipt.moduleIds ? researchModuleSelectionLabel(receipt.moduleIds) : receipt.direction && RESEARCH_DIRECTIONS.includes(receipt.direction as ResearchDirection) ? getCompanyResearchTemplate(receipt.direction as ResearchDirection).title : "公司";
     const status = receipt.snapshot.status;
     const text = status === "queued" ? `“${name}”的${direction}调研已排队。`
       : status === "running" ? `“${name}”的${direction}调研${receipt.snapshot.phase === "structure" ? "正在整理报告" : "正在收集资料"}。`
@@ -109,7 +109,7 @@ export class TaskArtifactAdapter {
       createdAt: run.createdAt, completedAt: run.completedAt ?? null, searchStatus: run.searchStatus ?? "unknown",
       qualityNotice: "AI 调研结果仅供参考，重要事实仍需人工核验。联网状态不能保证证据充分。",
       sections: run.schemaVersion === "legacy-freeform-v1" ? ["raw"] : ["raw", "structured", "evidence"],
-      ...(run.schemaVersion === "company-research-report-v1" ? { title: `${run.researchContext.companyName} · ${run.template.title}`, rawCompletedAt: run.rawCompletedAt ?? null, direction: run.direction, asOfDate: run.asOfDate, failureStage: run.status === "structure_failed" ? "structure" : run.status === "research_failed" ? "raw" : null } : { title: "旧版原始调研报告" }) };
+      ...(run.schemaVersion === "company-research-report-v1" ? { title: `${run.researchContext.companyName} · ${run.template.title}`, rawCompletedAt: run.rawCompletedAt ?? null, ...(isModuleResearchRun(run) ? { moduleIds: run.moduleIds } : { direction: run.direction }), asOfDate: run.asOfDate, failureStage: run.status === "structure_failed" ? "structure" : run.status === "research_failed" ? "raw" : null } : { title: "旧版原始调研报告" }) };
     else if (section === "raw") data = run.schemaVersion === "legacy-freeform-v1" ? run.reportText : run.rawReportText ?? "";
     else if (section === "structured") data = run.schemaVersion === "company-research-report-v1" ? run.structuredContent ?? null : null;
     else if (section === "evidence") data = run.schemaVersion === "company-research-report-v1" ? run.structuredContent?.sections.flatMap(s => s.facts.map(f => f.source)) ?? [] : [];

@@ -1,7 +1,7 @@
 import { Value } from "typebox/value";
-import { StructuredResearchContentSchema, type CompanyResearchModelErrorCategory, type CompanyResearchValidationIssue, type CompanyResearchTemplateSnapshot, type StructuredResearchContent } from "../contracts/index.js";
+import { StructuredResearchContentSchema, HistoricalStructuredResearchContentSchema, ModuleStructuredResearchContentSchema, type CompanyResearchModelErrorCategory, type CompanyResearchValidationIssue, type CompanyResearchTemplateSnapshot, type StructuredResearchContent } from "../contracts/index.js";
 
-export const COMPANY_RESEARCH_HARNESS_VERSION = 1 as const;
+export const COMPANY_RESEARCH_HARNESS_VERSION = 2 as const;
 const EMPTY_FACTS_SUMMARY = "现有公开信息不足以形成可靠的核心判断。";
 const punctuation = /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/;
 const unescapeMarkdown = (text: string): string => text.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, "$1");
@@ -463,7 +463,7 @@ function validateStructuredResearchCandidate(
   rawSources?: Set<string>,
 ): StructuredResearchContent {
   const candidate = parseStructuredCandidate(candidateText);
-  if (!Value.Check(StructuredResearchContentSchema, candidate)) {
+  if (!Value.Check(StructuredResearchContentSchema, candidate) || !Value.Check(template.templateVersion === 1 ? HistoricalStructuredResearchContentSchema : ModuleStructuredResearchContentSchema, candidate)) {
     throw new StructuredResearchValidationError("schema_invalid", schemaIssues(candidate));
   }
   if (candidate.sections.length !== template.sections.length) {

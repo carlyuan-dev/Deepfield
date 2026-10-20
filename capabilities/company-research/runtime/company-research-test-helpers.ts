@@ -1,4 +1,4 @@
-import { getCompanyResearchTemplate, STRUCTURED_RESEARCH_OUTPUT_SCHEMA, type CompanyResearchRawWorkerRequest, type CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
+import { createCompanyResearchTemplate, buildStructuredResearchOutputSchema, type CompanyResearchRawWorkerRequest, type CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
 import type { CompanyResearchWorkerRequest, CompanyResearchWorkerEvent } from "../contracts/index.js";
 import { ResearchEvidenceCollector } from "./company-research-evidence-collector.js";
 export function zeroEvidenceEvents(request: CompanyResearchWorkerRequest): CompanyResearchWorkerEvent[] {
@@ -25,9 +25,9 @@ export function rawResearchRequest(): CompanyResearchRawWorkerRequest {
       businessTags: ["Robotics", "Embodied AI"],
       topicName: "Humanoid Robotics", topicScope: "Commercialization and core components",
       companyNote: "Candidate note for this topic only",
-      direction: "product_and_technology", focusScope: "Humanoid actuators", asOfDate: "2026-06-30",
+      moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], focusScope: "Humanoid actuators", asOfDate: "2026-06-30",
     },
-    template: getCompanyResearchTemplate("product_and_technology"),
+    template: createCompanyResearchTemplate(["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position"]),
   };
 }
 
@@ -37,7 +37,7 @@ export function structureResearchRequest(): CompanyResearchStructureWorkerReques
     ...raw, requestId: "structure-1", kind: "company-research.structure.run", stage: "structure",
     toolAccess: { network: "disabled", maxAgentTurns: 1, maxSearchCalls: 0, maxFetchCalls: 0 },
     rawReportText: "# 原始报告\n产品已发布。[公司公告](https://example.com/report)",
-    outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+    outputSchema: buildStructuredResearchOutputSchema(raw.template),
   };
 }
 

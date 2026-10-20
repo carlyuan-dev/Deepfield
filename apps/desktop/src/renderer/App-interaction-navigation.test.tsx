@@ -28,11 +28,12 @@ it("opens a new bound form, then preserves the dirty old form when the next navi
     retry: id => navigation.retry(1, id), noteManualNavigation: async () => { navigation.noteManualNavigation(); } };
   const listeners = new Set<(id: string) => void>();
   let interactions: InteractionRecord[] = [];
+  let draftRevision = "1";
   api.chat.listInteractions.mockImplementation(async () => interactions);
   api.chat.onInteractions.mockImplementation(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; });
   api.chat.readInteractionEditor.mockImplementation(async (_conversationId, id): Promise<InteractionEditorState> => {
     const item = interactions.find(value => value.id === id)!;
-    return { interaction: item, formId: id, actionId: "save", form: { draft: { capabilityId: "a", draftId: id, revision: "1" },
+    return { interaction: item, formId: id, actionId: "save", form: { draft: { capabilityId: "a", draftId: id, revision: draftRevision },
       view: { capabilityId: "a", viewId: id, input: {} }, values: {}, inputSchema: {}, transitions: [], readyToSubmit: true } };
   });
   api.chat.autoOpenInteractionEditor.mockImplementation(async (_conversationId, id) => {
@@ -70,7 +71,17 @@ it("opens a new bound form, then preserves the dirty old form when the next navi
   await trigger("first", "r1");
   await waitFor(() => expect(screen.getByText("page:first")).toBeTruthy());
   await waitFor(() => expect(screen.getByText("bound:first")).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "查看或编辑表单" })).toBeNull();
   fireEvent.click(screen.getByLabelText("form-dirty"));
+  await act(async () => {
+    expect(await navigation.open({ capabilityId: "a", viewId: "first", input: {} })).toMatchObject({ status: "opened" });
+  });
+  expect((screen.getByLabelText("form-dirty") as HTMLInputElement).checked).toBe(true);
+  draftRevision = "2";
+  await act(async () => {
+    expect(await navigation.open({ capabilityId: "a", viewId: "first", input: {} })).toMatchObject({ status: "blocked", message: "unsaved_input" });
+  });
+  draftRevision = "1";
   act(() => api.emit({ type: "handed_off", requestId: "r1" }));
   await trigger("second", "r2");
   await waitFor(() => expect(api.chat.autoOpenInteractionEditor).toHaveBeenCalledWith("c1", "second"));
@@ -79,7 +90,8 @@ it("opens a new bound form, then preserves the dirty old form when the next navi
   expect((screen.getByLabelText("form-dirty") as HTMLInputElement).checked).toBe(true);
   fireEvent.click(screen.getAllByRole("button", { name: "查看或编辑表单" }).at(-1)!);
   await waitFor(() => expect(api.chat.openInteractionEditor).toHaveBeenCalledWith("c1", "second"));
-  await screen.findByText("打开表单失败。");
+  await screen.findByText("请先保存或关闭右侧当前表单，再打开此表单。");
+  expect(document.querySelector(".workspace > [role=status]")).toBeNull();
   expect(screen.getByText("page:first")).toBeTruthy();
   expect(screen.getByText("bound:first")).toBeTruthy();
   expect((screen.getByLabelText("form-dirty") as HTMLInputElement).checked).toBe(true);

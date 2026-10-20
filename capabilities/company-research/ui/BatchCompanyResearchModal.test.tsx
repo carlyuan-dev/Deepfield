@@ -137,7 +137,7 @@ describe("batch company research UI", () => {
       company("b", "等待中的公司"),
       company("c", "可选择的公司"),
     ]);
-    const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-17" };
+    const input = { moduleIds: ["products_and_positioning" as const], asOfDate: "2026-09-17" };
     fake.companyResearchBatch.getState.mockResolvedValue({
       batchId: "batch", itemId: "other-topic", status: "running",
       entries: [
@@ -166,6 +166,7 @@ describe("batch company research UI", () => {
 
     await user.click(screen.getByRole("checkbox", { name: "选择 可选择的公司" }));
     await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByLabelText("主要产品与定位"));
     await user.click(screen.getByRole("button", { name: "下一步" }));
     const confirmDialog = screen.getByRole("dialog", { name: "批量调研公司" });
     const confirmBody = confirmDialog.querySelector<HTMLElement>(".batch-research-modal")!;
@@ -190,19 +191,25 @@ describe("batch company research UI", () => {
     expect((screen.getByRole("checkbox", { name: /选择 D公司/ }) as HTMLInputElement).disabled).toBe(false);
     expect(screen.queryByText(/公司资料尚未就绪/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "下一步" }));
-    await user.selectOptions(screen.getByLabelText("研究方向"), "market_and_commercialization");
+    await user.click(screen.getByLabelText("目标市场与客户"));
     await user.type(screen.getByLabelText("关注范围（可选）"), "共同范围");
     await user.click(screen.getByRole("button", { name: "下一步" }));
     expect(screen.queryByText("共同范围")).toBeNull();
     await user.click(screen.getByRole("button", { name: "编辑 B公司" }));
     await user.clear(screen.getByLabelText("关注范围（可选）")); await user.type(screen.getByLabelText("关注范围（可选）"), "B范围");
-    await user.selectOptions(screen.getByLabelText("研究方向"), "operations_and_performance");
+    await user.click(screen.getByLabelText("目标市场与客户"));
+    await user.click(screen.getByLabelText("核心财务表现"));
     await user.click(screen.getByRole("button", { name: "确认修改" }));
     expect(fake.companyResearch.start).not.toHaveBeenCalled(); expect(fake.companyResearchBatch.start).not.toHaveBeenCalled();
     expect(within(screen.getByTestId("batch-confirm-b")).getByText("已修改")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "上一步" }));
     await user.clear(screen.getByLabelText("关注范围（可选）")); await user.type(screen.getByLabelText("关注范围（可选）"), "新共同范围");
     await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByRole("button", { name: "编辑 B公司" }));
+    expect((screen.getByLabelText("核心财务表现") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("目标市场与客户") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("B范围");
+    await user.click(screen.getByRole("button", { name: "取消" }));
     await user.click(screen.getByRole("button", { name: "上一步" }));
     await user.click(screen.getByRole("button", { name: "上一步" }));
     await user.click(screen.getByRole("checkbox", { name: "选择 B公司" }));
@@ -211,8 +218,8 @@ describe("batch company research UI", () => {
     await user.click(screen.getByRole("button", { name: "开始调研" }));
     await waitFor(() => expect(fake.companyResearchBatch.start).toHaveBeenCalledTimes(1));
     expect(fake.companyResearchBatch.start.mock.calls[0]?.[1]).toEqual([
-      expect.objectContaining({ companyId: "a", input: expect.objectContaining({ focusScope: "新共同范围" }) }),
-      expect.objectContaining({ companyId: "c", input: expect.objectContaining({ focusScope: "新共同范围" }) }),
+      expect.objectContaining({ companyId: "a", input: expect.objectContaining({ moduleIds: ["target_market_and_customers"], focusScope: "新共同范围" }) }),
+      expect.objectContaining({ companyId: "c", input: expect.objectContaining({ moduleIds: ["target_market_and_customers"], focusScope: "新共同范围" }) }),
     ]);
   });
 
@@ -224,7 +231,7 @@ describe("batch company research UI", () => {
     fake.companyResearchBatch.subscribe.mockImplementation((listener) => { listeners.add(listener); return () => listeners.delete(listener); });
     fake.companyResearchBatch.getState.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
     let finishCancel!: () => void; fake.companyResearchBatch.cancel.mockImplementation(() => new Promise<void>((resolve) => { finishCancel = resolve; }));
-    const running: CompanyResearchBatchState = { batchId: "batch", itemId: "topic", status: "running", entries: [{ companyId: "a", input: { direction: "product_and_technology", asOfDate: "2026-09-17" }, status: "running", stage: "raw" }], processed: 1, succeeded: 1, failed: 0, total: 2 };
+    const running: CompanyResearchBatchState = { batchId: "batch", itemId: "topic", status: "running", entries: [{ companyId: "a", input: { moduleIds: ["products_and_positioning"], asOfDate: "2026-09-17" }, status: "running", stage: "raw" }], processed: 1, succeeded: 1, failed: 0, total: 2 };
     const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     act(() => { for (const listener of listeners) listener(running); });
@@ -258,7 +265,7 @@ describe("batch company research UI", () => {
   it("shows a recovered running entry as paused without a row spinner while pending entries still wait", async () => {
     const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
     fake.industryResearch.listItems.mockResolvedValue([item]); fake.industryResearch.listCompanies.mockResolvedValue([company("a", "A公司"), company("b", "B公司")]);
-    const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-17" };
+    const input = { moduleIds: ["products_and_positioning" as const], asOfDate: "2026-09-17" };
     fake.companyResearchBatch.getState.mockResolvedValue({ batchId: "batch", itemId: "topic", status: "paused", entries: [{ companyId: "a", input, status: "running", stage: "structure", interrupted: true }, { companyId: "b", input, status: "pending" }], processed: 0, succeeded: 0, failed: 0, total: 2 });
     const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));

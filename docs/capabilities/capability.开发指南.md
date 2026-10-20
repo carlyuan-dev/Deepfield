@@ -90,6 +90,8 @@ export async function bootstrap(_registrar: CapabilityRegistrar, services: Capab
 
 若公开动作已有真实编辑页，在 `bootstrap` 中与 `registerAction` 一起调用可选的 `registrar.registerFormProvider?.([{ id: "note-edit", actionIds: ["notes.save"], description: "编辑便签" }], provider)`。`actionIds` 必须是本包实际注册的公开动作；一个表单可覆盖多个阶段动作。提供方实现 `prepare/read/update/transition/validate/submission/release`，返回含 `DraftRef`、真实 `ViewRef`、当前值、输入约束、步骤、可转换项与可提交状态的快照。业务数据只存在包自己的草稿里，`submission` 从已校验草稿产生现有动作输入，实际执行仍经公共动作网关。多阶段流程可实现 `afterAction`，依据真实成功回执更新草稿并要求下一动作重新确认；普通步骤切换不执行动作。
 
+快照可选提供 `sourceDraftRefs`（省略等同空数组），声明准备当前表单的来源草稿。宿主仅接受同一能力、当前会话已保存的精确引用，允许跨请求继续，再与真实完成回执中的草稿引用关联，将准备回执与确认合并为同一操作卡。宿主投影区分准备回执和实际执行回执，准备完成不能代表提交完成；此字段只用于展示关联，不产生执行权限，也不要求宿主理解业务参数。表单自身的 `draft` 可以与来源草稿不同。
+
 关联页面收到可选 `interactionEditor` 时，先 `read()` 取得当前修订；用户开始编辑即调用 `beginEdit(revision)`（返回 `void`），成功后再 `read()` 取得本次锁的新修订并用于 `update` 或 `transition`。同步和校验完成后才允许 `respond(revision, "approve" | "cancel")`。模型修改同一草稿时也须带预期修订；冲突后重新读取，不覆盖用户修改。页面本地可留尚未同步的输入缓冲，但不能再保存一份独立的待执行参数。`interactionEditor` 已绑定一个会话内待办，包不能自行构造批准票据。普通人工入口没有该桥时，仍按原页面提交路径工作。
 
 不提供表单绑定的 v2 包仍可被 Chat 调用；需确认动作显示只读摘要。损坏的可选声明不应让相应动作失效。请用 `tests/capabilities/form-protocol.test.ts` 的离线便签夹具核对发现、共享修改、网关提交与禁用后启动快照；该夹具不证明自己的 UI 组件已接线，实际页面和连续步骤仍应手测。

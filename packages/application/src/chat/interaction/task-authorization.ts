@@ -19,6 +19,11 @@ export interface ExactTaskCall { call: ActionCall; packageVersion: string; diges
 export const exactTaskCallDigest = (call: ActionCall, packageVersion: string): string =>
   createHash("sha256").update(canonicalActionJson({ call, packageVersion })).digest("hex");
 
+class UnsupportedExactTaskProposalError extends Error {
+  readonly code = "proposal_mode_unsupported";
+  constructor() { super("该操作不能纳入本次具体调用提案，请按动作声明准备确认"); }
+}
+
 /** Optional family metadata admits a proposal; only exact complete inputs authorize execution. */
 export function snapshotExactTaskCalls(candidates: readonly ExactTaskCandidate[]): ExactTaskCall[] {
   if (!candidates.length || candidates.length > 10) throw new Error("本次提案必须包含 1 至 10 个具体操作");
@@ -27,7 +32,7 @@ export function snapshotExactTaskCalls(candidates: readonly ExactTaskCandidate[]
     if (item.taskAuthorization?.mode !== "exact_input" || first.taskAuthorization?.mode !== "exact_input" || !item.taskAuthorization.family || item.mode !== "immediate"
       || item.effects.data === "destructive" || item.call.capabilityId !== first.call.capabilityId
       || item.packageVersion !== first.packageVersion || item.taskAuthorization.family !== first.taskAuthorization?.family)
-      throw new Error("该操作不能纳入本次任务授权，请单独确认");
+      throw new UnsupportedExactTaskProposalError();
     const call = structuredClone(item.call); const digest = exactTaskCallDigest(call, item.packageVersion);
     if (seen.has(digest)) throw new Error("提案包含重复操作");
     seen.add(digest); return { call, packageVersion: item.packageVersion, digest };

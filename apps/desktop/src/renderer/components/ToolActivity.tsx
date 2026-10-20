@@ -145,9 +145,7 @@ export function ToolActivity({ activities, terminal }: ToolActivityProps) {
         .map((batch) => batch.key),
     [batches],
   );
-  const [expanded, setExpanded] = useState(
-    () => !terminal && activities.some((activity) => activity.status === "running"),
-  );
+  const [expanded, setExpanded] = useState(false);
   const [expandedBatchKeys, setExpandedBatchKeys] = useState<ReadonlySet<string>>(
     () => new Set(runningBatchKeys),
   );
@@ -160,7 +158,6 @@ export function ToolActivity({ activities, terminal }: ToolActivityProps) {
       activities.length > previousCount.current &&
       activities.some((activity) => activity.status === "running")
     ) {
-      setExpanded(true);
       setExpandedBatchKeys((current) => new Set([...current, ...runningBatchKeys]));
     }
     previousCount.current = activities.length;

@@ -5,11 +5,13 @@ export function checkAccess(registry: CapabilityRegistry, capabilityId: string, 
   if (!registry.readyIds().includes(capabilityId)) throw new GatewayError("capability_unavailable");
   if (!required.every(permission => context.permissions.includes(permission))) throw new GatewayError("permission_denied");
 }
-const codes = new Set(["contract_changed", "permission_denied", "confirmation_invalid", "presentation_invalid", "revision_changed", "not_found", "expired", "reconciliation_required", "invocation_invalid", "response_too_large", "capability_unavailable"]);
+const codes = new Set(["action_not_described", "contract_changed", "permission_denied", "confirmation_invalid", "presentation_invalid", "revision_changed", "not_found", "expired", "reconciliation_required", "invocation_invalid", "response_too_large", "capability_unavailable"]);
 export function safeGatewayError(error: unknown) {
   const candidate = error && typeof error === "object" && "code" in error ? error.code : undefined;
   const code = typeof candidate === "string" && codes.has(candidate) ? candidate : toPublicError(typeof candidate === "string" ? new AppError(candidate as ConstructorParameters<typeof AppError>[0]) : error).code;
   return { code, message: code === "presentation_invalid" ? "无法安全展示确认内容，请检查操作参数。" : code, retryable: ["EXTERNAL.TIMEOUT", "EXTERNAL.UNAVAILABLE", "EXTERNAL.RATE_LIMITED"].includes(code),
+    ...(code === "action_not_described" ? { recovery: "Call capability_describe for this action, then invoke with its current contractDigest and documented input." } : {}),
+    ...(code === "contract_changed" ? { recovery: "Refresh this action with capability_describe; rebuild input using the current contractDigest and request new confirmation for changed operations." } : {}),
     ...(code === "response_too_large" ? { recovery: "Request a smaller page or section." } : {}), ...(code === "reconciliation_required" ? { recovery: "Query the invocation receipt; do not resubmit the operation." } : {}) };
 }
 export function bounded<T>(value: T): T {

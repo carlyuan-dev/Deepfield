@@ -10,7 +10,11 @@
 
 模型引用支持编号，也兼容精确的 URL/kind 对象；来源仍须存在于本轮账本。引用失败与 JSON/Schema 失败共享最多一次无工具修正。修正只能使用既有证据、删除缺少依据的字段，不启动新的 Agent 或检索。第二次仍无效、取消、无搜索证据或模型接口失败就终止。诊断沿用 `formatRepair` 字段，以保持已有持久化兼容。
 
-落盘继续使用原有 `identity/fields/fieldEvidence/sources` 和 URL/kind 结构，不存运行内编号，不修改旧资料，不需要迁移。
+落盘继续使用原有 `identity/fields/fieldEvidence/sources` 和 URL/kind 结构，不存运行内编号。总部格式及旧总部的一次性清理见[公司资料契约](../../../docs/capabilities/company-research.设计文档.md#公司主体与主题关联)。
+
+未知字段省略；仅在本轮可靠证据明确支持时，允许 `stockListings:[]` 表示未上市、`aliases:[]` 表示无别名、`officialWebsite:null` 表示无官网，同样验证逐字段来源。模型须定向检索目标主体的上市情况，搜索失败、空结果与未提及都不能推断为不存在。总部使用“国家／省或一级行政区／市或区”，末段可省略；成立时间保留来源精度，不补日期。
+
+本轮可靠证据明确确认未上市时，模型须将结论写入 `fields.stockListings:[]` 及 `fieldEvidence.stockListings`；只写在身份解释中不会形成上市资料。证据不足仍省略字段，程序不从身份解释或“民营”“员工持股”等描述推导未上市。
 
 ## 品牌、产品和公司
 
@@ -26,7 +30,7 @@
 
 来源核验失败映射为 `EXTERNAL.INVALID_RESPONSE`、`context.service = search`；格式失败为同一 code、`service = llm`；搜索或模型接口不可用继续使用 `EXTERNAL.UNAVAILABLE`。前端分别提示来源核验、结果格式、接口失败，不能把有搜索结果但引用错误显示成接口故障。
 
-详情页在资料失败且来源记录的身份为 `ambiguous` / `unresolved` 时提示“公司主体待确认，请确认主体”，保留更新信息与确认主体入口；仅有用户主体提示不能把技术失败显示为身份未决。
+详情页实际失败显示“自动填写未完成，请确认主体或重试”，保留自动填写入口；来源记录的身份为 `ambiguous` / `unresolved` 时提供确认主体入口。仅有用户主体提示不能把技术失败显示为身份未决。
 
 ## 本地回归
 

@@ -9,7 +9,7 @@ import { artifactRef } from "./task-artifact-adapter.js";
 import { zeroEvidenceEvents } from "../runtime/company-research-test-helpers.js";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
-const input = { direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
+const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-01" };
 function setup(blocked = true, names: (itemId: string, companyId: string) => { topicName: string; companyName: string } = () => ({ topicName: "半导体", companyName: "甲" })) {
   const db = openTestDb(); dbs.push(db);
   const item = db.repos.capabilityItems.create({ industry: "半导体" });

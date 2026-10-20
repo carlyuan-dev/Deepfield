@@ -5,6 +5,7 @@ import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/base/
 import type { CompanyAgentRuntime } from "./ports.js";
 import { profileSchemaIssues, safeProfilePath } from "./profile-diagnostic.js";
 import { CompanyProfileModelCandidateSchema, type ProfileCatalogSource } from "./company-profile-model.js";
+import { normalizeHeadquarters } from "../contracts/profile-location.js";
 import {
   buildCompanyProfileRepairPrompt,
   buildCompanyProfileRequestPrompt,
@@ -109,8 +110,12 @@ export class ProfileEvidenceLedger {
     if (value.identity.disposition === "matched") {
       if (!value.identity.matchedName?.trim() || !Object.keys(value.fields).length) throw new ProfileFailure("invalid_evidence", "identity", "evidence", "/identity");
       for (const [field, fieldValue] of Object.entries(value.fields)) {
-        // An explicit unknown/null/empty list is not an evidenced fact.
-        if (fieldValue === null || (Array.isArray(fieldValue) && !fieldValue.length)) throw new ProfileFailure("invalid_evidence", "empty_field", "evidence", safeProfilePath(`/fields/${field}`));
+        // Confirmed absence is a fact only for these three fields and still needs evidence.
+        if ((fieldValue === null && field !== "officialWebsite") || (Array.isArray(fieldValue) && !fieldValue.length && !["aliases", "stockListings"].includes(field))) throw new ProfileFailure("invalid_evidence", "empty_field", "evidence", safeProfilePath(`/fields/${field}`));
+        if (field === "headquarters") {
+          try { value.fields.headquarters = normalizeHeadquarters(fieldValue as string); }
+          catch { throw new ProfileFailure("invalid_evidence", "schema_invalid", "schema", "/fields/headquarters"); }
+        }
         verify(value.fieldEvidence[field] ?? [], safeProfilePath(`/fieldEvidence/${field}`));
       }
       if (Object.keys(value.fieldEvidence).some((field) => !(field in value.fields))) throw new ProfileFailure("invalid_evidence", "source_missing", "evidence", "/fieldEvidence");

@@ -5,6 +5,7 @@ import { type ResearchRunId } from "./contracts.js";
 import { ActiveResearchRunSummarySchema, ResearchRunSchema, ResearchRunSummarySchema, StartCompanyResearchInputSchema, type ActiveResearchRunSummary, type KeyResearchRun, type ResearchFailureCode, type ResearchRun, type ResearchRunSummary } from "./contracts.js";
 import type { CompanyResearchRunRepository, CompanyResearchRunRow } from "./types.js";
 import { createCompanyResearchEvidenceRepository } from "./company-research-evidence-repository.js";
+import { isModuleResearchRun, normalizeResearchModuleIds, type ModuleResearchRun } from "../contracts/index.js";
 
 function invalidRun(): never {
   // Never include stored JSON or schema-validator diagnostics in public errors.
@@ -17,9 +18,15 @@ function validateRun(value: unknown): ResearchRun {
 
   const { researchContext: context, template } = value;
   if (
-    context.direction !== value.direction || context.asOfDate !== value.asOfDate ||
-    context.focusScope !== value.focusScope || template.templateId !== value.direction
+    context.asOfDate !== value.asOfDate || context.focusScope !== value.focusScope
   ) invalidRun();
+  if (isModuleResearchRun(value)) {
+    const ids = normalizeResearchModuleIds(value.moduleIds);
+    if (JSON.stringify(ids) !== JSON.stringify(value.moduleIds)
+      || JSON.stringify(ids) !== JSON.stringify(value.researchContext.moduleIds)
+      || JSON.stringify(ids) !== JSON.stringify(template.sections.map((section) => section.sectionId))
+      || (value.structuredContent && JSON.stringify(ids) !== JSON.stringify(value.structuredContent.sections.map((section) => section.sectionId)))) invalidRun();
+  } else if (value.researchContext.direction !== value.direction || template.templateId !== value.direction) invalidRun();
 
   const hasRaw = value.rawReportText !== undefined && value.rawReportText.trim().length > 0 &&
     value.rawCompletedAt !== undefined;
@@ -81,7 +88,9 @@ function toResearchRun(row: CompanyResearchRunRow): ResearchRun {
       evidencePolicy: row.evidence_policy,
       ...(row.evidence_attempt_id === null ? {} : { attemptId: row.evidence_attempt_id }),
       ...(row.evidence_packet_state === null ? {} : { evidencePacketState: row.evidence_packet_state }),
-      ...identity, direction: row.research_direction, asOfDate: row.as_of_date,
+      ...identity, ...(row.template_version === 2
+        ? { moduleIds: JSON.parse(row.research_context_json).moduleIds }
+        : { direction: row.research_direction }), asOfDate: row.as_of_date,
       ...(row.focus_scope !== null ? { focusScope: row.focus_scope } : {}),
       researchContext: JSON.parse(row.research_context_json),
       template: JSON.parse(row.template_snapshot_json), harnessVersion: row.harness_version,
@@ -95,6 +104,7 @@ function toResearchRun(row: CompanyResearchRunRow): ResearchRun {
       run.schemaVersion !== "company-research-report-v1" ||
       run.template.templateId !== row.template_id || run.template.templateVersion !== row.template_version
     ) invalidRun();
+    if (isModuleResearchRun(run) && row.research_direction !== null) invalidRun();
     return run;
   } catch {
     invalidRun();
@@ -112,17 +122,18 @@ function toSummary(run: ResearchRun): ResearchRunSummary | ActiveResearchRunSumm
     ...summary
   } = run;
   if (summary.status === "researching" || summary.status === "structuring") {
-    return { ...summary, status: summary.status };
+    if (!("moduleIds" in summary)) invalidRun();
+    return { ...summary, templateTitle: run.template.title, status: summary.status };
   }
-  return { ...summary, status: summary.status };
+  return { ...summary, templateTitle: run.template.title, status: summary.status };
 }
 
 export function createCompanyResearchRunRepository(db: Database): CompanyResearchRunRepository {
-  function getRequired(runId: ResearchRunId, status: KeyResearchRun["status"]): KeyResearchRun {
+  function getRequired(runId: ResearchRunId, status: KeyResearchRun["status"]): ModuleResearchRun {
     const row = db.prepare("SELECT * FROM company_research_runs WHERE id = ?").get(runId) as
       unknown as CompanyResearchRunRow | undefined;
     const run = row === undefined ? undefined : toResearchRun(row);
-    if (run?.schemaVersion !== "company-research-report-v1" || run.status !== status) {
+    if (!run || !isModuleResearchRun(run) || run.status !== status) {
       throw new Error("research run state transition rejected");
     }
     return run;
@@ -131,8 +142,8 @@ export function createCompanyResearchRunRepository(db: Database): CompanyResearc
   function transition(
     runId: ResearchRunId,
     from: KeyResearchRun["status"],
-    change: (run: KeyResearchRun) => KeyResearchRun,
-  ): KeyResearchRun {
+    change: (run: ModuleResearchRun) => ModuleResearchRun,
+  ): ModuleResearchRun {
     const next = change(getRequired(runId, from));
     validateRun(next);
     const result = db.prepare(`
@@ -144,7 +155,7 @@ export function createCompanyResearchRunRepository(db: Database): CompanyResearc
         evidence_policy = ?, evidence_attempt_id = ?, evidence_packet_state = ?
       WHERE id = ? AND status = ?
     `).run(
-      next.status, next.direction, next.focusScope ?? null, next.asOfDate, JSON.stringify(next.researchContext),
+      next.status, null, next.focusScope ?? null, next.asOfDate, JSON.stringify(next.researchContext),
       next.template.templateId, next.template.templateVersion, JSON.stringify(next.template), next.harnessVersion,
       next.rawReportText ?? null, next.rawCompletedAt ?? null,
       next.structuredContent === undefined ? null : JSON.stringify(next.structuredContent),
@@ -178,11 +189,11 @@ export function createCompanyResearchRunRepository(db: Database): CompanyResearc
       if (!Value.Check(StartCompanyResearchInputSchema, input)) {
         throw new Error("invalid research input");
       }
-      const run: KeyResearchRun = {
+      const run: ModuleResearchRun = {
         evidencePolicy: "required_v1", attemptId: randomUUID(),
         id: randomUUID() as ResearchRunId, itemId, companyId,
         schemaVersion: "company-research-report-v1", status: "researching", searchStatus: "none",
-        ...input, researchContext: context, template, harnessVersion: 1,
+        ...input, researchContext: context, template, harnessVersion: 2,
         structuringAttempts: 0, createdAt: new Date().toISOString(),
       };
       validateRun(run);
@@ -196,7 +207,7 @@ export function createCompanyResearchRunRepository(db: Database): CompanyResearc
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         run.id, itemId, companyId, run.schemaVersion, run.status,
-        run.direction, run.focusScope ?? null, run.asOfDate, JSON.stringify(context),
+        null, run.focusScope ?? null, run.asOfDate, JSON.stringify(context),
         template.templateId, template.templateVersion, JSON.stringify(template), run.harnessVersion,
         run.structuringAttempts, run.createdAt, run.searchStatus!, run.evidencePolicy!, run.attemptId!,
       );
@@ -250,7 +261,7 @@ export function createCompanyResearchRunRepository(db: Database): CompanyResearc
         unknown as CompanyResearchRunRow | undefined;
       const run = row === undefined ? undefined : toResearchRun(row);
       if (
-        run?.schemaVersion !== "company-research-report-v1" ||
+        !run || !isModuleResearchRun(run) ||
         (run.status !== "research_failed" && run.status !== "structure_failed" &&
           !(run.status === "completed" && run.searchStatus === "none"))
       ) throw new Error("research run state transition rejected");

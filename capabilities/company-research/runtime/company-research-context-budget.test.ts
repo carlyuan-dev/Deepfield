@@ -10,7 +10,7 @@ it("adds evidence rules only with a packet and budgets the actual ordinary and r
   const ordinary = buildCompanyResearchStructuringPrompt(request);
   const repair = buildStructureRepairPrompt(request, "", {});
   for (const messages of [ordinary, repair]) {
-    expect(messages.instructions).toContain("company-research-structure-v4");
+    expect(messages.instructions).toContain("company-research-structure-v5");
     expect(messages.instructions).toContain("facts.text 尽可能逐字沿用原始报告的事实表达");
     expect(messages.instructions).toContain("“提升至三倍”不得改成“提升三倍”");
     expect(messages.instructions).toContain("summary 和 coreSummary 优先选取最终 facts 中的完整短句");

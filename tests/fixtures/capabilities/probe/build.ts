@@ -45,30 +45,6 @@ function isExternalDependency(id: string): boolean {
   return !id.startsWith(".") && !id.startsWith("/") && !id.startsWith("@deepfield/");
 }
 
-const deepfieldAliases: Record<string, string> = {
-  "@deepfield/base/agent/runtime": "packages/base/src/agent/runtime.ts",
-  "@deepfield/base/agent": "packages/base/src/agent/index.ts",
-  "@deepfield/capability-sdk/execution": "packages/capability-sdk/src/execution.ts",
-  "@deepfield/capability-sdk/model-observation": "packages/capability-sdk/src/model-observation.ts",
-  "@deepfield/base/tools/runtime": "packages/base/src/tools/runtime.ts",
-  "@deepfield/base/tools/web": "packages/base/src/tools/web/index.ts",
-  "@deepfield/base/tools": "packages/base/src/tools/index.ts",
-  "@deepfield/base/search/runtime": "packages/base/src/search/runtime.ts",
-  "@deepfield/base/search": "packages/base/src/search/index.ts",
-  "@deepfield/application": "packages/application/src/index.ts",
-  "@deepfield/base/usage": "packages/base/src/usage/index.ts",
-  "@deepfield/capability-sdk": "packages/capability-sdk/src/index.ts",
-  "@deepfield/contracts": "packages/contracts/src/index.ts",
-  "@deepfield/contracts/model-config": "packages/contracts/src/model-config.ts",
-  "@deepfield/contracts/tools": "packages/contracts/src/tools.ts",
-  "@deepfield/persistence": "packages/persistence/src/index.ts",
-  "@deepfield/retrieval": "packages/retrieval/src/index.ts",
-  "@deepfield/retrieval/search-provider": "packages/retrieval/src/search-provider.ts",
-  "@deepfield/tool-platform": "packages/tool-platform/src/index.ts",
-  "@deepfield/tool-platform/budget-contract": "packages/tool-platform/src/budget-contract.ts",
-  "@deepfield/utility-tools": "packages/utility-tools/src/index.ts",
-};
-
 export async function collectHostModuleGraphs(
   repoRoot: string,
   outputRoot: string,
@@ -78,9 +54,6 @@ export async function collectHostModuleGraphs(
     worker: "apps/desktop/src/worker/index.ts",
     renderer: "apps/desktop/src/renderer/main.tsx",
   } as const;
-  const aliases = Object.fromEntries(
-    Object.entries(deepfieldAliases).map(([key, value]) => [key, resolve(repoRoot, value)]),
-  );
   const result = {} as Record<keyof typeof entries, string[]>;
 
   for (const [name, relativeEntry] of Object.entries(entries) as [keyof typeof entries, string][]) {
@@ -88,7 +61,7 @@ export async function collectHostModuleGraphs(
     await build({
       configFile: false,
       logLevel: "silent",
-      resolve: { alias: aliases },
+      // Match electron.vite.config.ts: workspace package exports resolve subpaths.
       plugins: [moduleCollector(modules)],
       build: {
         emptyOutDir: true,

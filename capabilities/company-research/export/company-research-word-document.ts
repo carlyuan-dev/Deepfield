@@ -24,7 +24,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { Value } from "typebox/value";
 import { CompanyResearchWordExportSelectionSchema, type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
-import { RESEARCH_SECTION_STATUS_LABELS, type KeyResearchRun, type ResearchRun } from "../contracts/index.js";
+import { RESEARCH_SECTION_STATUS_LABELS, isModuleResearchRun, type KeyResearchRun, type ResearchRun } from "../contracts/index.js";
 
 type MdNode = {
   type: string;
@@ -305,7 +305,7 @@ function structuredBlocks(run: KeyResearchRun, combined: boolean): FileChild[] {
     new Paragraph({ style: "Title", text: `${run.researchContext.companyName} ${run.template.title}调研报告` }),
     new Paragraph({ spacing: { line: 336, after: 80 }, children: [
       new TextRun({ text: `研究主题：${run.researchContext.topicName}　` }),
-      new TextRun({ text: `研究方向：${run.template.title}` }),
+      new TextRun({ text: `${isModuleResearchRun(run) ? "研究模块" : "研究方向"}：${run.template.title}` }),
     ] }),
     new Paragraph({ spacing: { line: 336, after: 180 }, children: [
       new TextRun({ text: `重点范围：${run.focusScope?.trim() || "未指定"}　` }),
@@ -386,7 +386,7 @@ export async function buildCompanyResearchDocx(run: ResearchRun, selection: Comp
     ]
     : [
       ["公司", run.researchContext.companyName], ["研究主题", run.researchContext.topicName],
-      ["研究方向", run.template.title], ["重点研究范围", run.focusScope?.trim() || "未指定"],
+      [isModuleResearchRun(run) ? "研究模块" : "研究方向", run.template.title], ["重点研究范围", run.focusScope?.trim() || "未指定"],
       ["截止日期", run.asOfDate], ["报告生成时间", generatedAt],
       ["运行与版本", `${run.id} / ${run.schemaVersion} / 模板 v${run.template.templateVersion} / Harness v${run.harnessVersion}`],
     ];

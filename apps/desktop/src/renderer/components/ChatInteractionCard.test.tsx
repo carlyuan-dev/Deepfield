@@ -47,5 +47,12 @@ describe("ChatInteractionCard", () => {
     view.rerender(<ChatInteractionCard interaction={{ ...approval, status: "failed", failureReason: "draft_ref_deleted: secret" }} respond={respond} />);
     expect(screen.queryByText(/draft_ref_deleted/)).toBeNull();
     expect(screen.getByText("操作未完成，请检查状态后重试。")).toBeTruthy();
+    view.rerender(<ChatInteractionCard interaction={{ ...approval, status: "cancelled", resultSummary: "草稿已准备" }} respond={respond}
+      open={vi.fn()} operation={{ conversationId: "c1", sourceRequestId: "prepare-request", invocationId: "prepare", interactionRole: "preparation",
+        status: "completed", title: "", presentation: { text: "草稿已准备", target: { capabilityId: "company", viewId: "draft", input: {} }, linkLabel: "打开旧草稿" } }} />);
+    expect(screen.getByText("已取消 ·")).toBeTruthy();
+    expect(screen.getByText("创建主题")).toBeTruthy();
+    expect(screen.queryByText("草稿已准备")).toBeNull();
+    expect(screen.queryByRole("button", { name: "打开旧草稿" })).toBeNull();
   });
 });

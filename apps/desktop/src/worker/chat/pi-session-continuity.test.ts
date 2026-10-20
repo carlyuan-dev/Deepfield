@@ -50,6 +50,7 @@ describe("persistent Pi Chat transcript", () => {
       db.close(); db = openDatabase(dbPath); migrate(db);
       const reloaded = createRepositories(db);
       const context = new ContextBuilder(reloaded).build(conversation.id);
+      context.messages.push({ role: "assistant", content: "宿主上下文数据：当前交互 cancelled；cached-action-doc", timestamp: Date.now() });
       const saved = reloaded.chatSessions.list(conversation.id)[0]!;
       expect(JSON.stringify(saved)).not.toContain("must-not-persist");
       expect(saved.activities[0]).toMatchObject({ queryOrUrl: "original query", sources: [{ title: "Original source", url: sourceUrl }], status: "completed" });
@@ -58,6 +59,8 @@ describe("persistent Pi Chat transcript", () => {
       const sent = offline.requests[0]!;
       expect(sent.tools.some(t => t.name === "web_search")).toBe(false);
       expect(sent.messages.some(m => m.role === "toolResult" && JSON.stringify(m).includes(sourceUrl))).toBe(true);
+      expect(sent.messages.some(m => m.role === "assistant" && JSON.stringify(m).includes("cached-action-doc"))).toBe(true);
+      expect(sent.systemPrompt).not.toContain("cached-action-doc");
       expect(sent.messages.filter(m => m.role === "user" && JSON.stringify(m.content).includes("当前问题"))).toHaveLength(2);
       expect(sent.systemPrompt).toContain("network=enabled");
       expect(sent.systemPrompt).toContain("successfulNetworkResults=1");

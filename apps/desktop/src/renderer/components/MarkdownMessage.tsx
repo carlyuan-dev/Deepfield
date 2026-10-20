@@ -4,7 +4,7 @@ import {
 } from "react";
 import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Parent, Root } from "mdast";
+import type { Parent, PhrasingContent, Root } from "mdast";
 import { UrlPopoverLink } from "./UrlPopoverLink.js";
 
 const HTTP_URL = /^https?:\/\//iu;
@@ -35,6 +35,47 @@ function remarkPreserveBareUrlUnderscores() {
         node.children[0].value += suffix;
         next.value = next.value.slice(suffix.length);
       }
+    };
+    visit(tree);
+  };
+}
+
+// Only a paragraph made entirely of links and separators is a source list.
+// Links embedded in ordinary prose keep their original inline structure.
+function remarkSourceLists() {
+  return (tree: Root, file: { value: unknown }) => {
+    const source = String(file.value);
+    const visit = (parent: Parent) => {
+      parent.children = parent.children.map(node => {
+        if ("children" in node) visit(node);
+        if (node.type !== "paragraph") return node;
+        node.children = node.children.flatMap((child): PhrasingContent[] => {
+          if (child.type !== "link" || child.children.length !== 1 || child.children[0]?.type !== "text") return [child];
+          const start = child.position?.start.offset;
+          const end = child.position?.end.offset;
+          if (start === undefined || end === undefined || !HTTP_URL.test(source.slice(start, end))) return [child];
+          // GFM may swallow the Chinese separator and the next bare URL into
+          // one destination. Only split literal bare URLs at another URL start.
+          const parts = child.children[0].value.split(/([、，；])(?=https?:\/\/)/u);
+          if (parts.length < 2) return [child];
+          return parts.map((url, index) => index % 2
+            ? { type: "text", value: url }
+            : { ...child, url, children: [{ type: "text", value: url }] });
+        });
+        const first = node.children[0];
+        const prefix = first?.type === "text" && /^\s*(?:来源|参考资料|参考来源|Sources|References)\s*[:：]\s*$/iu.test(first.value) ? first : undefined;
+        const links = node.children.filter(child => child.type === "link");
+        if (links.length < 2 || !node.children.every(child =>
+          child === prefix || child.type === "link" || (child.type === "text" && /^[\s、,，;；|]*$/u.test(child.value)))) return node;
+        return {
+          type: "list", ordered: false, spread: false,
+          data: { hProperties: { className: ["markdown-source-list"] } },
+          children: links.map(link => ({
+            type: "listItem", spread: false,
+            children: [{ type: "paragraph", children: [link] }],
+          })),
+        };
+      });
     };
     visit(tree);
   };
@@ -78,7 +119,7 @@ export function MarkdownMessage({ content }: { content: string }) {
   return (
     <div className="markdown-message">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkPreserveBareUrlUnderscores]}
+        remarkPlugins={[remarkGfm, remarkPreserveBareUrlUnderscores, remarkSourceLists]}
         components={{
           a: (props) => <MarkdownLink {...props} markdownSource={content} />,
         }}

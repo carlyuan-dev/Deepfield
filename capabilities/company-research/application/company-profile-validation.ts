@@ -1,5 +1,6 @@
 import { Value } from "typebox/value";
 import { CompanyProfileInputSchema, type CompanyProfileInput } from "../contracts/index.js";
+import { normalizeHeadquarters } from "../contracts/profile-location.js";
 
 function trimOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -24,7 +25,7 @@ export function normalizeCompanyProfile(input: unknown): CompanyProfileInput {
   const value = input as CompanyProfileInput;
   const name = value.name.trim();
   const legalName = trimOptional(value.legalName);
-  const headquarters = trimOptional(value.headquarters);
+  const headquarters = value.headquarters === undefined ? undefined : normalizeHeadquarters(value.headquarters);
   const foundedAt = trimOptional(value.foundedAt);
   const aliases = value.aliases?.map((alias) => alias.trim());
   const stockListings = value.stockListings?.map((listing) => ({

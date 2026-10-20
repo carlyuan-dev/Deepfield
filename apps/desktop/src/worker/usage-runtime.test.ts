@@ -37,10 +37,19 @@ it.each([1, 3])("keeps %i writer failures across real negative Host acknowledgem
     const now = new Date().toISOString();
     const finish: UsageFinish = { attemptId: "attempt", operationId: "op", profileId: "profile", profileName: "Search", providerId: "tavily", configRevisionId: "revision", serviceKind: "search", startedAt: now, finishedAt: now, durationMs: 0, revision: 2, outcome: "succeeded", attemptCountStatus: "complete", errorCode: null, resultCount: 0, ...normalizeUsageMetrics({}) };
     expect(await worker.recorder.recordFinish(finish)).toBe(failures < 3);
+    expect(worker.recorder.health()).toMatchObject({
+      pendingRecords: 0,
+      recoverableRecords: failures < 3 ? 0 : 1,
+      droppedRecords: 0,
+      currentFailure: failures === 3,
+      lastErrorCode: failures < 3 ? null : "write_failed",
+    });
     await worker.flush();
     const dashboard = await main.query.getDashboard({ serviceKind: "search", range: "month", timeZone: "UTC" });
     expect(dashboard.summary.requests).toBe(failures < 3 ? 1 : 0);
-    expect(dashboard.health).toMatchObject({ pendingRecords: 0, failedRecords: failures, droppedRecords: failures < 3 ? 0 : 1, degraded: true, lastErrorCode: "write_failed" });
+    // Recovered writes retain historical counts without a current fault;
+    // closing the queue turns an unrecovered record into a coverage gap.
+    expect(dashboard.health).toMatchObject({ pendingRecords: 0, recoverableRecords: 0, failedRecords: failures, droppedRecords: failures < 3 ? 0 : 1, degraded: failures === 3, lastErrorCode: failures < 3 ? null : "flush_timeout" });
     await main.shutdown();
     const reopened = createMainUsageRuntime(backing);
     expect((await reopened.query.getDashboard({ serviceKind: "search", range: "month", timeZone: "UTC" })).health.failedRecords).toBe(failures);

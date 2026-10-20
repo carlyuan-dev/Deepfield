@@ -22,7 +22,7 @@ describe("package-owned operation boundary", () => {
     valid.forEach((value, index) => {
       const replacements = typeof value === "string" ? ["", "x".repeat(201), null, 1, {}] : channel === "exportWord"
         ? [null, {}, { raw: true }, { raw: "yes", structured: false }, { raw: true, structured: false, extra: true }]
-        : [null, {}, { ...RESEARCH_INPUT, extra: true }, { ...RESEARCH_INPUT, direction: "unknown" }, { ...RESEARCH_INPUT, asOfDate: "today" }, { ...RESEARCH_INPUT, focusScope: "x".repeat(1001) }];
+        : [null, {}, { ...RESEARCH_INPUT, extra: true }, { ...RESEARCH_INPUT, moduleIds: ["unknown"] }, { ...RESEARCH_INPUT, moduleIds: ["products_and_positioning", "products_and_positioning"] }, { ...RESEARCH_INPUT, asOfDate: "today" }, { ...RESEARCH_INPUT, focusScope: "x".repeat(1001) }];
       for (const replacement of replacements) {
         const args: unknown[] = [...valid];
         args[index] = replacement;

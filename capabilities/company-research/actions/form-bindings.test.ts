@@ -9,14 +9,18 @@ export function formFixture() {
   const drafts = new ResearchDrafts(store, { validateBatchEntry: vi.fn() } as unknown as CompanyResearchService);
   return { rows, drafts, provider: createCompanyFormProvider(drafts) };
 }
-const parameters = { itemId: "topic", companyId: "company", direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
+const parameters = { itemId: "topic", companyId: "company", moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-01" };
 describe("company forms", () => {
   it("declares the correct parent for new topics, topic operations, and company operations", async () => {
     const f = formFixture();
     expect((await f.provider.prepare("topic", "topics.create", { industry: "机器人" })).parentView).toEqual({ capabilityId: "company-research", viewId: "topics", input: {} });
     expect((await f.provider.prepare("companies-add", "companies.add", { itemId: "topic", companies: [] })).parentView).toEqual({ capabilityId: "company-research", viewId: "companies", input: { itemId: "topic" } });
     expect((await f.provider.prepare("company-profile", "companies.update", { itemId: "topic", companyId: "company" })).parentView).toEqual({ capabilityId: "company-research", viewId: "company", input: { itemId: "topic", companyId: "company" } });
-    expect((await f.provider.prepare("research", "research.submit", f.drafts.prepare(parameters))).parentView).toEqual({ capabilityId: "company-research", viewId: "company", input: { itemId: "topic", companyId: "company" } });
+    const prepared = f.drafts.prepare(parameters);
+    const research = await f.provider.prepare("research", "research.submit", prepared);
+    expect(research.parentView).toEqual({ capabilityId: "company-research", viewId: "company", input: { itemId: "topic", companyId: "company" } });
+    expect(research.sourceDraftRefs).toEqual([prepared.draftRef]);
+    expect(research.draft).not.toEqual(prepared.draftRef);
   });
   it.each(companyForms)("registers $id with its existing component and action", async definition => {
     const f = formFixture();
@@ -38,10 +42,10 @@ describe("company forms", () => {
   });
   it("requires final batch step before admission and preserves per-company input", async () => {
     const { provider } = formFixture();
-    let snapshot = await provider.prepare("research-batch", "research.submitBatch", { itemId: "topic", entries: [{ companyId: "a", input: { direction: parameters.direction, asOfDate: parameters.asOfDate } }] });
+    let snapshot = await provider.prepare("research-batch", "research.submitBatch", { itemId: "topic", entries: [{ companyId: "a", input: { moduleIds: parameters.moduleIds, asOfDate: parameters.asOfDate } }] });
     await expect(provider.submission(snapshot.draft)).rejects.toThrow("invalid_form");
     snapshot = await provider.transition(snapshot.draft, "common");
-    snapshot = await provider.update(snapshot.draft, { entries: [{ companyId: "a", input: { direction: parameters.direction, asOfDate: parameters.asOfDate, focusScope: "用户最新条件" } }] });
+    snapshot = await provider.update(snapshot.draft, { entries: [{ companyId: "a", input: { moduleIds: parameters.moduleIds, asOfDate: parameters.asOfDate, focusScope: "用户最新条件" } }] });
     snapshot = await provider.transition(snapshot.draft, "confirm");
     expect((await provider.submission(snapshot.draft)).input).toMatchObject({ entries: [{ input: { focusScope: "用户最新条件" } }] });
   });

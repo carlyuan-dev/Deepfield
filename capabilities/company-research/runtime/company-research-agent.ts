@@ -9,6 +9,7 @@ import { CompanyResearchRawFilter } from "./company-research-raw-filter.js";
 import { ResearchEvidenceCollector } from "./company-research-evidence-collector.js";
 import { buildStructureRepairPrompt, budgetMessages, checkStructureBudget, BUDGET_VERSION } from "./company-research-context-budget.js";
 import { evidenceHash } from "../persistence/research-evidence-data.js";
+import { RESEARCH_MODULE_GROUPS, type CompanyResearchTemplateSnapshot } from "../contracts/index.js";
 
 export interface CompanyResearchAgentOptions {
   runtime: CompanyAgentRuntime;
@@ -37,6 +38,38 @@ function validateRawReport(text: string, expectsChinese: boolean): string {
   if (!filtered.trim()) throw new RawResearchFailure("empty_report");
   if (expectsChinese && !/\p{Script=Han}/u.test(filtered)) throw new RawResearchFailure("language_validation_failed");
   return filtered;
+}
+
+/** Repair only presentation differences; never add missing module content. */
+export function normalizeRawResearchModules(text: string, template: CompanyResearchTemplateSnapshot): string {
+  if (template.templateVersion === 1) return text;
+  const known = RESEARCH_MODULE_GROUPS.flatMap((group) => group.modules);
+  const headings: Array<{ line: number; title: string; id?: string }> = [];
+  const lines = text.split(/\r?\n/u);
+  let fenced = false;
+  lines.forEach((line, index) => {
+    if (/^\s*```/u.test(line)) { fenced = !fenced; return; }
+    if (fenced) return;
+    const match = /^\s*##\s+(.+?)\s*#*\s*$/u.exec(line);
+    if (!match) return;
+    const unstyledHeading = match[1]!.replace(/\*\*/gu, "");
+    const numbered = /^\d+[.、．)]/u.test(unstyledHeading);
+    const heading = unstyledHeading.replace(/^\d+[.、．)]\s*/u, "");
+    const id = /`([a-z_]+)`/u.exec(heading)?.[1];
+    const title = heading.replace(/`[a-z_]+`/gu, "").trim();
+    if (id || numbered || known.some((module) => module.title === title)) {
+      headings.push({ line: index, title, ...(id ? { id } : {}) });
+    }
+  });
+  if (headings.length !== template.sections.length || headings.some((heading, index) => {
+    const section = template.sections[index]!;
+    return heading.title !== section.title || (heading.id !== undefined && heading.id !== section.sectionId);
+  })) throw new RawResearchFailure("incomplete_response");
+  headings.forEach((heading, index) => {
+    const section = template.sections[index]!;
+    lines[heading.line] = `## ${index + 1}. ${section.title}`;
+  });
+  return lines.join("\n");
 }
 
 function mapPiFailure(code: ExecutionErrorCode): RawFailureCode {
@@ -221,7 +254,7 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions)
           throw new RawResearchFailure("model_failed");
         }
         if (!terminalSeen || terminalText === undefined) throw new RawResearchFailure("incomplete_response");
-        const report = validateRawReport(terminalText, /\p{Script=Han}/u.test(prompt.input));
+        const report = normalizeRawResearchModules(validateRawReport(terminalText, /\p{Script=Han}/u.test(prompt.input)), request.template);
         if (collector) emit({ ...identity, stage: "raw", type: "evidence_manifest", attemptId: request.attemptId!, manifest: collector.manifest() });
         emit({ ...identity, type: "completed", text: report });
       } catch (error) {

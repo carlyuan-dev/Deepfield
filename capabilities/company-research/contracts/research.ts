@@ -3,7 +3,7 @@ import { EvidencePolicySchema, EvidenceReceiptSchema, EvidenceManifestSchema, Fr
 import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "../../../packages/contracts/src/settings.js";
 import type { CapabilityItemId, CompanyId, ResearchRunId } from "../../../packages/contracts/src/ids.js";
 import { CompanyProfileFieldsSchema } from "./capability-items.js";
-import { CompanyResearchTemplateSnapshotSchema, ResearchDirectionSchema } from "./company-research-templates.js";
+import { CompanyResearchTemplateSnapshotSchema, HistoricalCompanyResearchTemplateSnapshotSchema, ModuleCompanyResearchTemplateSnapshotSchema, ResearchDirectionSchema, ResearchModuleIdsSchema, type CompanyResearchTemplateSnapshot } from "./company-research-templates.js";
 import type { JsonObject } from "../../../packages/contracts/src/tools.js";
 
 const DateSchema = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
@@ -16,11 +16,16 @@ const ReportTextSchema = Type.String({ minLength: 1, maxLength: 1_000_000 });
 const LegacyReportTextSchema = Type.String({ minLength: 1, pattern: "\\S" });
 
 export const StartCompanyResearchInputSchema = Type.Object({
-  direction: ResearchDirectionSchema,
+  moduleIds: ResearchModuleIdsSchema,
   focusScope: Type.Optional(Type.String({ maxLength: 1000 })),
   asOfDate: DateSchema,
 }, { additionalProperties: false });
 export type StartCompanyResearchInput = Static<typeof StartCompanyResearchInputSchema>;
+const HistoricalResearchInputSchema = Type.Object({
+  direction: ResearchDirectionSchema,
+  focusScope: Type.Optional(Type.String({ maxLength: 1000 })),
+  asOfDate: DateSchema,
+}, { additionalProperties: false });
 
 export const ResearchSectionStatusSchema = Type.Union([
   Type.Literal("found"), Type.Literal("partial"), Type.Literal("not_found"),
@@ -38,7 +43,7 @@ export const ResearchClaimTypeSchema = Type.Union([
 ]);
 export type ResearchClaimType = Static<typeof ResearchClaimTypeSchema>;
 
-export const StructuredResearchContentSchema = Type.Object({
+export const HistoricalStructuredResearchContentSchema = Type.Object({
   coreSummary: Type.Array(TextSchema, { minItems: 1, maxItems: 4 }),
   sections: Type.Array(Type.Object({
     sectionId: Type.String({ minLength: 1, maxLength: 100 }),
@@ -55,6 +60,11 @@ export const StructuredResearchContentSchema = Type.Object({
     }, { additionalProperties: false }), { maxItems: 8 }),
   }, { additionalProperties: false }), { minItems: 5, maxItems: 5 }),
 }, { additionalProperties: false });
+export const ModuleStructuredResearchContentSchema = Type.Object({
+  ...HistoricalStructuredResearchContentSchema.properties,
+  sections: Type.Array(HistoricalStructuredResearchContentSchema.properties.sections.items, { minItems: 1, maxItems: 4 }),
+}, { additionalProperties: false });
+export const StructuredResearchContentSchema = Type.Union([HistoricalStructuredResearchContentSchema, ModuleStructuredResearchContentSchema]);
 export type StructuredResearchContent = Static<typeof StructuredResearchContentSchema>;
 function freezeJson<T>(value: T): T {
   if (value !== null && typeof value === "object") {
@@ -65,7 +75,22 @@ function freezeJson<T>(value: T): T {
 }
 
 /** Plain JSON Schema for IPC/provider requests, without TypeBox's hidden metadata. */
-export const STRUCTURED_RESEARCH_OUTPUT_SCHEMA: JsonObject = freezeJson(JSON.parse(JSON.stringify(StructuredResearchContentSchema)));
+export const STRUCTURED_RESEARCH_OUTPUT_SCHEMA: JsonObject = freezeJson(JSON.parse(JSON.stringify(HistoricalStructuredResearchContentSchema)));
+export function buildStructuredResearchOutputSchema(template: CompanyResearchTemplateSnapshot): JsonObject {
+  const schema = JSON.parse(JSON.stringify(template.templateVersion === 1 ? HistoricalStructuredResearchContentSchema : ModuleStructuredResearchContentSchema));
+  schema.properties.sections = {
+    type: "array", minItems: template.sections.length, maxItems: template.sections.length,
+    items: template.sections.map((section) => ({
+      ...JSON.parse(JSON.stringify(HistoricalStructuredResearchContentSchema.properties.sections.items)),
+      properties: {
+        ...JSON.parse(JSON.stringify(HistoricalStructuredResearchContentSchema.properties.sections.items.properties)),
+        sectionId: { type: "string", const: section.sectionId },
+      },
+    })),
+    additionalItems: false,
+  };
+  return freezeJson(schema as JsonObject);
+}
 
 export const CompanyResearchContextSchema = Type.Object({
   ...CompanyProfileFieldsSchema.properties,
@@ -77,6 +102,10 @@ export const CompanyResearchContextSchema = Type.Object({
   ...StartCompanyResearchInputSchema.properties,
 }, { additionalProperties: false });
 export type CompanyResearchContext = Static<typeof CompanyResearchContextSchema>;
+export const HistoricalCompanyResearchContextSchema = Type.Object({
+  ...Type.Omit(CompanyResearchContextSchema, ["moduleIds"]).properties,
+  ...HistoricalResearchInputSchema.properties,
+}, { additionalProperties: false });
 
 const RunIdentity = {
   id: Type.Unsafe<ResearchRunId>(IdSchema),
@@ -123,7 +152,7 @@ export type LegacyResearchRun = Static<typeof LegacyResearchRunSchema>;
 
 // Artifact requirements for each transition are owned by Application/Repository;
 // this persisted JSON boundary validates shape and bounds without repairing data.
-export const KeyResearchRunSchema = Type.Object({
+export const ModuleResearchRunSchema = Type.Object({
   evidencePolicy: Type.Optional(Type.Union([Type.Literal("required_v1"), Type.Literal("legacy_optional")])),
   attemptId: Type.Optional(IdSchema),
   evidencePacketState: Type.Optional(Type.Union([Type.Literal("ready"), Type.Literal("budget_exceeded")])),
@@ -133,26 +162,51 @@ export const KeyResearchRunSchema = Type.Object({
   searchStatus: Type.Optional(ResearchSearchStatusSchema),
   ...StartCompanyResearchInputSchema.properties,
   researchContext: CompanyResearchContextSchema,
-  template: CompanyResearchTemplateSnapshotSchema,
-  harnessVersion: Type.Literal(1),
+  template: ModuleCompanyResearchTemplateSnapshotSchema,
+  harnessVersion: Type.Literal(2),
   rawReportText: Type.Optional(ReportTextSchema),
-  structuredContent: Type.Optional(StructuredResearchContentSchema),
+  structuredContent: Type.Optional(ModuleStructuredResearchContentSchema),
   structuringAttempts: Type.Integer({ minimum: 0 }),
   lastFailureCode: Type.Optional(ResearchFailureCodeSchema),
   rawCompletedAt: Type.Optional(TimestampSchema),
   completedAt: Type.Optional(TimestampSchema),
 }, { additionalProperties: false });
+export const HistoricalKeyResearchRunSchema = Type.Object({
+  ...Type.Omit(ModuleResearchRunSchema, ["moduleIds", "researchContext", "template", "harnessVersion", "structuredContent"]).properties,
+  ...HistoricalResearchInputSchema.properties,
+  researchContext: HistoricalCompanyResearchContextSchema,
+  template: HistoricalCompanyResearchTemplateSnapshotSchema,
+  harnessVersion: Type.Literal(1),
+  structuredContent: Type.Optional(HistoricalStructuredResearchContentSchema),
+}, { additionalProperties: false });
+export const KeyResearchRunSchema = Type.Union([HistoricalKeyResearchRunSchema, ModuleResearchRunSchema]);
 export type KeyResearchRun = Static<typeof KeyResearchRunSchema>;
+export type ModuleResearchRun = Static<typeof ModuleResearchRunSchema>;
+export function isModuleResearchRun(run: ResearchRun): run is ModuleResearchRun {
+  return run.schemaVersion === "company-research-report-v1" && "moduleIds" in run;
+}
 
 export const ResearchRunSchema = Type.Union([LegacyResearchRunSchema, KeyResearchRunSchema]);
 export type ResearchRun = Static<typeof ResearchRunSchema>;
 
 export const LegacyResearchRunSummarySchema = Type.Omit(LegacyResearchRunSchema, ["reportText"], { additionalProperties: false });
-export const KeyResearchRunSummarySchema = Type.Omit(KeyResearchRunSchema, [
+const ModuleResearchRunSummaryFields = Type.Omit(ModuleResearchRunSchema, [
   "rawReportText", "structuredContent", "researchContext", "template", "harnessVersion",
 ], { additionalProperties: false });
+export const ModuleResearchRunSummarySchema = Type.Object({
+  ...ModuleResearchRunSummaryFields.properties,
+  templateTitle: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+}, { additionalProperties: false });
+const HistoricalKeyResearchRunSummaryFields = Type.Omit(HistoricalKeyResearchRunSchema, [
+  "rawReportText", "structuredContent", "researchContext", "template", "harnessVersion",
+], { additionalProperties: false });
+export const HistoricalKeyResearchRunSummarySchema = Type.Object({
+  ...HistoricalKeyResearchRunSummaryFields.properties,
+  templateTitle: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+}, { additionalProperties: false });
+export const KeyResearchRunSummarySchema = Type.Union([HistoricalKeyResearchRunSummarySchema, ModuleResearchRunSummarySchema]);
 export const ActiveResearchRunSummarySchema = Type.Object({
-  ...KeyResearchRunSummarySchema.properties,
+  ...ModuleResearchRunSummarySchema.properties,
   status: Type.Union([Type.Literal("researching"), Type.Literal("structuring")]),
 }, { additionalProperties: false });
 export type ActiveResearchRunSummary = Static<typeof ActiveResearchRunSummarySchema>;
@@ -160,11 +214,18 @@ export type ActiveResearchRunSummary = Static<typeof ActiveResearchRunSummarySch
 export const ResearchRunSummarySchema = Type.Union([
   LegacyResearchRunSummarySchema,
   Type.Object({
-    ...KeyResearchRunSummarySchema.properties,
+    ...ModuleResearchRunSummarySchema.properties,
+    status: Type.Union([Type.Literal("research_failed"), Type.Literal("structure_failed"), Type.Literal("completed")]),
+  }, { additionalProperties: false }),
+  Type.Object({
+    ...HistoricalKeyResearchRunSummarySchema.properties,
     status: Type.Union([Type.Literal("research_failed"), Type.Literal("structure_failed"), Type.Literal("completed")]),
   }, { additionalProperties: false }),
 ]);
 export type ResearchRunSummary = Static<typeof ResearchRunSummarySchema>;
+export function isModuleResearchSummary(run: ResearchRunSummary | ActiveResearchRunSummary): run is Extract<ResearchRunSummary | ActiveResearchRunSummary, { moduleIds: unknown }> {
+  return run.schemaVersion === "company-research-report-v1" && "moduleIds" in run;
+}
 
 export const CompanyResearchStageSchema = Type.Union([Type.Literal("raw"), Type.Literal("structure")]);
 export type CompanyResearchStage = Static<typeof CompanyResearchStageSchema>;
@@ -205,7 +266,7 @@ const WorkerRequestFields = {
   llm: LlmRuntimeSnapshotSchema,
   toolAccess: ToolAccessPolicySchema,
   context: CompanyResearchContextSchema,
-  template: CompanyResearchTemplateSnapshotSchema,
+  template: ModuleCompanyResearchTemplateSnapshotSchema,
 };
 export const CompanyResearchRawWorkerRequestSchema = Type.Object({
   ...WorkerRequestFields,
@@ -221,7 +282,7 @@ export const CompanyResearchStructureWorkerRequestSchema = Type.Object({
   stage: Type.Literal("structure"),
   rawReportText: ReportTextSchema,
   // JSON Schema const validates the schema as data, not as the candidate output.
-  outputSchema: Type.Unsafe<JsonObject>({ type: "object", const: STRUCTURED_RESEARCH_OUTPUT_SCHEMA }),
+  outputSchema: Type.Unsafe<JsonObject>({ type: "object" }),
 }, { additionalProperties: false });
 export type CompanyResearchStructureWorkerRequest = Static<typeof CompanyResearchStructureWorkerRequestSchema>;
 export const CompanyResearchWorkerRequestSchema = Type.Union([

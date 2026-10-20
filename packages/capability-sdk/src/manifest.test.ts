@@ -102,14 +102,18 @@ describe("validateManifest", () => {
     }
   });
 
-  it("accepts standard nested pattern and anyOf schema constraints", () => {
+  it("accepts standard nested pattern, anyOf and uniqueItems schema constraints", () => {
     const action = validV2Manifest.actions[0];
     const inputSchema = { type: "object", properties: {
       website: { anyOf: [{ type: "string", pattern: "^https://" }, { type: "null" }] },
       direction: { anyOf: [{ type: "string", const: "market" }, { type: "string", const: "technology" }] },
+      selections: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 4, uniqueItems: true },
     }, required: ["website"], additionalProperties: false };
     const manifest = { ...validV2Manifest, actions: [{ ...action, inputSchema }] };
     expect(validateManifest(manifest)).toEqual({ ok: true, manifest });
+    expect(validateManifest({ ...manifest, actions: [{ ...action, inputSchema: { ...inputSchema, properties: {
+      ...inputSchema.properties, selections: { ...inputSchema.properties.selections, uniqueItems: "yes" },
+    } } }] })).toEqual({ ok: false, code: "invalid_manifest" });
   });
 
   it("keeps the v1 worker entry mandatory", () => {

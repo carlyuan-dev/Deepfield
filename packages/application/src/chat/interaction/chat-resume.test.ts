@@ -7,6 +7,30 @@ import { FakeWorker, makeSecrets } from "../chat-service-helpers.js";
 import type { AgentWorkerEvent, AgentWorkerRequest, InteractionRecord } from "@deepfield/contracts";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
+it("consumes repeated single-operation cancellations without model work and restores their latest state", async () => {
+  const db = openTestDb(); dbs.push(db); const conversation = db.repos.conversations.create();
+  const coordinator = new ChatInteractionCoordinator(db.repos.chatInteractions, new Map([["test", {
+    read: async () => ({ version: "1", summary: "Edit" }), execute: vi.fn(),
+    reconcile: async () => "unknown" as const,
+  }]]));
+  const worker = new FakeWorker(); const profiles = makeSecrets("key");
+  const service = new ChatService(db.repos, new ContextBuilder(db.repos), profiles, worker, { interactions: coordinator });
+  for (const requestId of ["first", "second"]) {
+    const item = await coordinator.create({ conversationId: conversation.id, requestId, toolCallId: "call" },
+      { kind: "approval", summary: "", operation: { provider: "test", operationId: requestId, contractVersion: "1" } });
+    await coordinator.respond({ interactionId: item.id, expectedRevision: 1, response: { kind: "decision", decision: "cancel" } },
+      { conversationId: conversation.id, source: "chat_button" });
+    service.recoverInteractionResumes();
+    await vi.waitFor(() => expect(db.repos.chatInteractions.pendingEvents()).toHaveLength(0));
+  }
+  expect(worker.requests).toHaveLength(0); expect(profiles.getCalls).toBe(0);
+  await service.send(conversation.id, "刚才状态是什么", "next", () => {});
+  const data = worker.requests[0]!.context.messages.at(-1)!;
+  expect(data.role).toBe("assistant");
+  expect(data.content.match(/"status":"cancelled"/g)).toHaveLength(2);
+  expect(worker.requests[0]!.context.systemPrompt).not.toContain('"interactionId"');
+  service.dispose();
+});
 it("does not persist a tool preamble that the worker retracted before handoff", async () => {
   const db = openTestDb(); dbs.push(db); const conversation = db.repos.conversations.create();
   const worker = new FakeWorker({ events: request => [

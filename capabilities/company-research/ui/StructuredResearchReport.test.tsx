@@ -2,9 +2,19 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StructuredResearchReport } from "./StructuredResearchReport.js";
-import { researchRun } from "./company-research-test-fixtures.js";
+import { researchRun, moduleResearchRun } from "./company-research-test-fixtures.js";
+import type { ResearchModuleId } from "../contracts/index.js";
 
 describe("structured research report sources", () => {
+  it.each([
+    ["financial_performance"],
+    ["financial_performance", "target_market_and_customers", "products_and_positioning", "value_chain_position"],
+  ] as ResearchModuleId[][])("renders only selected modules in frozen catalog order: %j", (...moduleIds) => {
+    const run = moduleResearchRun({ moduleIds });
+    run.structuredContent!.sections.reverse();
+    render(<StructuredResearchReport run={run} />);
+    expect(screen.getAllByRole("heading", { level: 3 }).map(node => node.textContent)).toEqual(["核心结论", ...run.template.sections.map(section => section.title)]);
+  });
   afterEach(() => {
     Reflect.deleteProperty(window, "deepfield");
   });

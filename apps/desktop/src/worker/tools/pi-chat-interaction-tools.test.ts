@@ -4,10 +4,13 @@ import { createPiChatInteractionTools } from "./pi-chat-interaction-tools.js";
 import { createExecutionHandoff } from "../agent/execution-handoff.js";
 it("registers questions without capabilities and only hands off the asking run", async () => {
   const request = { requestId: "r", context: {} } as AgentWorkerRequest;
-  const host = { request: vi.fn(async () => ({ result: { id: "interaction" } })) };
+  const host = { request: vi.fn(async () => ({ result: { id: "interaction", status: "waiting" } })) };
   const a = createExecutionHandoff(); const b = createExecutionHandoff();
   const tools = createPiChatInteractionTools(request, host, a);
   expect(tools.map(tool => tool.name)).toEqual(["request_user_input", "interaction_draft", "propose_actions"]);
+  host.request.mockResolvedValueOnce({ result: { id: "", status: "error" } });
+  await tools[0]!.execute("failed", { question: "Which?" });
+  expect(a.isRequested()).toBe(false);
   await tools[0]!.execute("tool", { question: "Which?" });
   expect(host.request).toHaveBeenCalledWith("chat.interaction", { chatRequestId: "r", toolCallId: "tool", operation: "question", arguments: { question: "Which?" } });
   expect(a.isRequested()).toBe(true); expect(b.isRequested()).toBe(false);
@@ -16,7 +19,7 @@ it("registers questions without capabilities and only hands off the asking run",
 
 it("hands off a concrete proposal without exposing an approval operation", async () => {
   const handoff = createExecutionHandoff();
-  const host = { request: vi.fn(async () => ({ result: { id: "proposal" } })) };
+  const host = { request: vi.fn(async () => ({ result: { id: "proposal", status: "waiting" } })) };
   const tools = createPiChatInteractionTools({ requestId: "r", context: {} } as AgentWorkerRequest, host, handoff);
   const proposal = tools.find(tool => tool.name === "propose_actions");
   expect(proposal).toBeDefined();

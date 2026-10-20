@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCompanyResearchTemplate, type KeyResearchRun, type ResearchRun } from "../contracts/index.js";
 import { buildCompanyResearchDocx } from "./company-research-word-document.js";
+import { moduleResearchRun } from "../ui/company-research-test-fixtures.js";
+import type { ResearchModuleId } from "../contracts/index.js";
 
 const tempDirectories: string[] = [];
 
@@ -97,6 +99,20 @@ function paragraphContaining(documentXml: string, text: string): string {
 }
 
 describe("company research Word document", () => {
+  it.each([
+    ["financial_performance"],
+    ["financial_performance", "target_market_and_customers", "products_and_positioning", "value_chain_position"],
+  ] as ResearchModuleId[][])("exports exactly selected module chapters with sources: %j", async (...moduleIds) => {
+    const run = moduleResearchRun({ moduleIds });
+    const documentXml = unzip(await buildCompanyResearchDocx(run, { raw: false, structured: true }), "word/document.xml");
+    for (const section of run.template.sections) expect(documentXml).toContain(section.title);
+    expect(documentXml).toContain("核心结论");
+    expect(documentXml).toContain("https://example.com/one");
+    expect(documentXml).toContain(" [1]");
+    expect(documentXml).not.toContain("技术瓶颈与路线图");
+    const positions = run.template.sections.map(section => documentXml.indexOf(section.title, documentXml.indexOf("核心结论")));
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
   it("preserves both saved stages, metadata, warnings, Markdown structures and safe links in editable OOXML", async () => {
     const run = fixture();
     const buffer = await buildCompanyResearchDocx(run, { raw: true, structured: true });

@@ -1,6 +1,6 @@
 import { Value } from "typebox/value";
 import { AppError, toPublicError, type AppErrorCode, type CapabilityItemId, type CompanyId, type ResearchRunId, type LlmRuntimeSnapshot, type SearchRuntimeSnapshot } from "@deepfield/contracts";
-import { normalizeResearchInput, researchRetryMode, CompanyResearchWorkerEventSchema, StartCompanyResearchInputSchema, STRUCTURED_RESEARCH_OUTPUT_SCHEMA, getCompanyResearchTemplate, type CompanyResearchContext, type CompanyResearchEvent, type CompanyResearchModelDiagnostic, type CompanyResearchStage, type CompanyResearchState, type CompanyResearchWorkerRequest, type KeyResearchRun, type ResearchRun, type ResearchFailureCode, type ResearchRunSummary, type StartCompanyResearchInput } from "../contracts/index.js";
+import { normalizeResearchInput, researchRetryMode, CompanyResearchWorkerEventSchema, StartCompanyResearchInputSchema, buildStructuredResearchOutputSchema, createCompanyResearchTemplate, type CompanyResearchContext, type CompanyResearchEvent, type CompanyResearchModelDiagnostic, type CompanyResearchStage, type CompanyResearchState, type CompanyResearchWorkerRequest, type ModuleResearchRun, type ResearchRun, type ResearchFailureCode, type ResearchRunSummary, type StartCompanyResearchInput } from "../contracts/index.js";
 import type { CompanyResearchServiceRepositories as Repositories } from "../host-ports.js";
 import type { CompanyResearchWorkerPort, RequestIdFactory, RuntimeProfileResolver } from "../host-ports.js";
 import { StructuredResearchValidationError, validateStructuredResearch } from "./company-research-harness.js";
@@ -22,7 +22,7 @@ export interface CompanyResearchServiceOptions {
 
 interface ActiveResearch {
   evidenceManifest?: EvidenceManifest;
-  run: KeyResearchRun;
+  run: ModuleResearchRun;
   requestId: string;
   stage: CompanyResearchStage;
   rawDraftText: string;
@@ -56,9 +56,9 @@ export class CompanyResearchService {
   private active: ActiveResearch | undefined;
   private starting = false;
   private reservation: string | undefined;
-  private onOwnedRunCreated: ((run: KeyResearchRun) => void) | undefined;
+  private onOwnedRunCreated: ((run: ModuleResearchRun) => void) | undefined;
   private settled: Promise<void> = Promise.resolve();
-  reserve(owner: string, onCreated?: (run: KeyResearchRun) => void): void { this.requireAvailable(owner); this.reservation = owner; this.onOwnedRunCreated = onCreated; }
+  reserve(owner: string, onCreated?: (run: ModuleResearchRun) => void): void { this.requireAvailable(owner); this.reservation = owner; this.onOwnedRunCreated = onCreated; }
   release(owner: string): void { if (this.reservation === owner) { this.reservation = undefined; this.onOwnedRunCreated = undefined; } }
   async whenSettled(): Promise<void> { await this.settled; }
   /** Invalidate old continuations without cancelling or deleting durable work. */
@@ -85,7 +85,7 @@ export class CompanyResearchService {
     this.now = options.now ?? (() => new Date());
   }
 
-  async start(itemId: string, companyId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<KeyResearchRun> {
+  async start(itemId: string, companyId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<ModuleResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
     this.requireAvailable(owner);
     const target = this.requireTarget(itemId, companyId);
@@ -114,14 +114,14 @@ export class CompanyResearchService {
     }
   }
 
-  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<KeyResearchRun> {
+  async retryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<ModuleResearchRun> {
     const { normalized, today } = this.normalizeInput(input);
     const target = this.requireTarget(itemId, companyId);
     const saved = this.read(() => this.repositories.companyResearchRuns.getByIdForTarget(
       target.item.id, target.company.id, runId as ResearchRunId,
     ));
     const mode = researchRetryMode(saved, normalized);
-    if (saved?.schemaVersion !== "company-research-report-v1" || mode === "unavailable") {
+    if (saved?.schemaVersion !== "company-research-report-v1" || !("moduleIds" in saved) || mode === "unavailable") {
       throw new CompanyResearchServiceError("company research cannot be retried", "BUSINESS.CONFLICT");
     }
     this.requireAvailable(owner);
@@ -171,10 +171,10 @@ export class CompanyResearchService {
     }
   }
 
-  async retryStructuring(itemId: string, companyId: string, runId: string, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<KeyResearchRun> {
+  async retryStructuring(itemId: string, companyId: string, runId: string, owner?: string, cancelled?: () => boolean, interrupted?: () => boolean): Promise<ModuleResearchRun> {
     this.requireAvailable(owner);
     const saved = this.getRun(itemId, companyId, runId);
-    if (saved?.schemaVersion !== "company-research-report-v1" || saved.status !== "structure_failed") {
+    if (saved?.schemaVersion !== "company-research-report-v1" || !("moduleIds" in saved) || saved.status !== "structure_failed") {
       throw new CompanyResearchServiceError("company research cannot be restructured", "BUSINESS.CONFLICT");
     }
     this.starting = true;
@@ -353,7 +353,7 @@ export class CompanyResearchService {
     { item, company, membership }: ReturnType<CompanyResearchService["requireTarget"]>,
     normalized: StartCompanyResearchInput,
     today: string,
-  ): { context: CompanyResearchContext; template: ReturnType<typeof getCompanyResearchTemplate> } {
+  ): { context: CompanyResearchContext; template: ReturnType<typeof createCompanyResearchTemplate> } {
     return {
       context: {
         ...normalized,
@@ -368,9 +368,8 @@ export class CompanyResearchService {
         ...(company.businessTags !== undefined ? { businessTags: company.businessTags } : {}),
         topicName: item.industry,
         ...(item.researchScope !== undefined ? { topicScope: item.researchScope } : {}),
-        ...(membership.note !== undefined ? { companyNote: membership.note } : {}),
       },
-      template: getCompanyResearchTemplate(normalized.direction),
+      template: createCompanyResearchTemplate(normalized.moduleIds),
     };
   }
 
@@ -381,7 +380,7 @@ export class CompanyResearchService {
     }
   }
 
-  private launch(run: KeyResearchRun, requestId: string, llm: LlmRuntimeSnapshot, search?: SearchRuntimeSnapshot): void {
+  private launch(run: ModuleResearchRun, requestId: string, llm: LlmRuntimeSnapshot, search?: SearchRuntimeSnapshot): void {
     const active: ActiveResearch = {
       run: structuredClone(run), requestId, stage: run.status === "researching" ? "raw" : "structure",
       rawDraftText: "", dispatched: false, cancelRequested: false, done: Promise.resolve(),
@@ -406,7 +405,7 @@ export class CompanyResearchService {
     return {
       ...common, kind: "company-research.structure.run", stage: "structure",
       ...(active.run.evidencePolicy === "required_v1" ? { evidencePacket: this.requirePacket(active) } : {}),
-      rawReportText: active.run.rawReportText!, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA, toolAccess: STRUCTURE_RESEARCH_POLICY,
+      rawReportText: active.run.rawReportText!, outputSchema: buildStructuredResearchOutputSchema(active.run.template), toolAccess: STRUCTURE_RESEARCH_POLICY,
     };
   }
 
@@ -429,7 +428,7 @@ export class CompanyResearchService {
       const built = buildEvidencePacket(snapshot, active.run.rawReportText!, {
         kind: "company-research.structure.run", stage: "structure", evidencePolicy: "required_v1", attemptId,
         requestId: active.requestId, runId: active.run.id, llm: active.llm, context: active.run.researchContext,
-        template: active.run.template, outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA, toolAccess: STRUCTURE_RESEARCH_POLICY,
+        template: active.run.template, outputSchema: buildStructuredResearchOutputSchema(active.run.template), toolAccess: STRUCTURE_RESEARCH_POLICY,
       });
       if (built.status === "budget_exceeded") throw new ResearchConsumeFailure("context_budget_exceeded");
       active.run = this.repositories.runInTransaction(() => {
@@ -493,7 +492,7 @@ export class CompanyResearchService {
                   const snapshot = this.repositories.companyResearchEvidence.readStaging(active.run.id, active.run.attemptId);
                   const built = buildEvidencePacket({ ...snapshot, frozen: true }, event.text, {
                     ...request, kind: "company-research.structure.run", stage: "structure",
-                    outputSchema: STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+                    outputSchema: buildStructuredResearchOutputSchema(active.run.template),
                   });
                   active.run = this.repositories.runInTransaction(() => {
                     const frozen = this.repositories.companyResearchEvidence.freeze(active.run.id, active.run.attemptId!, active.evidenceManifest!);
@@ -616,7 +615,7 @@ export class CompanyResearchService {
     };
   }
 
-  private stateChanged(run: KeyResearchRun, outcome?: ResearchOutcome): void {
+  private stateChanged(run: ModuleResearchRun, outcome?: ResearchOutcome): void {
     this.emit({
       type: "state_changed", itemId: run.itemId, companyId: run.companyId, runId: run.id,
       ...(outcome === undefined ? {} : { outcome }),

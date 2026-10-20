@@ -24,6 +24,8 @@ Search 提供搜索 Provider、公开网页读取、HTML／PDF 解析和资源�
 
 `createWebpageReader` 组合下载与 HTML 解析，返回有界文本、canonical `url`、`requestedUrl` 和真实响应 `finalUrl`；保留字符数与截断标记。HTML 的链接、结构定位和文本上限，PDF 的页数、文本与 metadata 上限沿用现有行为。PDF loader、页面清理、destroy 与取消相互协调，取消不等待不可终止的第三方 Promise，终态错误不携带原始文档内容。
 
+网页读取区分 HTTP 下载成功与取得可用正文：明确的安全验证／登录页标题与对应阻挡指令同时出现，或空标题且全文匹配已知的“正在进行安全检测”等待提示壳时，返回 `access_restricted`；未提取到文本时返回 `content_unavailable`。工具错误提供固定原因，调用方不将失败登记为已打开的正文证据；搜索摘要仍保持摘要来源身份。判定不以正文短小或单独出现验证码／登录词汇为依据。已经实际发出的请求仍消耗 fetch 额度，失败审计保留尝试与计量信息。
+
 ## Usage 与取消
 
 `createMeteredSearchProvider(runtime, snapshot, options)` 接收 `SearchUsagePort` 和配置身份函数。应用保留 ALS 上下文、recorder、跨进程输送和关闭 flush；Search 在 Provider transport 的实际 dispatch 边界开启一次 Usage attempt。

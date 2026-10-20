@@ -9,12 +9,12 @@ import { IndustryResearchService } from "./industry-research-service.js";
 import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-service.js";
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
 import type { CompanyResearchWorkerPort } from "../host-ports.js";
-import { getCompanyResearchTemplate } from "../contracts/index.js";
+import { createCompanyResearchTemplate } from "../contracts/index.js";
 import { zeroEvidenceEvents } from "../runtime/company-research-test-helpers.js";
 const dbs: TestDb[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
-const input = { direction: "product_and_technology", asOfDate: "2026-09-01" } as const;
+const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-01" };
 it.each(["settlement", "admission"] as const)("interrupts disposal at %s without stale writes or user cancellation", async boundary => {
   const f = setup();
   f.batch.dispose();
@@ -183,7 +183,7 @@ it("reserves all queue gaps, creates only dispatched runs, and continues after i
   f.releases.shift()!(); await flush(); expect(f.snapshots.at(-1)).toMatchObject({ batchId: state.batchId, status: "completed", processed: 2, failed: 2 });
   expect(f.batch.getState(f.item.id)).toBeNull();
 });
-const structured = JSON.stringify({ coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map(sectionId => ({ sectionId, status: "not_found", summary: null, facts: [] })) });
+const structured = JSON.stringify({ coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position"].map(sectionId => ({ sectionId, status: "not_found", summary: null, facts: [] })) });
 it.each(["evidence_incomplete", "context_budget_exceeded"] as const)("settles %s and continues to preserve the next completed report", async code => {
   const f = setup();
   if (code === "context_budget_exceeded") f.profiles.resolveActiveLlm = async () => ({ ...await setupResolver(), contextWindow: f.requests.length === 0 ? 32000 : 128000 });
@@ -227,7 +227,7 @@ it.each(["raw", "structure"] as const)("waits for cancellation acknowledgement d
 });
 it.each(["raw", "structure"] as const)("recovers %s as paused and resumes the appropriate existing stage", async stage => {
   const f = setup(); f.batch.dispose();
-  const run = f.db.repos.companyResearchRuns.createResearching(f.item.id, f.companies[0]!.id, input, { ...input, currentDate: input.asOfDate, companyName: "甲", topicName: "测试" }, getCompanyResearchTemplate(input.direction));
+  const run = f.db.repos.companyResearchRuns.createResearching(f.item.id, f.companies[0]!.id, input, { ...input, currentDate: input.asOfDate, companyName: "甲", topicName: "测试" }, createCompanyResearchTemplate(input.moduleIds));
   if (stage === "structure") { f.db.repos.companyResearchRuns.markSearchSucceeded(run.id); f.db.repos.companyResearchRuns.completeRaw(run.id, "原始报告"); }
   f.db.repos.companyResearchBatches.save({ batchId: "recover", itemId: f.item.id, status: "running", entries: [{ ...f.entries[0]!, runId: run.id, status: "running", stage }, f.entries[1]! && { ...f.entries[1]!, status: "pending" }], processed: 0, succeeded: 0, failed: 0, total: 2 });
   const recovered = new CompanyResearchBatchService(f.db.repos, f.research); recovered.recover(); await flush();
@@ -303,7 +303,7 @@ it("cancels before queue launch without dispatching research", async () => {
 });
 it("cancels recovered unfinished work while preserving an already terminal owned failure", async () => {
   const f = setup(); f.batch.dispose();
-  const create = (index: number) => f.db.repos.companyResearchRuns.createResearching(f.item.id, f.companies[index]!.id, input, { ...input, currentDate: input.asOfDate, companyName: f.companies[index]!.name, topicName: "测试" }, getCompanyResearchTemplate(input.direction));
+  const create = (index: number) => f.db.repos.companyResearchRuns.createResearching(f.item.id, f.companies[index]!.id, input, { ...input, currentDate: input.asOfDate, companyName: f.companies[index]!.name, topicName: "测试" }, createCompanyResearchTemplate(input.moduleIds));
   const terminal = create(0); f.db.repos.companyResearchRuns.failResearching(terminal.id, "model_failed");
   const unfinished = create(1); f.db.repos.companyResearchRuns.completeRaw(unfinished.id, "待完成原文");
   f.db.repos.companyResearchBatches.save({ batchId: "recover-cancel", itemId: f.item.id, status: "running", entries: [{ ...f.entries[0]!, runId: terminal.id, status: "failed" }, { ...f.entries[1]!, runId: unfinished.id, status: "running", stage: "structure" }], processed: 1, failed: 1, succeeded: 0, total: 2 });
@@ -370,7 +370,7 @@ it("cancels only a pending retry entry without deleting its failed report or sto
   const failed = f.db.repos.companyResearchRuns.createResearching(
     f.item.id, f.companies[1]!.id, input,
     { ...input, currentDate: input.asOfDate, companyName: "乙", topicName: "测试" },
-    getCompanyResearchTemplate(input.direction),
+    createCompanyResearchTemplate(input.moduleIds),
   );
   f.db.repos.companyResearchRuns.failResearching(failed.id, "model_failed");
   f.batch.start(f.item.id, [f.entries[0]!]); await flush();
@@ -390,7 +390,7 @@ it("runs a structure-only retry directly in the structure stage", async () => {
   const failed = f.db.repos.companyResearchRuns.createResearching(
     f.item.id, f.companies[0]!.id, input,
     { ...input, currentDate: input.asOfDate, companyName: "甲", topicName: "测试" },
-    getCompanyResearchTemplate(input.direction),
+    createCompanyResearchTemplate(input.moduleIds),
   );
   f.db.repos.companyResearchRuns.markSearchSucceeded(failed.id);
   f.db.repos.companyResearchRuns.completeRaw(failed.id, "原始报告");

@@ -40,15 +40,17 @@ describe("Chat message rendering", () => {
     const interaction: InteractionRecord = { id: "interaction", conversationId: "c", requestId: "r", toolCallId: "t", revision: 3, status: "succeeded",
       createdAt: "today", updatedAt: "today", resultSummary: "主题创建完成", payload: { kind: "approval", summary: "创建主题", operation: { provider: "capability", operationId: "opaque", contractVersion: "1" } } };
     const target = { capabilityId: "company-research", viewId: "companies", input: { itemId: "new" } };
-    const { container } = render(<Messages messages={[{ ...message("assistant", ""), requestId: "r" }]}
+    const { container } = render(<Messages messages={[{ ...message("assistant", ""), key: "preparation", requestId: "prepare-request" }, { ...message("assistant", ""), requestId: "r" }]}
       interactionCards={{ interactions: [interaction], respond: vi.fn() }}
       capabilityCards={{ tasks: [], confirmations: [], operations: [
-        { conversationId: "c", sourceRequestId: "r", invocationId: "executed", interactionId: "interaction", status: "completed", title: "", presentation: { text: "主题创建完成", target, linkLabel: "查看新主题" } },
+        { conversationId: "c", sourceRequestId: "prepare-request", invocationId: "prepared", interactionId: "interaction", interactionRole: "preparation", status: "completed", title: "", presentation: { text: "草稿已准备", target: { ...target, viewId: "old-form" }, linkLabel: "旧表单" } },
+        { conversationId: "c", sourceRequestId: "r", invocationId: "executed", interactionId: "interaction", interactionRole: "execution", status: "completed", title: "", presentation: { text: "主题创建完成", target, linkLabel: "查看新主题" } },
         { conversationId: "c", sourceRequestId: "r", invocationId: "other", status: "failed", title: "另一个操作失败" },
       ], approve: vi.fn(), dismiss: vi.fn(), open: vi.fn() }} />);
     expect(container.querySelectorAll(".chat-interaction-card, .capability-chat-card")).toHaveLength(2);
     expect(screen.getAllByText("主题创建完成")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "查看新主题" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "旧表单" })).toBeNull();
     expect(screen.getByText("另一个操作失败")).toBeTruthy();
   });
   it("keeps the completed operation link after generic approval replaces the old pending card", () => {
@@ -194,7 +196,8 @@ describe("Chat message rendering", () => {
       expect(link.getAttribute("target")).toBe("_blank");
       expect(link.getAttribute("rel")).toBe("noreferrer noopener");
     }
-    expect(container.querySelector(".assistant-content")?.textContent).toContain("来源：微博、网易");
+    expect(container.querySelectorAll(".markdown-source-list li")).toHaveLength(2);
+    expect(container.querySelector(".assistant-content")?.textContent).not.toContain("、");
     expect(container.querySelector(".assistant-content")?.textContent).not.toContain("](");
   });
 
@@ -213,6 +216,46 @@ describe("Chat message rendering", () => {
 
     expect(link?.textContent).toBe("https://label.example");
     expect(link?.getAttribute("href")).toBe("https://actual.example/report");
+  });
+
+  it("keeps links in prose inline while separating link-only paragraphs", () => {
+    const { container } = render(<Messages messages={[message("assistant",
+      "正文 [甲](https://a.example/?x=1&y=2)、[乙](https://b.example/) 继续。\n\n[甲](https://a.example/?x=1&y=2)、[乙](https://b.example/)",
+    )]} />);
+    expect(container.querySelector(".markdown-message > p")?.textContent).toBe("正文 甲、乙 继续。");
+    expect(container.querySelectorAll(".markdown-source-list li")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "甲" }).map(a => a.getAttribute("href"))).toEqual(["https://a.example/?x=1&y=2", "https://a.example/?x=1&y=2"]);
+  });
+
+  it("separates Chinese-delimited bare sources without rewriting explicit destinations", () => {
+    const { container } = render(<Messages messages={[message("assistant",
+      "https://one.example/a、https://two.example/b\n\n[原地址](https://one.example/a、https://two.example/b)",
+    )]} />);
+    expect(container.querySelectorAll(".markdown-source-list li")).toHaveLength(2);
+    expect(screen.getAllByRole("link").map(a => a.getAttribute("href"))).toEqual([
+      "https://one.example/a", "https://two.example/b", "https://one.example/a%E3%80%81https://two.example/b",
+    ]);
+  });
+
+  it("portals link details within the pane width and repositions above a bottom anchor", () => {
+    const { container } = render(<div className="chat-pane"><Messages messages={[message("assistant", "[来源](https://source.example/)")]} /></div>);
+    const pane = container.querySelector(".chat-pane")!;
+    const anchor = screen.getByRole("link");
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({ left: 100, right: 400 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ left: 350, top: 700, bottom: 720 } as DOMRect);
+    fireEvent.focus(anchor);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.parentElement).toBe(document.body);
+    expect(dialog.style.width).toBe("284px");
+    expect(dialog.style.left).toBe("108px");
+    Object.defineProperty(dialog, "scrollHeight", { configurable: true, value: 120 });
+    fireEvent.scroll(window);
+    expect(dialog.style.top).toBe("574px");
+    fireEvent.keyDown(anchor, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "复制链接" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(anchor);
   });
 
   it.each([

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type LlmRuntimeSnapshot, type ResearchRunId, type SearchRuntimeSnapshot } from "@deepfield/contracts";
-import { getCompanyResearchTemplate, type CompanyResearchEvent, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type StartCompanyResearchInput } from "../contracts/index.js";
+import { createCompanyResearchTemplate, type CompanyResearchEvent, type CompanyResearchWorkerEvent, type CompanyResearchWorkerRequest, type StartCompanyResearchInput } from "../contracts/index.js";
 import { CompanyResearchService, RAW_RESEARCH_POLICY, STRUCTURE_RESEARCH_POLICY } from "./company-research-service.js";
 import { AppError } from "@deepfield/contracts";
 import type { CompanyResearchWorkerPort } from "../host-ports.js";
@@ -11,7 +11,7 @@ import { evidenceHash, snapshotManifest } from "../persistence/research-evidence
 const dbs: TestDb[] = []; afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const llm: LlmRuntimeSnapshot = { id: "l1", name: "LLM", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 128000, apiKey: "llm-secret" };
 const search: SearchRuntimeSnapshot = { id: "s1", name: "Search", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: {}, apiKey: "search-secret" };
-const valid = { coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })) };
+const valid = { coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position"].map((sectionId) => ({ sectionId, status: "not_found", summary: null, facts: [] })) };
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
@@ -44,10 +44,10 @@ function setup(structureText = JSON.stringify(valid), rawCompletionGate?: Promis
   return { db, item, company, requests, persistedBeforeStructure, profiles, service, worker };
 }
 
-function seedFailed(f: ReturnType<typeof setup>, status: "research_failed" | "structure_failed", input: StartCompanyResearchInput = { direction: "product_and_technology", asOfDate: "2026-09-11" }, evidenceText?: string) {
+function seedFailed(f: ReturnType<typeof setup>, status: "research_failed" | "structure_failed", input: StartCompanyResearchInput = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" }, evidenceText?: string) {
   const context = { ...input, currentDate: "2026-09-11", companyName: f.company.name, topicName: f.item.industry };
   const run = f.db.repos.companyResearchRuns.createResearching(
-    f.item.id, f.company.id, input, context, getCompanyResearchTemplate(input.direction),
+    f.item.id, f.company.id, input, context, createCompanyResearchTemplate(input.moduleIds),
   );
   if (status === "research_failed") return f.db.repos.companyResearchRuns.failResearching(run.id, "tool_failed");
   if (evidenceText) {
@@ -173,7 +173,7 @@ describe("CompanyResearchService profile snapshots", () => {
   it.each(["llm", "search"] as const)("preserves authoritative missing %s credential detail", async (service) => {
     const f = setup();
     f.profiles[service === "llm" ? "resolveActiveLlm" : "resolveActiveSearch"] = async () => { throw new AppError("CONFIG.CREDENTIAL_MISSING", { service }); };
-    await expect(f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" })).rejects.toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING", context: { service } });
+    await expect(f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" })).rejects.toMatchObject({ code: "CONFIG.CREDENTIAL_MISSING", context: { service } });
     expect(f.service.listRuns(f.item.id, f.company.id)).toEqual([]);
   });
   it("reserves legacy structure retry while resolving its LLM", async () => {
@@ -203,7 +203,7 @@ describe("CompanyResearchService profile snapshots", () => {
       } as const;
       yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : JSON.stringify(valid) } as const;
     })();
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "completed", searchStatus: expected });
   });
@@ -219,7 +219,7 @@ describe("CompanyResearchService profile snapshots", () => {
       yield { ...identity, type: "tool_activity", callKey: "s2", name: "web_search", status: "failed", errorCode: "authentication_failed" } as const;
       yield { ...identity, type: "failed", code: "model_failed", message: "company research failed" } as const;
     })();
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await flush();
     expect(f.db.repos.companyResearchRuns.getByIdForTarget(f.item.id, f.company.id, run.id)).toMatchObject({ status: "researching", searchStatus: "succeeded" });
     release();
@@ -239,21 +239,21 @@ describe("CompanyResearchService profile snapshots", () => {
       }
       yield { requestId: request.requestId, runId: request.runId, stage: request.stage, type: "completed", text: request.stage === "raw" ? "原始报告" : JSON.stringify(valid) } as const;
     })();
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "completed", searchStatus: "none" });
   });
 
   it("retries an unsearched completed report in place using changed input", async () => {
     const f = setup();
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.requests[0]).toMatchObject({ llm, search });
     f.profiles.activeLlm = { ...llm, id: "l2", modelId: "model-b" };
     f.profiles.activeSearch = { ...search, id: "s2", options: { searchEngine: "search_pro" } };
     f.requests.length = 0;
-    const retried = await f.service.retryFailed(f.item.id, f.company.id, run.id, { direction: "market_and_commercialization", asOfDate: "2026-09-10", focusScope: "新范围" });
-    expect(retried).toMatchObject({ id: run.id, status: "researching", searchStatus: "none", direction: "market_and_commercialization", focusScope: "新范围", asOfDate: "2026-09-10" });
+    const retried = await f.service.retryFailed(f.item.id, f.company.id, run.id, { moduleIds: ["target_market_and_customers" as const], asOfDate: "2026-09-10", focusScope: "新范围" });
+    expect(retried).toMatchObject({ id: run.id, status: "researching", searchStatus: "none", moduleIds: ["target_market_and_customers" as const], focusScope: "新范围", asOfDate: "2026-09-10" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.requests[0]).toMatchObject({ stage: "raw", llm: f.profiles.activeLlm, search: f.profiles.activeSearch, context: { focusScope: "新范围" } });
   });
@@ -261,7 +261,7 @@ describe("CompanyResearchService profile snapshots", () => {
   it("reruns raw research for unchanged structure failure without search success", async () => {
     const f = setup();
     const failed = seedFailed(f, "structure_failed");
-    await f.service.retryFailed(f.item.id, f.company.id, failed.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    await f.service.retryFailed(f.item.id, f.company.id, failed.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.requests[0]).toMatchObject({ stage: "raw" });
     expect(f.profiles.searchCalls).toBe(1);
@@ -271,7 +271,7 @@ describe("CompanyResearchService profile snapshots", () => {
     let release!: () => void;
     const paused = new Promise<void>(resolve => { release = resolve; });
     const f = setup(undefined, paused);
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => f.requests.length === 1);
     f.profiles.activeLlm = { ...llm, id: "l2", modelId: "model-b" };
     f.profiles.activeSearch = { ...search, id: "s2" };
@@ -284,7 +284,7 @@ describe("CompanyResearchService profile snapshots", () => {
   });
 
   it("retryStructuring resolves only the current LLM for historical unknown search state", async () => {
-    const f = setup("invalid"); const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const f = setup("invalid"); const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     for (let i = 0; i < 10 && f.service.getRun(f.item.id, f.company.id, run.id)?.status !== "structure_failed"; i++) await flush();
     f.db.db.prepare("UPDATE company_research_runs SET search_status = 'unknown' WHERE id = ?").run(run.id);
     expect(f.requests[0]).toMatchObject({ llm, search });
@@ -332,7 +332,7 @@ describe("CompanyResearchService profile snapshots", () => {
     })();
     const emitted: unknown[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await flush();
     expect(f.service.getState(f.item.id, f.company.id).active?.latestActivity).toMatchObject({ callKey: "tool-1", name: "web_search", summary: "宇树科技", status: "running" });
     expect(emitted).toContainEqual(expect.objectContaining({ type: "tool_activity", runId: run.id, callKey: "tool-1" }));
@@ -361,11 +361,11 @@ describe("CompanyResearchService profile snapshots", () => {
     })();
     const emitted: CompanyResearchEvent[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const input = { direction: "product_and_technology" as const, focusScope: "  机器人  ", asOfDate: "2026-09-11" };
+    const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], focusScope: "  机器人  ", asOfDate: "2026-09-11" };
     const run = await f.service.start(f.item.id, f.company.id, input);
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({
-      id: run.id, status: "research_failed", direction: input.direction,
+      id: run.id, status: "research_failed", moduleIds: input.moduleIds,
       focusScope: "机器人", asOfDate: input.asOfDate, lastFailureCode: persistedCode,
     });
     expect(f.service.listRuns(f.item.id, f.company.id)).toEqual([
@@ -383,7 +383,7 @@ describe("CompanyResearchService profile snapshots", () => {
     })();
     const emitted: unknown[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "research_failed", lastFailureCode: "protocol_error" });
     expect(f.service.listRuns(f.item.id, f.company.id)).toHaveLength(1);
@@ -405,7 +405,7 @@ describe("CompanyResearchService profile snapshots", () => {
     })();
     const emitted: CompanyResearchEvent[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "completed" });
     expect(f.service.listRuns(f.item.id, f.company.id)).toHaveLength(1);
@@ -415,7 +415,7 @@ describe("CompanyResearchService profile snapshots", () => {
 
   it("persists safe application validation diagnostics when a worker bypasses structure validation", async () => {
     const f = setup("{broken");
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
 
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "structure_failed", rawReportText: "原始报告" });
@@ -427,7 +427,7 @@ describe("CompanyResearchService profile snapshots", () => {
   it("persists a safe storage_failed structure diagnostic when report persistence fails", async () => {
     const f = setup();
     f.db.repos.companyResearchRuns.completeStructured = () => { throw new Error("private database path"); };
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
 
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "structure_failed", rawReportText: "原始报告" });
@@ -445,7 +445,7 @@ describe("CompanyResearchService profile snapshots", () => {
     f.db.repos.companyResearchRuns.failResearching = () => { throw new Error("sk-storage-secret"); };
     const emitted: CompanyResearchEvent[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await flush();
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "researching" });
     expect(f.service.isRunning()).toBe(true);
@@ -465,7 +465,7 @@ describe("CompanyResearchService profile snapshots", () => {
       } as const;
       yield { requestId: request.requestId, runId: request.runId, stage: "raw", type: "failed", code: "empty_report", message: "company research failed" } as const;
     })();
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "research_failed", lastFailureCode: "empty_report" });
     expect(f.db.repos.companyResearchDiagnostics.getByRequestId("r1")).toMatchObject({ runId: run.id, traceId: "r1", errorCategory: "invalid_final_empty" });
@@ -489,7 +489,7 @@ describe("CompanyResearchService profile snapshots", () => {
     f.worker.cancelResearch = vi.fn(() => release());
     const emitted: CompanyResearchEvent[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await stageEntered;
     await f.service.cancel(run.id);
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toBeUndefined();
@@ -508,7 +508,7 @@ describe("CompanyResearchService profile snapshots", () => {
     })();
     const emitted: CompanyResearchEvent[] = [];
     f.service.subscribe((event) => emitted.push(event));
-    const run = await f.service.start(f.item.id, f.company.id, { direction: "product_and_technology", asOfDate: "2026-09-11" });
+    const run = await f.service.start(f.item.id, f.company.id, { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.getRun(f.item.id, f.company.id, run.id)).toMatchObject({ status: "structure_failed", lastFailureCode: "structuring_failed" });
     expect(emitted).toContainEqual(expect.objectContaining({ type: "state_changed", runId: run.id, outcome: "research_failed" }));
@@ -522,7 +522,7 @@ describe("CompanyResearchService failed-run retry", () => {
     const failed = seedFailed(f, "research_failed");
     const release = pauseWorker(f);
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
-    const changedInput = { direction: "product_and_technology" as const, focusScope: "  核心零部件  ", asOfDate: "2026-09-10" };
+    const changedInput = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], focusScope: "  核心零部件  ", asOfDate: "2026-09-10" };
     const retried = await f.service.retryFailed(f.item.id, f.company.id, failed.id, changedInput);
     expect(retried).toMatchObject({ id: failed.id, status: "researching", focusScope: "核心零部件", asOfDate: "2026-09-10" });
     expect(f.db.repos.companyResearchRuns.listRuns(f.item.id, f.company.id)).toHaveLength(0);
@@ -535,7 +535,7 @@ describe("CompanyResearchService failed-run retry", () => {
 
   it.each(["unknown", "succeeded"] as const)("retries unchanged %s structure failure in place using only LLM and structure dispatch", async (searchStatus) => {
     const f = setup();
-    const input = { direction: "product_and_technology" as const, focusScope: "机器人", asOfDate: "2026-09-11" };
+    const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], focusScope: "机器人", asOfDate: "2026-09-11" };
     const failed = seedFailed(f, "structure_failed", input);
     f.db.db.prepare("UPDATE company_research_runs SET search_status = ? WHERE id = ?").run(searchStatus, failed.id);
     const release = pauseWorker(f);
@@ -553,17 +553,17 @@ describe("CompanyResearchService failed-run retry", () => {
 
   it("routes a changed structure failure through full raw research with rebuilt snapshots", async () => {
     const f = setup();
-    const failed = seedFailed(f, "structure_failed", { direction: "product_and_technology", focusScope: "旧范围", asOfDate: "2026-09-11" });
+    const failed = seedFailed(f, "structure_failed", { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], focusScope: "旧范围", asOfDate: "2026-09-11" });
     const release = pauseWorker(f);
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     const retried = await f.service.retryFailed(f.item.id, f.company.id, failed.id, {
-      direction: "value_chain_and_competition", focusScope: "新范围", asOfDate: "2026-09-10",
+      moduleIds: ["value_chain_position" as const], focusScope: "新范围", asOfDate: "2026-09-10",
     });
-    expect(retried).toMatchObject({ id: failed.id, status: "researching", direction: "value_chain_and_competition", focusScope: "新范围", asOfDate: "2026-09-10" });
+    expect(retried).toMatchObject({ id: failed.id, status: "researching", moduleIds: ["value_chain_position" as const], focusScope: "新范围", asOfDate: "2026-09-10" });
     expect(retried).not.toHaveProperty("rawReportText");
     await waitUntil(() => f.requests.length === 1);
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 1 });
-    expect(f.requests[0]).toMatchObject({ stage: "raw", context: { direction: "value_chain_and_competition", focusScope: "新范围", asOfDate: "2026-09-10" }, template: { templateId: "value_chain_and_competition" } });
+    expect(f.requests[0]).toMatchObject({ stage: "raw", context: { moduleIds: ["value_chain_position" as const], focusScope: "新范围", asOfDate: "2026-09-10" }, template: { templateId: "selected_modules" } });
     release();
     await waitUntil(() => !f.service.isRunning());
   });
@@ -573,7 +573,7 @@ describe("CompanyResearchService failed-run retry", () => {
     const failed = seedFailed(f, "research_failed");
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(f.item.id, f.company.id, failed.id, {
-      direction: "product_and_technology", asOfDate: "2026-09-12",
+      moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-12",
     })).rejects.toThrow("invalid company research input");
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles).toMatchObject({ llmCalls: 0, searchCalls: 0 });
@@ -586,7 +586,7 @@ describe("CompanyResearchService failed-run retry", () => {
     f.db.repos.itemCompanies.add(other.id, f.company.id);
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(other.id, f.company.id, failed.id, {
-      direction: "product_and_technology", asOfDate: "2026-09-11",
+      moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11",
     })).rejects.toThrow("cannot be retried");
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles).toMatchObject({ llmCalls: 0, searchCalls: 0 });
@@ -600,13 +600,13 @@ describe("CompanyResearchService failed-run retry", () => {
     f.db.repos.itemCompanies.add(otherItem.id, otherCompany.id);
     f.db.repos.companyResearchRuns.createResearching(
       otherItem.id, otherCompany.id,
-      { direction: "operations_and_performance", asOfDate: "2026-09-11" },
-      { direction: "operations_and_performance", asOfDate: "2026-09-11", currentDate: "2026-09-11", companyName: otherCompany.name, topicName: otherItem.industry },
-      getCompanyResearchTemplate("operations_and_performance"),
+      { moduleIds: ["financial_performance" as const], asOfDate: "2026-09-11" },
+      { moduleIds: ["financial_performance" as const], asOfDate: "2026-09-11", currentDate: "2026-09-11", companyName: otherCompany.name, topicName: otherItem.industry },
+      createCompanyResearchTemplate(["financial_performance"]),
     );
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(f.item.id, f.company.id, failed.id, {
-      direction: "product_and_technology", asOfDate: "2026-09-11",
+      moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11",
     })).rejects.toThrow("already running");
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles).toMatchObject({ llmCalls: 0, searchCalls: 0 });
@@ -618,7 +618,7 @@ describe("CompanyResearchService failed-run retry", () => {
     f.profiles.resolveActiveLlm = async () => { f.profiles.llmCalls++; throw new Error("sk-provider-secret"); };
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(f.item.id, f.company.id, failed.id, {
-      direction: "product_and_technology", asOfDate: "2026-09-11",
+      moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11",
     })).rejects.toMatchObject({ code: "INTERNAL.UNKNOWN" });
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles.llmCalls).toBe(1);
@@ -630,7 +630,7 @@ describe("CompanyResearchService failed-run retry", () => {
     f.profiles.resolveActiveSearch = async () => { f.profiles.searchCalls++; throw new Error("sk-search-secret"); };
     f.profiles.llmCalls = 0; f.profiles.searchCalls = 0;
     await expect(f.service.retryFailed(f.item.id, f.company.id, failed.id, {
-      direction: "product_and_technology", asOfDate: "2026-09-11",
+      moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11",
     })).rejects.toMatchObject({ code: "INTERNAL.UNKNOWN" });
     expect(f.service.getRun(f.item.id, f.company.id, failed.id)).toEqual(failed);
     expect(f.profiles).toMatchObject({ llmCalls: 1, searchCalls: 1 });
@@ -643,12 +643,12 @@ describe("CompanyResearchService failed-run retry", () => {
       yield { requestId: request.requestId, runId: request.runId, stage: "raw", type: "failed", code: "model_failed", message: "company research failed" } as const;
     })();
     await f.service.retryFailed(f.item.id, f.company.id, failed.id, {
-      direction: "market_and_commercialization", focusScope: "最新范围", asOfDate: "2026-09-10",
+      moduleIds: ["target_market_and_customers" as const], focusScope: "最新范围", asOfDate: "2026-09-10",
     });
     await waitUntil(() => !f.service.isRunning());
     expect(f.service.listRuns(f.item.id, f.company.id)).toEqual([
       expect.objectContaining({
-        id: failed.id, status: "research_failed", direction: "market_and_commercialization",
+        id: failed.id, status: "research_failed", moduleIds: ["target_market_and_customers" as const],
         focusScope: "最新范围", asOfDate: "2026-09-10", lastFailureCode: "model_failed",
       }),
     ]);
@@ -668,7 +668,7 @@ describe("CompanyResearchService run deletion", () => {
   it("deletes one terminal run with its diagnostics and trace-linked tools only", () => {
     const f = setup();
     const doomed = seedFailed(f, "research_failed");
-    const kept = seedFailed(f, "research_failed", { direction: "market_and_commercialization", asOfDate: "2026-09-10" });
+    const kept = seedFailed(f, "research_failed", { moduleIds: ["target_market_and_customers" as const], asOfDate: "2026-09-10" });
     recordDiagnostic(f, doomed.id, "request-doomed", "trace-doomed");
     recordDiagnostic(f, kept.id, "request-kept", "trace-kept");
     recordTool(f, "tool-doomed", "trace-doomed");
@@ -699,10 +699,10 @@ describe("CompanyResearchService run deletion", () => {
 
   it("leaves every row unchanged when the selected run is active", () => {
     const f = setup();
-    const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-11" };
+    const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-11" };
     const context = { ...input, currentDate: "2026-09-11", companyName: f.company.name, topicName: f.item.industry };
     const run = f.db.repos.companyResearchRuns.createResearching(
-      f.item.id, f.company.id, input, context, getCompanyResearchTemplate(context.direction),
+      f.item.id, f.company.id, input, context, createCompanyResearchTemplate(context.moduleIds),
     );
     recordDiagnostic(f, run.id, "request-1", "trace-1");
     recordTool(f, "tool-1", "trace-1");
@@ -722,9 +722,9 @@ describe("CompanyResearchService run deletion", () => {
     f.db.repos.itemCompanies.add(otherItem.id, otherCompany.id);
     f.db.repos.companyResearchRuns.createResearching(
       otherItem.id, otherCompany.id,
-      { direction: "operations_and_performance", asOfDate: "2026-09-11" },
-      { direction: "operations_and_performance", asOfDate: "2026-09-11", currentDate: "2026-09-11", companyName: otherCompany.name, topicName: otherItem.industry },
-      getCompanyResearchTemplate("operations_and_performance"),
+      { moduleIds: ["financial_performance" as const], asOfDate: "2026-09-11" },
+      { moduleIds: ["financial_performance" as const], asOfDate: "2026-09-11", currentDate: "2026-09-11", companyName: otherCompany.name, topicName: otherItem.industry },
+      createCompanyResearchTemplate(["financial_performance"]),
     );
     expect(() => f.service.deleteRun(f.item.id, f.company.id, terminal.id)).toThrow("already running");
     expect(f.service.getRun(f.item.id, f.company.id, terminal.id)).toEqual(terminal);

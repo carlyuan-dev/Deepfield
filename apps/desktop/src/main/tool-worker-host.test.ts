@@ -81,6 +81,17 @@ const auditFinish = {
 };
 
 describe("tool worker host", () => {
+  it("classifies interaction failures safely without returning audit errors or private exception text", async () => {
+    const posted: unknown[] = [];
+    const host = createToolWorkerHost({ audit: fakeAudit().audit, secrets: { get: () => undefined }, postMessage: value => posted.push(value),
+      chatInteraction: { call: async () => { throw new Error("Stale request: private-secret"); } } });
+    host.handleRequest({ hostRequestId: "interaction-error", kind: "host.request", method: "chat.interaction",
+      payload: { chatRequestId: "chat", toolCallId: "draft", operation: "draft.update", arguments: {} } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(posted).toMatchObject([{ ok: true, payload: { result: { status: "error", error: { code: "revision_changed", operation: "draft.update" } } } }]);
+    expect(JSON.stringify(posted)).not.toContain("private-secret");
+    host.dispose();
+  });
   it("lists, reads and searches bounded conversation data over the narrow host RPC", async () => {
     const dir = mkdtempSync(join(tmpdir(), "df-conversations-"));
     const db = openDatabase(join(dir, "t.sqlite"));

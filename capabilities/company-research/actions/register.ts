@@ -53,8 +53,8 @@ export function registerResearchProtocol(registrar: CapabilityRegistrar, service
     if (id === "research.retryFailed" || id === "research.retryStructuring") {
       requireTarget(input.itemId, input.companyId);
       const run = services.companyResearch.getRun(input.itemId, input.companyId, input.runId);
-      if (!run || run.schemaVersion !== "company-research-report-v1") throw protocolError("not_found");
-      const retryInput = id === "research.retryFailed" ? input.input : { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope ? { focusScope: run.focusScope } : {}) };
+      if (!run || run.schemaVersion !== "company-research-report-v1" || !("moduleIds" in run)) throw protocolError("not_found");
+      const retryInput = id === "research.retryFailed" ? input.input : { moduleIds: run.moduleIds, asOfDate: run.asOfDate, ...(run.focusScope ? { focusScope: run.focusScope } : {}) };
       const task = await submission.submitBatch(input.itemId, [{ companyId: input.companyId, input: retryInput }], context.invocationId, { runId: input.runId, structureOnly: id === "research.retryStructuring" });
       return withPresentation({ status: "accepted", taskRef: task.taskRef, taskStatus: task.status }, presentAccepted(id, input));
     }

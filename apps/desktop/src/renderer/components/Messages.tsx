@@ -17,6 +17,7 @@ export interface MessagesProps {
     interactions: InteractionRecord[];
     respond(interaction: InteractionRecord, command: RespondCommand): Promise<InteractionRecord>;
     openEditor?(interaction: InteractionRecord): Promise<void>;
+    activeEditorInteractionId?: string | undefined;
   };
   capabilityCards?: {
     tasks: ChatCapabilityTaskCard[]; confirmations: ChatCapabilityConfirmation[]; operations: ChatCapabilityOperationCard[];
@@ -39,25 +40,27 @@ export function Messages({
     if (message.role === "assistant" || !owner.has(message.requestId)) owner.set(message.requestId, index);
   });
   const interactionsFor = (requestId: string) => interactionCards?.interactions.filter(item => item.requestId === requestId) ?? [];
+  const independentOperations = capabilityCards?.operations.filter(operation =>
+    !interactionCards?.interactions.some(interaction => interaction.id === operation.interactionId)) ?? [];
   const taskFor = (interaction: InteractionRecord) => capabilityCards?.tasks.find(task =>
     task.sourceRequestId === interaction.requestId && task.interactionId === interaction.id);
   const cardsFor = (requestId: string) => <>
     {interactionsFor(requestId).map(item => <ChatInteractionCard key={item.id} interaction={item}
-      operation={capabilityCards?.operations.find(operation => operation.interactionId === item.id)} task={taskFor(item)}
+      operation={capabilityCards?.operations.findLast(operation => operation.interactionId === item.id && operation.interactionRole === "execution")
+        ?? capabilityCards?.operations.findLast(operation => operation.interactionId === item.id && operation.interactionRole !== "preparation")} task={taskFor(item)}
       {...(capabilityCards ? { open: capabilityCards.open } : {})}
       respond={command => interactionCards!.respond(item, command)}
-      {...(interactionCards?.openEditor ? { openEditor: () => interactionCards.openEditor!(item) } : {})} />)}
+      {...(interactionCards?.openEditor && interactionCards.activeEditorInteractionId !== item.id ? { openEditor: () => interactionCards.openEditor!(item) } : {})} />)}
     {capabilityCards && <CapabilityChatCards
     tasks={capabilityCards.tasks.filter(item => item.sourceRequestId === requestId && !interactionsFor(requestId).some(interaction => taskFor(interaction) === item))}
     confirmations={interactionsFor(requestId).some(item => item.payload.kind === "approval") ? [] : capabilityCards.confirmations.filter(item => item.sourceRequestId === requestId)}
-    operations={capabilityCards.operations.filter(item => item.sourceRequestId === requestId
-      && !interactionsFor(requestId).some(interaction => interaction.id === item.interactionId)
+    operations={independentOperations.filter(item => item.sourceRequestId === requestId
       && (item.status !== "awaiting_confirmation" || !interactionsFor(requestId).some(interaction => interaction.payload.kind === "approval")))}
     approve={capabilityCards.approve} dismiss={capabilityCards.dismiss} open={capabilityCards.open} />}
   </>;
   const hasCards = (requestId: string) => Boolean(interactionsFor(requestId).length || (capabilityCards && (
     capabilityCards.confirmations.some(item => item.sourceRequestId === requestId)
-    || capabilityCards.operations.some(item => item.sourceRequestId === requestId)
+    || independentOperations.some(item => item.sourceRequestId === requestId)
     || capabilityCards.tasks.some(item => item.sourceRequestId === requestId && item.snapshot.presentation))));
   return (
     <div
@@ -66,6 +69,7 @@ export function Messages({
       aria-live="polite"
       onScroll={(event) => onScroll?.(event.currentTarget)}
     >
+      <div className="messages-content">
       {messages.length === 0 && <p className="messages-empty">{emptyLabel}</p>}
       {messages.map((message, index) => <Fragment key={message.key}>
         <div key={message.key} className={`message ${message.role} ${message.status}`}>
@@ -121,6 +125,7 @@ export function Messages({
         {message.role === "user" && message.requestId && owner.get(message.requestId) === index && hasCards(message.requestId) &&
           <div className="message assistant capability-message"><div className="message-role">Deepfield</div>{cardsFor(message.requestId)}</div>}
       </Fragment>)}
+      </div>
     </div>
   );
 }

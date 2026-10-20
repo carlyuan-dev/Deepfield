@@ -247,6 +247,8 @@ describe("app conversation chat", () => {
     });
 
     const runningToggle = await screen.findByRole("button", { name: "正在调用 2 个工具" });
+    expect(runningToggle.getAttribute("aria-expanded")).toBe("false");
+    await user.click(runningToggle);
     expect(runningToggle.getAttribute("aria-expanded")).toBe("true");
     expect(runningToggle.querySelector(".tool-activity-arrow")?.textContent).toBe("↑");
     expect(screen.getByText("读取网页")).toBeTruthy();
@@ -256,7 +258,7 @@ describe("app conversation chat", () => {
       within(screen.getByLabelText("工具调用"))
         .getAllByRole("listitem")
         .map((row) => row.textContent),
-    ).toEqual(["读取网页example.com调用中", "计算器2 + 2调用中"]);
+    ).toEqual(["读取网页调用中example.com", "计算器调用中2 + 2"]);
 
     act(() => {
       fake.emit({

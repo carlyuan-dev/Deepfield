@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Value } from "typebox/value";
 import { AppError, toPublicError, type ResearchRunId, type CapabilityItemId, type CompanyId } from "@deepfield/contracts";
-import { BatchResearchEntryInputSchema, researchRetryMode, type BatchResearchEntry, type BatchResearchEntryInput, type CompanyResearchBatchState, type KeyResearchRun, type StartCompanyResearchInput } from "../contracts/index.js";
+import { BatchResearchEntryInputSchema, normalizeResearchInput, researchRetryMode, type BatchResearchEntry, type BatchResearchEntryInput, type CompanyResearchBatchState, type KeyResearchRun, type StartCompanyResearchInput } from "../contracts/index.js";
 import type { CompanyResearchBatchServiceRepositories as Repositories } from "../host-ports.js";
 import type { CompanyResearchService } from "./company-research-service.js";
 
@@ -86,13 +86,13 @@ export class CompanyResearchBatchService {
   enqueueRetryFailed(itemId: string, companyId: string, runId: string, input: StartCompanyResearchInput, onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     this.research.validateBatchEntry(itemId, companyId, input);
     const run = this.research.getRun(itemId, companyId, runId);
-    if (run?.schemaVersion !== "company-research-report-v1" || researchRetryMode(run, input) === "unavailable") throw new AppError("BUSINESS.CONFLICT");
+    if (run?.schemaVersion !== "company-research-report-v1" || !("moduleIds" in run) || researchRetryMode(run, input) === "unavailable") throw new AppError("BUSINESS.CONFLICT");
     return this.enqueue(itemId, companyId, input, "retry_failed", runId, onQueued);
   }
   enqueueRetryStructuring(itemId: string, companyId: string, runId: string, onQueued?: (state: CompanyResearchBatchState) => void): CompanyResearchBatchState {
     const run = this.research.getRun(itemId, companyId, runId);
-    if (run?.schemaVersion !== "company-research-report-v1" || run.status !== "structure_failed") throw new AppError("BUSINESS.CONFLICT");
-    const input: StartCompanyResearchInput = { direction: run.direction, asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) };
+    if (run?.schemaVersion !== "company-research-report-v1" || !("moduleIds" in run) || run.status !== "structure_failed") throw new AppError("BUSINESS.CONFLICT");
+    const input: StartCompanyResearchInput = { moduleIds: run.moduleIds, asOfDate: run.asOfDate, ...(run.focusScope === undefined ? {} : { focusScope: run.focusScope }) };
     this.research.validateBatchEntry(itemId, companyId, input);
     return this.enqueue(itemId, companyId, input, "retry_structure", runId, onQueued);
   }
@@ -375,7 +375,7 @@ export class CompanyResearchBatchService {
     return structuredClone(state);
   }
   private createEntry(itemId: string, entry: BatchResearchEntryInput, mode: "new" | "retry_failed" | "retry_structure", originalRunId?: string): BatchResearchEntry {
-    return { ...structuredClone(entry), entryId: randomUUID(), itemId, mode, ...(originalRunId ? { originalRunId } : {}), status: "pending" };
+    return { ...structuredClone(entry), input: normalizeResearchInput(entry.input), entryId: randomUUID(), itemId, mode, ...(originalRunId ? { originalRunId } : {}), status: "pending" };
   }
   private normalize(state: CompanyResearchBatchState): void {
     for (const entry of state.entries) {

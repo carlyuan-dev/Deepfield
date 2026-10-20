@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
-import { researchRetryMode, COMPANY_RESEARCH_TEMPLATES, type BatchResearchEntry, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
+import { researchRetryMode, isModuleResearchSummary, researchModuleSelectionLabel, type BatchResearchEntry, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
 import { MarkdownMessage } from "../../../apps/desktop/src/renderer/components/MarkdownMessage.js";
 import { CompanyResearchModal, type ResearchContextProps } from "./CompanyResearchModal.js";
 import { useFormField, type FormControl } from "./form-control.js";
@@ -37,7 +37,7 @@ function runStatusLabel(run: ResearchRunSummary): string {
 function runLabel(run: ResearchRunSummary): string {
   const failure = run.status === "research_failed" || run.status === "structure_failed" ? "（失败待重试）"
     : run.searchStatus === "none" ? "（未成功联网）" : "";
-  return `${runTimestamp(run)} · ${run.schemaVersion === "legacy-freeform-v1" ? "旧版原始报告" : `${COMPANY_RESEARCH_TEMPLATES[run.direction].title} · 截至 ${run.asOfDate}`}${failure}`;
+  return `${runTimestamp(run)} · ${run.schemaVersion === "legacy-freeform-v1" ? "旧版原始报告" : `${run.templateTitle ?? (isModuleResearchSummary(run) ? researchModuleSelectionLabel(run) : "历史报告")} · 截至 ${run.asOfDate}`}${failure}`;
 }
 function ReportTabs({ run, rawText, exportControl }: { run: KeyResearchRun | undefined; rawText: string; exportControl: ReactNode }) {
   const completed = run?.status === "completed";
@@ -142,7 +142,7 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   const exportInFlight = useRef(false);
   const active = research.state.active?.run.id === research.selectedRunId ? research.state.active : undefined;
   const run = research.selectedRun;
-  const latest = research.state.runs.find((entry) => entry.schemaVersion === "company-research-report-v1");
+  const latest = research.state.runs.find(isModuleResearchSummary);
   const occupied = queueEntry?.status === "pending" || queueEntry?.status === "running" || (!!research.state.active && !active);
   const summary = research.state.runs.find((entry) => entry.id === research.selectedRunId);
   const selectionKey = `${itemId}:${companyId}:${research.selectedRunId ?? ""}`;
@@ -150,7 +150,7 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   currentSelectionKey.current = selectionKey;
   const status = active?.run.status ?? summary?.status;
   const canRetry = researchRetryMode(summary) !== "unavailable";
-  const canRetryStructuring = summary?.status === "structure_failed" && summary.lastFailureCode !== "evidence_incomplete";
+  const canRetryStructuring = summary && isModuleResearchSummary(summary) && summary.status === "structure_failed" && summary.lastFailureCode !== "evidence_incomplete";
   const reportSearchStatus = run?.searchStatus ?? summary?.searchStatus ?? active?.run.searchStatus ?? "unknown";
   const modalOpen = newReportModalOpen || retryModalOpen;
   if (navigationDirtyRef) navigationDirtyRef.current = modalOpen;
@@ -274,8 +274,8 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
         : research.state.runs.length === 0 ? <p className="muted company-research-empty">还没有调研报告。</p> : null}
       {!active && research.state.runs.length > 0 && (!run || status === "research_failed") && <div role="group" aria-label="报告视图与导出" className="research-tabs-toolbar company-report-export-fallback"><button type="button" disabled>导出 Word</button></div>}
     </>}
-    {newReportModalOpen && <CompanyResearchModal {...context} {...(latest?.schemaVersion === "company-research-report-v1" ? { initial: latest } : {})} active={panelActive} disabled={occupied} onClose={() => setNewReportModalOpen(false)} onStart={research.start} {...(onOpenSettings ? { onOpenSettings } : {})} />}
-    {retryModalOpen && summary?.schemaVersion === "company-research-report-v1" && <CompanyResearchModal {...context} mode="retry" initial={summary} active={panelActive} disabled={occupied} onClose={() => setRetryModalOpen(false)} onStart={research.retry} {...(onOpenSettings ? { onOpenSettings } : {})} />}
+    {newReportModalOpen && <CompanyResearchModal {...context} {...(latest && isModuleResearchSummary(latest) ? { initial: latest } : {})} active={panelActive} disabled={occupied} onClose={() => setNewReportModalOpen(false)} onStart={research.start} {...(onOpenSettings ? { onOpenSettings } : {})} />}
+    {retryModalOpen && summary && isModuleResearchSummary(summary) && <CompanyResearchModal {...context} mode="retry" initial={summary} active={panelActive} disabled={occupied} onClose={() => setRetryModalOpen(false)} onStart={research.retry} {...(onOpenSettings ? { onOpenSettings } : {})} />}
     {run && run.id === research.selectedRunId && (hasPersistedReportBody(run) || (run.schemaVersion === "company-research-report-v1" && run.evidencePolicy === "required_v1" && run.status === "research_failed")) && <ResearchEvidenceDetails key={selectionKey} api={api} itemId={itemId} companyId={companyId} runId={run.id} />}
     {exportChoiceOpen && <WordExportChoiceModal
       availableRaw={availableRaw}

@@ -1,15 +1,33 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CompanyResearchState, ResearchRun } from "../contracts/index.js";
 import { makeFakeApi as makeBaseApi } from "../../../apps/desktop/src/renderer/renderer-test-helpers.js";
 import { configuredSettings } from "../../../apps/desktop/src/renderer/features/settings/settings-test-fixtures.js";
 import { CompanyResearchPanel } from "./CompanyResearchPanel.js";
 import { CompanyResearchModal } from "./CompanyResearchModal.js";
-import { activeResearch, researchRun, researchSummary } from "./company-research-test-fixtures.js";
+import { activeResearch, moduleResearchRun as researchRun, researchRun as historicalResearchRun, researchSummary } from "./company-research-test-fixtures.js";
 
 const context = { itemId: "item-research", companyId: "company-research", topicName: "智能眼镜", topicScope: "中国市场", companyName: "小米", companyNote: "重点候选" };
+
+it("selects one or four modules across groups, blocks a fifth, and requires at least one", async () => {
+  const user = userEvent.setup(); const onStart = vi.fn();
+  render(<CompanyResearchModal {...context} onClose={() => {}} onStart={onStart} closeOnSubmit={false} />);
+  const submit = screen.getByRole("button", { name: "开始调研" }) as HTMLButtonElement;
+  expect(submit.disabled).toBe(true);
+  await user.click(screen.getByLabelText("核心财务表现"));
+  await user.click(submit);
+  expect(onStart).toHaveBeenLastCalledWith(expect.objectContaining({ moduleIds: ["financial_performance"] }));
+  for (const title of ["产业链位置", "目标市场与客户", "主要产品与定位"]) await user.click(screen.getByLabelText(title));
+  expect((screen.getByLabelText("核心技术与指标") as HTMLInputElement).disabled).toBe(true);
+  expect(screen.getByRole("status").textContent).toContain("已选 4 个");
+  await user.click(submit);
+  expect(onStart).toHaveBeenLastCalledWith(expect.objectContaining({ moduleIds: ["products_and_positioning", "target_market_and_customers", "value_chain_position", "financial_performance"] }));
+  for (const input of screen.getAllByRole("checkbox").filter(input => (input as HTMLInputElement).checked)) await user.click(input);
+  expect(submit.disabled).toBe(true);
+});
+
 function makeFakeApi() {
   const api = makeBaseApi();
   api.settings.get.mockResolvedValue(configuredSettings());
@@ -146,7 +164,7 @@ describe("two-stage company research", () => {
 
   it("identifies saved reports with snapshot context and history cutoff after live target edits", async () => {
     const fake = makeFakeApi(); const user = userEvent.setup();
-    const run = researchRun({
+    const run = historicalResearchRun({
       focusScope: "历史新品范围", asOfDate: "2025-06-30",
       researchContext: {
         companyName: "历史公司名称", legalName: "历史公司全称", aliases: ["历史别名"],
@@ -288,6 +306,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.start.mockReturnValue(pendingStart.promise);
     const view = render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
+    await user.click(screen.getByLabelText("主要产品与定位"));
     await user.click(screen.getAllByRole("button", { name: "开始调研" })[1]!);
     fake.companyResearch.getState.mockReturnValueOnce(pendingState.promise);
     act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: "old" }));
@@ -379,7 +398,7 @@ describe("two-stage company research", () => {
   it("retries the selected failure with edited inputs and keeps the same selected run after completion", async () => {
     const fake = makeFakeApi(); const user = userEvent.setup();
     let run = researchRun({
-      status: "research_failed", direction: "operations_and_performance", focusScope: "旧范围",
+      status: "research_failed", moduleIds: ["financial_performance"], focusScope: "旧范围",
       asOfDate: "2026-01-01", lastFailureCode: "model_failed",
     });
     let state: CompanyResearchState = { runs: [researchSummary(run)], globalActiveRun: null };
@@ -393,20 +412,21 @@ describe("two-stage company research", () => {
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "重新尝试" }));
     const dialog = screen.getByRole("dialog", { name: "重新尝试调研" });
-    expect((within(dialog).getByLabelText("研究方向") as HTMLSelectElement).value).toBe("operations_and_performance");
+    expect((within(dialog).getByLabelText("核心财务表现") as HTMLInputElement).checked).toBe(true);
     expect((within(dialog).getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("旧范围");
     expect((within(dialog).getByLabelText("截至日期") as HTMLInputElement).value).toBe("2026-01-01");
-    await user.selectOptions(within(dialog).getByLabelText("研究方向"), "market_and_commercialization");
+    await user.click(within(dialog).getByLabelText("核心财务表现"));
+    await user.click(within(dialog).getByLabelText("目标市场与客户"));
     await user.clear(within(dialog).getByLabelText("关注范围（可选）"));
     await user.type(within(dialog).getByLabelText("关注范围（可选）"), "更新后的范围");
     fireEvent.change(within(dialog).getByLabelText("截至日期"), { target: { value: "2026-02-02" } });
     await user.click(within(dialog).getByRole("button", { name: "重新尝试" }));
     expect(fake.companyResearch.retryFailed).toHaveBeenCalledWith(context.itemId, context.companyId, run.id, {
-      direction: "market_and_commercialization", focusScope: "更新后的范围", asOfDate: "2026-02-02",
+      moduleIds: ["target_market_and_customers"], focusScope: "更新后的范围", asOfDate: "2026-02-02",
     });
     expect(await screen.findByText("正在联网调研…")).toBeTruthy();
 
-    run = researchRun({ id: run.id, direction: "market_and_commercialization", focusScope: "更新后的范围", asOfDate: "2026-02-02", rawReportText: "重试成功" });
+    run = researchRun({ id: run.id, moduleIds: ["target_market_and_customers"], focusScope: "更新后的范围", asOfDate: "2026-02-02", rawReportText: "重试成功" });
     state = { runs: [researchSummary(run)], globalActiveRun: null };
     act(() => fake.emitResearch({ type: "state_changed", itemId: context.itemId, companyId: context.companyId, runId: run.id }));
     expect(await screen.findByText("重试成功")).toBeTruthy();
@@ -510,7 +530,7 @@ describe("two-stage company research", () => {
       globalActiveRun: { runId: "other-run" as ResearchRun["id"], itemId: run.itemId, companyId: "other-company" as ResearchRun["companyId"], stage: "raw" },
     });
     fake.companyResearch.getRun.mockResolvedValue(run);
-    render(<CompanyResearchPanel api={fake} {...context} queueEntry={{ entryId: "entry", itemId: context.itemId, companyId: context.companyId, mode: "new", input: { direction: "product_and_technology", asOfDate: "2026-09-09" }, status: "pending" }} />);
+    render(<CompanyResearchPanel api={fake} {...context} queueEntry={{ entryId: "entry", itemId: context.itemId, companyId: context.companyId, mode: "new", input: { moduleIds: ["products_and_positioning"], asOfDate: "2026-09-09" }, status: "pending" }} />);
     expect((await screen.findByRole("button", { name: "删除" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -523,7 +543,7 @@ describe("two-stage company research", () => {
     const view = render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "删除" }));
     const confirmation = within(screen.getByRole("dialog", { name: "删除调研报告" })).getByRole("button", { name: "确认删除" }) as HTMLButtonElement;
-    view.rerender(<CompanyResearchPanel api={fake} {...context} queueEntry={{ entryId: "entry", itemId: context.itemId, companyId: context.companyId, mode: "new", input: { direction: "product_and_technology", asOfDate: "2026-09-09" }, status: "pending" }} />);
+    view.rerender(<CompanyResearchPanel api={fake} {...context} queueEntry={{ entryId: "entry", itemId: context.itemId, companyId: context.companyId, mode: "new", input: { moduleIds: ["products_and_positioning"], asOfDate: "2026-09-09" }, status: "pending" }} />);
     await waitFor(() => expect(confirmation.disabled).toBe(true));
     expect(fake.companyResearch.deleteRun).not.toHaveBeenCalled();
   });
@@ -603,7 +623,7 @@ describe("two-stage company research", () => {
   it("renders persisted section order, warning statuses, and source text safely", async () => {
     const fake = makeFakeApi();
     const user = userEvent.setup();
-    const run = researchRun();
+    const run = historicalResearchRun({ searchStatus: "none" });
     const first = run.structuredContent!.sections[0]!;
     first.facts.push({ text: "<img src=x onerror=alert(1)>", timeContext: null, claimType: "forecast", source: { title: "<script>unsafe</script>", url: "javascript:alert(1)" } });
     run.structuredContent!.sections.reverse();
@@ -611,6 +631,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getRun.mockResolvedValue(run);
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("tab", { name: "结构化报告" }));
+    expect(screen.queryByRole("button", { name: "重新尝试" })).toBeNull();
     expect(await screen.findByText("核心结论")).toBeTruthy();
     expect(within(screen.getByRole("tabpanel")).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["核心结论", "主要产品与定位", "核心技术与指标", "研发与产品阶段", "竞争力与替代方案", "技术瓶颈与路线图"]);
     for (const text of ["未找到", "未披露", "存在冲突", "设备已经发布", "<img src=x onerror=alert(1)>", "<script>unsafe</script>"]) expect(screen.getByText(text)).toBeTruthy();
@@ -705,6 +726,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.getRun.mockResolvedValue(run);
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
+    await user.click(screen.getByLabelText("主要产品与定位"));
     await user.click(screen.getAllByRole("button", { name: "开始调研" })[1]!);
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });
     act(() => fake.emitResearch({ type: "state_changed", runId: run.id, itemId: run.itemId, companyId: run.companyId }));
@@ -762,6 +784,7 @@ describe("two-stage company research", () => {
     fake.companyResearch.start.mockRejectedValue(new Error("secret backend detail"));
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "开始调研" }));
+    await user.click(screen.getByLabelText("主要产品与定位"));
     const date = screen.getByLabelText("截至日期") as HTMLInputElement;
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -780,23 +803,23 @@ describe("two-stage company research", () => {
   it("reuses the newest v1 inputs even when a legacy summary is newer", async () => {
     const fake = makeFakeApi();
     const user = userEvent.setup();
-    const run = researchRun({ direction: "operations_and_performance", focusScope: "利润与现金流", asOfDate: "2026-01-01" });
+    const run = researchRun({ moduleIds: ["financial_performance"], focusScope: "利润与现金流", asOfDate: "2026-01-01" });
     const legacy: ResearchRun = { id: "legacy" as ResearchRun["id"], itemId: run.itemId, companyId: run.companyId, schemaVersion: "legacy-freeform-v1", status: "completed", createdAt: run.createdAt, completedAt: run.createdAt, timeScope: "近一年", reportText: "旧报告" };
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(legacy), researchSummary(run)], globalActiveRun: null });
     fake.companyResearch.getRun.mockResolvedValue(legacy);
     render(<CompanyResearchPanel api={fake} {...context} />);
     await user.click(await screen.findByRole("button", { name: "新的调研" }));
-    expect((screen.getByLabelText("研究方向") as HTMLSelectElement).value).toBe("operations_and_performance");
+    expect((screen.getByLabelText("核心财务表现") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("关注范围（可选）") as HTMLTextAreaElement).value).toBe("利润与现金流");
     expect((screen.getByLabelText("截至日期") as HTMLInputElement).value).toBe("2026-01-01");
   });
 
   it("falls back from invalid inherited launch inputs and rejects excessive scope", async () => {
     const fake = makeFakeApi();
-    render(<CompanyResearchModal {...context} initial={{ direction: "obsolete" as "product_and_technology", focusScope: "x".repeat(1001), asOfDate: "2025-02-30" }} onClose={() => {}} onStart={async (input) => { await fake.companyResearch.start(context.itemId, context.companyId, input); }} />);
+    render(<CompanyResearchModal {...context} initial={{ moduleIds: [], focusScope: "x".repeat(1001), asOfDate: "2025-02-30" }} onClose={() => {}} onStart={async (input) => { await fake.companyResearch.start(context.itemId, context.companyId, input); }} />);
     const date = screen.getByLabelText("截至日期") as HTMLInputElement;
     expect(date.value).toBe(date.max);
-    expect((screen.getByLabelText("研究方向") as HTMLSelectElement).value).toBe("product_and_technology");
+    expect(screen.getAllByRole("checkbox").every(input => !(input as HTMLInputElement).checked)).toBe(true);
     const scope = screen.getByLabelText("关注范围（可选）") as HTMLTextAreaElement;
     expect(scope.value).toBe("");
     fireEvent.change(scope, { target: { value: "x".repeat(1001) } });

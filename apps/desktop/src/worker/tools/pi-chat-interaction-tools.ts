@@ -8,7 +8,8 @@ import { chatInteractionToolDeclarations } from "../../shared/chat-interaction-t
 export function createPiChatInteractionTools(request: AgentWorkerRequest, host: Pick<HostClient, "request">, handoff: ExecutionHandoff): AgentTool<any>[] {
   const call = async (toolCallId: string, operation: "question" | "draft.read" | "draft.update" | "draft.transition" | "proposal.create", args: unknown) => {
     const reply = await host.request("chat.interaction", { chatRequestId: request.requestId, toolCallId, operation, arguments: args }) as { result: unknown };
-    if (operation === "question" || operation === "proposal.create") handoff.request();
+    const result = reply.result as { status?: string } | undefined;
+    if ((operation === "question" || operation === "proposal.create") && result?.status === "waiting") handoff.request();
     return { content: [{ type: "text" as const, text: JSON.stringify(reply.result) }], details: {} };
   };
   return [

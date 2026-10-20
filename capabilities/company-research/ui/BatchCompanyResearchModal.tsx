@@ -15,7 +15,7 @@ export function BatchCompanyResearchModal({ api, item, control, companies, compa
   const setStep = (next: typeof step) => { if (control) void control.transition(next).catch(reason => setError(researchActionError(reason, "start"))); else setLocalStep(next); };
   const [entries, setEntries] = useFormField<BatchResearchEntryInput[]>(control, "entries", []);
   const [editedIds, setEditedIds] = useFormField<string[]>(control, "editedIds", []);
-  const [common, setCommon] = useFormField<StartCompanyResearchInput>(control, "common", { direction: "product_and_technology", asOfDate: today() });
+  const [common, setCommon] = useFormField<StartCompanyResearchInput>(control, "common", { moduleIds: [], asOfDate: today() });
   const selected = useMemo(() => new Set(entries.map(entry => entry.companyId)), [entries]);
   const setSelected = (update: SetStateAction<Set<string>>) => { const next = typeof update === "function" ? update(selected) : update; setEntries(Array.from(next, companyId => entries.find(entry => entry.companyId === companyId) ?? { companyId, input: common })); };
   const overrides = new Map(entries.map(entry => [entry.companyId, entry.input]));

@@ -163,10 +163,16 @@ describe("trusted capability Chat host", () => {
     const host = new CapabilityChatHost(() => ({ ...fixture.runtime, navigation }), fixture.registry, repos);
     cleanups.push(async () => { host.dispose(); navigation.dispose(); db.close(); await fixture.runtime.dispose(); });
     repos.chatCapabilities.saveViews(a.id, "old", [target]); host.setActiveConversation(a.id);
-    host.begin("request", a.id, "Show detail");
-    const pending = host.call("request", "open", "open", { target });
-    host.end("request"); resolve({ status: "resolved", view: target });
-    expect(await pending).toMatchObject({ status: "blocked" });
+    for (const prompt of ["不要进入详情", "Do not enter detail", "Research enterprise data center"]) {
+      host.begin("denied", a.id, prompt);
+      expect(await host.call("denied", "open", "open", { target })).toMatchObject({ status: "blocked", message: "user_open_intent_required" });
+    }
+    for (const prompt of ["进入详情", "Enter detail"]) {
+      host.begin("request", a.id, prompt);
+      const pending = host.call("request", "open", "open", { target });
+      host.end("request"); resolve({ status: "resolved", view: target });
+      expect(await pending).toMatchObject({ status: "blocked" });
+    }
     expect(events.some(event => event.kind === "open")).toBe(false);
     const ui = host.openForConversation(a.id, target);
     host.setActiveConversation(b.id); resolve({ status: "resolved", view: target });
@@ -243,7 +249,9 @@ describe("trusted capability Chat host", () => {
     host.begin("chat-a", a.id, "Run the public action");
     host.begin("chat-b", b.id, "Run the public action");
     expect(host.directory()).toHaveLength(1);
-    expect((await host.call("chat-b", "invoke-b", "invoke", fixture.call) as { error?: { code?: string } }).error?.code).toBe("contract_changed");
+    expect((await host.call("chat-b", "invoke-b", "invoke", fixture.call) as { error?: { code?: string } }).error?.code).toBe("action_not_described");
+    expect(await host.call("chat-b", "outdated", "invoke", { ...fixture.call, contractDigest: `sha256:${"0".repeat(64)}` }))
+      .toMatchObject({ status: "error", error: { code: "contract_changed", recovery: expect.stringContaining("capability_describe") } });
     const described = await host.call("chat-a", "describe-a", "describe", { capabilityId: fixture.call.capabilityId, actionId: fixture.call.actionId }) as { status: string };
     expect(described.status).toBe("described");
     expect((await host.call("chat-a", "describe-again", "describe", { capabilityId: fixture.call.capabilityId, actionId: fixture.call.actionId }) as { status: string }).status).toBe("already_described");

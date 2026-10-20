@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCompanyResearchTemplate, type CompanyResearchModelDiagnostic } from "../../../capabilities/company-research/contracts/index.js";
+import { createCompanyResearchTemplate, type CompanyResearchModelDiagnostic } from "../../../capabilities/company-research/contracts/index.js";
 import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 
 const cleanups: Array<() => void> = [];
@@ -17,9 +17,9 @@ function fixture() {
   const item = repos.capabilityItems.create({ industry: "机器人" });
   const company = repos.companies.upsert({ name: "宇树科技" });
   repos.itemCompanies.add(item.id, company.id);
-  const input = { direction: "product_and_technology" as const, asOfDate: "2026-09-15" };
+  const input = { moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const], asOfDate: "2026-09-15" };
   const context = { ...input, currentDate: "2026-09-15", companyName: "宇树科技", topicName: "机器人" };
-  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, getCompanyResearchTemplate(input.direction));
+  const run = repos.companyResearchRuns.createResearching(item.id, company.id, input, context, createCompanyResearchTemplate(input.moduleIds));
   return { db, repos, run };
 }
 

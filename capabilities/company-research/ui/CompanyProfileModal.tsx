@@ -1,9 +1,13 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { normalizeCompanyProfile } from "../application/company-profile-validation.js";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
 import type { Company, CompanyProfileInput } from "../contracts/index.js";
 import { useFormField, useMappedFormField, type FormControl } from "./form-control.js";
 
 export interface CompanyProfileFormProps {
+  formId?: string;
+  hideActions?: boolean;
+  onSubmittingChange?(submitting: boolean): void;
   control?: FormControl;
   api: DesktopApi;
   company: Company;
@@ -15,7 +19,7 @@ function splitValues(value: string): string[] {
   return value.split(/[,，\n]/u).map((entry) => entry.trim()).filter(Boolean);
 }
 
-export function CompanyProfileForm({ api, company, control, onCancel, onSaved }: CompanyProfileFormProps) {
+export function CompanyProfileForm({ api, company, control, onCancel, onSaved, formId, hideActions, onSubmittingChange }: CompanyProfileFormProps) {
   const [name, setName] = useFormField(control, "name", company.name);
   const [legalName, setLegalName] = useMappedFormField(control, "legalName", company.legalName ?? "", value => value ?? "", value => value || null);
   const [aliases, setAliases] = useMappedFormField(control, "aliases", company.aliases?.join("，") ?? "", value => value?.join("，") ?? "", splitValues);
@@ -29,10 +33,11 @@ export function CompanyProfileForm({ api, company, control, onCancel, onSaved }:
   const [tags, setTags] = useMappedFormField(control, "businessTags", company.businessTags?.join("，") ?? "", value => value?.join("，") ?? "", splitValues);
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (submitting) return;
+    if (submittingRef.current) return;
     const trimmedName = name.trim();
     if (trimmedName.length === 0) {
       setError("请填写公司名称");
@@ -71,33 +76,46 @@ export function CompanyProfileForm({ api, company, control, onCancel, onSaved }:
           : {}),
       ...(businessTags.length > 0 ? { businessTags } : {}),
     };
+    let normalized: CompanyProfileInput;
+    try { normalized = normalizeCompanyProfile(input); }
+    catch (reason) {
+      setError(reason instanceof Error && reason.message.startsWith("总部") ? reason.message : "请检查成立时间、网址和填写内容");
+      return;
+    }
+    submittingRef.current = true;
     setSubmitting(true);
+    onSubmittingChange?.(true);
     setError(undefined);
     try {
       if (control) { await control.confirm(); return; }
-      onSaved(await api.industryResearch.updateCompany(company.id, input));
+      onSaved(await api.industryResearch.updateCompany(company.id, normalized));
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "";
       setError(/already exists/i.test(message) ? "已有同名公司，无法重命名" : "保存失败，请检查填写内容后重试");
       setSubmitting(false);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+      onSubmittingChange?.(false);
     }
   };
 
   return (
-      <form className="company-profile-form" aria-label="编辑公司基本信息" onSubmit={handleSubmit}>
+      <form id={formId} className="company-profile-form" aria-label="编辑公司基本信息" onSubmit={handleSubmit}>
         {error !== undefined && <p className="error" role="alert">{error}</p>}
         <label>公司名称<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
         <label>法定名称（可选）<input value={legalName} onChange={(event) => setLegalName(event.target.value)} /></label>
         <label>别名（逗号分隔）<textarea disabled={noAliases} value={aliases} onChange={(event) => setAliases(event.target.value)} rows={2} /></label>
         <label className="inline-check"><input type="checkbox" checked={noAliases} onChange={(event) => setNoAliases(event.target.checked)} />已确认无别名</label>
-        <label>总部（可选）<input value={headquarters} onChange={(event) => setHeadquarters(event.target.value)} /></label>
+        <label>总部（可选）<input placeholder="中国／北京市／海淀区；美国／加利福尼亚州／旧金山" value={headquarters} onChange={(event) => setHeadquarters(event.target.value)} /></label>
+        <p className="muted">国家／省或一级行政区／市或区，末段可省略；未知时留空。</p>
         <label>成立时间（YYYY、YYYY-MM 或 YYYY-MM-DD）<input value={foundedAt} onChange={(event) => setFoundedAt(event.target.value)} /></label>
         <label>官方网站状态<select value={websiteState} onChange={(event) => setWebsiteState(event.target.value as typeof websiteState)}><option value="unknown">未知</option><option value="known">已知</option><option value="none">已确认无官方网站</option></select></label>
         {websiteState === "known" && <label>官方网站<input type="url" value={website} onChange={(event) => setWebsite(event.target.value)} required /></label>}
         <label>上市信息（每行“交易所:代码”）<textarea disabled={unlisted} value={listings} onChange={(event) => setListings(event.target.value)} rows={3} /></label>
         <label className="inline-check"><input type="checkbox" checked={unlisted} onChange={(event) => setUnlisted(event.target.checked)} />已确认未上市</label>
         <label>业务标签（1–5 个，逗号分隔）<input value={tags} onChange={(event) => setTags(event.target.value)} /></label>
-        <div className="modal-actions"><button type="button" disabled={submitting} onClick={onCancel}>取消</button><button className="primary-button" type="submit" disabled={submitting}>{submitting ? "保存中…" : "保存"}</button></div>
+        {!hideActions && <div className="modal-actions"><button type="button" disabled={submitting} onClick={onCancel}>取消</button><button className="primary-button" type="submit" disabled={submitting}>{submitting ? "保存中…" : "保存"}</button></div>}
       </form>
   );
 }

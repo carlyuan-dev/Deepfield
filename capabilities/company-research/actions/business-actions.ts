@@ -4,7 +4,7 @@ import type { CompanyResearchOperationServices } from "../main.js";
 import type { InputPresentation } from "./definitions.js";
 import { artifactRef } from "./task-artifact-adapter.js";
 import { CAPABILITY_ID, protocolError, revision } from "./drafts.js";
-import { getCompanyResearchTemplate, type ResearchDirection } from "../contracts/index.js";
+import { researchModuleSelectionLabel, type ResearchModuleId } from "../contracts/index.js";
 
 export function createBusinessActions(services: CompanyResearchOperationServices, retainRecognition?: (itemId: string, text: string, candidates: unknown[]) => string | undefined) {
   const industry = services.industryResearch;
@@ -49,7 +49,7 @@ export function createBusinessActions(services: CompanyResearchOperationServices
     }
     return { items, ...(offset < values.length ? { nextCursor: Buffer.from(JSON.stringify({ key, offset })).toString("base64url") } : {}) };
   };
-  const directionName = (value: string) => getCompanyResearchTemplate(value as ResearchDirection).title;
+  const moduleNames = (value: ResearchModuleId[]) => researchModuleSelectionLabel(value);
   const profileLabels: Record<string, string> = { name: "公司名称", legalName: "法定名称", aliases: "别名", headquarters: "总部", foundedAt: "成立时间", officialWebsite: "官方网站", stockListings: "上市信息", businessTags: "业务标签" };
   const profileFields = (profile: Record<string, unknown>) => Object.entries(profileLabels).map(([key, label]) => {
     const value = profile[key];
@@ -79,8 +79,8 @@ export function createBusinessActions(services: CompanyResearchOperationServices
     if (expanded.length > 12) throw new AppError("INPUT.INVALID");
     return { title, fields: expanded };
   };
-  const researchFields = (itemId: string, companyId: string, parameters: { direction: string; asOfDate: string; focusScope?: string }) => [
-    field("研究主题", topic(itemId).industry), field("公司", company(itemId, companyId).name), field("研究方向", directionName(parameters.direction)),
+  const researchFields = (itemId: string, companyId: string, parameters: { moduleIds: ResearchModuleId[]; asOfDate: string; focusScope?: string }) => [
+    field("研究主题", topic(itemId).industry), field("公司", company(itemId, companyId).name), field("研究模块", moduleNames(parameters.moduleIds)),
     field("截止日期", parameters.asOfDate), field("重点范围", parameters.focusScope || "未指定"),
   ];
   const operation = (id: string, input: any): OperationPresentation | undefined => {
@@ -92,7 +92,7 @@ export function createBusinessActions(services: CompanyResearchOperationServices
     if (id === "companies.update") return { text: `准备编辑“${shortName(company(input.itemId, input.companyId).name)}”的共享资料。`, linkLabel: "查看公司", target: target("company", { itemId: input.itemId, companyId: input.companyId }), autoOpen: true };
     if (id === "companies.remove") return { text: `准备从“${shortName(topic(input.itemId).industry)}”移除 ${input.companyIds.length} 家公司。`, linkLabel: "查看主题公司", target: target("companies", { itemId: input.itemId }), autoOpen: true };
     if (id === "companies.retryProfile" || id === "companies.confirmIdentity") return { text: `准备继续处理“${shortName(company(input.itemId, input.companyId).name)}”的资料补全。`, linkLabel: "查看公司", target: target("company", { itemId: input.itemId, companyId: input.companyId }), autoOpen: true };
-    if (id === "research.submit") { const p = input.parameters; return { text: `准备提交“${shortName(company(p.itemId, p.companyId).name)}”的${directionName(p.direction)}调研，截止 ${p.asOfDate}。`, linkLabel: "查看公司调研", target: target("company", { itemId: p.itemId, companyId: p.companyId }), autoOpen: true }; }
+    if (id === "research.submit") { const p = input.parameters; return { text: `准备提交“${shortName(company(p.itemId, p.companyId).name)}”的${moduleNames(p.moduleIds)}调研，截止 ${p.asOfDate}。`, linkLabel: "查看公司调研", target: target("company", { itemId: p.itemId, companyId: p.companyId }), autoOpen: true }; }
     if (id === "research.submitBatch") return { text: `准备向“${shortName(topic(input.itemId).industry)}”提交 ${input.entries.length} 家公司的调研。`, linkLabel: "查看调研队列", target: target("companies", { itemId: input.itemId }), autoOpen: true };
     if (id === "research.retryFailed" || id === "research.retryStructuring") return { text: `准备重试“${shortName(company(input.itemId, input.companyId).name)}”的${id === "research.retryStructuring" ? "报告结构化" : "失败调研"}。`, linkLabel: "查看公司调研", target: target("company", { itemId: input.itemId, companyId: input.companyId }), autoOpen: true };
     if (id === "queue.cancel" || id === "queue.cancelEntry" || id === "queue.resume") return { text: id === "queue.resume" ? "准备恢复全局调研队列。" : id === "queue.cancel" ? "准备取消全局调研队列中未完成的条目。" : "准备取消指定的单条调研。", target: input.itemId ? target("companies", { itemId: input.itemId }) : target("topics", {}), autoOpen: true };
@@ -121,11 +121,11 @@ export function createBusinessActions(services: CompanyResearchOperationServices
     if (id === "companies.recognize") return boundedFields("识别候选公司", [field("研究主题", input.itemId ? topic(input.itemId).industry : "本次任务前一步新建的主题"), field("待识别文本", input.text ?? "本任务执行中取得的文本"), field("资源消耗", "识别将调用模型；候选公司尚不会加入主题")]);
     if (id === "companies.update") return boundedFields("编辑公司共享资料", [field("研究主题", topic(input.itemId).industry), field("公司", company(input.itemId, input.companyId).name), field("影响范围", "公司共享资料，其他主题中的同一公司也会看到修改"), ...profileFields(mergedProfile(input))]);
     if (id === "companies.remove") return boundedFields("从当前主题移除公司", [field("研究主题", topic(input.itemId).industry), field("移除公司", joinNamed(input.companyIds.map((value: string) => company(input.itemId, value).name))), field("影响范围", "移除当前主题关联；共享公司可能仍在其他主题")]);
-    if (id === "companies.retryProfile") return boundedFields("重试公司资料补全", [field("研究主题", topic(input.itemId).industry), field("公司", company(input.itemId, input.companyId).name), field("资源消耗", "可能调用模型和搜索")]);
+    if (id === "companies.retryProfile") return boundedFields("自动填写公司信息", [field("研究主题", topic(input.itemId).industry), field("公司", company(input.itemId, input.companyId).name), field("资源消耗", "可能调用模型和搜索")]);
     if (id === "companies.confirmIdentity") return boundedFields("确认公司主体并继续补全", [field("研究主题", topic(input.itemId).industry), field("公司", company(input.itemId, input.companyId).name), field("确认名称", input.identity.name), field("官方网站", input.identity.officialWebsite || "未指定"), field("资源消耗", "确认后可能继续调用模型和搜索")]);
     if (id === "research.prepare") return boundedFields("准备调研草稿", researchFields(input.itemId, input.companyId, input));
     if (id === "research.submit") return boundedFields("提交公司调研", researchFields(input.parameters.itemId, input.parameters.companyId, input.parameters));
-    if (id === "research.submitBatch") return boundedFields("批量提交公司调研", [field("研究主题", topic(input.itemId).industry), field("逐公司参数", joinNamed(input.entries.map((entry: any) => `${company(input.itemId, entry.companyId).name}；方向：${directionName(entry.input.direction)}；截止：${entry.input.asOfDate}；重点：${entry.input.focusScope || "未指定"}`)))]);
+    if (id === "research.submitBatch") return boundedFields("批量提交公司调研", [field("研究主题", topic(input.itemId).industry), field("逐公司参数", joinNamed(input.entries.map((entry: any) => `${company(input.itemId, entry.companyId).name}；模块：${moduleNames(entry.input.moduleIds)}；截止：${entry.input.asOfDate}；重点：${entry.input.focusScope || "未指定"}`)))]);
     if (id === "research.retryFailed") return boundedFields("重试失败调研", [...researchFields(input.itemId, input.companyId, input.input), field("原报告", reportLabel(input)), field("资源消耗", "可能重新搜索并调用模型")]);
     if (id === "research.retryStructuring") return boundedFields("只重试报告结构化", [field("研究主题", topic(input.itemId).industry), field("报告", reportLabel(input)), field("资源消耗", "只调用模型整理已有原始报告")]);
     if (id === "queue.cancel" || id === "queue.resume" || id === "queue.cancelEntry") {
@@ -161,7 +161,7 @@ export function createBusinessActions(services: CompanyResearchOperationServices
     if (id === "companies.recognize") { const candidates = await industry.recognizeCompanies(input.itemId, input.text); const receiptId = retainRecognition?.(input.itemId, input.text, candidates); return completed(`识别到 ${candidates.length} 家候选公司，尚未导入。`, { items: candidates.slice(0, 20), item: { totalCandidates: candidates.length, returned: Math.min(candidates.length, 20), truncated: candidates.length > 20, ...(receiptId ? { recognitionReceiptId: receiptId } : {}), remainingRecovery: candidates.length > 20 ? "请把原文本分段后分别识别" : null } }); }
     if (id === "companies.update") { const updated = industry.updateCompany(input.companyId, mergedProfile(input)); return completed(`已更新“${updated.name}”的共享资料。`, { item: { id: updated.id, name: updated.name, profileStatus: updated.profileStatus } }); }
     if (id === "companies.remove") { for (const value of input.companyIds) company(input.itemId, value); industry.removeCompanies(input.itemId, input.companyIds); return completed(`已从“${shortName(topic(input.itemId).industry)}”移除 ${input.companyIds.length} 家公司；其他主题中的共享资料不受此主题移除操作影响。`); }
-    if (id === "companies.retryProfile") { const name = company(input.itemId, input.companyId).name; const accepted = industry.retryCompanyProfile(input.companyId); return completed(accepted ? `已排队更新“${name}”的信息。` : `“${name}”目前正在更新信息。`, { accepted }); }
+    if (id === "companies.retryProfile") { const name = company(input.itemId, input.companyId).name; const accepted = industry.retryCompanyProfile(input.companyId); return completed(accepted ? `已排队自动填写“${name}”的公司信息。` : `“${name}”目前正在自动填写公司信息。`, { accepted }); }
     if (id === "companies.confirmIdentity") { const name = company(input.itemId, input.companyId).name; const accepted = industry.confirmCompanyProfileIdentity(input.companyId, input.identity); return completed(accepted ? `已确认“${name}”的主体，资料补全将继续。` : `“${name}”的主体确认未被接受。`, { accepted }); }
     if (id === "queue.cancel" || id === "queue.resume" || id === "queue.cancelEntry") {
       present(id, input);

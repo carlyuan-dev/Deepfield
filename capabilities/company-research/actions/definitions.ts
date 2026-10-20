@@ -1,6 +1,6 @@
 import { Type, type TSchema } from "typebox";
 import { defineAction, DraftRefSchema, type ActionDefinition, type ActionInvocationContext, type ActionOutcome, type OperationPresentation, type TaskAuthorization } from "@deepfield/capability-sdk";
-import { RESEARCH_DIRECTIONS, StartCompanyResearchInputSchema, CreateIndustryResearchItemInputSchema, type ResearchDirection } from "../contracts/index.js";
+import { ResearchModuleIdsSchema, StartCompanyResearchInputSchema, CreateIndustryResearchItemInputSchema } from "../contracts/index.js";
 import { topicActions, companyActions, researchActions, reportActions } from "./domain-definitions.js";
 export const id = Type.String({ minLength: 1, maxLength: 200 });
 export const ids = Type.Array(id, { minItems: 1, maxItems: 100 });
@@ -11,7 +11,7 @@ export const BatchInputSchema = Type.Object({ itemId: id, entries: Type.Array(Ba
 export const TargetSchema = Type.Object({ itemId: id, companyId: id }, { additionalProperties: false });
 export const RunTargetSchema = Type.Object({ itemId: id, companyId: id, runId: id }, { additionalProperties: false });
 export const ResearchParametersSchema = Type.Object({ itemId: id, companyId: id,
-  direction: Type.Unsafe<ResearchDirection>({ type: "string", enum: [...RESEARCH_DIRECTIONS] }),
+  moduleIds: ResearchModuleIdsSchema,
   asOfDate: Type.String({ minLength: 10, maxLength: 10 }), focusScope: Type.Optional(Type.String({ maxLength: 1000 })),
 }, { additionalProperties: false });
 export const PreparedResearchSchema = Type.Object({ draftRef: DraftRefSchema, parameters: ResearchParametersSchema }, { additionalProperties: false });

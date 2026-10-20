@@ -41,9 +41,11 @@ export function createCompanyFormProvider(drafts: ResearchDrafts, describeDeleti
     if (!raw) throw protocolError("not_found");
     const form = JSON.parse(raw) as StoredForm;
     if (form.kind !== "form" || form.released) throw protocolError("expired");
+    if (form.actionId === "research.submit") form.values = drafts.get(form.values.draftRef);
+    if (form.formId === "research" && !("moduleIds" in (form.values.parameters ?? form.values.input ?? form.values))) throw protocolError("expired");
+    if (form.formId === "research-batch" && form.values.entries?.some((entry: any) => !entry.input?.moduleIds)) throw protocolError("expired");
     if (form.ref.revision !== ref.revision) throw protocolError("revision_changed");
     if (form.formId === "companies-import") activeImports.add(ref.draftId);
-    if (form.actionId === "research.submit") form.values = drafts.get(form.values.draftRef);
     return form;
   };
   const save = (form: StoredForm) => drafts.store.saveDraft(form.ref.draftId, JSON.stringify(form.actionId === "research.submit" ? { ...form, values: { draftRef: form.values.draftRef } } : form));
@@ -54,6 +56,7 @@ export function createCompanyFormProvider(drafts: ResearchDrafts, describeDeleti
   };
   const snapshot = (form: StoredForm): CapabilityFormSnapshot => ({
     draft: form.ref, view: { capabilityId: CAPABILITY_ID, viewId: "form", input: { draftId: form.ref.draftId, revision: form.ref.revision } },
+    ...(form.actionId === "research.submit" ? { sourceDraftRefs: [form.values.draftRef] } : {}),
     parentView: { capabilityId: CAPABILITY_ID,
       viewId: (form.values.parameters ?? form.values).companyId ? "company" : form.values.itemId ? "companies" : "topics",
       input: Object.fromEntries(["itemId", "companyId"].flatMap(key => {
@@ -75,6 +78,7 @@ export function createCompanyFormProvider(drafts: ResearchDrafts, describeDeleti
     async prepare(formId, actionId, values) {
       if (!companyForms.some(form => form.id === formId && (form.actionIds as readonly string[]).includes(actionId))) throw protocolError("not_found");
       const form: StoredForm = { kind: "form", formId, actionId, ref: { capabilityId: CAPABILITY_ID, draftId: randomUUID(), revision: randomUUID() }, values: structuredClone(values), step: formId === "research-batch" ? "select" : formId === "companies-import" && actionId === "companies.add" ? "selection" : "edit" };
+      if (formId === "research-batch") form.values.common = { moduleIds: [], ...form.values.common };
       if (actionId === "research.submit") drafts.validate(form.values);
       if (formId === "companies-import") activeImports.add(form.ref.draftId);
       save(form); return snapshot(form);

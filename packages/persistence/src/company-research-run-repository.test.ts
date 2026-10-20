@@ -2,20 +2,20 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCompanyResearchTemplate, type CompanyResearchContext, type StartCompanyResearchInput, type StructuredResearchContent } from "../../../capabilities/company-research/contracts/index.js";
+import { createCompanyResearchTemplate, type CompanyResearchContext, type StartCompanyResearchInput, type StructuredResearchContent } from "../../../capabilities/company-research/contracts/index.js";
 import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 import { installZeroEvidenceRawFixture } from "./research-evidence-test-fixtures.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
 const input: StartCompanyResearchInput = {
-  direction: "product_and_technology", focusScope: "海外业务", asOfDate: "2026-09-11",
+  moduleIds: ["products_and_positioning", "technology_and_metrics"], focusScope: "海外业务", asOfDate: "2026-09-11",
 };
 const context: CompanyResearchContext = {
   ...input, companyName: "ACME", topicName: "Robotics", currentDate: "2026-09-11",
   aliases: ["ACME Robotics"], topicScope: "整机", companyNote: "首选",
 };
-const template = getCompanyResearchTemplate(input.direction);
+const template = createCompanyResearchTemplate(input.moduleIds);
 const content: StructuredResearchContent = {
   coreSummary: ["暂无足够信息"],
   sections: template.sections.map(({ sectionId }) => ({
@@ -99,7 +99,7 @@ describe("company research run repository", () => {
     supplied.companyName = "changed";
     expect(run).toMatchObject({
       status: "researching", schemaVersion: "company-research-report-v1",
-      researchContext: { companyName: "ACME" }, template, harnessVersion: 1, structuringAttempts: 0,
+      researchContext: { companyName: "ACME" }, template, harnessVersion: 2, structuringAttempts: 0,
     });
     expect(run).not.toHaveProperty("rawReportText");
     f.db.close();
@@ -140,12 +140,12 @@ describe("company research run repository", () => {
   it("retries failed runs in place while clearing only artifacts invalid for the new stage", () => {
     const f = fixture();
     const changedInput: StartCompanyResearchInput = {
-      direction: "market_and_commercialization", focusScope: "最新量产", asOfDate: "2026-09-16",
+      moduleIds: ["target_market_and_customers"], focusScope: "最新量产", asOfDate: "2026-09-16",
     };
     const changedContext: CompanyResearchContext = {
       ...context, ...changedInput, currentDate: "2026-09-16", companyNote: "changed",
     };
-    const changedTemplate = getCompanyResearchTemplate(changedInput.direction);
+    const changedTemplate = createCompanyResearchTemplate(changedInput.moduleIds);
     const run = f.create();
     const failed = f.repo.failResearching(run.id, "tool_failed");
     expect(failed).toMatchObject({ id: run.id, status: "research_failed", lastFailureCode: "tool_failed" });
@@ -312,10 +312,10 @@ describe("company research run repository", () => {
 
   it("rejects invalid inputs and output before mutating durable state", () => {
     const f = fixture();
-    expect(() => f.repo.createResearching(f.item.id, f.company.id, { ...input, direction: "invalid" } as never, context, template)).toThrow();
+    expect(() => f.repo.createResearching(f.item.id, f.company.id, { ...input, moduleIds: ["invalid"] } as never, context, template)).toThrow();
     expect(() => f.repo.createResearching(f.item.id, f.company.id, input, { ...context, companyName: "" }, template)).toThrow();
     expect(() => f.repo.createResearching(f.item.id, f.company.id, input, { ...context, asOfDate: "2025-01-01" }, template)).toThrow();
-    expect(() => f.repo.createResearching(f.item.id, f.company.id, input, context, getCompanyResearchTemplate("operations_and_performance"))).toThrow();
+    expect(() => f.repo.createResearching(f.item.id, f.company.id, input, context, createCompanyResearchTemplate(["financial_performance"]))).toThrow();
     expect(f.repo.getActive()).toBeUndefined();
     const run = f.create();
     for (const text of ["", " \n\t", "x".repeat(1_000_001)]) expect(() => f.repo.completeRaw(run.id, text)).toThrow();
@@ -333,8 +333,8 @@ describe("company research run repository", () => {
     ["template_snapshot_json", "null"],
     ["template_snapshot_json", JSON.stringify({ ...template, sections: [] })],
     ["template_id", "operations_and_performance"],
-    ["template_version", 2],
-    ["harness_version", 2],
+    ["template_version", 9],
+    ["harness_version", 9],
     ["structured_content_json", '{"private":"sensitive malformed'],
     ["structured_content_json", JSON.stringify({ coreSummary: [], sections: [] })],
     ["raw_report_text", null],

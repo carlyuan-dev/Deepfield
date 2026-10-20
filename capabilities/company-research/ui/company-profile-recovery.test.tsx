@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppError, toPublicError, type CompanyId } from "@deepfield/contracts";
@@ -9,6 +9,31 @@ import { capabilityItem, makeFakeApi } from "../../../apps/desktop/src/renderer/
 import { profileResult } from "../../../packages/application/src/testing/company-profile-test-fixtures.js";
 
 describe("profile recovery presentation", () => {
+  it("saves through the heading actions with the same form validation and no duplicate buttons", async () => {
+    const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
+    const company: ItemCompanyView = { id: "company" as CompanyId, name: "资料公司", normalizedName: "资料公司", itemId: item.id, profileStatus: "ready", createdAt: "", updatedAt: "" };
+    fake.industryResearch.listItems.mockResolvedValue([item]);
+    fake.industryResearch.listCompanies.mockResolvedValue([company]);
+    fake.industryResearch.updateCompany.mockImplementation(async (_id, profile) => ({ ...company, ...profile }));
+    const user = userEvent.setup(); render(<IndustryResearchCapability api={fake} onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: /^机器人/ }));
+    await user.click(await screen.findByRole("button", { name: "查看 资料公司" }));
+    expect(screen.queryByText("候选备注")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "编辑信息" }));
+    expect(screen.queryByRole("button", { name: "自动填写" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "保存" })).toHaveLength(1);
+    expect(within(screen.getByRole("form", { name: "编辑公司基本信息" })).queryByRole("button", { name: "保存" })).toBeNull();
+    await user.type(screen.getByLabelText("总部（可选）"), "北京");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(fake.industryResearch.updateCompany).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("总部请填写");
+    await user.clear(screen.getByLabelText("总部（可选）"));
+    await user.type(screen.getByLabelText("总部（可选）"), "中国 / 北京市");
+    await user.type(screen.getByLabelText(/成立时间/), "1998-03");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(fake.industryResearch.updateCompany).toHaveBeenCalledExactlyOnceWith(company.id, { name: company.name, headquarters: "中国／北京市", foundedAt: "1998-03" });
+    expect(await screen.findByRole("button", { name: "自动填写" })).toBeTruthy();
+  });
   it("offers update on unknown and complete details without list retry controls", async () => {
     const fake = makeFakeApi(); const item = capabilityItem({ id: "topic", industry: "机器人" });
     const base: ItemCompanyView = { id: "company" as CompanyId, name: "待补字段", normalizedName: "待补字段", itemId: item.id, profileStatus: "ready", createdAt: "", updatedAt: "", headquarters: "北京" };
@@ -18,15 +43,15 @@ describe("profile recovery presentation", () => {
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     expect(screen.queryByRole("button", { name: /重试补全/ })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "查看 待补字段" }));
-    expect(screen.getByText("部分信息未知，可更新信息")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "更新信息" }));
+    expect(screen.queryByText("部分信息未知，可更新信息")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "自动填写" }));
     expect(fake.industryResearch.retryCompanyProfile).toHaveBeenCalledWith(base.id);
-    expect((screen.getByRole("button", { name: "更新中…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "自动填写中…" }) as HTMLButtonElement).disabled).toBe(true);
     fake.industryResearch.listCompanies.mockResolvedValue([{ ...base, legalName: "已知", aliases: [], foundedAt: "2020", officialWebsite: null, stockListings: [], businessTags: ["软件"] }]);
     await act(async () => fake.emitProfile({ companyId: base.id, status: "ready" }));
-    await waitFor(() => expect(screen.getByText("信息已更新")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "更新信息" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "更新信息" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "自动填写" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByRole("button", { name: "自动填写" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "自动填写" }));
     expect(fake.industryResearch.retryCompanyProfile).toHaveBeenCalledTimes(2);
   });
   it("keeps a pending company accessible for research without a list failure prompt", async () => {
@@ -39,7 +64,7 @@ describe("profile recovery presentation", () => {
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     expect(screen.queryByRole("button", { name: "前往设置" })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "查看 待补全公司" }));
-    expect((screen.getByRole("button", { name: "更新中…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "自动填写中…" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("button", { name: "开始调研" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "开始调研" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
@@ -56,9 +81,9 @@ describe("profile recovery presentation", () => {
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     expect(screen.queryByText("身份待确认")).toBeNull();
     await user.click(await screen.findByRole("button", { name: "查看 同名公司" }));
-    expect(screen.getByText("公司主体待确认，请确认主体")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "更新信息" })).toBeTruthy();
-    expect(screen.getByText("身份尚未确认，请核对公司名称并确认主体或更新信息。")).toBeTruthy();
+    expect(screen.getByText("自动填写未完成，请确认主体或重试")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "自动填写" })).toBeTruthy();
+    expect(screen.getByText("身份尚未确认，请核对公司名称并确认主体或自动填写公司信息。")).toBeTruthy();
     expect(screen.queryByText("本次来源用于身份及部分字段核实，未确认字段保持未知。")).toBeNull();
     expect(screen.getByRole("button", { name: "开始调研" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "确认主体 同名公司" }));
@@ -68,7 +93,7 @@ describe("profile recovery presentation", () => {
     await user.type(screen.getByLabelText("精确主体名称"), "三星电子株式会社");
     await user.type(screen.getByLabelText("官方网站（可选）"), "ftp://example.com");
     await user.click(screen.getByRole("button", { name: "确认并继续补全" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("请输入 http:// 或 https:// 开头的网站地址");
+    expect((await within(screen.getByRole("dialog", { name: "确认公司主体" })).findByRole("alert")).textContent).toBe("请输入 http:// 或 https:// 开头的网站地址");
     expect(fake.industryResearch.confirmCompanyProfileIdentity).not.toHaveBeenCalled();
     await user.clear(screen.getByLabelText("官方网站（可选）"));
     await user.type(screen.getByLabelText("官方网站（可选）"), "https://www.samsung.com/");
@@ -86,9 +111,8 @@ describe("profile recovery presentation", () => {
     await user.click(await screen.findByRole("button", { name: /^机器人/ }));
     expect(screen.queryByText("结果格式错误，请重试")).toBeNull();
     await user.click(await screen.findByRole("button", { name: "查看 三星" }));
-    expect(screen.getByText("更新未完成，可再次更新信息")).toBeTruthy();
-    expect(screen.queryByText("公司主体待确认，请确认主体")).toBeNull();
-    expect(screen.getByRole("button", { name: "更新信息" })).toBeTruthy();
+    expect(screen.getByText("自动填写未完成，请确认主体或重试")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "自动填写" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "修改主体 三星" }));
     expect((screen.getByLabelText("精确主体名称") as HTMLInputElement).value).toBe("三星电子株式会社");
     expect((screen.getByLabelText("官方网站（可选）") as HTMLInputElement).value).toBe("https://www.samsung.com/");

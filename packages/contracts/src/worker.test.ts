@@ -6,8 +6,11 @@ import {
   CompanyResearchWorkerEventSchema,
   CompanyResearchWorkerRequestSchema,
   CompanyResearchEventSchema,
-  STRUCTURED_RESEARCH_OUTPUT_SCHEMA,
+  buildStructuredResearchOutputSchema,
 } from "../../../capabilities/company-research/contracts/research.js";
+import { createCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
+import { validateResearchWorkerContract } from "../../../capabilities/company-research/worker.js";
+import type { CompanyResearchWorkerRequest } from "../../../capabilities/company-research/contracts/index.js";
 import { ToolExecutionEventSchema } from "./tools.js";
 import {
   HostReplySchema,
@@ -48,16 +51,17 @@ const auditStartPayload = {
 };
 
 const researchRequest = {
+  evidencePolicy: "legacy_optional",
   requestId: "research-1", kind: "company-research.raw.run", runId: "run-1", stage: "raw",
   llm: { id: "llm-1", name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: "https://api.deepseek.com", modelId: "deepseek-flash", contextWindow: 128_000, apiKey: "sk-test-key" },
   search: { id: "search-1", name: "Zhipu", provider: "zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", options: {}, apiKey: "search-test-key" },
   toolAccess: { network: "enabled", maxAgentTurns: 12, maxSearchCalls: 8, maxFetchCalls: 8 },
-  context: { currentDate: "2026-09-11", companyName: "小米", topicName: "电池", direction: "product_and_technology", asOfDate: "2026-09-11" },
-  template: {
-    templateId: "product_and_technology", templateVersion: 1, title: "产品与技术",
-    sections: ["products_and_positioning", "technology_and_metrics", "development_and_readiness", "competitive_position", "constraints_and_roadmap"].map((sectionId) => ({ sectionId, title: "模块", coreQuestion: "问题", coverage: "覆盖", boundary: "边界" })),
-  },
+  context: { currentDate: "2026-09-11", companyName: "小米", topicName: "电池", moduleIds: ["products_and_positioning"], asOfDate: "2026-09-11" },
+  template: createCompanyResearchTemplate(["products_and_positioning"]),
 };
+const STRUCTURED_RESEARCH_OUTPUT_SCHEMA = buildStructuredResearchOutputSchema(researchRequest.template);
+const researchEnvelope = (input: unknown) => ({ kind: "capability.run", capabilityId: "company-research", operation: "research", requestId: "research-1", input });
+const researchEventEnvelope = (payload: unknown) => ({ kind: "capability.event", capabilityId: "company-research", operation: "research", requestId: "research-1", type: "progress", payload });
 const { search: _rawSearch, ...researchWithoutSearch } = researchRequest;
 const structureRequest = {
   ...researchWithoutSearch,
@@ -72,7 +76,7 @@ describe("utility worker protocol", () => {
   it("accepts only fixed raw web search failure and a metadata-free public outcome", () => {
     const failure = { requestId: "request-1", runId: "run-1", stage: "raw", type: "failed", code: "web_search_failed", message: "company research web search failed" };
     expect(Value.Check(CompanyResearchWorkerEventSchema, failure)).toBe(true);
-    expect(Value.Check(UtilityWorkerEventSchema, failure)).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, researchEventEnvelope(failure))).toBe(true);
     for (const invalid of [{ ...failure, stage: "structure" }, { ...failure, message: "private refusal" }, { ...failure, query: "private query" }, { ...failure, code: "provider_failure" }]) {
       expect(Value.Check(CompanyResearchWorkerEventSchema, invalid)).toBe(false);
     }
@@ -137,8 +141,10 @@ describe("utility worker protocol", () => {
     expect(Value.Check(UtilityWorkerRequestSchema, toolRequest)).toBe(true);
     expect(Value.Check(CompanyResearchWorkerRequestSchema, researchRequest)).toBe(true);
     expect(Value.Check(CompanyResearchCancelRequestSchema, cancelRequest)).toBe(true);
-    expect(Value.Check(UtilityWorkerRequestSchema, researchRequest)).toBe(true);
-    expect(Value.Check(UtilityWorkerRequestSchema, cancelRequest)).toBe(true);
+    expect(Value.Check(UtilityWorkerRequestSchema, researchEnvelope(researchRequest))).toBe(true);
+    expect(Value.Check(UtilityWorkerRequestSchema, { kind: "capability.cancel", capabilityId: "company-research", operation: "research", requestId: cancelRequest.requestId })).toBe(true);
+    expect(Value.Check(UtilityWorkerRequestSchema, researchRequest)).toBe(false);
+    expect(Value.Check(UtilityWorkerRequestSchema, cancelRequest)).toBe(false);
   });
 
   it("rejects blank IDs, extra properties and malformed tool.run kinds", () => {
@@ -182,7 +188,8 @@ describe("utility worker protocol", () => {
     expect(Value.Check(ToolEventEnvelopeSchema, envelope)).toBe(true);
     expect(Value.Check(UtilityWorkerEventSchema, envelope)).toBe(true);
     expect(Value.Check(CompanyResearchWorkerEventSchema, researchEvent)).toBe(true);
-    expect(Value.Check(UtilityWorkerEventSchema, researchEvent)).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, researchEventEnvelope(researchEvent))).toBe(true);
+    expect(Value.Check(UtilityWorkerEventSchema, researchEvent)).toBe(false);
     // raw tool events are no longer part of the Utility event union: the
     // envelope with its transport generation id is the only tool carrier.
     expect(Value.Check(UtilityWorkerEventSchema, toolEvent)).toBe(false);
@@ -436,25 +443,27 @@ describe("two-stage company research protocol", () => {
     expect(Reflect.set(required, "0", "injectedField")).toBe(false);
 
     const structure = { ...structureRequest, outputSchema: JSON.parse(JSON.stringify(STRUCTURED_RESEARCH_OUTPUT_SCHEMA)) };
-    expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerRequestSchema, structure)).toBe(true);
+    expect(() => validateResearchWorkerContract(structure as CompanyResearchWorkerRequest)).not.toThrow();
     structure.outputSchema.properties.coreSummary.maxItems = 100;
-    expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(false);
+    expect(() => validateResearchWorkerContract(structure as CompanyResearchWorkerRequest)).toThrow("invalid_research_contract");
   });
 
   it("requires raw and structure kinds, stage identity, snapshots and the fixed output schema", () => {
     expect(Value.Check(CompanyResearchWorkerRequestSchema, researchRequest)).toBe(true);
     const structure = structureRequest;
-    expect(Value.Check(UtilityWorkerRequestSchema, structure)).toBe(true);
-    expect(Value.Check(UtilityWorkerRequestSchema, JSON.parse(JSON.stringify(structure)))).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerRequestSchema, structure)).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerRequestSchema, JSON.parse(JSON.stringify(structure)))).toBe(true);
     for (const invalid of [
       { ...researchRequest, kind: "company-research.run" }, { ...researchRequest, stage: "structure" },
       { ...structure, stage: "raw" }, { ...structure, rawReportText: "" },
-      { ...structure, outputSchema: {} }, { ...structure, tools: ["web_search"] },
-    ]) expect(Value.Check(UtilityWorkerRequestSchema, invalid)).toBe(false);
+      { ...structure, outputSchema: null }, { ...structure, tools: ["web_search"] },
+    ]) expect(Value.Check(CompanyResearchWorkerRequestSchema, invalid)).toBe(false);
+    expect(() => validateResearchWorkerContract({ ...structure, outputSchema: {} } as CompanyResearchWorkerRequest)).toThrow("invalid_research_contract");
     for (const key of ["requestId", "runId", "stage", "context", "template", "rawReportText", "outputSchema"]) {
       const invalid = { ...structure };
       Reflect.deleteProperty(invalid, key);
-      expect(Value.Check(UtilityWorkerRequestSchema, invalid)).toBe(false);
+      expect(Value.Check(CompanyResearchWorkerRequestSchema, invalid)).toBe(false);
     }
   });
 
@@ -470,7 +479,7 @@ describe("two-stage company research protocol", () => {
       for (const event of [...events, failure]) {
         const valid = { ...identity, stage, ...event };
         expect(Value.Check(CompanyResearchWorkerEventSchema, valid)).toBe(true);
-        expect(Value.Check(UtilityWorkerEventSchema, valid)).toBe(true);
+        expect(Value.Check(UtilityWorkerEventSchema, researchEventEnvelope(valid))).toBe(true);
         for (const key of ["requestId", "runId", "stage"]) {
           const invalid = { ...valid };
           Reflect.deleteProperty(invalid, key);
@@ -480,12 +489,12 @@ describe("two-stage company research protocol", () => {
         expect(Value.Check(CompanyResearchWorkerEventSchema, { ...valid, apiKey: "secret" })).toBe(false);
       }
       const cancel = { ...identity, stage, kind: "company-research.cancel" };
-      expect(Value.Check(UtilityWorkerRequestSchema, cancel)).toBe(true);
+      expect(Value.Check(CompanyResearchCancelRequestSchema, cancel)).toBe(true);
       Reflect.deleteProperty(cancel, "stage");
       expect(Value.Check(CompanyResearchCancelRequestSchema, cancel)).toBe(false);
     }
-    expect(Value.Check(UtilityWorkerEventSchema, { ...identity, stage: "raw", type: "text_delta", delta: "draft" })).toBe(true);
-    expect(Value.Check(UtilityWorkerEventSchema, { ...identity, stage: "structure", type: "text_delta", delta: "{unfinished" })).toBe(false);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, { ...identity, stage: "raw", type: "text_delta", delta: "draft" })).toBe(true);
+    expect(Value.Check(CompanyResearchWorkerEventSchema, { ...identity, stage: "structure", type: "text_delta", delta: "{unfinished" })).toBe(false);
     expect(Value.Check(CompanyResearchWorkerEventSchema, { ...identity, stage: "structure", type: "failed", code: "research_failed", message: "raw provider secret" })).toBe(false);
   });
 

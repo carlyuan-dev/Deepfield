@@ -5,7 +5,7 @@ import { webcrypto } from "node:crypto";
 import type { CapabilityUiNavigationHandler, ViewRef } from "@deepfield/capability-sdk";
 import { IndustryResearchCapability } from "../ui/IndustryResearchCapability.js";
 import { CompanyResearchPanel } from "../ui/CompanyResearchPanel.js";
-import { researchRun, researchSummary } from "../ui/company-research-test-fixtures.js";
+import { researchRun, moduleResearchRun, researchSummary } from "../ui/company-research-test-fixtures.js";
 import { makeFakeApi } from "../../../apps/desktop/src/renderer/renderer-test-helpers.js";
 import type { CapabilityItem, ItemCompanyView } from "../contracts/index.js";
 import type { PreparedResearch } from "./drafts.js";
@@ -99,8 +99,8 @@ it.each(["changed", "deleted"] as const)("keeps the current page when a report i
 it.each(["retry", "retryStructuring"] as const)("allows a new report revision after an explicit successful %s from a reference", async method => {
   vi.stubGlobal("crypto", webcrypto);
   const api = makeFakeApi(); api.settings.get.mockResolvedValue(configuredSettings());
-  const initial = researchRun({ status: method === "retry" ? "research_failed" : "structure_failed", lastFailureCode: method === "retry" ? "model_failed" : "structuring_failed" });
-  const updated = researchRun({ rawReportText: "用户重试后的新报告" });
+  const initial = moduleResearchRun({ status: method === "retry" ? "research_failed" : "structure_failed", lastFailureCode: method === "retry" ? "model_failed" : "structuring_failed" });
+  const updated = moduleResearchRun({ rawReportText: "用户重试后的新报告" });
   api.companyResearch.retryFailed.mockResolvedValue(updated);
   api.companyResearch.retryStructuring.mockResolvedValue(updated);
   api.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(initial)], globalActiveRun: null });
@@ -109,7 +109,7 @@ it.each(["retry", "retryStructuring"] as const)("allows a new report revision af
   await waitFor(() => expect(result.current.selectedRun).toEqual(initial));
   api.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(updated)], globalActiveRun: null });
   api.companyResearch.getRun.mockResolvedValue(updated);
-  await act(async () => { if (method === "retry") await result.current.retry({ direction: initial.direction, asOfDate: initial.asOfDate }); else await result.current.retryStructuring(); });
+  await act(async () => { if (method === "retry") await result.current.retry({ moduleIds: initial.moduleIds, asOfDate: initial.asOfDate }); else await result.current.retryStructuring(); });
   await waitFor(() => expect(result.current.selectedRun).toEqual(updated));
   expect(result.current.error).toBeUndefined();
 });
@@ -148,7 +148,7 @@ it("opens an editable draft with one submit button, invalidates on editing and p
   const item = { id: "topic", type: "industry-research", industry: "芯片", createdAt: "2026-09-01", updatedAt: "2026-09-01" } as CapabilityItem;
   const company = { id: "company", itemId: "topic", name: "甲", normalizedName: "甲", profileStatus: "ready", createdAt: "2026-09-01", updatedAt: "2026-09-01" } as ItemCompanyView;
   api.industryResearch.listItems.mockResolvedValue([item]); api.industryResearch.getItem.mockResolvedValue(item); api.industryResearch.listCompanies.mockResolvedValue([company]);
-  const prepared: PreparedResearch = { draftRef: { capabilityId: "company-research", draftId: "draft", revision: "1" }, parameters: { itemId: "topic", companyId: "company", direction: "product_and_technology", asOfDate: "2026-09-01", focusScope: "原始范围" } };
+  const prepared: PreparedResearch = { draftRef: { capabilityId: "company-research", draftId: "draft", revision: "1" }, parameters: { itemId: "topic", companyId: "company", moduleIds: ["products_and_positioning"], asOfDate: "2026-09-01", focusScope: "原始范围" } };
   let invalidations = 0;
   api.researchDraft = { get: async () => ({ ok: true, prepared }), invalidate: async () => { invalidations++; return { ok: true, prepared: { ...prepared, draftRef: { ...prepared.draftRef, revision: "2" } } }; }, update: async () => ({ ok: false, code: "revision_changed" }), submit: async () => ({ ok: true }) };
   let handler!: CapabilityUiNavigationHandler;

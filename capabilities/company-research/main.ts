@@ -17,6 +17,7 @@ import { createCompanyResearchWordExportService, type ExportDependencies } from 
 import { ResearchDrafts } from "./actions/drafts.js";
 import { ResearchSubmission } from "./actions/handlers.js";
 import { registerResearchProtocol } from "./actions/register.js";
+import { companyResearchMigrations } from "./persistence/migrations.js";
 export { createActionDefinitions, viewDeclarations } from "./actions/definitions.js";
 declare const __COMPANY_ACTION_DECLARATIONS__: import("@deepfield/capability-sdk").CompiledActionDeclaration[];
 
@@ -32,7 +33,7 @@ export function bootstrap(registrar: CapabilityRegistrar, services: CapabilityHo
   const database = services.get<unknown>("database.v1");
   const audit = services.get<unknown>("tools.audit.v1");
   assertDatabase(database); assertToolsAuditService(audit);
-  database.migrate([], checkCompanyResearchBaseline);
+  database.migrate(companyResearchMigrations, checkCompanyResearchBaseline);
   const repositories = createCompanyResearchRepositories(database, audit);
   const configuration = services.get<{ profiles: CompanyResearchMainPorts["profiles"]; settings: CompanyResearchMainPorts["settings"]; onConfigurationChanged: NonNullable<CompanyResearchMainPorts["onConfigurationChanged"]> }>("model.configuration");
   const execution = services.get<{ gateway: CompanyRecognitionModelGateway; transport: WorkerTransport; mode?: string }>("model.execution");

@@ -15,6 +15,8 @@ export type ToolFailureCode =
   | "response_too_large"
   | "unsupported_content_type"
   | "parse_failed"
+  | "access_restricted"
+  | "content_unavailable"
   | "invalid_output"
   | "executor_failed"
   | "audit_failed";
@@ -37,6 +39,8 @@ export const TOOL_FAILURE_MESSAGES: Record<ToolFailureCode, string> = {
   response_too_large: "response too large",
   unsupported_content_type: "unsupported content type",
   parse_failed: "parse failed",
+  access_restricted: "网页访问受限：检测到安全验证或登录阻挡，未取得可用正文。",
+  content_unavailable: "网页内容不可用：响应中未提取到可用正文，可能需要页面脚本加载。",
   invalid_output: "invalid tool output",
   executor_failed: "executor failed",
   audit_failed: "audit failed",

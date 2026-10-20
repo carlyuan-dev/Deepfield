@@ -18,7 +18,6 @@ import type { PreparedResearch } from "../actions/drafts.js";
 import { CompanyResearchModal } from "./CompanyResearchModal.js";
 import { ResearchDraftConflictError } from "./research-error-presentation.js";
 import { reportRevision } from "./report-revision.js";
-import { hasUnknownCompanyProfileFields } from "../application/company-profile-completeness.js";
 
 export interface IndustryResearchCapabilityProps {
   interactionEditor?: CapabilityInteractionEditor;
@@ -69,6 +68,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
   const [selectingItems, setSelectingItems] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [editingCompanyProfile, setEditingCompanyProfile] = useState(false);
+  const [savingCompanyProfile, setSavingCompanyProfile] = useState(false);
   const [confirmingIdentity, setConfirmingIdentity] = useState<ItemCompanyView>();
   const companyRequest = useRef(0);
   const itemsRequest = useRef(0);
@@ -144,7 +144,7 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
     selectedCompanyIdentityUnresolved
   );
   const profileUpdatePending = selectedCompany?.profileStatus === "pending" || selectedCompany?.profileStatus === "enriching";
-  const profileUpdateHint = profileUpdateError ?? (profileUpdatePending ? "信息更新中" : selectedCompanyIdentityUnresolved ? "公司主体待确认，请确认主体" : selectedCompany?.profileStatus === "failed" ? "更新未完成，可再次更新信息" : selectedCompany && hasUnknownCompanyProfileFields(selectedCompany) ? "部分信息未知，可更新信息" : "信息已更新");
+  const profileUpdateHint = profileUpdateError ?? (selectedCompany?.profileStatus === "failed" ? "自动填写未完成，请确认主体或重试" : undefined);
   const sortedItems = useMemo(() => newestFirst(items), [items]);
   const listVisible = active && selectedCompanyId === undefined && selectedItem !== undefined;
   const operation = useOperationProgress(api, selectedItem?.id ?? "", listVisible);
@@ -394,8 +394,18 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
         </>
       ) : selectedCompany !== undefined ? (
         <>
-          <div className="capability-page-heading"><div><h1 className="capability-title">{selectedCompany.name}</h1></div><div className="capability-actions"><small className="company-profile-update-hint" role="status">{profileUpdateHint}</small><button className="company-detail-action" disabled={profileUpdatePending} onClick={() => void updateCompanyProfile(selectedCompany)}>{profileUpdatePending ? "更新中…" : "更新信息"}</button>{!editingCompanyProfile && <button className="company-detail-action" onClick={() => setEditingCompanyProfile(true)}>编辑信息</button>}<button className="danger-button company-detail-action" onClick={() => beginConfirmation({ kind: "remove-company", company: selectedCompany })}>删除公司</button></div></div>
-          {editingCompanyProfile ? <CompanyProfileForm api={api} company={selectedCompany} onCancel={() => setEditingCompanyProfile(false)} onSaved={(saved) => handleCompanySaved({ ...saved, itemId: selectedCompany.itemId, ...(selectedCompany.note !== undefined ? { note: selectedCompany.note } : {}) })} /> : <dl className="company-detail">
+          <div className="capability-page-heading"><div><h1 className="capability-title">{selectedCompany.name}</h1></div><div className="capability-actions">
+            {editingCompanyProfile ? <>
+              <button key="cancel-profile" type="button" disabled={savingCompanyProfile} onClick={() => setEditingCompanyProfile(false)}>取消</button>
+              <button key="save-profile" className="primary-button" type="submit" form="company-detail-profile-form" disabled={savingCompanyProfile}>{savingCompanyProfile ? "保存中…" : "保存"}</button>
+            </> : <>
+              <button key="autofill-profile" type="button" className="company-detail-action" disabled={profileUpdatePending} onClick={() => void updateCompanyProfile(selectedCompany)}>{profileUpdatePending ? "自动填写中…" : "自动填写"}</button>
+              <button key="edit-profile" type="button" className="company-detail-action" onClick={() => setEditingCompanyProfile(true)}>编辑信息</button>
+              <button key="remove-company" type="button" className="danger-button company-detail-action" onClick={() => beginConfirmation({ kind: "remove-company", company: selectedCompany })}>删除公司</button>
+            </>}
+          </div></div>
+          {!editingCompanyProfile && profileUpdateHint && <p className="error" role="alert">{profileUpdateHint}</p>}
+          {editingCompanyProfile ? <CompanyProfileForm formId="company-detail-profile-form" hideActions onSubmittingChange={setSavingCompanyProfile} api={api} company={selectedCompany} onCancel={() => setEditingCompanyProfile(false)} onSaved={(saved) => handleCompanySaved({ ...saved, itemId: selectedCompany.itemId, ...(selectedCompany.note !== undefined ? { note: selectedCompany.note } : {}) })} /> : <dl className="company-detail">
             <div className="scope-row"><dt>公司名称</dt><dd>{selectedCompany.name}</dd></div>
             <div className="scope-row"><dt>法定名称</dt><dd>{selectedCompany.legalName ?? "未知"}</dd></div>
             <div className="scope-row"><dt>别名</dt><dd>{selectedCompany.aliases === undefined ? "未知" : selectedCompany.aliases.length === 0 ? "无" : selectedCompany.aliases.join("、")}</dd></div>
@@ -404,12 +414,11 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
             <div className="scope-row"><dt>官方网站</dt><dd>{selectedCompany.officialWebsite === undefined ? "未知" : selectedCompany.officialWebsite === null ? "无" : <a href={selectedCompany.officialWebsite} target="_blank" rel="noreferrer">{selectedCompany.officialWebsite}</a>}</dd></div>
             <div className="scope-row"><dt>上市信息</dt><dd>{selectedCompany.stockListings === undefined ? "未知" : selectedCompany.stockListings.length === 0 ? "未上市" : selectedCompany.stockListings.map((listing) => `${listing.exchange}:${listing.ticker}`).join("、")}</dd></div>
             <div className="scope-row"><dt>业务标签</dt><dd>{selectedCompany.businessTags?.join("、") ?? "未知"}</dd></div>
-            <div className="scope-row"><dt>候选备注</dt><dd>{selectedCompany.note ?? "未填写"}</dd></div>
           </dl>}
           {selectedCompanyNeedsIdentityConfirmation && <div><button className="company-profile-confirm" aria-label={`${selectedCompany.profileIdentityHint ? "修改" : "确认"}主体 ${selectedCompany.name}`} onClick={() => setConfirmingIdentity(selectedCompany)}>{selectedCompany.profileIdentityHint ? "修改主体" : "确认主体"}</button></div>}
           {!editingCompanyProfile && selectedCompany.profileProvenance && <details>
             <summary>资料核实来源</summary>
-            <p className="muted">{selectedCompany.profileProvenance.identity.disposition === "matched" ? "本次来源用于身份及部分字段核实，未确认字段保持未知。" : "身份尚未确认，请核对公司名称并确认主体或更新信息。"}</p>
+            <p className="muted">{selectedCompany.profileProvenance.identity.disposition === "matched" ? "本次来源用于身份及部分字段核实，未确认字段保持未知。" : "身份尚未确认，请核对公司名称并确认主体或自动填写公司信息。"}</p>
             <ul>{selectedCompany.profileProvenance.sources.map((source) => <li key={`${source.kind}:${source.url}`}><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a>（{source.kind === "opened_page" ? "已读取网页" : "搜索摘要"}）</li>)}</ul>
           </details>}
           <CompanyResearchPanel
@@ -427,7 +436,6 @@ export function IndustryResearchCapability({ api, onClose, active = true, onOpen
             {...(() => { const queueEntry = operation.queue?.entries.find((entry) => (entry.status === "pending" || entry.status === "running") && entry.companyId === selectedCompany.id); return queueEntry ? { queueEntry } : {}; })()}
             {...(onOpenSettings ? { onOpenSettings } : {})}
             {...(selectedItem.researchScope !== undefined ? { topicScope: selectedItem.researchScope } : {})}
-            {...(selectedCompany.note !== undefined ? { companyNote: selectedCompany.note } : {})}
           />
         </>
       ) : (

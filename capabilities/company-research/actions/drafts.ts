@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { canonicalActionJson, type DraftRef } from "@deepfield/capability-sdk";
 import type { Repositories } from "../persistence/index.js";
 import type { StartCompanyResearchInput } from "../contracts/index.js";
+import { normalizeResearchInput } from "../contracts/index.js";
 import type { CompanyResearchService } from "../application/company-research-service.js";
 export const CAPABILITY_ID = "company-research";
 export type ProtocolStore = Repositories["companyResearchProtocol"];
@@ -23,6 +24,7 @@ export class ResearchDrafts {
     const data = this.store.getDraft(ref.draftId);
     if (!data) throw protocolError("not_found");
     const draft = JSON.parse(data) as StoredDraft;
+    if (!draft.parameters || !("moduleIds" in draft.parameters)) throw protocolError("expired");
     if (draft.draftRef.revision !== ref.revision) throw protocolError("revision_changed");
     return draft;
   }
@@ -42,8 +44,8 @@ export class ResearchDrafts {
   }
   save(draft: StoredDraft): void { this.store.saveDraft(draft.draftRef.draftId, JSON.stringify(draft)); }
   private normalize(parameters: ResearchParameters): ResearchParameters {
-    const { itemId, companyId, direction, asOfDate, focusScope } = parameters;
-    const input = { direction, asOfDate, ...(focusScope?.trim() ? { focusScope: focusScope.trim() } : {}) };
+    const { itemId, companyId } = parameters;
+    const input = normalizeResearchInput(parameters);
     this.research.validateBatchEntry(itemId, companyId, input);
     return { itemId, companyId, ...input };
   }
