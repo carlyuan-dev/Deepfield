@@ -11,6 +11,24 @@ interface BoundaryLayout {
 }
 
 const PACKAGE_ENTRIES = {
+  "@deepfield/base/config": {
+    packageDirectory: "packages/base", exportKey: "./config", target: "./src/config/index.ts",
+  },
+  "@deepfield/base/agent": {
+    packageDirectory: "packages/base", exportKey: "./agent", target: "./src/agent/index.ts",
+  },
+  "@deepfield/base/agent/runtime": {
+    packageDirectory: "packages/base", exportKey: "./agent/runtime", target: "./src/agent/runtime.ts",
+  },
+  "@deepfield/base/model": {
+    packageDirectory: "packages/base", exportKey: "./model", target: "./src/model/index.ts",
+  },
+  "@deepfield/capability-sdk/execution": {
+    packageDirectory: "packages/capability-sdk", exportKey: "./execution", target: "./src/execution.ts",
+  },
+  "@deepfield/capability-sdk/model-observation": {
+    packageDirectory: "packages/capability-sdk", exportKey: "./model-observation", target: "./src/model-observation.ts",
+  },
   "@deepfield/contracts/model-config": {
     packageDirectory: "packages/contracts",
     exportKey: "./model-config",
@@ -54,6 +72,11 @@ function checkExecutionBoundary(
     if ([
       resolve(layout.repositoryRoot, "packages/contracts/src/model-config.ts"),
       resolve(layout.repositoryRoot, "packages/contracts/src/tools.ts"),
+      ...["execution", "model-observation"].map(file => resolve(layout.repositoryRoot, `packages/capability-sdk/src/${file}.ts`)),
+      ...["index", "runtime", "message-utils", "errors"].map(file => resolve(layout.repositoryRoot, `packages/base/src/agent/${file}.ts`)),
+      ...["index", "contracts", "observation", "errors"].map(file => resolve(layout.repositoryRoot, `packages/base/src/model/${file}.ts`)),
+      ...["index", "llm", "search", "definition", "types", "config-error"].map(file => resolve(layout.repositoryRoot, `packages/base/src/config/${file}.ts`)),
+      ...["index", "errors"].map(file => resolve(layout.repositoryRoot, `packages/base/src/errors/${file}.ts`)),
       ...["index", "contracts", "definition", "errors", "budget-contract", "budget", "audit", "tool-set", "events", "retry"].map((file) => resolve(layout.repositoryRoot, `packages/base/src/tools/${file}.ts`)),
       ...["index", "search-provider", "output-contracts", "source-date", "errors", "parsing-contracts", "html-limits"].map((file) => resolve(layout.repositoryRoot, `packages/base/src/search/${file}.ts`)),
     ].includes(path)) return;
@@ -178,6 +201,11 @@ describe("Pi executor dependency boundary", () => {
   });
 
   it.each([
+    {
+      edge: "the SDK aggregate export",
+      files: { "entry.ts": 'import type { PiExecutionRequest } from "@deepfield/capability-sdk";' },
+      error: "@deepfield/capability-sdk",
+    },
     {
       edge: "a type re-export through the local Chat factory",
       files: {

@@ -1,1 +1,1 @@
-export type { PiExecutionContextMessage, PiExecutionRequest, PiToolSource, PiExecutionEvent } from "@deepfield/capability-sdk";
+export type { PiExecutionContextMessage, PiExecutionRequest, PiToolSource, PiExecutionEvent } from "@deepfield/capability-sdk/execution";

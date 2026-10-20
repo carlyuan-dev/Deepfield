@@ -8,7 +8,7 @@ Chat 是通用主 Agent，Conversation 独立于研究主题和 Capability 条�
 
 Chat 负责会话、历史与上下文策略、每轮工具开放、Skill 使用、流式展示及人机交互。Capability 负责业务流程、输入输出契约、产物与版本，不隐式继承 Chat 记忆。工具提供原子能力，不决定业务流程；Search Provider 不管理 Prompt、Agent 循环或额度。
 
-人机交互、草稿编辑、任务范围授权、等待与恢复以 [Chat 交互设计](chat.interaction.设计文档.md) 为唯一详细说明。Base 的目标边界与迁移状态以 [Base 总览](../base/base.overview.设计文档.md) 和 [Base 抽取设计](../base/base.extraction.设计文档.md) 为准；共享执行器仍在 desktop Worker，不能据此宣称 Base.Agent 已实现。
+人机交互、草稿编辑、任务范围授权、等待与恢复以 [Chat 交互设计](chat.interaction.设计文档.md) 为唯一详细说明。Base 的目标边界与迁移状态以 [Base 总览](../base/base.overview.设计文档.md) 和 [Base 抽取设计](../base/base.extraction.设计文档.md) 为准；通用 Pi 执行核已迁至 Base.Agent，desktop Worker 保留 Chat／Capability 场景装配。
 
 ## 2. 模型、搜索与请求快照
 
@@ -24,7 +24,7 @@ Settings 分别维护 LLM 和 Search Profile；允许保存多份，每类只有
 
 ## 3. Pi 循环与动态工具开放
 
-主路径为 `ChatService → Worker → PiChatAgent → PiAgentExecutor → Pi AgentTool → ToolRunner`。Pi 承担模型工具协议与原生循环；Deepfield 补配置快照、权限、预算、持久化、事件和场景策略，不 fork Pi 或另建模型工具协议。
+主路径为 `ChatService → Worker → PiChatAgent → Pi 场景适配 → Base.Agent → Pi AgentTool → ToolRunner`。Pi 承担模型工具协议与原生循环；Deepfield 补配置快照、权限、预算、持久化、事件和场景策略，不 fork Pi 或另建模型工具协议。
 
 主 Agent 的当前循环契约：
 
@@ -90,7 +90,7 @@ Search 层只标准化能力和结果，不负责证据覆盖、预算、循环�
 | --- | --- |
 | 请求、场景额度、终态与历史展示 | `packages/application/src/chat/chat-service.ts` |
 | 最近消息与 transcript 预算 | `packages/application/src/chat/context-builder.ts`、`chat-session-context.ts` |
-| 主 Agent 与 Capability 循环分支 | `apps/desktop/src/worker/agent/pi-agent-executor.ts` |
+| 通用有界执行与场景策略 | `packages/base/src/agent/runtime.ts`、`apps/desktop/src/worker/agent/pi-execution-policy.ts` |
 | 网络额度与批次规划 | `apps/desktop/src/worker/agent/agent-run-control.ts`、`tool-batch-admission.ts` |
 | 安全 transcript、恢复和语言锚点 | `apps/desktop/src/worker/chat/pi-session-transcript.ts`、`pi-chat-context.ts` |
 | 工具活动与来源投影 | `apps/desktop/src/worker/tools/tool-activity.ts`、`tool-source-projection.ts` |

@@ -1,8 +1,8 @@
 # Deepfield Base 抽取设计文档
 
-版本：0.8 · 日期：2026-10-20
+版本：0.9 · 日期：2026-10-20
 
-状态：总体设计、各模块安全契约与 runtime 分入口、Database 通用 CRUD 和模块迁移账本、公司仓储归属及宿主注入边界已确认。Errors、Config 已实现并完成已声明范围的用户验收；Model 安全契约、runtime、Usage collector 及实际消费者接线已实现，自动验证与真实链路端测完成。Search 抽取已实现、自动检查通过，已完成代码复核，最终用户体验尚未验收。Tools 通用核心与 web 适配已实现，Worker 及通用工具消费者已接入，长期契约见 [Base.Tools 设计](base.tools.设计文档.md)。Agent、Database 与仓储归位尚未完成。后续各批由 Agent 自验并独立提交，最终集中进行用户体验验收；本文件维护长期边界与当前真实状态。
+状态：总体设计、各模块安全契约与 runtime 分入口、Database 通用 CRUD 和模块迁移账本、公司仓储归属及宿主注入边界已确认。Errors、Config 已实现并完成已声明范围的用户验收；Model 安全契约、runtime、Usage collector 及实际消费者接线已实现，自动验证与真实链路端测完成。Search 抽取已实现、自动检查通过，已完成代码复核，最终用户体验尚未验收。Tools 通用核心与 web 适配已实现，Worker 及通用工具消费者已接入，长期契约见 [Base.Tools 设计](base.tools.设计文档.md)。Agent 通用核已实现并接入 Chat／Capability；Database 与仓储归位尚未完成。后续各批由 Agent 自验并独立提交，最终集中进行用户体验验收；本文件维护长期边界与当前真实状态。
 
 当前 Errors 实现在 `packages/base/src/errors/`，旧接口在 `packages/contracts/src/errors.ts` 保留薄兼容适配；其他模块的当前归属见下表。
 
@@ -24,17 +24,15 @@
 | `packages/base/src/model/` 实际核心；`apps/desktop/src/shared/model-gateway.ts`、`model-request-observation.ts` 为单向薄装配／转出 | Model 已抽取：调用、请求观察、HTTP 诊断及 LLM transport；SDK 精确特化中立契约 | 公司证据如何接收、冻结、使用请求记录留 Capability |
 | `packages/base/src/search/` 实际核心；`packages/retrieval` 服务入口单向转出；`shared/usage-search.ts` 为应用计量装配 | Search 已抽取：Provider、读取解析、资源生命周期与计量接入 | 联网许可、检索任务策略留上层；web 工具定义由 Base.Tools/web 适配 |
 | `packages/base/src/tools/` 实际核心；tool-platform 与 retrieval web 工具入口单向转出 | Tools 已抽取：定义、注册、执行、准入、TraceBudgetPool 与审计端口 | Chat 会话工具实现、HITL 授权、业务工具及应用装配留上层 |
-| `apps/desktop/src/worker/agent` 的共享执行器；SDK 中中立 execution 契约 | Agent：Pi 循环与运行控制 | Chat 上下文和调研专属收口策略留各自适配器 |
+| `packages/base/src/agent/` 通用核；SDK execution 单向转出中立契约 | Agent 已抽取：Pi 循环与运行控制 | Chat 上下文和调研专属收口策略留应用适配器 |
 | `packages/persistence/src/database.ts`、`transactions.ts`、迁移执行机制及仓储重复的参数化执行 | Database：连接、通用读写／CRUD、事务和迁移执行 | Chat／公司／报告表与仓储归各自模块；旧迁移保留兼容 |
 | `packages/base/src/usage` 含实例化 collector；`shared/usage-collection.ts` 为 ALS／recorder 桥接；`persistence/usage-repository.ts` | Usage 通用采集已归位；SQLite 适配待后续归位 | Settings 展示、主进程／Worker 传输与初始化留应用 |
 | `packages/base/src/errors/`；`packages/contracts/src/errors.ts` 兼容适配 | Errors 核心及旧公共出口接线已实现；已通过用户手测 | 业务错误码、恢复动作、用户文案与边界白名单归各模块 |
 
 当前必须承认的边界缺口：
 
-1. 共享 Agent 不依赖 Chat 历史实现，但仍内置 `WEB_CHAT_POLICY`、搜索／读取额度及 Capability 分支，不能整体视为已中立化。
-2. Agent 的部分中立契约仍来自 Capability SDK；Model 的中立观察契约已下沉，SDK 单向精确特化。
-3. 主进程仍组装 `company-research.repositories`，能力包依赖 persistence 的聚合仓储类型；公司数据层尚未完全回到包内。
-4. 现有 `schema_migrations` 1–32 混合多模块表结构，不能因归属变化重排、重跑或删除历史迁移。
+1. 主进程仍组装 `company-research.repositories`，能力包依赖 persistence 的聚合仓储类型；公司数据层尚未完全回到包内。
+2. 现有 `schema_migrations` 1–32 混合多模块表结构，不能因归属变化重排、重跑或删除历史迁移。
 
 ## 3. 模块边界
 
@@ -156,6 +154,6 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 优先复用测试：配置存储／诊断、tool-platform 的准入与预算、`pi-agent-executor` 的历史隔离、persistence 的事务与旧库读取、公司证据集成、Capability runtime／loader 及 production boundary。仅对本批新增风险补必要回归保护；构建通过不替代关键行为验证。
 
-已实现模块的长期契约见 [Base.Errors 设计](base.errors.设计文档.md)、[Base.Config 设计](base.config.设计文档.md)、[Base.Model 设计](base.model.设计文档.md)、[Base.Search 设计](base.search.设计文档.md)、[Base.Tools 设计](base.tools.设计文档.md)和 [Base.Usage 设计](base.usage.设计文档.md)。Model 已完成本地协议回归、限定冻结旧包服务兼容、生产边界与打包验证；当前 DeepSeek `deepseek-flash`／Tavily 下的配置诊断、Chat、资料更新和完整两阶段调研真实链路端测通过，证据与 Usage 对齐。其他真实 Provider／模型、集中用户体验验收及冻结旧包 GUI／完整生命周期仍待验证；取消行为沿用本地回归证据。
+已实现模块的长期契约见 [Base.Errors 设计](base.errors.设计文档.md)、[Base.Config 设计](base.config.设计文档.md)、[Base.Model 设计](base.model.设计文档.md)、[Base.Search 设计](base.search.设计文档.md)、[Base.Tools 设计](base.tools.设计文档.md)、[Base.Agent 设计](base.agent.设计文档.md)和 [Base.Usage 设计](base.usage.设计文档.md)。Model 已完成本地协议回归、限定冻结旧包服务兼容、生产边界与打包验证；当前 DeepSeek `deepseek-flash`／Tavily 下的配置诊断、Chat、资料更新和完整两阶段调研真实链路端测通过，证据与 Usage 对齐。其他真实 Provider／模型、集中用户体验验收及冻结旧包 GUI／完整生命周期仍待验证；取消行为沿用本地回归证据。
 
-Search 抽取已实现，typecheck、build、Search／Settings／Usage 回归及安全边界检查通过，已完成代码复核；本批未启动 Electron 或调用真实 Provider，最终用户体验尚未验收。Agent、Database 与仓储归位尚未完成。
+Search 抽取已实现，typecheck、build、Search／Settings／Usage 回归及安全边界检查通过，已完成代码复核；本批未启动 Electron 或调用真实 Provider，最终用户体验尚未验收。Agent 通用核已实现并接入 Chat／Capability；Database 与仓储归位尚未完成。

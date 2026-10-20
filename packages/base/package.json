@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agent": "./src/agent/index.ts",
+    "./agent/runtime": "./src/agent/runtime.ts",
     "./search": "./src/search/index.ts",
     "./search/runtime": "./src/search/runtime.ts",
     "./model": "./src/model/index.ts",
@@ -17,6 +19,7 @@
     "./tools/web": "./src/tools/web/index.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.84.3",
     "@earendil-works/pi-ai": "0.84.3",
     "typebox": "1.3.7",
     "cheerio": "1.1.2",

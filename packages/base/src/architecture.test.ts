@@ -22,6 +22,8 @@ function checkBoundary(entries: string[], read: (path: string) => string, root: 
       if (name === "node:crypto" && path === resolve(root, "usage/collector.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "model/request-observation.ts")) return;
       const piImports: Record<string, readonly string[]> = {
+        "agent/runtime.ts": ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai"],
+        "agent/message-utils.ts": ["@earendil-works/pi-ai"],
         "model/contracts.ts": ["@earendil-works/pi-ai"],
         "model/request-observation.ts": ["@earendil-works/pi-ai"],
         "model/runtime.ts": ["@earendil-works/pi-ai", "@earendil-works/pi-ai/compat", "@earendil-works/pi-ai/api/anthropic-messages.lazy", "@earendil-works/pi-ai/api/openai-completions.lazy"],

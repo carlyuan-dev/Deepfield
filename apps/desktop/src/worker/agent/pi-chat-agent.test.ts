@@ -1778,7 +1778,6 @@ describe("pi chat agent", () => {
   it.each([
     ["空白答案", "   "],
     ["DSML 工具协议", '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="web_search"></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>'],
-    ["与中文问题不一致的纯英文答案", "I could not verify the requested information."],
   ])("rejects a final turn containing only %s", async (_label, finalText) => {
     const fake = new FakePiAgent({
       events: [{ type: "agent_start" }, agentEnd([assistant(finalText)])],
@@ -1788,6 +1787,16 @@ describe("pi chat agent", () => {
 
     expect(result.error).toBeInstanceOf(PiChatAgentError);
     expect(result.events.some((event) => event.type === "completed")).toBe(false);
+  });
+
+  it.each(["The requested result is ready.", "const value = 42;"])("preserves valid non-Han output while retaining the human language instruction: %s", async finalText => {
+    const fake = new FakePiAgent({
+      events: [{ type: "agent_start" }, agentEnd([assistant(finalText)])],
+    });
+    const result = await capture(createPiChatAgent(makeRuntime(fake, stubModel)));
+    expect(result.error).toBeUndefined();
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "completed", text: finalText }));
+    expect(fake.receivedOptions?.initialState?.systemPrompt).toContain("本轮真实人类消息使用中文");
   });
 
   it("adds non-persisted offline and local-date context to each Pi session", async () => {
@@ -1807,9 +1816,10 @@ describe("pi chat agent", () => {
     expect(systemPrompt).toContain(MAIN_AGENT_SYSTEM_PROMPT);
     expect(systemPrompt).toContain("当前日期：2026-09-09");
     expect(systemPrompt).toContain("本机时区：Asia/Shanghai");
-    expect(systemPrompt).toContain("本轮未启用联网搜索");
-    expect(systemPrompt).toContain("不允许发起新的网页搜索或抓取");
-    expect(systemPrompt).toContain("可以直接使用上下文已有的网页内容及来源链接");
+    expect(systemPrompt).toContain("不调用 web_search 或 read_webpage");
+    expect(systemPrompt).toContain("可以使用历史工具结果、来源链接和已有证据");
+    expect(systemPrompt).toContain("不得说本轮已重新核实");
+    expect(fake.receivedOptions?.initialState?.tools).toEqual([]);
     expect(systemPrompt).not.toContain("不能处理本地文件");
     expect(workerRequest.context.systemPrompt).toBe(MAIN_AGENT_SYSTEM_PROMPT);
     expect(fake.promptedWith).toBe("当前问题");

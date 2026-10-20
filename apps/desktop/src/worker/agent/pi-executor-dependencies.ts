@@ -12,7 +12,7 @@ import type {
   SkillCatalogProvider,
 } from "./pi-runtime.js";
 import type { ExecutionHandoff } from "./execution-handoff.js";
-import type { ModelRequestObserver } from "@deepfield/capability-sdk";
+import type { ModelRequestObserver } from "@deepfield/capability-sdk/model-observation";
 
 export interface PiAgentExecutorDependencies {
   runtime: PiRuntime;

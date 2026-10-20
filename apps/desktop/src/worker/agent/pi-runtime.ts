@@ -1,55 +1,17 @@
-import type {
-  AgentEvent,
-  AgentMessage,
-  AgentOptions,
-  AgentTool,
-  StreamFn,
-} from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import type { LlmRuntimeSnapshot } from "@deepfield/contracts/model-config";
-import type {
-  ToolExecutionBatchScope,
-  ToolSyntheticAuditRecord,
-} from "@deepfield/contracts/tools";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ToolExecutionBatchScope, ToolSyntheticAuditRecord } from "@deepfield/contracts/tools";
 import type { ToolBudgetSnapshot } from "@deepfield/base/tools";
 import type { SearchProvider } from "@deepfield/base/search";
-import type { ModelRequestObserver } from "@deepfield/capability-sdk";
-import type { ModelGatewayError } from "../../shared/model-gateway.js";
-
-export class PiChatAgentError extends Error {
-  constructor(
-    readonly code: "provider_failed" | "stream_failed" | "incomplete_lifecycle" | "invalid_final_empty" | "invalid_final_protocol" | "invalid_final_language" | "invalid_final_tool_use",
-    message: string,
-  ) {
-    super(message);
-    this.name = "PiChatAgentError";
-  }
-}
+import type { ModelToolOrigin } from "@deepfield/capability-sdk/model-observation";
+import type { PiRuntime as BasePiRuntime, PiAgentError } from "@deepfield/base/agent/runtime";
+export { PiAgentError as PiChatAgentError } from "@deepfield/base/agent/runtime";
+export type { PiSession, PiAgentHandle } from "@deepfield/base/agent/runtime";
+export type PiRuntime = BasePiRuntime<ModelToolOrigin, "ordinary" | "synthesis">;
 
 export interface SkillCatalogProvider {
   get(): Promise<{
     formatInvocation(name: string, instructions: string): string;
   }>;
-}
-
-export interface PiSession {
-  model: Model<Api>;
-  streamFn: StreamFn;
-  getModelFailure?(): ModelGatewayError | undefined;
-}
-
-export interface PiAgentHandle {
-  subscribe(
-    listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void,
-  ): () => void;
-  abort(): void;
-  followUp(message: AgentMessage): void;
-  prompt(message: string): Promise<void>;
-}
-
-export interface PiRuntime {
-  createSession(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver): PiSession | undefined;
-  createAgent(options: AgentOptions): PiAgentHandle;
 }
 
 export interface PiToolSessionProvider {
@@ -74,7 +36,7 @@ export interface PiRunDiagnostic {
   maxModelInputCharsEstimate: number;
   outputChars: number;
   stopReason: "stop" | "length" | "tool_use" | "error" | "aborted" | "unknown";
-  errorCategory?: PiChatAgentError["code"];
+  errorCategory?: PiAgentError["code"];
   startedAt: string;
   finishedAt: string;
   durationMs: number;
