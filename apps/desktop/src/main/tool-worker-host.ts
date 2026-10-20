@@ -6,7 +6,7 @@ import {
   type HostRequest,
   type HostRpcMethod,
 } from "@deepfield/contracts";
-import { TOOL_FAILURE_MESSAGES, type ToolAuditSink } from "@deepfield/tool-platform";
+import { TOOL_FAILURE_MESSAGES, type ToolAuditSink } from "@deepfield/base/tools";
 import type { ConversationRepositories } from "./conversation-reader.js";
 import { createRepositoryConversationReader } from "./conversation-reader.js";
 

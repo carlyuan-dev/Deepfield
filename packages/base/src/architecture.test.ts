@@ -18,6 +18,7 @@ function checkBoundary(entries: string[], read: (path: string) => string, root: 
       if (literal?.type !== "StringLiteral" || typeof literal.value !== "string") throw new Error("Unverifiable dynamic dependency");
       const name = literal.value;
       if (name === "typebox" || name === "typebox/value") return;
+      if (name === "typebox/format" && path === resolve(root, "tools/contracts.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "usage/collector.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "model/request-observation.ts")) return;
       const piImports: Record<string, readonly string[]> = {

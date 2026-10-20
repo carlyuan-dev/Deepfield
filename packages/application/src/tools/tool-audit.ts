@@ -3,7 +3,7 @@ import {
   type ToolAuditFinish,
   type ToolAuditSink,
   type ToolAuditStart,
-} from "@deepfield/tool-platform";
+} from "@deepfield/base/tools";
 import type { ToolExecutionRepository } from "@deepfield/persistence";
 import type { ToolSyntheticAuditRecord } from "@deepfield/contracts";
 

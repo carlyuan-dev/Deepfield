@@ -8,7 +8,7 @@ Search 提供搜索 Provider、公开网页读取、HTML／PDF 解析和资源�
 
 `@deepfield/base/search/runtime` 提供 `createSearchProvider`、Provider HTTP client、安全 HTTP transport、URL policy、ResourceStore、HTML／PDF parser、网页读取和 Usage 装配函数。Node 网络、DNS、流、哈希以及 cheerio、pdfjs、ipaddr 只在运行时依赖图中加载。Search 使用 Config 和 Usage 的中立契约，依赖图不得进入应用、SDK、业务 contracts 或工具平台。
 
-旧 `packages/retrieval` 服务入口仅转出 Base 实现；web_search、read_webpage、fetch、parse 和 link check 工具定义继续由 retrieval 适配。适配层将 `SearchResourceError`／`TransportError` 映射到工具错误，并把可信工具上下文绑定为资源作用域。旧入口在现有工具消费者及 benchmark／live 设施迁移完毕后才可删除；不另维护服务副本。
+旧 `packages/retrieval` 服务入口仅转出 Base 实现；web_search、read_webpage、fetch、parse 和 link check 工具定义由 [Base.Tools/web](base.tools.设计文档.md) 适配，retrieval 工具入口单向转出。适配层将 `SearchResourceError`／`TransportError` 映射到工具错误，并把可信工具上下文绑定为资源作用域。旧入口在现有工具消费者及 benchmark／live 设施迁移完毕后才可删除；不另维护服务副本。
 
 ## 搜索请求与配置
 

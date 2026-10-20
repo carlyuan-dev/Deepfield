@@ -46,6 +46,9 @@ function isExternalDependency(id: string): boolean {
 }
 
 const deepfieldAliases: Record<string, string> = {
+  "@deepfield/base/tools/runtime": "packages/base/src/tools/runtime.ts",
+  "@deepfield/base/tools/web": "packages/base/src/tools/web/index.ts",
+  "@deepfield/base/tools": "packages/base/src/tools/index.ts",
   "@deepfield/base/search/runtime": "packages/base/src/search/runtime.ts",
   "@deepfield/base/search": "packages/base/src/search/index.ts",
   "@deepfield/application": "packages/application/src/index.ts",

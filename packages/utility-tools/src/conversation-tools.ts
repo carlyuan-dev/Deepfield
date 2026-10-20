@@ -10,7 +10,7 @@ import {
 import {
   ToolExecutionError,
   type ToolDefinition,
-} from "@deepfield/tool-platform";
+} from "@deepfield/base/tools";
 
 export type ConversationToolName =
   | "list_conversations"

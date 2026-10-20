@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { ToolExecutionError, type ToolDefinition } from "@deepfield/tool-platform";
+import { ToolExecutionError, type ToolDefinition } from "@deepfield/base/tools";
 
 const currentDatetimeInputSchema = Type.Object(
   { timeZone: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })) },

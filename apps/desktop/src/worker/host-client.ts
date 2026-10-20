@@ -9,7 +9,7 @@ import {
   type HostRpcMethod,
   type ToolSyntheticAuditRecord,
 } from "@deepfield/contracts";
-import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
+import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/base/tools";
 import type { ConversationReader } from "@deepfield/utility-tools";
 
 export class HostRpcError extends Error {

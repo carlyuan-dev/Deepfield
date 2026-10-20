@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { ToolExecutionError, type ToolDefinition } from "@deepfield/tool-platform";
+import { ToolExecutionError, type ToolDefinition } from "@deepfield/base/tools";
 import {
   dateTimeOutputSchema,
   formatAbsoluteDateTime,

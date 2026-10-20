@@ -11,7 +11,7 @@ import type {
   ToolExecutionBatchScope,
   ToolSyntheticAuditRecord,
 } from "@deepfield/contracts/tools";
-import type { ToolBudgetSnapshot } from "@deepfield/tool-platform/budget-contract";
+import type { ToolBudgetSnapshot } from "@deepfield/base/tools";
 import type { SearchProvider } from "@deepfield/base/search";
 import type { ModelRequestObserver } from "@deepfield/capability-sdk";
 import type { ModelGatewayError } from "../../shared/model-gateway.js";

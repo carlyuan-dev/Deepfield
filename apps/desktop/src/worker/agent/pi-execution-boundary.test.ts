@@ -21,10 +21,10 @@ const PACKAGE_ENTRIES = {
     exportKey: "./tools",
     target: "./src/tools.ts",
   },
-  "@deepfield/tool-platform/budget-contract": {
-    packageDirectory: "packages/tool-platform",
-    exportKey: "./budget-contract",
-    target: "./src/budget-contract.ts",
+  "@deepfield/base/tools": {
+    packageDirectory: "packages/base",
+    exportKey: "./tools",
+    target: "./src/tools/index.ts",
   },
   "@deepfield/base/search": {
     packageDirectory: "packages/base",
@@ -54,7 +54,7 @@ function checkExecutionBoundary(
     if ([
       resolve(layout.repositoryRoot, "packages/contracts/src/model-config.ts"),
       resolve(layout.repositoryRoot, "packages/contracts/src/tools.ts"),
-      resolve(layout.repositoryRoot, "packages/tool-platform/src/budget-contract.ts"),
+      ...["index", "contracts", "definition", "errors", "budget-contract", "budget", "audit", "tool-set", "events", "retry"].map((file) => resolve(layout.repositoryRoot, `packages/base/src/tools/${file}.ts`)),
       ...["index", "search-provider", "output-contracts", "source-date", "errors", "parsing-contracts", "html-limits"].map((file) => resolve(layout.repositoryRoot, `packages/base/src/search/${file}.ts`)),
     ].includes(path)) return;
     throw new Error(`Forbidden executor source dependency: ${path}`);
@@ -167,6 +167,14 @@ describe("Pi executor dependency boundary", () => {
       resolve(agentRoot, "pi-executor-dependencies.ts"),
     ], (path) => readFileSync(path, "utf8"), layout);
     expect(packageEntries).toEqual(new Set(Object.keys(PACKAGE_ENTRIES)));
+  });
+
+  it("resolves the Tools safe export and alias through only its precise contract dependencies", () => {
+    const entry = resolve(agentRoot, "tools-boundary-fixture.ts");
+    const entries = checkExecutionBoundary([entry], (path) => path === entry
+      ? 'import type { ToolBudgetSnapshot } from "@deepfield/base/tools";'
+      : readFileSync(path, "utf8"), layout);
+    expect(entries).toEqual(new Set(["@deepfield/base/tools"]));
   });
 
   it.each([

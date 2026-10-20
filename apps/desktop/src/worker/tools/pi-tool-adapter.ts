@@ -7,7 +7,7 @@ import type {
   ToolRunner,
   ToolRegistry,
   ToolSet,
-} from "@deepfield/tool-platform";
+} from "@deepfield/base/tools/runtime";
 import type { JsonObject, ToolExecutionBatchScope, ToolExecutionEvent } from "@deepfield/contracts";
 import type { ModelToolOrigin } from "@deepfield/capability-sdk";
 import { toolResultProjection } from "./tool-source-projection.js";

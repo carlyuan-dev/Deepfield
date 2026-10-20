@@ -14,6 +14,7 @@
 | [Base.Config](base/base.config.设计文档.md) | 已实现的通用配置、作用域接入与旧接口兼容；当前配置消费链路已验收，证据范围见正文 |
 | [Base.Model](base/base.model.设计文档.md) | 模型安全契约、可信端 runtime 与实际接线；本阶段自动验证完成，可交付 staging，待用户体验验收 |
 | [Base.Search](base/base.search.设计文档.md) | 搜索、网页读取／解析及计量边界；已实现、自动检查通过，已完成代码复核，待用户体验验收 |
+| [Base.Tools](base/base.tools.设计文档.md) | 工具安全契约、执行／审计／预算与 web 适配；通用核心已实现，Worker 已接入 |
 | [Base.Usage](base/base.usage.设计文档.md) | 已实现的用量账本、统计口径、采集与看板 |
 | [Chat 运行机制](chat/chat.runtime.设计文档.md) | Pi 循环、工具许可、联网额度、历史与配置调用边界 |
 | [Chat 人机交互](chat/chat.interaction.设计文档.md) | 询问／确认、真实表单共同编辑、任务范围授权与恢复 |
