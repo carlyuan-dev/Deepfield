@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { databaseView, type DatabaseInput } from "./database.js";
+import type { Database } from "@deepfield/base/database";
 import { Value } from "typebox/value";
-import { type ResearchRunId } from "./legacy-company-contracts/index.js";
-import { ActiveResearchRunSummarySchema, ResearchRunSchema, ResearchRunSummarySchema, StartCompanyResearchInputSchema, type ActiveResearchRunSummary, type KeyResearchRun, type ResearchFailureCode, type ResearchRun, type ResearchRunSummary } from "./legacy-company-contracts/index.js";
+import { type ResearchRunId } from "./contracts.js";
+import { ActiveResearchRunSummarySchema, ResearchRunSchema, ResearchRunSummarySchema, StartCompanyResearchInputSchema, type ActiveResearchRunSummary, type KeyResearchRun, type ResearchFailureCode, type ResearchRun, type ResearchRunSummary } from "./contracts.js";
 import type { CompanyResearchRunRepository, CompanyResearchRunRow } from "./types.js";
 import { createCompanyResearchEvidenceRepository } from "./company-research-evidence-repository.js";
 
@@ -117,8 +117,7 @@ function toSummary(run: ResearchRun): ResearchRunSummary | ActiveResearchRunSumm
   return { ...summary, status: summary.status };
 }
 
-export function createCompanyResearchRunRepository(connection: DatabaseInput): CompanyResearchRunRepository {
-  const db = databaseView(connection);
+export function createCompanyResearchRunRepository(db: Database): CompanyResearchRunRepository {
   function getRequired(runId: ResearchRunId, status: KeyResearchRun["status"]): KeyResearchRun {
     const row = db.prepare("SELECT * FROM company_research_runs WHERE id = ?").get(runId) as
       unknown as CompanyResearchRunRow | undefined;

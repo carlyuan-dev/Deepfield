@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { structureResearchRequest } from "./company-research-test-helpers.js";
 import { budgetMessages, buildStructureRepairPrompt, checkStructureBudget } from "./company-research-context-budget.js";
-import { evidenceBytes } from "../../../packages/persistence/src/research-evidence-data.js";
+import { evidenceBytes } from "../persistence/research-evidence-data.js";
 import { buildCompanyResearchStructuringPrompt } from "./company-research-structuring-prompt.js";
 it("adds evidence rules only with a packet and budgets the actual ordinary and repair messages", () => {
   const legacy = structureResearchRequest();

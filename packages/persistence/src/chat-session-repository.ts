@@ -1,6 +1,6 @@
 import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
-import { AgentWorkerEventSchema, ChatTranscriptMessageSchema, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "./legacy-company-contracts/index.js";
+import { AgentWorkerEventSchema, ChatTranscriptMessageSchema, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "@deepfield/contracts";
 
 export interface ChatSessionRecord {
   requestId: string;

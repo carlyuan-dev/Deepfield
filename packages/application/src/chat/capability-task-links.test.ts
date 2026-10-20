@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../../persistence/src/testing/repositories.js";
 import { requestedCompletionAnalysis, shouldScheduleAnalysis, taskEventId } from "./capability-task-links.js";
 
 describe("capability task links", () => {

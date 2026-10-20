@@ -6,7 +6,7 @@ import { AppError } from "@deepfield/contracts";
 import type { CompanyResearchWorkerPort } from "../host-ports.js";
 import { openTestDb, type TestDb } from "../../../packages/application/src/testing/application-test-helpers.js";
 import { ResearchEvidenceCollector } from "../runtime/company-research-evidence-collector.js";
-import { evidenceHash, snapshotManifest } from "../../../packages/persistence/src/research-evidence-data.js";
+import { evidenceHash, snapshotManifest } from "../persistence/research-evidence-data.js";
 
 const dbs: TestDb[] = []; afterEach(() => { for (const db of dbs.splice(0)) db.cleanup(); });
 const llm: LlmRuntimeSnapshot = { id: "l1", name: "LLM", provider: "custom", protocol: "openai_compatible", baseUrl: "https://llm.test/v1", modelId: "m", contextWindow: 128000, apiKey: "llm-secret" };
@@ -656,6 +656,15 @@ describe("CompanyResearchService failed-run retry", () => {
 });
 
 describe("CompanyResearchService run deletion", () => {
+  it("rolls back diagnostics and reports when the same-connection audit cleanup fails", () => {
+    const f = setup(); const terminal = seedFailed(f, "research_failed");
+    recordDiagnostic(f, terminal.id, "audit-request", "audit-trace"); recordTool(f, "audit-tool", "audit-trace");
+    f.db.db.exec("CREATE TRIGGER reject_tool_cleanup BEFORE DELETE ON tool_executions BEGIN SELECT RAISE(ABORT, 'audit_cleanup_failed'); END");
+    expect(() => f.service.deleteRun(f.item.id, f.company.id, terminal.id)).toThrow("could not be deleted");
+    expect(f.service.getRun(f.item.id, f.company.id, terminal.id)).toEqual(terminal);
+    expect(f.db.repos.companyResearchDiagnostics.listByRunId(terminal.id)).toHaveLength(1);
+    expect(f.db.repos.toolExecutions.getById("audit-tool")).toBeDefined();
+  });
   it("deletes one terminal run with its diagnostics and trace-linked tools only", () => {
     const f = setup();
     const doomed = seedFailed(f, "research_failed");

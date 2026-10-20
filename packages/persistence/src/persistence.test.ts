@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
-import type { ConversationId } from "./legacy-company-contracts/index.js";
-import { openDatabase, migrate, createRepositories } from "./index.js";
+import type { ConversationId } from "@deepfield/contracts";
+import { openDatabase, migrate, createRepositories } from "./testing/repositories.js";
 
 interface TestDb {
   dir: string;

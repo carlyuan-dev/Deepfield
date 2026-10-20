@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../../../persistence/src/testing/repositories.js";
 import { ChatInteractionCoordinator } from "./coordinator.js";
 import type { OperationAdapter } from "./ports.js";
 

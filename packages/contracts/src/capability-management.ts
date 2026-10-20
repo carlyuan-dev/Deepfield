@@ -14,6 +14,7 @@ export const CAPABILITY_ISSUES = {
   entry_missing: "缺少能力文件",
   duplicate_id: "能力标识重复",
   missing_host_service: "当前应用缺少能力需要的服务",
+  incompatible_host_service: "当前应用的服务版本与能力不兼容",
   activation_failed: "能力启动失败",
   worker_unavailable: "能力运行进程不可用",
   runtime_disposed: "能力已停止",
@@ -32,6 +33,12 @@ export const CapabilityStatusSchema = Type.Object({
   id: CapabilityIdSchema, name: text(200), description: text(4000), version: text(100),
   status: Type.Union([Type.Literal("disabled"), Type.Literal("loading"), Type.Literal("ready"), Type.Literal("incompatible"), Type.Literal("failed")]),
   enabledNextStart: Type.Boolean(), issue: Type.Optional(CapabilityIssueSchema),
+  databaseDiagnostic: Type.Optional(Type.Object({
+    namespace: Type.String({ maxLength: 128, pattern: "^capability:[a-z0-9][a-z0-9-]*$" }),
+    version: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    stage: Type.Union(["declaration", "transaction", "baseline", "ledger", "apply", "record"].map(value => Type.Literal(value))),
+    code: Type.Optional(Type.String({ pattern: "^(ERR_SQLITE_[A-Z_]+|SQLITE_[A-Z_]+)$", maxLength: 100 })),
+  }, { additionalProperties: false })),
   navigation: Type.Optional(Type.Object({ title: text(200), order: Type.Number(), route: text(500) }, { additionalProperties: false })),
   uiEntry: Type.Optional(Type.String({ maxLength: 1000, pattern: "^deepfield-capability://[a-z][a-z0-9-]*/[^?#]+\\.js$" })),
 }, { additionalProperties: false });

@@ -1,6 +1,6 @@
 import { CompanyDraftSchema, type CompanyDraft } from "../contracts/index.js";
 import { RECOGNITION_CHUNK_MAX_CODE_POINTS, countUnicodeCodePoints, type LlmRuntimeSnapshot } from "@deepfield/contracts";
-import { normalizeCompanyName } from "@deepfield/persistence";
+import { normalizeCompanyName } from "../persistence/company-repository.js";
 import { Value } from "typebox/value";
 import type { CompanyRecognizer, CompanyRecognitionModelGateway, UsageContextRunner } from "../host-ports.js";
 export class CompanyRecognitionError extends Error {

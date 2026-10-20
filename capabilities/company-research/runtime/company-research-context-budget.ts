@@ -1,5 +1,5 @@
 import type { CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
-import { evidenceBytes, utf8Prefix } from "../../../packages/persistence/src/research-evidence-data.js";
+import { evidenceBytes, utf8Prefix } from "../persistence/research-evidence-data.js";
 import { buildCompanyResearchStructuringPrompt } from "./company-research-structuring-prompt.js";
 export const BUDGET_VERSION = "utf8-proxy-v1";
 export interface BudgetResult { allowed: boolean; E: number; O: number; S: number; C: number; budgetVersion: string }

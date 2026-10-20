@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
 import { profileResult } from "../../application/src/testing/company-profile-test-fixtures.js";
-import { createRepositories, migrate, openDatabase } from "./index.js";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 
 const cleanups: Array<() => void> = [];
 

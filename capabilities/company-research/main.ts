@@ -5,7 +5,10 @@ import { createCompanyResearchWorkerClient, type WorkerTransport } from "./worke
 import { ConfiguredCompanyRecognizer } from "./application/company-recognizer.js";
 import { FakeCompanyRecognizer } from "./application/fake-company-recognizer.js";
 import { createCompanyProfileCompleter } from "./application/company-profile-completer.js";
-import type { CompanyRecognitionModelGateway, UsageContextRunner, ProfileDiagnosticSink } from "./host-ports.js";
+import type { CompanyRecognitionModelGateway, UsageContextRunner } from "./host-ports.js";
+import { assertDatabase } from "@deepfield/base/database";
+import { assertToolsAuditService } from "@deepfield/base/tools";
+import { createCompanyResearchRepositories, checkCompanyResearchBaseline } from "./persistence/index.js";
 import { AppError, SettingsViewSchema, type SettingsView } from "@deepfield/contracts";
 import { createCompanyResearchServices, type CompanyResearchServicesPorts } from "./application/create-services.js";
 import * as C from "./contracts/index.js";
@@ -26,16 +29,20 @@ export interface CompanyResearchMainPorts extends CompanyResearchServicesPorts {
 /** Package-owned construction from the host's explicitly versioned adapters. */
 export function bootstrap(registrar: CapabilityRegistrar, services: CapabilityHostServices): void {
   if (services.version !== 1) throw new Error("incompatible_host_services");
-  const storage = services.get<{ repositories: CompanyResearchMainPorts["repositories"]; recordProfileDiagnostic: ProfileDiagnosticSink }>("company-research.repositories");
+  const database = services.get<unknown>("database.v1");
+  const audit = services.get<unknown>("tools.audit.v1");
+  assertDatabase(database); assertToolsAuditService(audit);
+  database.migrate([], checkCompanyResearchBaseline);
+  const repositories = createCompanyResearchRepositories(database, audit);
   const configuration = services.get<{ profiles: CompanyResearchMainPorts["profiles"]; settings: CompanyResearchMainPorts["settings"]; onConfigurationChanged: NonNullable<CompanyResearchMainPorts["onConfigurationChanged"]> }>("model.configuration");
   const execution = services.get<{ gateway: CompanyRecognitionModelGateway; transport: WorkerTransport; mode?: string }>("model.execution");
   const worker = createCompanyResearchWorkerClient(execution.transport);
   activate(registrar, {
-    repositories: storage.repositories, profiles: configuration.profiles, settings: configuration.settings,
+    repositories, profiles: configuration.profiles, settings: configuration.settings,
     onConfigurationChanged: configuration.onConfigurationChanged, worker,
     companyRecognizer: execution.mode === "fake" ? new FakeCompanyRecognizer() : new ConfiguredCompanyRecognizer(
       () => configuration.profiles.resolveActiveLlm(), execution.gateway, services.get<UsageContextRunner>("usage.context")),
-    companyCompleter: createCompanyProfileCompleter(configuration.profiles, worker, storage.recordProfileDiagnostic),
+    companyCompleter: createCompanyProfileCompleter(configuration.profiles, worker, diagnostic => repositories.companyProfileDiagnostics.record(diagnostic)),
     requestIdFactory: randomUUID, documentSave: services.get<CompanyResearchMainPorts["documentSave"]>("document.save"),
   });
 }

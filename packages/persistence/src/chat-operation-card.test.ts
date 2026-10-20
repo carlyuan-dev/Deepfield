@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRepositories, migrate, openDatabase } from "./index.js";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 
 describe("Chat operation card receipts", () => {
   it("keeps a resolved card on its initiating request and interrupts stale confirmation without resurrecting it", () => {

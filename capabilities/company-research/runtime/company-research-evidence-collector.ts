@@ -1,5 +1,5 @@
 import type { ModelRequestObservation } from "@deepfield/capability-sdk";
-import { evidenceBytes, evidenceHash, snapshotManifest, validateEvidenceReceipts, utf8Prefix, type ArchivedProjection, type EvidenceReceipt, type EvidenceManifest } from "../../../packages/persistence/src/research-evidence-data.js";
+import { evidenceBytes, evidenceHash, snapshotManifest, validateEvidenceReceipts, utf8Prefix, type ArchivedProjection, type EvidenceReceipt, type EvidenceManifest } from "../persistence/research-evidence-data.js";
 
 /** One tool-result group is saved once; sources describe association, not isolated supporting quotations. */
 export class ResearchEvidenceCollector {

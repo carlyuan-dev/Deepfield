@@ -1,8 +1,7 @@
-import { databaseView, type DatabaseInput } from "./database.js";
+import type { Database } from "@deepfield/base/database";
 
 /** Opaque package-owned JSON; host storage does not interpret drafts or task state. */
-export function createCompanyResearchProtocolRepository(connection: DatabaseInput) {
-  const db = databaseView(connection);
+export function createCompanyResearchProtocolRepository(db: Database) {
   const decode = (row: unknown): string | undefined => row ? (row as { data: string }).data : undefined;
   return {
     getDraft: (id: string) => decode(db.prepare("SELECT data FROM company_research_drafts WHERE id=?").get(id)),

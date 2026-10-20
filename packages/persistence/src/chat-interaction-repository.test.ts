@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRepositories, migrate, openDatabase } from "./index.js";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 
 const owner = (conversationId: string) => ({ conversationId, requestId: "request", toolCallId: "tool" });
 const approval = { kind: "approval" as const, summary: "Create item", operation: { provider: "fake", operationId: "create", contractVersion: "1", draftRef: "draft" } };

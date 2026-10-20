@@ -37,6 +37,14 @@ v2 清单使用 `protocolVersion: 2`、`hostApiVersion: 2`。`entries.main` 必�
 
 可选模块按实际需要添加：有页面才声明 `ui`/`views` 并注册页面解析器；有后台任务才声明 `worker` 或在 main 中接入自己的任务执行器并注册 TaskProvider；有可读长结果才注册 ArtifactProvider。小结果直接作为 `completed.data` 返回，不要求为它创建产物。LLM、Search、Usage 只能通过宿主明确提供的服务接口使用；不能读取整个配置或密钥。v1 旧包仍可服务原 UI，但不会自动获得 v2 Chat 动作入口。
 
+### 包内数据库与审计清理
+
+需要 SQLite 存储的 main 入口声明 `database.v1`，使用 `@deepfield/base/database` 的 `assertDatabase` 校验后调用同库 view；仓储与表结构演进放在包内。宿主按 `capability:<id>` 固定迁移 namespace，包拿不到路径、原生连接或 close。`migrate(migrations, checkBaseline)` 在同步事务中校验历史前缀并执行待迁移版本；历史基线由包检查，真实新版本从 1 开始。raw SQL 是可信能力，不构成表级沙箱。
+
+公司包 3.0.0 同时要求 `tools.audit.v1`，它只提供 `version: 1` 和 `deleteByTraceIds`，用于与报告删除共享事务；宿主和包均检查服务 version 与方法。包内 dispose 应先停止工作并落盘暂停回执，宿主随后撤销数据库 scope。禁用／移除保留数据，失败只影响该能力；Worker 重建获得新句柄，旧句柄失效。详细契约见 [Base.Database](../base/base.database.设计文档.md)。
+
+公司包 3.0.0 已移除旧宿主仓储服务需求，须与对应宿主一起更新整个构建包。`hostApiVersion: 2`、协议版本 2 不变；未升级旧包与新宿主不承诺兼容，安装目录不会被启动流程自动覆盖。
+
 ### 包私有配置
 
 在清单 `requirements` 中加入 `"config.v1"`，主进程 `bootstrap` 即可取得宿主限定到本包 ID 的配置服务。当前 Worker 不提供此服务；包不能自行传 scope、读取目录或创建全局管理器。全局模型／搜索仍通过原 `model.configuration` 等显式服务使用，私有配置不会覆盖它们。Config 核心、作用域接入及旧 LLM／Search 兼容适配已实现并完成本轮验收，范围见 [Base.Config 设计](../base/base.config.设计文档.md)。

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { structureResearchRequest } from "./company-research-test-helpers.js";
 import { buildEvidencePacket } from "./company-research-evidence-packet.js";
 import { checkStructureBudget } from "./company-research-context-budget.js";
-import { snapshotManifest, evidenceHash, evidenceBytes, type FrozenSnapshot, type EvidenceReceipt } from "../../../packages/persistence/src/research-evidence-data.js";
+import { snapshotManifest, evidenceHash, evidenceBytes, type FrozenSnapshot, type EvidenceReceipt } from "../persistence/research-evidence-data.js";
 function fixture(text = "中文🌱".repeat(3000)): FrozenSnapshot {
   const event: EvidenceReceipt = { sequence: 1, modelRequestId: "model", requestId: "request", phase: "ordinary", state: "dispatched", responseState: "succeeded", projections: [{
     evidenceId: "projection", toolCallId: "tool", toolName: "web_search", messageIndex: 2, mapping: "mapped",

@@ -9,7 +9,7 @@
 | [开发指南](development.md) | 环境、运行、配置、分支、交付与文档维护规则 |
 | [按风险选测指南](testing.md) | 可复用的必要检查路径，不记录某一批“测试已通过” |
 | [Base 总览](base/base.overview.设计文档.md) | Chat／Capability → Base 的单向依赖、能力目录与真实状态 |
-| [Base 抽取设计](base/base.extraction.设计文档.md) | 已确认的八域边界、当前归属 → 目标归属及迁移取舍 |
+| [Base 抽取设计](base/base.extraction.设计文档.md) | 八批实现已齐；模块边界、当前归属与待验收范围 |
 | [Base.Errors](base/base.errors.设计文档.md) | 已实现并接入旧接口的中立错误契约；验收范围与兼容边界见正文 |
 | [Base.Config](base/base.config.设计文档.md) | 已实现的通用配置、作用域接入与旧接口兼容；当前配置消费链路已验收，证据范围见正文 |
 | [Base.Model](base/base.model.设计文档.md) | 模型安全契约、可信端 runtime 与实际接线；本阶段自动验证完成，可交付 staging，待用户体验验收 |
@@ -33,7 +33,7 @@
 - `apps/desktop/src/worker/agent/`：共享 Pi 执行器及窄执行契约；`worker/chat/`：Chat 提示词、历史、溯源与 checkpoint 适配；`worker/tools/`：工具运行和活动投影。
 - `apps/desktop/src/worker/capabilities/agent-runtime.ts`：Capability 直接装配共享执行器，不经过 Chat 上下文工厂。
 - `capabilities/company-research/`：独立公司调研包，包含 application、runtime、ui、export 与 contracts。
-- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent 与 Database，并提供对应 runtime 入口（Errors 除外）。Errors、Config 已验收，Model 本阶段自动验证与限定真实链路端测完成，可交付 staging，待用户体验验收；Search 已实现、自动检查通过，已完成代码复核，待用户体验验收；Tools、Agent 已实现并接入真实消费者；Database 与 Usage SQLite 已归位，现有仓储已使用新底座；公司仓储归属与作用域注入待下一批收口。各域的实现与验收范围见对应设计。
+- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent 与 Database，并提供对应 runtime 入口（Errors 除外）。Errors、Config 已验收，Model 本阶段自动验证与限定真实链路端测完成，可交付 staging，待用户体验验收；Search 已实现、自动检查通过，已完成代码复核，待用户体验验收；Tools、Agent 已实现并接入真实消费者；Database 与 Usage SQLite 已归位，现有仓储已使用新底座；公司仓储归属与作用域注入已收口。各域的实现与验收范围见对应设计。
 - `packages/contracts/`、`packages/tool-platform/`、`packages/retrieval/`、`packages/persistence/`：当前配置／错误兼容契约、工具执行、检索工具适配与存储；retrieval 服务入口单向转出 Base.Search，迁移边界以 Base 抽取设计为准。
 
 Base.Agent 提供中立 Pi 执行核；Worker 的共享场景适配保留联网／调研策略，Chat 和 Capability 调用同一个 Base 核心。SDK 的窄执行契约单向复用 Base，职责与兼容边界见 Base.Agent 设计。

@@ -28,3 +28,8 @@ export interface Database {
   /** Namespace is bound by the host, never selected by a consumer. */
   migrate(migrations: readonly ModuleMigration[], checkBaseline: (db: Database) => void): void;
 }
+
+export function assertDatabase(value: unknown): asserts value is Database {
+  if (!value || typeof value !== "object" || !("version" in value) || value.version !== 1 ||
+    ["prepare", "get", "all", "run", "exec", "transaction", "table", "migrate"].some(key => typeof (value as Record<string, unknown>)[key] !== "function")) throw new Error("incompatible_host_service:database.v1");
+}

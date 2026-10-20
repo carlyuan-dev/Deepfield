@@ -1,5 +1,5 @@
 import type { CompanyResearchStructureWorkerRequest } from "../contracts/index.js";
-import { evidenceBytes, evidenceHash, type FrozenSnapshot, type FrozenEvidencePacket } from "../../../packages/persistence/src/research-evidence-data.js";
+import { evidenceBytes, evidenceHash, type FrozenSnapshot, type FrozenEvidencePacket } from "../persistence/research-evidence-data.js";
 import { checkStructureBudget, type BudgetResult } from "./company-research-context-budget.js";
 import { extractMarkdownSources } from "../application/company-research-harness.js";
 export type PacketBuildContext = Omit<CompanyResearchStructureWorkerRequest, "evidencePacket" | "rawReportText">;
@@ -11,7 +11,7 @@ export function buildEvidencePacket(snapshot: FrozenSnapshot, rawReport: string,
   const urls = [...extractMarkdownSources(rawReport)].map(pair => pair.slice(pair.indexOf("\u0000") + 1));
   // Fetch identities come from the tool, never the report's prose. Aliases only
   // associate saved material; the Harness still validates raw title/URL pairs.
-  const citationIndex = (source: import("../../../packages/persistence/src/research-evidence-data.js").EvidenceSource) => Math.min(...[source.url, source.requestedUrl, source.finalUrl].map(url => {
+  const citationIndex = (source: import("../persistence/research-evidence-data.js").EvidenceSource) => Math.min(...[source.url, source.requestedUrl, source.finalUrl].map(url => {
     const index = url === undefined ? -1 : urls.indexOf(url); return index < 0 ? Infinity : index;
   }));
   const latest = new Map(snapshot.events.map(event => [event.modelRequestId, event]));

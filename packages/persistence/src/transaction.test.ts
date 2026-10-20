@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createRepositories, migrate, openDatabase } from "./index.js";
-import type { Repositories } from "./index.js";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
+import type { Repositories } from "./testing/repositories.js";
 
 function openTestRepos(): { repos: Repositories; cleanup(): void } {
   const dir = mkdtempSync(join(tmpdir(), "deepfield-tx-"));

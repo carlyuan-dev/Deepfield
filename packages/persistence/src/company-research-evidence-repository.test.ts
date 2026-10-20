@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
-import { createRepositories, migrate } from "./index.js";
+import { createRepositories, migrate } from "./testing/repositories.js";
 import { getCompanyResearchTemplate } from "../../../capabilities/company-research/contracts/index.js";
-import { evidenceHash, snapshotManifest, type EvidenceReceipt } from "./research-evidence-data.js";
+import { evidenceHash, snapshotManifest, type EvidenceReceipt } from "../../../capabilities/company-research/persistence/research-evidence-data.js";
 import { ResearchEvidenceCollector } from "../../../capabilities/company-research/runtime/company-research-evidence-collector.js";
 import { installZeroEvidenceRawFixture } from "./research-evidence-test-fixtures.js";
 import { Value } from "typebox/value";

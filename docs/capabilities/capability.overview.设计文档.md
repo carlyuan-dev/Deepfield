@@ -21,7 +21,7 @@
 
 ## 2. 当前实现与保留边界
 
-- 宿主 application-runtime 只创建 Chat；main 注入选定旧仓储、配置、执行器、Usage 和保存适配，包入口创建公司业务服务，Worker 确认后才运行恢复。
+- 宿主 application-runtime 只创建 Chat；main 注入通用 database.v1、tools.audit.v1、配置、执行器、Usage 和保存适配，包入口创建公司仓储与业务服务，Worker 确认后才运行恢复。
 - Main/Worker 经通用注册表和可信启动快照加载包；preload 只传通用调用/事件。诊断 CLI 源码保留，但不再是默认生产构建入口。
 - Sidebar 从 ready 包元数据产生导航，管理页勾选仅在下次启动生效。包失败或 Worker 退出会撤销 ready、注册项和资源访问。
 - 完整业务代码位于 `capabilities/company-research/`；React 注入、协议资源处理与 CSS 挂载已有离线验证。第二阶段已将公司包升级到 v2，公开查询、准备／提交动作及任务／产物／页面适配，保持原单个／批量队列；已通过独立审查、离线生产包冒烟与打包校验，并于 2026-09-23 通过用户手测验收。

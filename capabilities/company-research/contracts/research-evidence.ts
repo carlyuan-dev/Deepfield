@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { SourceDateSchema } from "@deepfield/base/search";
-export type { ArchivedProjection, EvidenceReceipt, EvidenceManifest, EvidenceSnapshot, FrozenSnapshot, FrozenEvidencePacket } from "../../../packages/persistence/src/research-evidence-data.js";
+export type { ArchivedProjection, EvidenceReceipt, EvidenceManifest, EvidenceSnapshot, FrozenSnapshot, FrozenEvidencePacket } from "../persistence/research-evidence-data.js";
 const id = Type.String({ minLength: 1, maxLength: 200 });
 const hash = Type.String({ pattern: "^[a-f0-9]{64}$" });
 const count = Type.Integer({ minimum: 0, maximum: 100_000_000 });

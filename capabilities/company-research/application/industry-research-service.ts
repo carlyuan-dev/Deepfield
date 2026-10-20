@@ -2,7 +2,7 @@ import { Value } from "typebox/value";
 import { AppError, RECOGNITION_CHUNK_MAX_CODE_POINTS, countUnicodeCodePoints, type CapabilityItemId } from "@deepfield/contracts";
 import { CompanyDraftSchema, CompanyProfileIdentityHintSchema, CreateIndustryResearchItemInputSchema, UpdateIndustryResearchItemInputSchema, type CapabilityItem, type Company, type CompanyDraft, type CompanyProfileInput, type CompanyProfileIdentityHint, type ItemCompany, type ItemCompanyView as ContractItemCompanyView, type UpdateIndustryResearchItemInput } from "../contracts/index.js";
 import type { IndustryResearchServiceRepositories as Repositories } from "../host-ports.js";
-import { normalizeCompanyName } from "@deepfield/persistence";
+import { normalizeCompanyName } from "../persistence/company-repository.js";
 import type { CompanyRecognizer } from "../host-ports.js";
 import { normalizeCompanyProfile } from "./company-profile-validation.js";
 

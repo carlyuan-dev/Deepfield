@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { SourceDateMetadata } from "../../capability-sdk/src/model-observation.js";
+import type { SourceDateMetadata } from "@deepfield/capability-sdk/model-observation";
 
 export const evidenceHash = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
 export const evidenceBytes = (text: string): number => Buffer.byteLength(text, "utf8");

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ToolAuditFinish, ToolAuditSink, ToolAuditStart } from "@deepfield/tool-platform";
 import type { ToolSyntheticAuditRecord } from "@deepfield/contracts";
 import { SqliteToolAudit } from "@deepfield/application";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../../../packages/persistence/src/testing/repositories.js";
 import {
   createConversationToolDefinitions,
   type ConversationToolName,

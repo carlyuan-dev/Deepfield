@@ -1,6 +1,6 @@
 # Deepfield Base.Database 设计文档
 
-状态：通用底座已实现，桌面宿主及现有仓储已接入。公司仓储搬入能力包、`database.v1` 注入和停用撤销接线属于下一批。
+状态：通用底座已实现，桌面宿主及现有仓储已接入。公司仓储已归能力包自建，`database.v1` 与 `tools.audit.v1` 已注入；清理完成后撤销作用域。
 
 ## 公开接口与生命周期
 
@@ -30,6 +30,12 @@ scope 的 `migrate(migrations, checkBaseline)` 验证连续版本、唯一且稳
 
 ## Usage 与当前验收边界
 
+选中且声明 `database.v1` 的包，由宿主为其创建 `capability:<id>` scope；包自行校验 Database 的 version 与方法形状。公司包执行空新迁移列表并检查历史 32 基线所需表／列后，构造自己的仓储。高于包支持版本的迁移账本仍拒绝加载。`tools.audit.v1` 是 version 1 的单方法 `deleteByTraceIds` 服务，报告、诊断与工具记录删除共用同一连接的事务。
+
+scope 的 revoke 在包 bootstrap 前加入 registrar 清理栈。包的取消、暂停回执持久化和异步清理先执行，LIFO 最后撤销数据库句柄；bootstrap 失败和 Worker 重建也沿此顺序处理。Config 的立即失效规则保持独立。Usage／Worker 完成宿主收尾后才关闭 owner。未启用／物理缺失的包不创建 scope、不运行包迁移，已有报告和证据保留。
+
+迁移失败只让对应能力失败，Chat 继续使用宿主数据库视图。管理状态中的 databaseDiagnostic 只允许 namespace/version/stage/安全 code，不含原始 driver message、SQL、用户内容或密钥。
+
 `@deepfield/base/usage/sqlite` 接受 Database view，安全 Usage 入口不导入 SQLite 实现。初始化恢复与批量删除通过 Base 同步事务执行；probeStorage 仍在 SAVEPOINT 内真实读取并 UPDATE 健康表，再回滚／释放，以检测不可写存储。旧 persistence Usage 入口只做适配。
 
-本批使用临时数据库验证参数绑定、事务、撤销、模块迁移、旧库重开、Usage 和证据原子性；GUI／真实模型请求不属于数据库单批验证。公司仓储仍位于 persistence，并通过 Base view 实际执行读写；归属及 Capability 注入的后续验收见 [抽取设计](base.extraction.设计文档.md)。
+本批使用临时数据库验证参数绑定、事务、撤销、模块迁移、旧库重开、Usage 和证据原子性；GUI／真实模型请求不属于数据库单批验证。公司仓储位于 `capabilities/company-research/persistence`，直接使用 Base.Database；Chat 与工具仓储留宿主，历史 1–32 兼容迁移也留宿主。归属及 Capability 注入边界见 [抽取设计](base.extraction.设计文档.md)。

@@ -1,3 +1,4 @@
+import { adoptDatabase } from "@deepfield/base/database/runtime";
 import { mkdtemp, readdir, rm, writeFile, rename, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCapabilityHostServices } from "@deepfield/capability-sdk";
-import { createCapabilityInvocationRepository, createRepositories, migrate } from "@deepfield/persistence";
+import { createCapabilityInvocationRepository, createRepositories, migrate } from "../../packages/persistence/src/testing/repositories.js";
 import { CapabilityRegistry } from "../../apps/desktop/src/main/capabilities/registry.js";
 import { createCapabilityRuntime, prepareCapabilities } from "../../apps/desktop/src/main/capabilities/runtime.js";
 import { writeCapabilityPreferences } from "../../apps/desktop/src/main/capabilities/preferences.js";
@@ -117,13 +118,13 @@ describe("offline company research Chat protocol", () => {
     const client = new AgentWorkerClient(endpoint);
     const registry = new CapabilityRegistry();
     const services = createCapabilityHostServices({
-      "company-research.repositories": { repositories, recordProfileDiagnostic() {} },
+      "tools.audit.v1": { version: 1, deleteByTraceIds: (ids: readonly string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
       "model.configuration": { profiles, settings: { get: () => settings.getView() }, onConfigurationChanged: () => () => {} },
       "model.execution": { mode: "fake", gateway: {}, transport: client },
       "tools.retrieval": {}, "usage.context": useContext,
       "document.save": { writeFile, rename, unlink, randomToken: randomUUID, showSaveDialog: async () => ({ canceled: true }) },
     });
-    const runtime = createCapabilityRuntime(prepared, registry, undefined, repositories.capabilityInvocations);
+    const runtime = createCapabilityRuntime(prepared, registry, undefined, repositories.capabilityInvocations, { databaseOwner: adoptDatabase(database) });
     let host: CapabilityChatHost | undefined;
     try {
       await runtime.start(client, services);

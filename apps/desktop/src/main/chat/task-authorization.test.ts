@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../../../../packages/persistence/src/testing/repositories.js";
 import { ChatInteractionHost } from "./interaction-host.js";
 import { actionFixture, testAction } from "../capabilities/action-test-helpers.js";
 import type { ActionCall, CapabilityFormProvider, CapabilityFormSnapshot } from "@deepfield/capability-sdk";

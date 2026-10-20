@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../../../../packages/persistence/src/testing/repositories.js";
 import { ContextBuilder } from "@deepfield/application";
 import { createPiChatAgent } from "../agent/pi-chat-agent.js";
 import { assistant, capture, makeRecordingInstalledPiRuntime, request } from "../agent/pi-chat-agent-test-helpers.js";

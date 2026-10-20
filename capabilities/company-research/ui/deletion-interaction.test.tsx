@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatInteractionCoordinator } from "@deepfield/application";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../../packages/persistence/src/testing/repositories.js";
 import type { CapabilityInteractionEditor } from "@deepfield/capability-sdk";
 import { CompanyFormView } from "./CompanyFormView.js";
 import { createCompanyFormProvider } from "../actions/form-bindings.js";

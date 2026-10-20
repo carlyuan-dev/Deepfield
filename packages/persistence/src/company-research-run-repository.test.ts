@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCompanyResearchTemplate, type CompanyResearchContext, type StartCompanyResearchInput, type StructuredResearchContent } from "../../../capabilities/company-research/contracts/index.js";
-import { createRepositories, migrate, openDatabase } from "./index.js";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 import { installZeroEvidenceRawFixture } from "./research-evidence-test-fixtures.js";
 
 const cleanups: Array<() => void> = [];

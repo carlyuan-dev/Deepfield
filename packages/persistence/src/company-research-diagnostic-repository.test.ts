@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCompanyResearchTemplate, type CompanyResearchModelDiagnostic } from "../../../capabilities/company-research/contracts/index.js";
-import { createRepositories, migrate, openDatabase } from "./index.js";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });

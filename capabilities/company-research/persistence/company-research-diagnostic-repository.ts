@@ -1,6 +1,6 @@
-import { databaseView, type DatabaseInput } from "./database.js";
+import type { Database } from "@deepfield/base/database";
 import { Value } from "typebox/value";
-import { CompanyResearchModelDiagnosticSchema, type CompanyResearchModelDiagnostic } from "./legacy-company-contracts/index.js";
+import { CompanyResearchModelDiagnosticSchema, type CompanyResearchModelDiagnostic } from "./contracts.js";
 import type { CompanyResearchDiagnosticRepository } from "./types.js";
 
 interface DiagnosticRow {
@@ -50,8 +50,7 @@ function fromRow(row: DiagnosticRow): CompanyResearchModelDiagnostic {
   });
 }
 
-export function createCompanyResearchDiagnosticRepository(connection: DatabaseInput): CompanyResearchDiagnosticRepository {
-  const db = databaseView(connection);
+export function createCompanyResearchDiagnosticRepository(db: Database): CompanyResearchDiagnosticRepository {
   const select = "SELECT * FROM company_research_model_diagnostics";
   return {
     record(value) {

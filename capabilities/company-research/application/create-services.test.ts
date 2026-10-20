@@ -9,6 +9,8 @@ import { CompanyResearchService } from "./company-research-service.js";
 import { AgentWorkerClient } from "../../../apps/desktop/src/main/agent-worker-client.js";
 import { FakeEndpoint } from "../../../apps/desktop/src/main/agent-worker-client-test-helpers.js";
 import { createCompanyResearchWorkerClient } from "../worker-client.js";
+import { adoptDatabase } from "@deepfield/base/database/runtime";
+import { createCompanyResearchRepositories } from "../persistence/index.js";
 const dbs: TestDb[] = [];
 const declarations = await compileActionCatalog({ capabilityRoot: fileURLToPath(new URL("..", import.meta.url)), actions: createActionDefinitions() });
 const protocol = { views: JSON.parse(JSON.stringify(viewDeclarations)) as Array<{ id: string; inputSchema: Record<string, unknown> }>, publicActions: declarations.map(declaration => ({ capabilityId: "company-research", actionId: declaration.id, packageVersion: "2.0.0", declaration, documentation: "test" })) };
@@ -28,8 +30,10 @@ it("interrupts registered business services before Worker exit rejects their liv
   const send = vi.spyOn(client, "sendCapability");
   const cancel = vi.spyOn(client, "cancelCapability");
   const registry = new CapabilityRegistry();
+  const scope = adoptDatabase(db.db).scope("capability:company-research");
+  const scopedRepositories = createCompanyResearchRepositories(scope.database, { version: 1, deleteByTraceIds: ids => db.repos.toolExecutions.deleteByTraceIds(ids) });
   const ports: CompanyResearchMainPorts = {
-    repositories: db.repos,
+    repositories: scopedRepositories,
     profiles: {
       resolveActiveLlm: async () => ({ id: "l", name: "l", provider: "custom", protocol: "openai_compatible", baseUrl: "https://a.test", modelId: "m", contextWindow: 32000, apiKey: "s" }),
       resolveActiveSearch: async () => ({ id: "s", name: "s", provider: "zhipu", baseUrl: "https://a.test", options: {}, apiKey: "s" }),
@@ -39,7 +43,7 @@ it("interrupts registered business services before Worker exit rejects their liv
     settings: { get: vi.fn() }, documentSave: { showSaveDialog: vi.fn(), writeFile: vi.fn(), rename: vi.fn(), unlink: vi.fn(), randomToken: () => "token" },
   };
   const activation = await activateRegisteredCapability({ registry, capabilityId: "company-research", ...protocol,
-    activateMain: registrar => activate(registrar, ports, declarations), activateWorker: async () => {},
+    activateMain: registrar => { registrar.defer(scope.revoke); activate(registrar, ports, declarations); }, activateWorker: async () => {},
     onWorkerUnavailable: listener => client.subscribeUnavailable(listener),
   });
   await registry.call({ capabilityId: "company-research", operation: "companyResearchBatch.start", requestId: "start",
@@ -56,6 +60,10 @@ it("interrupts registered business services before Worker exit rejects their liv
   expect(db.repos.companyResearchBatches.getById(batch.batchId)).toEqual(batch);
   expect(db.repos.companyResearchRuns.getByIdForTarget(item.id, companies[0]!.id, run.id)).toEqual(run);
   expect(db.repos.companyResearchRuns.listRuns(item.id, companies[1]!.id)).toEqual([]);
+  const receipts = db.db.prepare("SELECT data FROM company_research_tasks").all().map(row => JSON.parse(String(row.data)));
+  expect(receipts.length).toBeGreaterThan(0);
+  expect(receipts.some(receipt => receipt.snapshot.status === "paused")).toBe(true);
+  expect(() => scope.database.get("SELECT 1")).toThrow("database_scope_closed");
   expect(send).toHaveBeenCalledTimes(1);
   expect(cancel).not.toHaveBeenCalled();
   client.dispose();

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { databaseView, type DatabaseInput } from "./database.js";
-import type { CapabilityItemId } from "./legacy-company-contracts/index.js";
-import type { CapabilityItem, CreateIndustryResearchItemInput, UpdateIndustryResearchItemInput } from "./legacy-company-contracts/index.js";
+import type { Database } from "@deepfield/base/database";
+import type { CapabilityItemId } from "./contracts.js";
+import type { CapabilityItem, CreateIndustryResearchItemInput, UpdateIndustryResearchItemInput } from "./contracts.js";
 import { toCapabilityItem } from "./mappers.js";
 import type { CapabilityItemRepository, CapabilityItemRow } from "./types.js";
 
@@ -10,8 +10,7 @@ function trimOptional(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-export function createCapabilityItemRepository(connection: DatabaseInput): CapabilityItemRepository {
-  const db = databaseView(connection);
+export function createCapabilityItemRepository(db: Database): CapabilityItemRepository {
   const items = db.table({ name: "capability_items", primaryKey: "id", columns: ["id", "type", "industry", "research_scope", "notes", "created_at", "updated_at"] });
   return {
     create(input: CreateIndustryResearchItemInput): CapabilityItem {

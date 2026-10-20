@@ -5,6 +5,8 @@ import { relative } from "node:path";
 import type { CapabilityHostServices } from "@deepfield/capability-sdk";
 import type { ConfigScope } from "@deepfield/base/config/runtime";
 import { createCapabilityConfigServices } from "./config-services.js";
+import type { DatabaseOwner } from "@deepfield/base/database/runtime";
+import { createCapabilityDatabaseServices, assertStorageServices, migrationDiagnostic } from "./database-services.js";
 import type { AgentWorkerClient } from "../agent-worker-client.js";
 import { loadCapabilityEntry, type TrustedCapabilityEntry } from "../../shared/capability-entry.js";
 import { scanCapabilities, selectCapabilities, type CatalogEntry, type CatalogIssue } from "./catalog.js";
@@ -22,6 +24,7 @@ export interface CapabilityStatus {
   status: "disabled" | "loading" | "ready" | "incompatible" | "failed";
   enabledNextStart: boolean;
   issue?: string;
+  databaseDiagnostic?: { namespace: string; version: number; stage: string; code?: string };
   navigation?: { title: string; order: number; route: string };
   uiEntry?: string;
 }
@@ -53,9 +56,9 @@ export async function prepareCapabilities(paths: CapabilityPaths) {
 export type PreparedCapabilities = Awaited<ReturnType<typeof prepareCapabilities>>;
 
 export function createCapabilityRuntime(prepared: PreparedCapabilities, registry: CapabilityRegistry, load = loadCapabilityEntry, invocations?: InvocationRepository,
-  options: { createConfigScope?: (capabilityId: string) => ConfigScope } = {}) {
+  options: { createConfigScope?: (capabilityId: string) => ConfigScope; databaseOwner?: DatabaseOwner } = {}) {
   let enabled = new Set(prepared.enabled);
-  const states = new Map<string, { status: CapabilityStatus["status"]; issue?: string }>();
+  const states = new Map<string, { status: CapabilityStatus["status"]; issue?: string; databaseDiagnostic?: NonNullable<CapabilityStatus["databaseDiagnostic"]> }>();
   const listeners = new Set<() => void>();
   const changed = () => { for (const listener of listeners) { try { listener(); } catch { /* isolated subscriber */ } } };
   let writeQueue = Promise.resolve();
@@ -153,7 +156,7 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
         if (usesWorker && !workerAvailable) continue;
         states.set(id, { status: "loading" }); changed();
         try {
-          if (entry.manifest.requirements.some(name => !(name === "config.v1" && options.createConfigScope) && !services.has(name))) throw new Error("missing_host_service");
+          if (entry.manifest.requirements.some(name => !(name === "config.v1" && options.createConfigScope) && !(name === "database.v1" && options.databaseOwner) && !services.has(name))) throw new Error("missing_host_service");
           const trusted = prepared.workerSnapshot.find(candidate => candidate.id === id)!;
           const workerEntry = entry.manifest.entries.worker
             ? await resolvePackageFile(entry.root, entry.manifest.entries.worker)
@@ -176,7 +179,15 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
                   if (configScopes.get(id) === scope) configScopes.delete(id);
                 });
               }
-              await module.bootstrap(registrar, scope ? createCapabilityConfigServices(services, scope.service) : services);
+              let scopedServices = scope ? createCapabilityConfigServices(services, scope.service) : services;
+              if (options.databaseOwner && entry.manifest.requirements.includes("database.v1")) {
+                const databaseScope = options.databaseOwner.scope(`capability:${id}`);
+                // Registered before package cleanup: LIFO preserves writes during disposal.
+                registrar.defer(databaseScope.revoke);
+                scopedServices = createCapabilityDatabaseServices(scopedServices, databaseScope.database);
+              }
+              assertStorageServices(scopedServices, entry.manifest.requirements);
+              await module.bootstrap(registrar, scopedServices);
             },
             ...(workerEntry ? {
               activateWorker: () => { assertCurrent(true); return client.activateCapability(id, workerEntry, randomUUID()); },
@@ -191,7 +202,9 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
         } catch (error) {
           if (disposed || generation !== currentGeneration) break;
           const missing = error instanceof Error && error.message === "missing_host_service";
-          states.set(id, { status: missing ? "incompatible" : "failed", issue: missing ? "missing_host_service" : "activation_failed" });
+          const incompatible = error instanceof Error && error.message.startsWith("incompatible_host_service:");
+          const diagnostic = migrationDiagnostic(error);
+          states.set(id, { status: missing || incompatible ? "incompatible" : "failed", issue: missing ? "missing_host_service" : incompatible ? "incompatible_host_service" : "activation_failed", ...(diagnostic ? { databaseDiagnostic: diagnostic } : {}) });
         }
         changed();
       }

@@ -3,7 +3,7 @@ import { CompanyResearchWorkerRequestSchema, CompanyResearchWorkerEventSchema, C
 import { createCompanyResearchAgent, type CompanyResearchAgent } from "./runtime/company-research-agent.js";
 import { createCompanyProfileAgent } from "./runtime/company-profile-agent.js";
 import type { CompanyAgentRuntime } from "./runtime/ports.js";
-import { snapshotManifest } from "../../packages/persistence/src/research-evidence-data.js";
+import { snapshotManifest } from "./persistence/research-evidence-data.js";
 
 const fakeCompanyResearchAgent: CompanyResearchAgent = {
   async run(request, emit, signal) {

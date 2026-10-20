@@ -1,17 +1,8 @@
 import { databaseView, type DatabaseInput } from "./database.js";
-import { createCompanyResearchEvidenceRepository } from "./company-research-evidence-repository.js";
-import { createCompanyResearchProtocolRepository } from "./company-research-protocol-repository.js";
 import { createCapabilityInvocationRepository } from "./capability-invocation-repository.js";
-import { createCompanyResearchBatchRepository } from "./company-research-batch-repository.js";
-import { createCapabilityItemRepository } from "./capability-item-repository.js";
-import { createCompanyRepository } from "./company-repository.js";
 import { createConversationRepository } from "./conversation-repository.js";
 import { createMessageRepository } from "./message-repository.js";
-import { createItemCompanyRepository } from "./item-company-repository.js";
 import { createToolExecutionRepository } from "./tool-execution-repository.js";
-import { createCompanyResearchRunRepository } from "./company-research-run-repository.js";
-import { createCompanyResearchDiagnosticRepository } from "./company-research-diagnostic-repository.js";
-import { createCompanyProfileDiagnosticRepository } from "./company-profile-diagnostic-repository.js";
 import { runInTransaction } from "./transactions.js";
 import type { Repositories } from "./types.js";
 import { createChatSessionRepository } from "./chat-session-repository.js";
@@ -21,19 +12,10 @@ import { createChatInteractionRepository } from "./chat-interaction-repository.j
 export function createRepositories(connection: DatabaseInput): Repositories {
   const db = databaseView(connection);
   return {
-    companyResearchEvidence: createCompanyResearchEvidenceRepository(db),
     chatCapabilities: createChatCapabilityRepository(db),
     chatInteractions: createChatInteractionRepository(db),
-    companyResearchProtocol: createCompanyResearchProtocolRepository(db),
     capabilityInvocations: createCapabilityInvocationRepository(db),
     chatSessions: createChatSessionRepository(db),
-    companyResearchBatches: createCompanyResearchBatchRepository(db),
-    capabilityItems: createCapabilityItemRepository(db),
-    companies: createCompanyRepository(db),
-    itemCompanies: createItemCompanyRepository(db),
-    companyResearchRuns: createCompanyResearchRunRepository(db),
-    companyResearchDiagnostics: createCompanyResearchDiagnosticRepository(db),
-    companyProfileDiagnostics: createCompanyProfileDiagnosticRepository(db),
     conversations: createConversationRepository(db),
     messages: createMessageRepository(db),
     toolExecutions: createToolExecutionRepository(db),

@@ -1,7 +1,7 @@
 import type { CompanyResearchWorkerPort, CompanyRecognizer, CompanyProfileCompleter, CompanyProfileWorkerPort } from "../host-ports.js";
 import { createCompanyResearchServices } from "../application/create-services.js";
 import { randomUUID } from "node:crypto";
-import type { Repositories } from "@deepfield/persistence";
+import type { Repositories } from "../../../packages/persistence/src/testing/repositories.js";
 import { ChatService, ContextBuilder, ConversationService, type AgentWorkerPort, type ConversationTitleGenerator, type SecretReader } from "@deepfield/application";
 import { CompanyResearchService, CompanyResearchBatchService, CompanyProfileEnrichmentService, IndustryResearchService } from "../application/index.js";
 import { createCompanyProfileCompleter } from "../application/company-profile-completer.js";

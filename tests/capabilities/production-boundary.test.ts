@@ -32,6 +32,7 @@ it("excludes company research from the actual production main/worker/preload/ren
   for (const graph of graphs) {
     expect(graph.modules.length).toBeGreaterThan(0);
     expect(graph.modules.filter(id => id.includes("/capabilities/company-research/"))).toEqual([]);
+    expect(graph.modules.filter(id => /legacy-company-contracts|\/persistence\/src\/(?:testing\/|company-|research-evidence|capability-item-repository|item-company-repository)/.test(id))).toEqual([]);
   }
 }, 60_000);
 

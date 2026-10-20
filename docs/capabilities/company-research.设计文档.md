@@ -9,6 +9,8 @@
 
 Chat 与 UI 共用公司调研业务动作、队列与报告，不创建隐藏 Conversation，不把调研正文写成 Chat 消息历史。包负责主题、公司、模板、两阶段状态机、Harness 和产物；宿主负责通用授权、模型/Search 服务及传输。
 
+公司包 3.0.0 的数据层位于 `capabilities/company-research/persistence`，通过宿主绑定的 `database.v1` 自建仓储、检查历史 32 基线并执行模块迁移；宿主不导入公司仓储。`tools.audit.v1` 提供同库工具记录清理，删除报告时诊断、审计与报告共同提交或回滚。包停用先中断工作并保存暂停回执，再撤销数据库句柄；禁用／缺包保留报告与冻结证据。旧宿主仓储服务已删除，需随宿主完整更新公司包，协议版本仍为 2。
+
 ## 公司主体与主题关联
 
 公司基础实体全局共享，规范名称按 trim、Unicode NFKC、空白折叠和小写去重；展示名称与已核实公司主体应区分。主题—公司关联承载候选备注，研究记录绑定具体关联，因此同一公司在不同主题中的调研上下文和版本独立。
@@ -17,7 +19,7 @@ Chat 与 UI 共用公司调研业务动作、队列与报告，不创建隐藏 C
 
 公司新增先持久化实体与关联，再安排后台资料补全。补全失败、等待配置或主体待确认不应阻塞列表浏览、公司管理或直接调研；调研服务校验目标关联及本轮输入，不以资料 `ready` 为硬门槛。报告使用启动时的上下文快照，正式两轮调研不顺便生成或写回公司档案。
 
-资料更新统一从公司详情的“更新信息”入口发起，列表不再提供重试叹号；更新期间禁用重复提交，详情显示更新中、部分未知或失败待再次更新的状态。更新失败只改变状态和安全错误，不清空既有人工字段与来源。补全进度按当前主题关联动态计数；删除关联后不再计入该主题，仍被其他主题引用的公司继续共享补全，不因单个主题移除而误取消。具体入口见 [公司页面](../../capabilities/company-research/ui/IndustryResearchCapability.tsx)，字段与来源保留见 [公司存储](../../packages/persistence/src/company-repository.ts)。
+资料更新统一从公司详情的“更新信息”入口发起，列表不再提供重试叹号；更新期间禁用重复提交，详情显示更新中、部分未知或失败待再次更新的状态。更新失败只改变状态和安全错误，不清空既有人工字段与来源。补全进度按当前主题关联动态计数；删除关联后不再计入该主题，仍被其他主题引用的公司继续共享补全，不因单个主题移除而误取消。具体入口见 [公司页面](../../capabilities/company-research/ui/IndustryResearchCapability.tsx)，字段与来源保留见 [公司存储](../../capabilities/company-research/persistence/company-repository.ts)。
 
 补全引用必须来自本轮成功工具结果，摘要与已读网页分开；品牌、产品不能冒充公司主体。具体编号、一次修正预算与身份门禁见包内正式文档 [公司补全：来源编号与公司主体](../../capabilities/company-research/docs/profile-evidence-and-identity.md)。
 
@@ -86,7 +88,7 @@ Provider 原始日期字段在规范化前留存，区分发表时间、未知�
 
 首次结构化、自动格式修正和二轮重试复用同一持久化包正文。首次组包可按预算有序缩取，冻结后不得为小上下文重新缩包或无证据发送；仅明确从未建立包的预算失败运行可在配置充足后首次组包。预算以保守 UTF-8 字节代理估算，包含全部文本、输出与修正预留，不声称精确 tokenizer；不足时保留原报告并明确失败。
 
-实现入口：[请求观察](../../apps/desktop/src/shared/model-request-observation.ts)、[证据存储](../../packages/persistence/src/company-research-evidence-repository.ts)、[证据包](../../capabilities/company-research/runtime/company-research-evidence-packet.ts)、[预算](../../capabilities/company-research/runtime/company-research-context-budget.ts)、[日期出处](../../packages/retrieval/src/publication-date.ts)。
+实现入口：[请求观察](../../apps/desktop/src/shared/model-request-observation.ts)、[证据存储](../../capabilities/company-research/persistence/company-research-evidence-repository.ts)、[证据包](../../capabilities/company-research/runtime/company-research-evidence-packet.ts)、[预算](../../capabilities/company-research/runtime/company-research-context-budget.ts)、[日期出处](../../packages/retrieval/src/publication-date.ts)。
 
 ## 阅读与 Word 导出
 

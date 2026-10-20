@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
-import type { Repositories, ToolExecutionStart } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "./testing/repositories.js";
+import type { Repositories, ToolExecutionStart } from "./testing/repositories.js";
 import { ToolExecutionError } from "./tool-execution-repository.js";
 
 const ISO = "2026-01-01T00:00:00.000Z";

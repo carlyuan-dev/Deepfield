@@ -8,7 +8,7 @@ import { researchFailure } from "./failure.js";
 import { CompanyResearchRawFilter } from "./company-research-raw-filter.js";
 import { ResearchEvidenceCollector } from "./company-research-evidence-collector.js";
 import { buildStructureRepairPrompt, budgetMessages, checkStructureBudget, BUDGET_VERSION } from "./company-research-context-budget.js";
-import { evidenceHash } from "../../../packages/persistence/src/research-evidence-data.js";
+import { evidenceHash } from "../persistence/research-evidence-data.js";
 
 export interface CompanyResearchAgentOptions {
   runtime: CompanyAgentRuntime;

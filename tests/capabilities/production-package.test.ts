@@ -1,3 +1,4 @@
+import { adoptDatabase } from "@deepfield/base/database/runtime";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { cp, mkdtemp, readFile, rm, writeFile, rename, unlink } from "node:fs/promises";
@@ -9,7 +10,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createCapabilityHostServices } from "@deepfield/capability-sdk";
 import { createUsageQueryService } from "@deepfield/base/usage";
 import { createUsageRepository } from "../../packages/persistence/src/usage-repository.js";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
+import { createRepositories, migrate, openDatabase } from "../../packages/persistence/src/testing/repositories.js";
 import { appResult } from "@deepfield/contracts";
 import { prepareCapabilities, createCapabilityRuntime } from "../../apps/desktop/src/main/capabilities/runtime.js";
 import { CapabilityRegistry } from "../../apps/desktop/src/main/capabilities/registry.js";
@@ -63,13 +64,13 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     const client = new AgentWorkerClient(endpoint);
     const registry = new CapabilityRegistry();
     const services = createCapabilityHostServices({
-      "company-research.repositories": { repositories, recordProfileDiagnostic() {} },
+      "tools.audit.v1": { version: 1, deleteByTraceIds: (ids: readonly string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
       "model.configuration": { profiles, settings: { get: () => settings.getView() }, onConfigurationChanged: () => () => {} },
       "model.execution": { mode: "fake", gateway: {}, transport: client },
       "tools.retrieval": {}, "usage.context": useContext,
       "document.save": { writeFile, rename, unlink, randomToken: randomUUID, showSaveDialog: async () => ({ canceled: false, filePath: join(root, "report.docx") }) },
     });
-    const runtime = createCapabilityRuntime(prepared, registry, load);
+    const runtime = createCapabilityRuntime(prepared, registry, load, undefined, { databaseOwner: adoptDatabase(database) });
     await runtime.start(client, services);
     const call = (operation: string, input: unknown[]) => registry.call({ capabilityId: "company-research", operation, input, requestId: randomUUID() });
     return { runtime, registry, call, async dispose() { await runtime.dispose(); await worker.dispose(); client.dispose(); } };
@@ -116,6 +117,7 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     const saved = repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]!;
     expect(await active.registry.taskProvider("company-research")!.get(accepted.taskRef)).toMatchObject({ status: "succeeded", artifactRefs: expect.any(Array), finishedAt: expect.any(String) });
     const report = repositories.companyResearchRuns.getByIdForTarget(item.id as never, company.id, saved.id as never)!;
+    const evidence = await active.call("companyResearch.getEvidence", [item.id, company.id, saved.id]);
     expect(report).toMatchObject({ rawReportText: expect.stringContaining("离线测试"), structuredContent: expect.any(Object) });
     expect(await active.call("companyResearch.exportWord", [item.id, company.id, saved.id, { raw: true, structured: true }])).toMatchObject({ status: "saved" });
     expect((await readFile(join(root, "report.docx"))).subarray(0, 2).toString()).toBe("PK");
@@ -139,5 +141,6 @@ it("installs portable artifacts, runs two stages and Word export, and preserves 
     active = await start();
     expect(active.runtime.list()[0]?.status).toBe("ready");
     expect(await active.call("companyResearch.getRun", [item.id, company.id, saved.id])).toEqual(report);
+    expect(await active.call("companyResearch.getEvidence", [item.id, company.id, saved.id])).toEqual(evidence);
   } finally { await active?.dispose(); database.close(); }
 }, 60_000);

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { Repositories } from "./types.js";
-import { evidenceHash, snapshotManifest, type EvidenceReceipt } from "./research-evidence-data.js";
+import type { Repositories } from "./testing/repositories.js";
+import { evidenceHash, snapshotManifest, type EvidenceReceipt } from "../../../capabilities/company-research/persistence/research-evidence-data.js";
 
 /** Isolated tests with no tool material still provide an explicit observed zero-material manifest. */
 export function installZeroEvidenceRawFixture(db: DatabaseSync, repos: Repositories): void {

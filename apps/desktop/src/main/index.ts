@@ -199,22 +199,12 @@ void app.whenReady().then(async () => {
   capabilitySnapshot = prepared.workerSnapshot;
   capabilityRuntime = createCapabilityRuntime(prepared, capabilities, undefined, repositories.capabilityInvocations, {
     createConfigScope: capabilityId => configRuntime.createScope(capabilityId),
+    databaseOwner: database,
   });
   const disposeNavigation = registerNavigationIpc(ipcMainAdapter, capabilityRuntime.navigation);
   agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
   const services = createCapabilityHostServices({
-    "company-research.repositories": {
-      repositories: {
-        capabilityItems: repositories.capabilityItems, companies: repositories.companies,
-        itemCompanies: repositories.itemCompanies, companyResearchRuns: repositories.companyResearchRuns,
-        companyResearchEvidence: repositories.companyResearchEvidence,
-        companyResearchDiagnostics: repositories.companyResearchDiagnostics, companyResearchBatches: repositories.companyResearchBatches,
-        companyResearchProtocol: repositories.companyResearchProtocol,
-        toolExecutions: { deleteByTraceIds: (ids: string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
-        runInTransaction: <T>(work: () => T) => repositories.runInTransaction(work),
-      },
-      recordProfileDiagnostic: (diagnostic: Parameters<typeof repositories.companyProfileDiagnostics.record>[0]) => repositories.companyProfileDiagnostics.record(diagnostic),
-    },
+    "tools.audit.v1": { version: 1, deleteByTraceIds: (ids: readonly string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
     "model.configuration": {
       profiles: { resolveActiveLlm: () => profiles.resolveActiveLlm(), resolveActiveSearch: () => profiles.resolveActiveSearch() },
       settings: { get: () => configuration.get() },

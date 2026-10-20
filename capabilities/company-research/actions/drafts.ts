@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { canonicalActionJson, type DraftRef } from "@deepfield/capability-sdk";
-import type { Repositories } from "@deepfield/persistence";
+import type { Repositories } from "../persistence/index.js";
 import type { StartCompanyResearchInput } from "../contracts/index.js";
 import type { CompanyResearchService } from "../application/company-research-service.js";
 export const CAPABILITY_ID = "company-research";

@@ -12,6 +12,8 @@ import { CapabilityRegistry } from "./registry.js";
 import { writeEnabledIds } from "./preferences.js";
 import { writeTestPackage } from "./startup-test-helpers.js";
 import { createSnapshotWorkerLoader } from "../../shared/capability-entry.js";
+import { openDatabase } from "@deepfield/base/database/runtime";
+import type { Database } from "@deepfield/base/database";
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture(requirements: string[] = []) {
@@ -29,6 +31,55 @@ function worker() {
 }
 const services = createCapabilityHostServices({});
 describe("optional capability startup", () => {
+  it("keeps scoped database usable through cleanup, revokes failed/old handles and creates a fresh restart scope", async () => {
+    const { prepared } = await fixture(["database.v1"]); const owner = openDatabase(":memory:");
+    owner.database.exec("CREATE TABLE receipts(value TEXT)");
+    const handles: Database[] = []; let fail = true;
+    const runtime = createCapabilityRuntime(prepared, new CapabilityRegistry(), async () => ({ bootstrap(registrar, host) {
+      const db = host.get<Database>("database.v1"); handles.push(db);
+      registrar.defer(async () => { await Promise.resolve(); db.run("INSERT INTO receipts VALUES ('paused')"); });
+      if (fail) throw new Error("bootstrap_failed");
+    } }), undefined, { databaseOwner: owner });
+    try {
+      await runtime.start(worker(), services); expect(runtime.list()[0]?.status).toBe("failed");
+      expect(() => handles[0]!.get("SELECT 1")).toThrow("closed");
+      fail = false; await runtime.start(worker(), services); const old = handles[1]!;
+      await runtime.start(worker(), services); expect(() => old.get("SELECT 1")).toThrow("closed");
+      expect(handles[2]!.get("SELECT 1 AS value")).toEqual({ value: 1 });
+      await runtime.dispose(); expect(() => handles[2]!.get("SELECT 1")).toThrow("closed");
+      expect(owner.database.all("SELECT value FROM receipts")).toEqual([{ value: "paused" }, { value: "paused" }, { value: "paused" }]);
+    } finally { await runtime.dispose(); owner.close(); }
+  });
+  it("rejects wrong Database versions and missing audit methods before calling bootstrap", async () => {
+    const { prepared } = await fixture(["database.v1", "tools.audit.v1"]); const owner = openDatabase(":memory:");
+    const bootstrap = vi.fn();
+    try {
+      for (const supplied of [
+        { "database.v1": { ...owner.database, version: 2 }, "tools.audit.v1": { version: 1, deleteByTraceIds() { return 0; } } },
+        { "database.v1": owner.database, "tools.audit.v1": { version: 1 } },
+      ]) {
+        const runtime = createCapabilityRuntime(prepared, new CapabilityRegistry(), async () => ({ bootstrap }));
+        await runtime.start(worker(), createCapabilityHostServices(supplied));
+        expect(runtime.list()[0]).toMatchObject({ status: "incompatible", issue: "incompatible_host_service" });
+        await runtime.dispose();
+      }
+      expect(bootstrap).not.toHaveBeenCalled();
+    } finally { owner.close(); }
+  });
+  it("isolates failed module migrations and exposes only safe diagnostics while host writes remain available", async () => {
+    const { prepared } = await fixture(["database.v1"]); const owner = openDatabase(":memory:");
+    owner.database.exec("CREATE TABLE host_messages(content TEXT)");
+    const runtime = createCapabilityRuntime(prepared, new CapabilityRegistry(), async () => ({ bootstrap(_registrar, host) {
+      host.get<Database>("database.v1").migrate([{ version: 1, key: "fail", up(db) { db.run("INSERT INTO host_messages VALUES (?)", "secret"); throw new Error("SECRET SQL/key"); } }], () => {});
+    } }), undefined, { databaseOwner: owner });
+    try {
+      await runtime.start(worker(), services);
+      expect(runtime.list()[0]).toMatchObject({ status: "failed", databaseDiagnostic: { namespace: "capability:test-package", version: 1, stage: "apply" } });
+      expect(JSON.stringify(runtime.list())).not.toMatch(/SECRET|secret/);
+      owner.database.run("INSERT INTO host_messages VALUES ('chat usable')");
+      expect(owner.database.all("SELECT content FROM host_messages")).toEqual([{ content: "chat usable" }]);
+    } finally { await runtime.dispose(); owner.close(); }
+  });
   it("expires scoped handles on activation failure, Worker restart and disposal, preserving next-start data", async () => {
     const { prepared } = await fixture(["config.v1"]); const registry = new CapabilityRegistry();
     const secretValues = new Map<string, string>(); let id = 0;

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { databaseView, type DatabaseInput } from "./database.js";
-import type { Conversation, ConversationId } from "./legacy-company-contracts/index.js";
+import type { Conversation, ConversationId } from "@deepfield/contracts";
 import { toConversation } from "./mappers.js";
 import type { ConversationRepository, ConversationRow, NewConversation } from "./types.js";
 import { runInTransaction } from "./transactions.js";

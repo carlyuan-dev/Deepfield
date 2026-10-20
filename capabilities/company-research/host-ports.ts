@@ -1,4 +1,4 @@
-import type { Repositories, CompanyRepository } from "@deepfield/persistence";
+import type { Repositories, CompanyRepository } from "./persistence/index.js";
 import type { LlmRuntimeSnapshot, SearchRuntimeSnapshot } from "@deepfield/contracts";
 import type { CompanyDraft, Company, CompanyProfileResult, CompanyProfileWorkerRequest, CompanyProfileWorkerEvent, CompanyResearchWorkerRequest, CompanyResearchWorkerEvent, CompanyResearchStage } from "./contracts/index.js";
 

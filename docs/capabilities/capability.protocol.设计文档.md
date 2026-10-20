@@ -5,6 +5,8 @@
 已确认方向：一个业务、Chat 与 UI 两个入口；Chat 调用业务接口，页面负责呈现与人工输入；启动时确定启用包，不做热加载。
 范围：自有或经用户认可的可信本地包。允许其他开发者按协议编写，但不提供不可信代码沙箱。
 
+数据服务边界：公司包 3.0.0 通过 `database.v1` 与 `tools.audit.v1` 自建仓储，旧宿主仓储适配已移除。命名服务必须通过 requirements 与实际 version／方法校验；数据库迁移只影响该包的激活状态。业务 dispose 完成暂停回执落盘后，宿主才撤销数据库作用域。历史迁移 1–32 仍由宿主执行，禁用／缺包保留数据并允许 Chat 继续运行；数据库契约见 [Base.Database](../base/base.database.设计文档.md)。协议和 hostApiVersion 保持 2，新宿主与未升级的公司旧包不承诺兼容。
+
 表单导航补充：`CapabilityFormSnapshot.parentView?: ViewRef` 可声明表单下方的真实业务页。包的 ViewProvider 应先验证草稿并将其表单引用解析为该父页；宿主仍通过原编辑桥绑定表单，不解释业务字段。缺失声明的旧包继续使用原 ViewRef。无表单确认使用动作可选的 `presentOperation.target/autoOpen`，声明失败或缺失不阻断执行。完成回执的导航遵循原请求会话和导航 generation，不能覆盖用户之后打开的页面或未完成输入。
 
 ## 1. 目标与非目标
