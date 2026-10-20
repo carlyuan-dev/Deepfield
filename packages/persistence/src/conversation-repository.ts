@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { Conversation, ConversationId } from "./legacy-company-contracts/index.js";
 import { toConversation } from "./mappers.js";
 import type { ConversationRepository, ConversationRow, NewConversation } from "./types.js";
@@ -7,7 +7,8 @@ import { runInTransaction } from "./transactions.js";
 
 export const BLANK_CONVERSATION_TITLE = "新对话";
 
-export function insertConversationRow(db: DatabaseSync, conversation: NewConversation): void {
+export function insertConversationRow(connection: DatabaseInput, conversation: NewConversation): void {
+  const db = databaseView(connection);
   db.prepare(
     "INSERT INTO conversations(id, title, has_user_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run(
@@ -19,7 +20,8 @@ export function insertConversationRow(db: DatabaseSync, conversation: NewConvers
   );
 }
 
-export function createConversationRepository(db: DatabaseSync): ConversationRepository {
+export function createConversationRepository(connection: DatabaseInput): ConversationRepository {
+  const db = databaseView(connection);
   const insertBlank = (): Conversation => {
     const conversationId = randomUUID() as ConversationId;
     const now = new Date().toISOString();

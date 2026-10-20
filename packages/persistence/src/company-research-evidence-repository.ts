@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import { evidenceBytes, evidenceHash, evidenceMetadataJson, snapshotManifest, validateEvidenceReceipts, type CompanyResearchEvidenceRepository, type EvidenceReceipt, type FrozenSnapshot, type FrozenEvidencePacket } from "./research-evidence-data.js";
 import { storedReceiptShape, storedSnapshotShape, storedPacketShape } from "./research-evidence-validation.js";
 function parseStoredEvidence<T>(text: string, valid: (value: unknown) => boolean): T {
@@ -11,7 +11,8 @@ function parseStoredEvidence<T>(text: string, valid: (value: unknown) => boolean
   if (!valid(value)) throw new Error("evidence_incomplete: invalid stored evidence shape");
   return value as T;
 }
-export function createCompanyResearchEvidenceRepository(db: DatabaseSync): CompanyResearchEvidenceRepository {
+export function createCompanyResearchEvidenceRepository(connection: DatabaseInput): CompanyResearchEvidenceRepository {
+  const db = databaseView(connection);
   function requireAttempt(runId: string, attemptId: string, researching = false): void {
     const row = db.prepare("SELECT status, evidence_attempt_id FROM company_research_runs WHERE id = ?").get(runId) as { status: string; evidence_attempt_id: string } | undefined;
     if (!row || row.evidence_attempt_id !== attemptId || researching && row.status !== "researching") throw new Error("evidence_incomplete: attempt/status");

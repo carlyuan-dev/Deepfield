@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
 import { AgentWorkerEventSchema, ChatTranscriptMessageSchema, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "./legacy-company-contracts/index.js";
 
@@ -13,7 +13,8 @@ export interface ChatSessionRecord {
 }
 
 /** SQLite is the only durable source; the UI and Pi context are projections. */
-export function createChatSessionRepository(db: DatabaseSync) {
+export function createChatSessionRepository(connection: DatabaseInput) {
+  const db = databaseView(connection);
   const read = (conversationId: ConversationId, requestId: string): ChatSessionRecord | undefined => {
     const row = db.prepare("SELECT data_json FROM chat_sessions WHERE conversation_id = ? AND request_id = ?").get(conversationId, requestId) as { data_json: string } | undefined;
     return row ? JSON.parse(row.data_json) as ChatSessionRecord : undefined;

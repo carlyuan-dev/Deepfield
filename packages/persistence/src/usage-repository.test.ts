@@ -24,6 +24,17 @@ afterEach(() => handles.splice(0).forEach((db) => db.close()));
 const range = { from: "2026-09-01T00:00:00.000Z", to: "2026-10-01T00:00:00.000Z", timeZone: "UTC", serviceKind: "llm" as const };
 
 describe("durable usage ledger", () => {
+  it("probes actual writes and rolls back probe side effects within an outer transaction", () => {
+    const { db, repo } = setup();
+    db.exec("CREATE TABLE probe_effect(value INTEGER); CREATE TRIGGER probe_write AFTER UPDATE ON usage_health BEGIN INSERT INTO probe_effect VALUES (1); END;");
+    db.exec("BEGIN IMMEDIATE");
+    repo.probeStorage();
+    expect(db.isTransaction).toBe(true);
+    expect(db.prepare("SELECT * FROM probe_effect").all()).toEqual([]);
+    db.exec("ROLLBACK; CREATE TRIGGER probe_reject BEFORE UPDATE ON usage_health BEGIN SELECT RAISE(ABORT, 'probe_write_rejected'); END;");
+    expect(() => repo.probeStorage()).toThrow("probe_write_rejected");
+    expect(db.isTransaction).toBe(false);
+  });
   it.each([
     { inputTokens: null, outputTokens: null },
     { inputTokens: 110, outputTokens: null },

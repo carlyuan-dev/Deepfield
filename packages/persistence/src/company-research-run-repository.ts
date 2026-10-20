@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
 import { type ResearchRunId } from "./legacy-company-contracts/index.js";
 import { ActiveResearchRunSummarySchema, ResearchRunSchema, ResearchRunSummarySchema, StartCompanyResearchInputSchema, type ActiveResearchRunSummary, type KeyResearchRun, type ResearchFailureCode, type ResearchRun, type ResearchRunSummary } from "./legacy-company-contracts/index.js";
@@ -117,7 +117,8 @@ function toSummary(run: ResearchRun): ResearchRunSummary | ActiveResearchRunSumm
   return { ...summary, status: summary.status };
 }
 
-export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyResearchRunRepository {
+export function createCompanyResearchRunRepository(connection: DatabaseInput): CompanyResearchRunRepository {
+  const db = databaseView(connection);
   function getRequired(runId: ResearchRunId, status: KeyResearchRun["status"]): KeyResearchRun {
     const row = db.prepare("SELECT * FROM company_research_runs WHERE id = ?").get(runId) as
       unknown as CompanyResearchRunRow | undefined;
@@ -308,8 +309,7 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
     },
 
     recoverAbandoned() {
-      db.exec("BEGIN IMMEDIATE");
-      try {
+      return db.transaction(() => {
         const rows = db.prepare("SELECT * FROM company_research_runs WHERE status IN ('researching', 'structuring')").all() as
           unknown as CompanyResearchRunRow[];
         const recovered = { failedResearching: 0, failedStructuring: 0 };
@@ -334,12 +334,8 @@ export function createCompanyResearchRunRepository(db: DatabaseSync): CompanyRes
             recovered.failedStructuring++;
           }
         }
-        db.exec("COMMIT");
         return recovered;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+      });
     },
 
     getByIdForTarget(itemId, companyId, runId) {

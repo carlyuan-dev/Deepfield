@@ -16,7 +16,10 @@
     "./config/runtime": "./src/config/runtime.ts",
     "./tools": "./src/tools/index.ts",
     "./tools/runtime": "./src/tools/runtime.ts",
-    "./tools/web": "./src/tools/web/index.ts"
+    "./tools/web": "./src/tools/web/index.ts",
+    "./database": "./src/database/index.ts",
+    "./database/runtime": "./src/database/runtime.ts",
+    "./usage/sqlite": "./src/usage/sqlite.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",

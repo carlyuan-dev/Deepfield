@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type {
   ToolExecution,
   ToolExecutionCleanupRepository,
@@ -78,7 +78,8 @@ function requireCanonicalIso(value: unknown): string {
   return value;
 }
 
-export function createToolExecutionRepository(db: DatabaseSync): ToolExecutionRepository & ToolExecutionCleanupRepository {
+export function createToolExecutionRepository(connection: DatabaseInput): ToolExecutionRepository & ToolExecutionCleanupRepository {
+  const db = databaseView(connection);
   return {
     start(record: ToolExecutionStart): void {
       const id = requireNonEmptyString(record.id);

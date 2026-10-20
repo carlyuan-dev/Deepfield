@@ -18,6 +18,9 @@
     "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
+      "@deepfield/base/database": ["./packages/base/src/database/index.ts"],
+      "@deepfield/base/database/runtime": ["./packages/base/src/database/runtime.ts"],
+      "@deepfield/base/usage/sqlite": ["./packages/base/src/usage/sqlite.ts"],
       "@deepfield/base/agent": ["./packages/base/src/agent/index.ts"],
       "@deepfield/base/agent/runtime": ["./packages/base/src/agent/runtime.ts"],
       "@deepfield/base/tools": ["./packages/base/src/tools/index.ts"],

@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
 import { CompanyProfileDiagnosticSchema, type CompanyProfileDiagnostic } from "./legacy-company-contracts/index.js";
 import type { CompanyProfileDiagnosticRepository } from "./types.js";
@@ -6,7 +6,8 @@ function valid(value: unknown): CompanyProfileDiagnostic {
   if (!Value.Check(CompanyProfileDiagnosticSchema, value)) throw new Error("invalid profile diagnostic");
   return structuredClone(value);
 }
-export function createCompanyProfileDiagnosticRepository(db: DatabaseSync): CompanyProfileDiagnosticRepository {
+export function createCompanyProfileDiagnosticRepository(connection: DatabaseInput): CompanyProfileDiagnosticRepository {
+  const db = databaseView(connection);
   const decode = (row: { diagnostic_json: string }) => valid(JSON.parse(row.diagnostic_json));
   return {
     record(value) {

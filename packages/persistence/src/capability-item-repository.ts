@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { CapabilityItemId } from "./legacy-company-contracts/index.js";
 import type { CapabilityItem, CreateIndustryResearchItemInput, UpdateIndustryResearchItemInput } from "./legacy-company-contracts/index.js";
 import { toCapabilityItem } from "./mappers.js";
@@ -10,7 +10,9 @@ function trimOptional(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-export function createCapabilityItemRepository(db: DatabaseSync): CapabilityItemRepository {
+export function createCapabilityItemRepository(connection: DatabaseInput): CapabilityItemRepository {
+  const db = databaseView(connection);
+  const items = db.table({ name: "capability_items", primaryKey: "id", columns: ["id", "type", "industry", "research_scope", "notes", "created_at", "updated_at"] });
   return {
     create(input: CreateIndustryResearchItemInput): CapabilityItem {
       const now = new Date().toISOString();
@@ -25,19 +27,7 @@ export function createCapabilityItemRepository(db: DatabaseSync): CapabilityItem
         createdAt: now,
         updatedAt: now,
       };
-      db.prepare(
-        `INSERT INTO capability_items(
-          id, type, industry, research_scope, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        item.id,
-        item.type,
-        item.industry,
-        researchScope ?? null,
-        notes ?? null,
-        item.createdAt,
-        item.updatedAt,
-      );
+      items.insert({ id: item.id, type: item.type, industry: item.industry, research_scope: researchScope ?? null, notes: notes ?? null, created_at: item.createdAt, updated_at: item.updatedAt });
       return item;
     },
 
@@ -48,16 +38,12 @@ export function createCapabilityItemRepository(db: DatabaseSync): CapabilityItem
       const researchScope = trimOptional(input.researchScope);
       const notes = trimOptional(input.notes);
       const updatedAt = new Date().toISOString();
-      const result = db.prepare(
-        `UPDATE capability_items
-         SET industry = ?, research_scope = ?, notes = ?, updated_at = ?
-         WHERE id = ?`,
-      ).run(input.industry, researchScope ?? null, notes ?? null, updatedAt, itemId);
+      const result = items.update({ id: itemId }, { industry: input.industry, research_scope: researchScope ?? null, notes: notes ?? null, updated_at: updatedAt });
       return result.changes === 0 ? undefined : this.getById(itemId);
     },
 
     delete(itemId: CapabilityItemId): boolean {
-      return db.prepare("DELETE FROM capability_items WHERE id = ?").run(itemId).changes > 0;
+      return items.delete({ id: itemId }).changes > 0;
     },
 
     list(): CapabilityItem[] {
@@ -68,9 +54,7 @@ export function createCapabilityItemRepository(db: DatabaseSync): CapabilityItem
     },
 
     getById(itemId: CapabilityItemId): CapabilityItem | undefined {
-      const row = db
-        .prepare("SELECT * FROM capability_items WHERE id = ?")
-        .get(itemId) as unknown as CapabilityItemRow | undefined;
+      const row = items.findById(itemId) as unknown as CapabilityItemRow | undefined;
       return row === undefined ? undefined : toCapabilityItem(row);
     },
   };

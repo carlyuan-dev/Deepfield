@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { CapabilityItemId, CompanyId } from "./legacy-company-contracts/index.js";
 import type { ItemCompany } from "./legacy-company-contracts/index.js";
 import { toItemCompany } from "./mappers.js";
@@ -9,7 +9,8 @@ function trimOptional(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-export function createItemCompanyRepository(db: DatabaseSync): ItemCompanyRepository {
+export function createItemCompanyRepository(connection: DatabaseInput): ItemCompanyRepository {
+  const db = databaseView(connection);
   return {
     add(itemId: CapabilityItemId, companyId: CompanyId, note?: string): ItemCompany {
       const now = new Date().toISOString();

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { CompanyId } from "./legacy-company-contracts/index.js";
 import type { Company, CompanyDraft, CompanyProfileFields, CompanyProfileInput, CompanyProfileIdentityHint, CompanyProfileStatus } from "./legacy-company-contracts/index.js";
 import { toCompany } from "./mappers.js";
@@ -14,7 +14,8 @@ export function normalizeCompanyName(name: string): string {
   return name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-export function createCompanyRepository(db: DatabaseSync): CompanyRepository {
+export function createCompanyRepository(connection: DatabaseInput): CompanyRepository {
+  const db = databaseView(connection);
   const repository: CompanyRepository = {
     upsert(draft: CompanyDraft): Company {
       const name = draft.name.trim();

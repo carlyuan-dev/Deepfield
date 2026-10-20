@@ -180,6 +180,12 @@ describe("migration 10", () => {
       INSERT INTO schema_migrations VALUES
         (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,'');
       CREATE TABLE companies(id TEXT PRIMARY KEY);
+      -- Migration 21 extends the conversation table already present at v9.
+      CREATE TABLE conversations(
+        id TEXT PRIMARY KEY, title TEXT NOT NULL,
+        has_user_message INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
       CREATE TABLE capability_item_companies(item_id TEXT, company_id TEXT, PRIMARY KEY(item_id, company_id));
       CREATE TABLE company_research_runs(
         id TEXT PRIMARY KEY, item_id TEXT NOT NULL, company_id TEXT NOT NULL,

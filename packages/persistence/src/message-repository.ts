@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { ChatMessage, ConversationId, MessageId } from "./legacy-company-contracts/index.js";
 import { toMessage } from "./mappers.js";
 import type { MessageRepository, MessageRow } from "./types.js";
 
-export function createMessageRepository(db: DatabaseSync): MessageRepository {
+export function createMessageRepository(connection: DatabaseInput): MessageRepository {
+  const db = databaseView(connection);
   return {
     append(
       conversationId: ConversationId,

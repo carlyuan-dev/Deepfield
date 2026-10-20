@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 
 export interface InvocationIssuance { id: string; bindingDigest: string; capabilityId: string; actionId: string; issuedAt: number; expiresAt: number }
 export interface InvocationRecord extends InvocationIssuance { state: "issued" | "pending" | "completed"; result?: unknown; taskId?: string; terminalAt?: number }
@@ -13,7 +13,8 @@ export interface InvocationRepository {
   prune(now: number, limit?: number): number;
 }
 const RETENTION = 30 * 86400000;
-export function createCapabilityInvocationRepository(db: DatabaseSync): InvocationRepository {
+export function createCapabilityInvocationRepository(connection: DatabaseInput): InvocationRepository {
+  const db = databaseView(connection);
   return {
     issue(record) { db.prepare("INSERT INTO capability_invocations(id, capability_id, action_id, binding_digest, issued_at, expires_at, state) VALUES (?, ?, ?, ?, ?, ?, 'issued')").run(record.id, record.capabilityId, record.actionId, record.bindingDigest, record.issuedAt, record.expiresAt); },
     get(id) {

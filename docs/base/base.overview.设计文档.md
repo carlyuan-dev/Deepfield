@@ -2,7 +2,7 @@
 
 版本：0.12 · 更新日期：2026-10-20
 
-状态：Usage 已用于当前产品；Errors、Config 已实现并完成已声明范围的用户验收。Model 安全契约、runtime 与 Usage collector 已实现并接入实际消费者，自动验证与真实链路端测完成。Search 抽取已实现、自动检查通过，已完成代码复核，最终用户体验尚未验收。Tools 通用核心与 web 适配已实现，Worker 已接入；Agent 通用执行核已实现，Chat 与 Capability 已接入；Database 及仓储归位尚未完成；已确认各模块安全契约与 runtime 分入口、模块迁移账本及公司仓储注入设计。各批由 Agent 自验并独立提交，最终集中进行用户体验验收。
+状态：Usage 已用于当前产品；Errors、Config 已实现并完成已声明范围的用户验收。Model 安全契约、runtime 与 Usage collector 已实现并接入实际消费者，自动验证与真实链路端测完成。Search 抽取已实现、自动检查通过，已完成代码复核，最终用户体验尚未验收。Tools 通用核心与 web 适配已实现，Worker 已接入；Agent 通用执行核已实现，Chat 与 Capability 已接入；Database 通用底座与 Usage SQLite 已实现，现有仓储已使用新底座；公司仓储归属与作用域注入待下一批收口；已确认各模块安全契约与 runtime 分入口、模块迁移账本及公司仓储注入设计。各批由 Agent 自验并独立提交，最终集中进行用户体验验收。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
@@ -36,15 +36,15 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 
 ## 3. 能力域目录
 
-| 能力域 | 公开入口（Database 为目标入口） | 职责 | 当前状态 |
+| 能力域 | 公开入口 | 职责 | 当前状态 |
 | --- | --- | --- | --- |
 | Config | `@deepfield/base/config`、`@deepfield/base/config/runtime` | 通用配置声明／存取／校验、可选 Profile 管理、调用快照 | 已实现，本轮验收完成；证据与范围见[设计](base.config.设计文档.md) |
 | Model | `@deepfield/base/model`、`@deepfield/base/model/runtime` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 本阶段自动验证完成，可交付 staging，待用户体验验收；范围见[设计](base.model.设计文档.md) |
 | Search | `@deepfield/base/search`、`@deepfield/base/search/runtime` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 已实现、自动检查通过，已完成代码复核，待用户体验验收；范围见[设计](base.search.设计文档.md) |
 | Tools | `@deepfield/base/tools`、`@deepfield/base/tools/runtime`、`@deepfield/base/tools/web` | 工具注册、参数校验、执行与授权检查、预算及审计机制 | 已实现，Worker 已接入；契约见[设计](base.tools.设计文档.md) |
 | Agent | `@deepfield/base/agent`、`@deepfield/base/agent/runtime` | 基于 Pi 的有界模型—工具循环、取消、事件与最终输出 | 已实现并接入共享执行路径；契约见[设计](base.agent.设计文档.md) |
-| Database | `@deepfield/base/database`、`@deepfield/base/database/runtime` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 待从 persistence 抽取，不含业务仓储 |
-| Usage | `@deepfield/base/usage`、`@deepfield/base/usage/runtime` | 用量记录、实例化 collector、幂等持久化契约与汇总查询 | 已实现；ALS、输送与生命周期留应用，SQLite 适配仍在 persistence |
+| Database | `@deepfield/base/database`、`@deepfield/base/database/runtime` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 通用底座已实现，现有仓储使用同一连接的 Base view；仓储归属下一批收口 |
+| Usage | `@deepfield/base/usage`、`@deepfield/base/usage/runtime`、`@deepfield/base/usage/sqlite` | 用量记录、实例化 collector、幂等持久化契约与汇总查询 | 已实现；ALS、输送与生命周期留应用，SQLite 适配已归位并使用 Database |
 | Errors | `@deepfield/base/errors` | 中立错误结构、公共分类及安全传输约定 | 核心及 contracts 兼容接线已实现；已通过用户手测 |
 
 Config 管配置，不负责执行 Model／Search 调用；Search 提供能力，不负责决定何时搜索；Tools 执行调用方给定的授权，不授予授权；Agent 提供执行机制，不接管 Chat 的记忆与 Capability 的业务流程。
@@ -53,9 +53,9 @@ Search 核心不依赖 Tools，web 工具适配由 Tools 使用 Search。Agent �
 
 Database 封装“怎样读写数据”，可以提供参数化查询、写入和轻量单表 CRUD；表结构、领域映射及业务条件由使用方负责，不将公司、报告等业务操作下沉。
 
-Database 保持同库、同连接的同步事务，公司包自行构造仓储；迁移账本、受控 CRUD、注入与清理生命周期见[抽取设计的 Database 边界](base.extraction.设计文档.md#33-database-与业务仓储)。宿主与自有公司包同步升级，旧包与数据的兼容范围及更新方式见[公开契约与 Capability 兼容](base.extraction.设计文档.md#41-公开契约与-capability-兼容)。
+Database 保持同库、同连接的同步事务；当前公司仓储仍由宿主构造，下一批迁回公司包。已实现契约见 [Base.Database](base.database.设计文档.md)；迁移账本、受控 CRUD、注入与清理生命周期见[抽取设计的 Database 边界](base.extraction.设计文档.md#33-database-与业务仓储)。宿主与自有公司包同步升级，旧包与数据的兼容范围及更新方式见[公开契约与 Capability 兼容](base.extraction.设计文档.md#41-公开契约与-capability-兼容)。
 
-`packages/base` 当前公开 Usage、Errors、Config、Model、Search、Tools 与 Agent，其余目标入口尚不可用。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config、Model、Search、Tools 与 Agent 均区分安全入口和可信端 runtime；主进程 Capability 通过 `config.v1` 取得作用域句柄。Model 的旧共享入口只做单向薄装配，SDK 精确特化其中立观察契约，见 [Base.Model 设计文档](base.model.设计文档.md)。Search 的旧 retrieval 服务入口单向转出 Base 实现，工具定义由 Base.Tools/web 适配，旧 retrieval 工具入口单向转出，见 [Base.Search 设计文档](base.search.设计文档.md)。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
+`packages/base` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent 与 Database。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config、Model、Search、Tools、Agent 与 Database 均区分安全入口和可信端 runtime；主进程 Capability 通过 `config.v1` 取得作用域句柄。Model 的旧共享入口只做单向薄装配，SDK 精确特化其中立观察契约，见 [Base.Model 设计文档](base.model.设计文档.md)。Search 的旧 retrieval 服务入口单向转出 Base 实现，工具定义由 Base.Tools/web 适配，旧 retrieval 工具入口单向转出，见 [Base.Search 设计文档](base.search.设计文档.md)。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
 
 用量在实际请求边界统一计量，上层不手工累加；字段、恢复机制与看板口径见 [Base.Usage 设计文档](base.usage.设计文档.md)。
 

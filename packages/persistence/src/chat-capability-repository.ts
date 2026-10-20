@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { OperationPresentation, TaskSnapshot } from "@deepfield/capability-sdk";
 import type { ViewRef, DraftRef } from "@deepfield/capability-sdk";
 import { createHash } from "node:crypto";
@@ -24,7 +24,8 @@ export interface ChatCapabilityOperation {
   title: string; presentation?: OperationPresentation;
 }
 
-export function createChatCapabilityRepository(db: DatabaseSync) {
+export function createChatCapabilityRepository(connection: DatabaseInput) {
+  const db = databaseView(connection);
   const task = (row: Record<string, unknown>): ChatCapabilityTask => ({
     conversationId: String(row.conversation_id), sourceRequestId: String(row.source_request_id),
     snapshot: JSON.parse(String(row.snapshot_json)) as TaskSnapshot,

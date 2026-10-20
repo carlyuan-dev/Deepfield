@@ -1,6 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { CompanyResearchBatchState } from "./legacy-company-contracts/index.js";
-export function createCompanyResearchBatchRepository(db: DatabaseSync) {
+export function createCompanyResearchBatchRepository(connection: DatabaseInput) {
+  const db = databaseView(connection);
   const decode = (row: unknown): CompanyResearchBatchState | undefined => row ? JSON.parse((row as { snapshot: string }).snapshot) as CompanyResearchBatchState : undefined;
   return {
     deleteTerminal: (id: string) => { db.prepare("DELETE FROM company_research_batches WHERE id = ? AND status IN ('completed','cancelled')").run(id); },

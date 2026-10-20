@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import type { InteractionOwner, InteractionPayload, InteractionRecord, InteractionResumeEvent, OperationRef, OperationResult, OperationSnapshot, InteractionResponseSource } from "@deepfield/contracts";
 import { runInTransaction } from "./transactions.js";
 
@@ -45,7 +45,8 @@ const event = (row: Row): InteractionResumeEvent => ({
   detail: String(row.detail), state: row.state as InteractionResumeEvent["state"],
 });
 
-export function createChatInteractionRepository(db: DatabaseSync): InteractionRepository {
+export function createChatInteractionRepository(connection: DatabaseInput): InteractionRepository {
+  const db = databaseView(connection);
   const get = (id: string): InteractionRecord | undefined => {
     const row = db.prepare("SELECT * FROM chat_interactions WHERE id=?").get(id) as Row | undefined;
     return row ? record(row) : undefined;

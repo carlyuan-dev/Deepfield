@@ -1,13 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 
-export function runInTransaction<T>(db: DatabaseSync, work: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = work();
-    db.exec("COMMIT");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+export function runInTransaction<T>(db: DatabaseInput, work: () => T): T {
+  // Legacy generic signature; Base still rejects async/thenable work at runtime.
+  return databaseView(db).transaction(work as () => T extends PromiseLike<unknown> ? never : T);
 }

@@ -1,7 +1,8 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 
 /** Opaque package-owned JSON; host storage does not interpret drafts or task state. */
-export function createCompanyResearchProtocolRepository(db: DatabaseSync) {
+export function createCompanyResearchProtocolRepository(connection: DatabaseInput) {
+  const db = databaseView(connection);
   const decode = (row: unknown): string | undefined => row ? (row as { data: string }).data : undefined;
   return {
     getDraft: (id: string) => decode(db.prepare("SELECT data FROM company_research_drafts WHERE id=?").get(id)),

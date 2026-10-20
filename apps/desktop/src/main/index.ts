@@ -12,8 +12,9 @@ import { registerCapabilityManagementIpc } from "./capabilities/management-ipc.j
 import { createCapabilityResourceHandler } from "./capabilities/resource-handler.js";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createRepositories, migrate, openDatabase } from "@deepfield/persistence";
-import { createUsageRepository } from "@deepfield/persistence";
+import { createRepositories, migrate } from "@deepfield/persistence";
+import { openDatabase } from "@deepfield/base/database/runtime";
+import { createUsageRepository } from "@deepfield/base/usage/sqlite";
 import { createMainUsageRuntime } from "./usage-runtime.js";
 import { configureUsageRecorder } from "../shared/usage-collection.js";
 import type { Repositories } from "@deepfield/persistence";
@@ -117,10 +118,10 @@ void app.whenReady().then(async () => {
   });
   const paths = createAppPaths(userDataRoot);
   database = openDatabase(paths.database);
-  migrate(database);
-  usageRuntime = createMainUsageRuntime(createUsageRepository(database), () => agentRuntime);
+  database.legacy(migrate);
+  usageRuntime = createMainUsageRuntime(createUsageRepository(database.database), () => agentRuntime);
   configureUsageRecorder(usageRuntime.recorder);
-  const repositories = createRepositories(database);
+  const repositories = createRepositories(database.database);
   interactionHost = new ChatInteractionHost(repositories, capabilities, () => capabilityRuntime,
     conversationId => appRuntime?.chatService.interactionChanged(conversationId),
     (owner, invocationId, result, generation) => chatHost?.interactionOutcome(owner, invocationId, result, generation),

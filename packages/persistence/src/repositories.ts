@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { databaseView, type DatabaseInput } from "./database.js";
 import { createCompanyResearchEvidenceRepository } from "./company-research-evidence-repository.js";
 import { createCompanyResearchProtocolRepository } from "./company-research-protocol-repository.js";
 import { createCapabilityInvocationRepository } from "./capability-invocation-repository.js";
@@ -18,7 +18,8 @@ import { createChatSessionRepository } from "./chat-session-repository.js";
 import { createChatCapabilityRepository } from "./chat-capability-repository.js";
 import { createChatInteractionRepository } from "./chat-interaction-repository.js";
 
-export function createRepositories(db: DatabaseSync): Repositories {
+export function createRepositories(connection: DatabaseInput): Repositories {
+  const db = databaseView(connection);
   return {
     companyResearchEvidence: createCompanyResearchEvidenceRepository(db),
     chatCapabilities: createChatCapabilityRepository(db),
