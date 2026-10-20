@@ -1,38 +1,8 @@
-import { Type, type Static } from "typebox";
-import {
-  ToolExecutionError,
-  type ToolDefinition,
-  type ToolRunContext,
-} from "@deepfield/tool-platform";
-import { TransportError, type SafeHttpTransport } from "./http-transport.js";
-import { ResourceStore, zeroFillBuffer, type ResourceScope } from "./resource-store.js";
-
-export const MAX_HTML_BYTES = 8 * 1024 * 1024;
-export const MAX_PDF_BYTES = 32 * 1024 * 1024;
-
-export const FetchInputSchema = Type.Object(
-  { url: Type.String({ minLength: 1, maxLength: 2048 }) },
-  { additionalProperties: false },
-);
-export type FetchInput = Static<typeof FetchInputSchema>;
-
-export const FetchOutputSchema = Type.Object(
-  {
-    resourceId: Type.String({ minLength: 1 }),
-    finalUrl: Type.String({ minLength: 1 }),
-    contentType: Type.String({ minLength: 1 }),
-    size: Type.Integer({ minimum: 0 }),
-    sha256: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
-export type FetchOutput = Static<typeof FetchOutputSchema>;
-
-export interface FetchToolDeps {
-  transport: Pick<SafeHttpTransport, "fetch">;
-  store: ResourceStore;
-}
-
+import { ToolExecutionError, type ToolDefinition, type ToolRunContext } from "@deepfield/tool-platform";
+import { FetchInputSchema, FetchOutputSchema, MAX_HTML_BYTES, MAX_PDF_BYTES, SearchResourceError } from "@deepfield/base/search";
+import { fetchResource, TransportError, type FetchResourceDeps, type ResourceScope } from "@deepfield/base/search/runtime";
+export { FetchInputSchema, FetchOutputSchema, MAX_HTML_BYTES, MAX_PDF_BYTES, type FetchInput, type FetchOutput } from "@deepfield/base/search";
+export type FetchToolDeps = FetchResourceDeps;
 /**
  * Fail-closed scope binding: prefer the trusted ToolSet object itself (direct
  * trusted calls), then the runner-provided snapshot fingerprint. A self-reported
@@ -54,20 +24,7 @@ export function scopeFromContext(context: ToolRunContext): ResourceScope {
   };
 }
 
-function toToolFailure(error: unknown): never {
-  if (error instanceof ToolExecutionError) {
-    throw error;
-  }
-  if (error instanceof TransportError) {
-    throw new ToolExecutionError(error.code);
-  }
-  throw new ToolExecutionError("executor_failed");
-}
-
-function makeFetchDefinition(
-  deps: FetchToolDeps,
-  options: { identity: "fetch_url" | "fetch_pdf"; maxBytes: number; acceptedMime: readonly string[] },
-): ToolDefinition<typeof FetchInputSchema, typeof FetchOutputSchema> {
+function makeFetchDefinition(deps: FetchToolDeps, options: { identity: "fetch_url" | "fetch_pdf"; maxBytes: number; acceptedMime: readonly string[] }): ToolDefinition<typeof FetchInputSchema, typeof FetchOutputSchema> {
   return {
     identity: { name: options.identity, version: 1 },
     label: options.identity === "fetch_url" ? "Fetch URL" : "Fetch PDF",
@@ -83,82 +40,15 @@ function makeFetchDefinition(
     concurrency: 2,
     meter: { category: "fetch", countsBytes: true, countsTime: true, commitOn: "external_dispatch" },
     async execute(input, context, signal, onProgress) {
-      if (signal.aborted) {
-        throw new ToolExecutionError("cancelled");
-      }
-      let result: Awaited<ReturnType<SafeHttpTransport["fetch"]>> | undefined;
-      let scope: ResourceScope | undefined;
-      let resourceId: string | undefined;
-      // Abort after a successful put must consume the fresh resource so no
-      // orphan survives the cancelled execution.
-      const onAbort = (): void => {
-        if (resourceId !== undefined && scope !== undefined) {
-          try {
-            deps.store.consume(resourceId, scope);
-          } catch {
-            // consume is idempotent; a second abort listener run is a no-op
-          }
-          resourceId = undefined;
-        }
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      try {
-        onProgress?.({ kind: "fetching" });
-        result = await deps.transport.fetch(input.url, {
-          signal,
-          maxBodyBytes: options.maxBytes,
-          ...(context.markBudgetConsumed === undefined
-            ? {}
-            : { onExternalDispatch: context.markBudgetConsumed }),
-        });
-        const mime = result.contentType;
-        if (!options.acceptedMime.includes(mime)) {
-          throw new ToolExecutionError("unsupported_content_type");
-        }
-        if (signal.aborted) {
-          throw new ToolExecutionError("cancelled");
-        }
-        scope = scopeFromContext(context);
-        const { id } = deps.store.put(scope, result.body, {
-          finalUrl: result.finalUrl,
-          contentType: mime,
-          size: result.decompressedBytes,
-          sha256: result.sha256,
-        });
-        resourceId = id;
-        if (signal.aborted) {
-          // abort raced the put: the fresh resource is consumed immediately
-          deps.store.consume(id, scope);
-          resourceId = undefined;
-          throw new ToolExecutionError("cancelled");
-        }
-        return {
-          resourceId: id,
-          finalUrl: result.finalUrl,
-          contentType: mime,
-          size: result.decompressedBytes,
-          sha256: result.sha256,
-        };
-      } catch (error) {
-        if (resourceId !== undefined && scope !== undefined) {
-          try {
-            deps.store.consume(resourceId, scope);
-          } catch {
-            // already consumed by the abort listener
-          }
-          resourceId = undefined;
-        }
-        toToolFailure(error);
-      } finally {
-        signal.removeEventListener("abort", onAbort);
-        if (result !== undefined) {
-          zeroFillBuffer(result.body); // best-effort: the copy is in the store
-        }
+      if (signal.aborted) throw new ToolExecutionError("cancelled");
+      try { return await fetchResource(deps, options, input.url, scopeFromContext(context), signal, context.markBudgetConsumed, () => onProgress?.({ kind: "fetching" })); }
+      catch (error) {
+        if (error instanceof SearchResourceError || error instanceof TransportError) throw new ToolExecutionError(error.code);
+        throw error;
       }
     },
   };
 }
-
 export function createFetchUrlDefinition(deps: FetchToolDeps): ToolDefinition<typeof FetchInputSchema, typeof FetchOutputSchema> {
   return makeFetchDefinition(deps, {
     identity: "fetch_url",

@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import { SourceDateSchema } from "../../../packages/retrieval/src/output-contracts.js";
+import { SourceDateSchema } from "@deepfield/base/search";
 export type { ArchivedProjection, EvidenceReceipt, EvidenceManifest, EvidenceSnapshot, FrozenSnapshot, FrozenEvidencePacket } from "../../../packages/persistence/src/research-evidence-data.js";
 const id = Type.String({ minLength: 1, maxLength: 200 });
 const hash = Type.String({ pattern: "^[a-f0-9]{64}$" });

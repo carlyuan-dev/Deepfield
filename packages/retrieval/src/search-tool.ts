@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
-import { SearchWebOutputSchema, type SearchWebOutput } from "./output-contracts.js";
-export { SearchWebResultSchema, SearchWebOutputSchema, type SearchWebOutput } from "./output-contracts.js";
+import { SearchWebOutputSchema, type SearchWebOutput } from "@deepfield/base/search";
+export { SearchWebResultSchema, SearchWebOutputSchema, type SearchWebOutput } from "@deepfield/base/search";
 import {
   ToolExecutionError,
   type ToolDefinition,
@@ -12,7 +12,7 @@ import {
   MAX_QUERY_LENGTH,
   MAX_RESULTS,
   type SearchProvider,
-} from "./search-provider.js";
+} from "@deepfield/base/search";
 
 export const SearchWebInputSchema = Type.Object(
   {

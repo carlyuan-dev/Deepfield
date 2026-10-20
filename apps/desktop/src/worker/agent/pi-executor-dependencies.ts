@@ -3,7 +3,7 @@ import type {
   LlmRuntimeSnapshot,
   SearchRuntimeSnapshot,
 } from "@deepfield/contracts/model-config";
-import type { SearchProvider } from "@deepfield/retrieval/search-provider";
+import type { SearchProvider } from "@deepfield/base/search";
 import type { RuntimeSystemContextOptions } from "./runtime-system-context.js";
 import type {
   PiRunDiagnostic,

@@ -1,8 +1,8 @@
 # Deepfield Base 抽取设计文档
 
-版本：0.6 · 日期：2026-10-15
+版本：0.7 · 日期：2026-10-20
 
-状态：用户已确认总体设计、Database 的通用 CRUD 边界及 Base／Capability 兼容约束。首批 Errors 核心与 contracts 兼容接线已实现，已通过用户手测；第二批 Config 通用核心、Capability 主进程接入及旧兼容适配已实现，本轮验收完成，证据为当前配置下 Chat 可用、资料更新与两阶段调研完成，不表示所有配置功能均逐项手测；第三批 Model 安全契约、runtime、Usage collector 及实际消费者接线已实现，本阶段自动验证与真实链路端测完成，可交付 staging，等待用户体验验收。Search 及后续抽取尚未实施。本文件确定目标边界和分批迁移顺序，不表示全部抽取已完成，也不是一次性执行全部迁移的实施计划。
+状态：总体设计、各模块安全契约与 runtime 分入口、Database 通用 CRUD 和模块迁移账本、公司仓储归属及宿主注入边界已确认。Errors、Config 已实现并完成已声明范围的用户验收；Model 安全契约、runtime、Usage collector 及实际消费者接线已实现，自动验证与真实链路端测完成。Search 抽取已实现、自动检查通过，已完成代码复核，最终用户体验尚未验收。Tools、Agent、Database 与仓储归位尚未完成。后续各批由 Agent 自验并独立提交，最终集中进行用户体验验收；本文件维护长期边界与当前真实状态。
 
 当前 Errors 实现在 `packages/base/src/errors/`，旧接口在 `packages/contracts/src/errors.ts` 保留薄兼容适配；其他模块的当前归属见下表。
 
@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | `packages/base/src/config/` 实际核心；`apps/desktop/src/main/profile-store.ts` 与 `packages/contracts/src/model-config.ts` 为旧入口薄适配 | Config 已抽取：通用配置、可选 Profile、选择、草稿／视图／快照及中立定义 | Electron 密钥加密、Settings UI、IPC 和诊断编排留桌面应用 |
 | `packages/base/src/model/` 实际核心；`apps/desktop/src/shared/model-gateway.ts`、`model-request-observation.ts` 为单向薄装配／转出 | Model 已抽取：调用、请求观察、HTTP 诊断及 LLM transport；SDK 精确特化中立契约 | 公司证据如何接收、冻结、使用请求记录留 Capability |
-| `packages/retrieval` 的 Provider／读取解析实现；`shared/usage-search.ts` | Search：服务能力与计量接入 | 联网许可、检索任务策略不进入 Search；web 工具定义归工具适配 |
+| `packages/base/src/search/` 实际核心；`packages/retrieval` 服务入口单向转出；`shared/usage-search.ts` 为应用计量装配 | Search 已抽取：Provider、读取解析、资源生命周期与计量接入 | 联网许可、检索任务策略留上层；web 工具定义仍由 retrieval 适配 |
 | `packages/tool-platform`；Worker 工具运行时中的通用部分 | Tools：定义、注册、执行、准入与审计端口 | Chat 会话工具实现、HITL 授权、业务工具及应用装配留上层 |
 | `apps/desktop/src/worker/agent` 的共享执行器；SDK 中中立 execution 契约 | Agent：Pi 循环与运行控制 | Chat 上下文和调研专属收口策略留各自适配器 |
 | `packages/persistence/src/database.ts`、`transactions.ts`、迁移执行机制及仓储重复的参数化执行 | Database：连接、通用读写／CRUD、事务和迁移执行 | Chat／公司／报告表与仓储归各自模块；旧迁移保留兼容 |
@@ -77,7 +77,9 @@ Database 提供 SQLite 连接、通用数据读写／CRUD、事务、迁移执�
 
 首轮维持同一 SQLite 文件、同一事务所用连接和现有同步事务契约，不为每个仓储另开连接，不将 Promise 偷塞进同步事务。证据冻结与报告状态更新等操作必须保持原子性。
 
-历史迁移 1–32 作为不可变的兼容升级序列保留，不并入 Base.Database 的通用核心，也不要求旧能力代码存在才能完成主程序兼容升级。未来新增模块迁移需使用明确的模块标识与有序版本，进入数据迁移批次前单独定义与旧版本表的衔接；本设计不授权提前改写旧迁移。
+历史 `schema_migrations` 1–32 作为不可变的兼容升级序列保留，不并入 Base.Database 的通用核心；宿主即使没有安装公司包，也能完成该序列的兼容升级。旧序列完成后视为各模块的基线 0，后续模块迁移从版本 1 开始，使用独立账本记录 `namespace`、`version`、`migration_key`、`applied_at`。Database 提供通用执行机制，模块声明自己的迁移；待执行迁移及其账本记录在同一同步事务内提交，失败共同回滚。禁用包不执行新模块迁移，也不删除已有数据。
+
+公司包在包内构造仓储，宿主注入 `database.v1` 及窄接口 `tools.audit.v1`，供跨仓储清理共享同库、同连接事务。清理业务落盘后再撤销包的数据库句柄，最后关闭连接；关闭前不能让必要的清理操作失去数据库访问权。迁移机制的验证复用真实 Schema 与兼容数据，无需增加业务字段或 DDL 作为演示。
 
 未启用或已移除的 Capability 不加载业务模块、不恢复其队列、不注册新业务动作，不因此删除用户数据。重新启用后仍可读取原记录。迁移后用“已有数据 → 禁用／缺失包 → Chat 可用 → 恢复包后读回”验证，而不是只用空数据库证明可启动。
 
@@ -104,7 +106,7 @@ Errors 抽取中立错误结构、公共分类和脱敏序列化；各模块维�
 | Tools | Errors、中立工具契约；具体 web 工具适配可使用 Search，核心不反向导入具体工具 |
 | Agent | Model／Tools 的公开契约与 Pi；注入上下文、工具集合、运行策略和事件接收者 |
 
-模块之间不循环依赖。元数据与类型依赖也要审查，不因 `import type` 就允许 Base 导入 Chat、Capability SDK 或包含业务内容的 contracts 总入口。UI 使用安全的契约／视图子入口，不能通过一次转出把 Node、SQLite 或凭据读取实现带进 Renderer。
+模块之间不循环依赖。元数据与类型依赖也要审查，不因 `import type` 就允许 Base 导入 Chat、Capability SDK 或包含业务内容的 contracts 总入口。Search、Tools、Agent、Database 均区分安全契约入口与可信端 `/runtime` 入口；UI 使用安全的契约／视图子入口，不能通过一次转出把 Node、SQLite 或凭据读取实现带进 Renderer。
 
 旧入口兼容方向只能是“旧入口 → Base 新实现”，不能在 Base 新增转出口后仍依赖旧应用实现。迁移批次应明确兼容出口的消费者和删除条件，避免长期维护两套行为。
 
@@ -120,11 +122,13 @@ Base 内部版本、宿主接口版本和 Capability 包版本分别表达不同
 
 Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通用读写机制不自行修改业务表或替业务模块决定 Schema 演进。宿主接口兼容与数据兼容分别验收，历史数据约束继续遵循本文件的 Database 边界。
 
+公司仓储归位时，宿主与自有公司包同步升级，移除旧 `company-research.repositories` 依赖后，不承诺未升级旧包继续兼容。现有安装不会自动覆盖旧包；交付沿用现有完整包更新流程并保留备份。该版本边界不改变历史数据库的兼容升级要求。
+
 每批迁移验证实际 Chat／Capability 消费者及本批关键行为。如果承诺旧包无需升级，须用未重新构建的旧包夹具运行新宿主，验证相关调用与行为；仅把新宿主和能力包新源码一起编译不能证明旧包兼容。验收覆盖本批声明的兼容范围，不扩展为完整插件版本管理平台。
 
 ## 5. 分批顺序与最小验收
 
-每行是可独立交付的边界；每个模块实施前明确职责、公开契约、可替换依赖、关键行为／数据不变量、兼容边界和最小验收，再细化本批改动清单。未知未来需求先留在能力包内，出现真实复用后再抽取，避免为假设需求扩大 Base。完成必要自动验证并打包交给用户手测，通过后按项目分支约定继续。下列检查复用现有设施，不要求每批重跑全套，也不要求每批消耗真实 API。
+每行是可独立交付的边界；每个模块实施前明确职责、公开契约、可替换依赖、关键行为／数据不变量、兼容边界和最小验收。未知未来需求先留在能力包内，出现真实复用后再抽取。各批完成必要的 Agent 自验后独立提交，并连续推进已授权范围，最终打包进行集中用户体验验收。下列检查复用现有设施，不要求每批重跑全套，也不要求每批消耗真实 API。
 
 | 批次 | 本批闭环 | 最小验证重点 |
 | --- | --- | --- |
@@ -137,7 +141,7 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 | 7. Database | 通用连接／参数化读写／事务／迁移执行归位，现有仓储先使用新底座；单表助手按实际重复需求纳入 | 参数绑定与读写结果兼容、旧库升级幂等、事务回滚、重开读取、保持同库同连接语义 |
 | 8. 仓储归属收口 | 公司仓储回到能力包并实际使用 Database；Chat 仓储留 Chat；移除宿主公司专属接线 | 旧报告与证据读回、冻结原子性、启停／移除能力后主 Agent 可用 |
 
-批次 8 涉及多种数据所有者，实施时可再拆成“公司仓储迁移”“其余仓储归位”两个小闭环，不要求一次提交全部完成。模块私有新增迁移规则应在本批前评审，不能先改旧库再补协议。
+仓储归位按数据所有者保持独立闭环；模块新增迁移遵循上述账本与事务契约。
 
 后续中立契约随对应模块迁移，按各批兼容边界替换 contracts／SDK 中的相关引用。
 
@@ -152,4 +156,6 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 优先复用测试：配置存储／诊断、tool-platform 的准入与预算、`pi-agent-executor` 的历史隔离、persistence 的事务与旧库读取、公司证据集成、Capability runtime／loader 及 production boundary。仅对本批新增风险补必要回归保护；构建通过不替代关键行为验证。
 
-已实现模块的长期契约见 [Base.Errors 设计](base.errors.设计文档.md)、[Base.Config 设计](base.config.设计文档.md)、[Base.Model 设计](base.model.设计文档.md)和 [Base.Usage 设计](base.usage.设计文档.md)。Model 已完成本地协议回归、限定冻结旧包服务兼容、生产边界与打包验证；当前 DeepSeek `deepseek-flash`／Tavily 下的配置诊断、Chat、资料更新和完整两阶段调研真实链路端测通过，证据与 Usage 对齐。其他真实 Provider／模型、用户体验验收及冻结旧包 GUI／完整生命周期仍待验证；取消行为沿用本地回归证据。后续批次为 Search，尚未启动。
+已实现模块的长期契约见 [Base.Errors 设计](base.errors.设计文档.md)、[Base.Config 设计](base.config.设计文档.md)、[Base.Model 设计](base.model.设计文档.md)、[Base.Search 设计](base.search.设计文档.md)和 [Base.Usage 设计](base.usage.设计文档.md)。Model 已完成本地协议回归、限定冻结旧包服务兼容、生产边界与打包验证；当前 DeepSeek `deepseek-flash`／Tavily 下的配置诊断、Chat、资料更新和完整两阶段调研真实链路端测通过，证据与 Usage 对齐。其他真实 Provider／模型、集中用户体验验收及冻结旧包 GUI／完整生命周期仍待验证；取消行为沿用本地回归证据。
+
+Search 抽取已实现，typecheck、build、Search／Settings／Usage 回归及安全边界检查通过，已完成代码复核；本批未启动 Electron 或调用真实 Provider，最终用户体验尚未验收。Tools、Agent、Database 与仓储归位尚未完成。

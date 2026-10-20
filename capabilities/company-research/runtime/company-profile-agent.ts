@@ -1,7 +1,7 @@
 import { Value } from "typebox/value";
 import { createHash } from "node:crypto";
 import { CompanyProfileCandidateSchema, type CompanyProfileDiagnostic, type ProfileSchemaIssue, type CompanyProfileResult, type CompanyProfileWorkerRequest, type CompanyProfileWorkerEvent, type ProfileSource, type ProfileSourceRef } from "../contracts/index.js";
-import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/retrieval/output-contracts";
+import { ReadWebpageOutputSchema, SearchWebOutputSchema } from "@deepfield/base/search";
 import type { CompanyAgentRuntime } from "./ports.js";
 import { profileSchemaIssues, safeProfilePath } from "./profile-diagnostic.js";
 import { CompanyProfileModelCandidateSchema, type ProfileCatalogSource } from "./company-profile-model.js";

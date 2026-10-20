@@ -36,7 +36,7 @@ import { createScopedConfigFileStore } from "./config-file-store.js";
 import { ConfiguredLlmService } from "./configured-llm-service.js";
 import { loadPiSkillCatalog, type PiSkillCatalog } from "../shared/pi-skill-catalog.js";
 import { PiModelGateway } from "../shared/model-gateway.js";
-import { listSearchProviderManifests } from "@deepfield/retrieval";
+import { listSearchProviderManifests } from "@deepfield/base/config";
 import { ConfigurationService } from "./configuration-service.js";
 import { CapabilityChatHost } from "./capabilities/chat-host.js";
 import { ChatInteractionHost } from "./chat/interaction-host.js";

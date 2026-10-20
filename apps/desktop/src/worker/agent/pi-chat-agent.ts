@@ -4,7 +4,7 @@ import type {
   AgentWorkerEvent,
   SearchRuntimeSnapshot,
 } from "@deepfield/contracts";
-import type { SearchProvider } from "@deepfield/retrieval";
+import type { SearchProvider } from "@deepfield/base/search";
 import type { ChatAgent } from "../message-loop.js";
 import { createPiChatContextPreparer } from "../chat/pi-chat-context.js";
 import { PiModelGateway, type ModelGateway } from "../../shared/model-gateway.js";

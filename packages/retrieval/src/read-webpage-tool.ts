@@ -1,16 +1,8 @@
-import { MAX_READ_WEBPAGE_TEXT_CHARS, ReadWebpageOutputSchema, type ReadWebpageOutput } from "./output-contracts.js";
-export { MAX_READ_WEBPAGE_TEXT_CHARS, ReadWebpageOutputSchema, type ReadWebpageOutput } from "./output-contracts.js";
-import type { ToolDefinition } from "@deepfield/tool-platform";
-import {
-  createFetchUrlDefinition,
-  FetchInputSchema,
-  type FetchOutput,
-  type FetchToolDeps,
-} from "./fetch-tools.js";
-import {
-  createParseHtmlDefinition,
-  type ParseHtmlOutput,
-} from "./html-tool.js";
+import { ReadWebpageOutputSchema, FetchInputSchema, SearchResourceError } from "@deepfield/base/search";
+import { createWebpageReader, TransportError } from "@deepfield/base/search/runtime";
+export { MAX_READ_WEBPAGE_TEXT_CHARS, ReadWebpageOutputSchema, type ReadWebpageOutput } from "@deepfield/base/search";
+import { ToolExecutionError, type ToolDefinition } from "@deepfield/tool-platform";
+import { scopeFromContext, type FetchToolDeps } from "./fetch-tools.js";
 
 /**
  * Model-facing webpage reader. The internal resource hand-off stays scoped to
@@ -19,15 +11,7 @@ import {
 export function createReadWebpageDefinition(
   deps: FetchToolDeps,
 ): ToolDefinition<typeof FetchInputSchema, typeof ReadWebpageOutputSchema> {
-  const fetchUrl = createFetchUrlDefinition(deps);
-  const parseHtml = createParseHtmlDefinition({
-    store: deps.store,
-    maxChars: MAX_READ_WEBPAGE_TEXT_CHARS,
-    // The composed output omits links, but parsing with the normal cap keeps
-    // ordinary link-heavy pages from being reported as text-truncated merely
-    // because a model-facing link list is not returned.
-    maxLinks: 500,
-  });
+  const read = createWebpageReader(deps);
   return {
     identity: { name: "read_webpage", version: 1 },
     label: "Read Webpage",
@@ -50,27 +34,12 @@ export function createReadWebpageDefinition(
       formatOutput: (output) => JSON.stringify(output),
     },
     async execute(input, context, signal, onProgress) {
-      const fetched = (await fetchUrl.execute(
-        input,
-        context,
-        signal,
-        onProgress,
-      )) as FetchOutput;
-      const parsed = (await parseHtml.execute(
-        { resourceId: fetched.resourceId },
-        context,
-        signal,
-        onProgress,
-      )) as ParseHtmlOutput;
-      return {
-        title: parsed.title,
-        url: parsed.canonicalUrl,
-        requestedUrl: input.url,
-        finalUrl: fetched.finalUrl,
-        text: parsed.text,
-        truncated: parsed.truncated,
-        characterCount: parsed.characterCount,
-      };
+      if (signal.aborted) throw new ToolExecutionError("cancelled");
+      try { return await read(input.url, scopeFromContext(context), signal, context.markBudgetConsumed, () => onProgress?.({ kind: "fetching" })); }
+      catch (error) {
+        if (error instanceof SearchResourceError || error instanceof TransportError) throw new ToolExecutionError(error.code);
+        throw error;
+      }
     },
   };
 }

@@ -1,19 +1,7 @@
 import type * as BaseModel from "@deepfield/base/model";
 
-export interface SourceDateMetadata {
-  provider: string;
-  fieldName?: string;
-  rawValue?: string;
-  normalizedValue?: string;
-  precision: "day" | "datetime" | "unknown";
-  nature: "published" | "unknown";
-  evidenceSource: "provider_metadata" | "unknown";
-  status: "valid" | "missing" | "unparseable" | "invalid_type" | "unknown";
-  rawType?: "null" | "number" | "boolean" | "object" | "array";
-  rawValueTruncated?: boolean;
-  rawValueBytes?: number;
-  rawValueHash?: string;
-}
+import type { SourceDateMetadata } from "@deepfield/base/search";
+export type { SourceDateMetadata } from "@deepfield/base/search";
 /** Text actually serialized by a model adapter. This does not imply provider consumption. */
 export interface ModelEvidenceSource {
   url: string;

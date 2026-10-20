@@ -26,6 +26,20 @@ function checkBoundary(entries: string[], read: (path: string) => string, root: 
         "model/runtime.ts": ["@earendil-works/pi-ai", "@earendil-works/pi-ai/compat", "@earendil-works/pi-ai/api/anthropic-messages.lazy", "@earendil-works/pi-ai/api/openai-completions.lazy"],
       };
       if (Object.entries(piImports).some(([file, names]) => path === resolve(root, file) && names.includes(name))) return;
+      const searchImports: Record<string, readonly string[]> = {
+        "search/bounded-reader.ts": ["node:stream", "node:zlib"],
+        "search/http-transport.ts": ["node:stream"],
+        "search/node-http-adapter.ts": ["node:http", "node:https"],
+        "search/provider-node-transport.ts": ["node:http", "node:https"],
+        "search/provider-http-client.ts": ["node:stream"],
+        "search/publication-date.ts": ["node:crypto"],
+        "search/resource-store.ts": ["node:crypto"],
+        "search/transport-loop.ts": ["node:crypto"],
+        "search/url-policy.ts": ["node:dns", "ipaddr.js"],
+        "search/html-extraction.ts": ["cheerio"],
+        "search/pdf-parser.ts": ["pdfjs-dist/legacy/build/pdf.mjs"],
+      };
+      if (Object.entries(searchImports).some(([file, names]) => path === resolve(root, file) && names.includes(name))) return;
       if (!name.startsWith(".")) throw new Error(`Forbidden Base dependency: ${name}`);
       visit(resolve(dirname(path), name.replace(/\.js$/, ".ts")));
     }

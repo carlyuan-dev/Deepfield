@@ -1,5 +1,5 @@
 import { AppError, toPublicError, type AppErrorCode, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView } from "@deepfield/contracts";
-import { SearchProviderError, type SearchProvider } from "@deepfield/retrieval";
+import { SearchProviderError, type SearchProvider } from "@deepfield/base/search";
 import { createMeteredSearchProvider } from "../shared/usage-search.js";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { ModelGatewayError, type ModelGateway } from "../shared/model-gateway.js";

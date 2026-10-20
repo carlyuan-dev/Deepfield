@@ -26,10 +26,10 @@ const PACKAGE_ENTRIES = {
     exportKey: "./budget-contract",
     target: "./src/budget-contract.ts",
   },
-  "@deepfield/retrieval/search-provider": {
-    packageDirectory: "packages/retrieval",
-    exportKey: "./search-provider",
-    target: "./src/search-provider.ts",
+  "@deepfield/base/search": {
+    packageDirectory: "packages/base",
+    exportKey: "./search",
+    target: "./src/search/index.ts",
   },
 } as const;
 
@@ -55,7 +55,7 @@ function checkExecutionBoundary(
       resolve(layout.repositoryRoot, "packages/contracts/src/model-config.ts"),
       resolve(layout.repositoryRoot, "packages/contracts/src/tools.ts"),
       resolve(layout.repositoryRoot, "packages/tool-platform/src/budget-contract.ts"),
-      resolve(layout.repositoryRoot, "packages/retrieval/src/search-provider.ts"),
+      ...["index", "search-provider", "output-contracts", "source-date", "errors", "parsing-contracts", "html-limits"].map((file) => resolve(layout.repositoryRoot, `packages/base/src/search/${file}.ts`)),
     ].includes(path)) return;
     throw new Error(`Forbidden executor source dependency: ${path}`);
   };

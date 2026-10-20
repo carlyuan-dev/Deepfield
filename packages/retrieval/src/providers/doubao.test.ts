@@ -1,10 +1,9 @@
 import { Readable } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ProviderEndpoint, ProviderTransport, ProviderTransportRequest } from "../provider-http-client.js";
 import { createSearchProvider } from "./provider-registry.js";
 
-const transportState = vi.hoisted(() => ({ current: undefined as ProviderTransport | undefined }));
-vi.mock("../provider-node-transport.js", () => ({ createNodeProviderTransport: () => transportState.current }));
+const transportState = { current: undefined as ProviderTransport | undefined };
 
 // Envelope and field types verified against the official Custom API document:
 // https://docs.volcengine.com/docs/87772/2272953?lang=zh (2026-09-17).
@@ -18,7 +17,7 @@ function setup(body: unknown = success, statusCode = 200, baseUrl = "https://ope
     requests.push({ endpoint, request });
     return { statusCode, headers: { "content-type": "application/json", "retry-after": "3" }, body: Readable.from([Buffer.from(typeof body === "string" ? body : JSON.stringify(body))]), destroy() {} };
   } };
-  const provider = createSearchProvider({ id: "search", name: "豆包搜索 Custom", provider: "doubao", baseUrl, options: {}, apiKey: "search-only-secret" });
+  const provider = createSearchProvider({ id: "search", name: "豆包搜索 Custom", provider: "doubao", baseUrl, options: {}, apiKey: "search-only-secret" }, { transport: transportState.current });
   return { provider, requests };
 }
 const request = { query: "公司", maxResults: 20 };
