@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { buildStructuredResearchOutputSchema, createCompanyResearchTemplate, normalizeResearchModuleIds, RESEARCH_MODULE_GROUPS, StartCompanyResearchInputSchema, type ResearchModuleId } from "./index.js";
+import { buildStructuredResearchOutputSchema, createCompanyResearchTemplate, normalizeResearchModuleIds, ModuleCompanyResearchTemplateSnapshotSchema, ModuleStructuredResearchContentSchema, RESEARCH_MODULE_GROUPS, StartCompanyResearchInputSchema, type ResearchModuleId } from "./index.js";
 import { validateStructuredResearchContent } from "../application/company-research-harness.js";
 import { normalizeRawResearchModules } from "../runtime/company-research-agent.js";
 import { structureResearchRequest } from "../runtime/company-research-test-helpers.js";
 import { validateResearchWorkerContract } from "../worker.js";
+import { buildCompanyResearchPrompt } from "../runtime/company-research-prompt.js";
+import { buildCompanyResearchStructuringPrompt } from "../runtime/company-research-structuring-prompt.js";
 
 describe("selected research modules", () => {
   it("rejects empty, oversized, duplicate and unknown selections before canonicalization", () => {
     const all = RESEARCH_MODULE_GROUPS.flatMap(group => group.modules.map(module => module.sectionId));
-    for (const moduleIds of [[], all.slice(0, 5), [all[0], all[0]], ["unknown"]]) {
+    for (const moduleIds of [[], all.slice(0, 6), [all[0], all[0]], ["unknown"]]) {
       expect(Value.Check(StartCompanyResearchInputSchema, { moduleIds, asOfDate: "2026-10-01" })).toBe(false);
       expect(() => normalizeResearchModuleIds(moduleIds as ResearchModuleId[])).toThrow();
     }
@@ -25,10 +27,18 @@ describe("selected research modules", () => {
     expect(template.sections.map(section => section.sectionId)).toEqual(normalizeResearchModuleIds(ids));
     expect(Object.isFrozen(template.sections[0])).toBe(true);
   });
-  it.each([["products_and_positioning"], ["products_and_positioning", "sales_and_adoption", "key_relationships", "financial_performance"]])("binds output schema and harness to %j", (...ids) => {
+  it.each([["products_and_positioning"], ["products_and_positioning", "technology_and_metrics", "sales_and_adoption", "key_relationships", "financial_performance"]])("binds output schema and harness to %j", (...ids) => {
     const template = createCompanyResearchTemplate(ids as ResearchModuleId[]);
+    expect(Value.Check(StartCompanyResearchInputSchema, { moduleIds: ids, asOfDate: "2026-10-01" })).toBe(true);
     const candidate = { coreSummary: ["现有公开信息不足以形成可靠的核心判断。"], sections: template.sections.map(({ sectionId }) => ({ sectionId, status: "not_found", summary: null, facts: [] })) };
     const schema = Type.Unsafe(buildStructuredResearchOutputSchema(template));
+    expect(Value.Check(ModuleCompanyResearchTemplateSnapshotSchema, template)).toBe(true);
+    expect(Value.Check(ModuleStructuredResearchContentSchema, candidate)).toBe(true);
+    const request = { ...structureResearchRequest(), template, outputSchema: buildStructuredResearchOutputSchema(template) };
+    request.context.moduleIds = ids as ResearchModuleId[];
+    expect(() => validateResearchWorkerContract(request)).not.toThrow();
+    expect(buildCompanyResearchPrompt(request.context, template).instructions).toContain(`所选 ${ids.length} 个模块`);
+    expect(buildCompanyResearchStructuringPrompt(request).instructions).toContain(`全部 ${ids.length} 个 section`);
     expect(Value.Check(schema, candidate)).toBe(true);
     expect(validateStructuredResearchContent(JSON.stringify(candidate), template)).toEqual(candidate);
     const invalid = [

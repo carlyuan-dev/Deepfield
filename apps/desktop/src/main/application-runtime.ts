@@ -5,6 +5,7 @@ export interface ApplicationRuntimeDeps {
   interactions?: import("@deepfield/application").ChatInteractionCoordinator;
   respondToInteraction?: import("@deepfield/application").ChatServiceOptions["respondToInteraction"];
   respondToTask?: import("@deepfield/application").ChatServiceOptions["respondToTask"];
+  classifyInteractionResponse?: import("@deepfield/application").ChatServiceOptions["classifyInteractionResponse"];
   onUserMessage?: (conversationId: string) => void;
   onTaskStopped?: (conversationId: string) => void;
   taskScope?: (conversationId: string) => unknown;
@@ -29,6 +30,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps) {
     ...(deps.interactions ? { interactions: deps.interactions } : {}),
     ...(deps.respondToInteraction ? { respondToInteraction: deps.respondToInteraction } : {}),
     ...(deps.respondToTask ? { respondToTask: deps.respondToTask } : {}),
+    ...(deps.classifyInteractionResponse ? { classifyInteractionResponse: deps.classifyInteractionResponse } : {}),
     ...(deps.onUserMessage ? { onUserMessage: deps.onUserMessage } : {}),
     ...(deps.onTaskStopped ? { onTaskStopped: deps.onTaskStopped } : {}),
     ...(deps.taskScope ? { taskScope: deps.taskScope } : {}),

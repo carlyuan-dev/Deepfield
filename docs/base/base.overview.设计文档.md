@@ -2,7 +2,7 @@
 
 版本：0.12 · 更新日期：2026-10-20
 
-状态：八批实现已齐，实际消费者、公司仓储归属与作用域注入已收口，必要自动检查与代码复核通过。当前 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路及 Usage 已验证；隔离打包界面与重启读回已通过，新公司包完整真实调研与用户体验仍待验收。Errors、Config 保留其此前已完成的用户验收范围；各域契约与证据边界见对应设计。
+状态：八批实现已齐，实际消费者、公司仓储归属与作用域注入已收口；0.1.2 本批用户体验验收已完成，最终类型检查、全套 Vitest 与差异检查通过。已有 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路、Usage、隔离打包界面与重启读回证据保留原范围；各域契约与证据边界见对应设计及 [0.1.2 发布记录](../releases/2026-10-21-v0.1.2.md)。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
@@ -39,8 +39,8 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 | 能力域 | 公开入口 | 职责 | 当前状态 |
 | --- | --- | --- | --- |
 | Config | `@deepfield/base/config`、`@deepfield/base/config/runtime` | 通用配置声明／存取／校验、可选 Profile 管理、调用快照 | 已实现，本轮验收完成；证据与范围见[设计](base.config.设计文档.md) |
-| Model | `@deepfield/base/model`、`@deepfield/base/model/runtime` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 本阶段自动验证完成，可交付 staging，待用户体验验收；范围见[设计](base.model.设计文档.md) |
-| Search | `@deepfield/base/search`、`@deepfield/base/search/runtime` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 已实现、自动检查通过，已完成代码复核，待用户体验验收；范围见[设计](base.search.设计文档.md) |
+| Model | `@deepfield/base/model`、`@deepfield/base/model/runtime` | 模型协议适配、普通／流式调用、请求观察与用量接入 | 已实现，0.1.2 本批用户体验验收已收口；范围见[设计](base.model.设计文档.md) |
+| Search | `@deepfield/base/search`、`@deepfield/base/search/runtime` | 搜索 Provider、统一结果、现有网页读取与内容解析 | 已实现，0.1.2 本批用户体验验收已收口；范围见[设计](base.search.设计文档.md) |
 | Tools | `@deepfield/base/tools`、`@deepfield/base/tools/runtime`、`@deepfield/base/tools/web` | 工具注册、参数校验、执行与授权检查、预算及审计机制 | 已实现，Worker 已接入；契约见[设计](base.tools.设计文档.md) |
 | Agent | `@deepfield/base/agent`、`@deepfield/base/agent/runtime` | 基于 Pi 的有界模型—工具循环、取消、事件与最终输出 | 已实现并接入共享执行路径；契约见[设计](base.agent.设计文档.md) |
 | Database | `@deepfield/base/database`、`@deepfield/base/database/runtime` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 通用底座已实现，现有仓储使用同一连接的 Base view；公司仓储已回到能力包 |

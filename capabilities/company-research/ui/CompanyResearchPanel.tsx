@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { type CompanyResearchWordExportSelection } from "../contracts/ipc.js";
 import type { CompanyResearchApi as DesktopApi } from "../contracts/api.js";
-import { researchRetryMode, isModuleResearchSummary, researchModuleSelectionLabel, type BatchResearchEntry, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
+import { researchRetryMode, isModuleResearchSummary, type BatchResearchEntry, type CompanyResearchState, type KeyResearchRun, type ResearchRun, type ResearchRunSummary } from "../contracts/index.js";
 import { MarkdownMessage } from "../../../apps/desktop/src/renderer/components/MarkdownMessage.js";
 import { CompanyResearchModal, type ResearchContextProps } from "./CompanyResearchModal.js";
 import { useFormField, type FormControl } from "./form-control.js";
@@ -37,7 +37,7 @@ function runStatusLabel(run: ResearchRunSummary): string {
 function runLabel(run: ResearchRunSummary): string {
   const failure = run.status === "research_failed" || run.status === "structure_failed" ? "（失败待重试）"
     : run.searchStatus === "none" ? "（未成功联网）" : "";
-  return `${runTimestamp(run)} · ${run.schemaVersion === "legacy-freeform-v1" ? "旧版原始报告" : `${run.templateTitle ?? (isModuleResearchSummary(run) ? researchModuleSelectionLabel(run) : "历史报告")} · 截至 ${run.asOfDate}`}${failure}`;
+  return `${runTimestamp(run)} · ${run.schemaVersion === "legacy-freeform-v1" ? "旧版原始报告" : `${isModuleResearchSummary(run) ? `${run.moduleIds.length} 个模块` : "历史报告"} · 截至 ${run.asOfDate}`}${failure}`;
 }
 function ReportTabs({ run, rawText, exportControl }: { run: KeyResearchRun | undefined; rawText: string; exportControl: ReactNode }) {
   const completed = run?.status === "completed";
@@ -140,10 +140,11 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback>();
   const exportSequence = useRef(0);
   const exportInFlight = useRef(false);
-  const active = research.state.active?.run.id === research.selectedRunId ? research.state.active : undefined;
+  const currentTask = research.state.active;
+  const active = currentTask?.run.id === research.selectedRunId ? currentTask : undefined;
   const run = research.selectedRun;
   const latest = research.state.runs.find(isModuleResearchSummary);
-  const occupied = queueEntry?.status === "pending" || queueEntry?.status === "running" || (!!research.state.active && !active);
+  const occupied = queueEntry?.status === "pending" || queueEntry?.status === "running" || !!currentTask;
   const summary = research.state.runs.find((entry) => entry.id === research.selectedRunId);
   const selectionKey = `${itemId}:${companyId}:${research.selectedRunId ?? ""}`;
   const currentSelectionKey = useRef(selectionKey);
@@ -227,29 +228,30 @@ function ResearchTarget({ api, itemId, companyId, queueEntry, active: panelActiv
   return <section className="company-research-panel" aria-labelledby="company-research-title">
     <div className="company-research-heading">
       <div><h2 id="company-research-title">公司调研</h2><p className="muted">AI 调研结果仅供参考，重要事实仍需人工核验。一次成功调用不保证证据充分。</p></div>
-      {!active && <div className="company-research-actions">
+      {!currentTask && <div className="company-research-actions">
         {canRetryStructuring
           ? <button disabled={research.loading || research.pending || occupied} onClick={() => void research.retryStructuring().catch(() => {})}>重新整理</button>
           : canRetry && <button disabled={research.loading || research.pending || occupied} onClick={() => setRetryModalOpen(true)}>重新尝试</button>}
         <button className="primary-button" disabled={research.loading || research.pending || occupied} onClick={() => setNewReportModalOpen(true)}>{research.state.runs.length ? "新的调研" : "开始调研"}</button>
       </div>}
     </div>
-    {!active && occupied && <div className="company-research-status" role="status"><div><strong>{queueEntry?.itemId && queueEntry.itemId !== itemId ? "已在其他主题的调研队列中" : queueEntry?.status === "pending" ? "等待调研" : queueEntry?.stage === "structure" ? "正在整理调研结果" : "正在收集调研资料"}</strong>{queueCancelError && <span className="error" role="alert">{queueCancelError}</span>}</div><button disabled={queueCancelPending || !queueEntry?.entryId} onClick={() => void cancelQueueEntry()}>{queueCancelPending ? "正在取消…" : "取消此项调研"}</button></div>}
+    {!currentTask && occupied && <div className="company-research-status" role="status"><div><strong>{queueEntry?.itemId && queueEntry.itemId !== itemId ? "已在其他主题的调研队列中" : queueEntry?.status === "pending" ? "等待调研" : queueEntry?.stage === "structure" ? "正在整理调研结果" : "正在收集调研资料"}</strong>{queueCancelError && <span className="error" role="alert">{queueCancelError}</span>}</div><button disabled={queueCancelPending || !queueEntry?.entryId} onClick={() => void cancelQueueEntry()}>{queueCancelPending ? "正在取消…" : "取消此项调研"}</button></div>}
     {displayedError && !modalOpen && <p className="error" role="alert">{displayedError.message} {(displayedError.kind === "state-load" || displayedError.kind === "detail-load")
       ? <button onClick={research.reload}>重新加载</button>
       : displayedError.kind === "configuration" && onOpenSettings
         ? <button onClick={() => onOpenSettings(displayedError.settingsModule)}>前往设置</button>
         : null}</p>}
     {research.loading ? <p className="muted">加载调研状态…</p> : <>
-      {active && <div className="company-research-status" role="status">
-        <div><div className="company-research-status-line"><span className="company-research-spinner" aria-hidden="true" /><strong>{active.run.status === "researching" ? "正在联网调研…" : "正在整理结构化报告…"}</strong>
-          {active.latestActivity && <span className="company-research-activity">{activityLabel(active.latestActivity)}</span>}</div>
+      {currentTask && <div className="company-research-status" role="status">
+        <div><div className="company-research-status-line"><span className="company-research-spinner" aria-hidden="true" /><strong>{currentTask.run.status === "researching" ? "正在联网调研…" : "正在整理结构化报告…"}</strong>
+          {currentTask.latestActivity && <span className="company-research-activity">{activityLabel(currentTask.latestActivity)}</span>}</div>
           <span>{research.elapsedLabel}</span></div>
-        <button type="button" disabled>导出 Word</button>
+        {active?.run.status === "researching" && <button type="button" disabled>导出 Word</button>}
         <button disabled={research.pending} onClick={() => void research.cancel()}>取消调研</button>
       </div>}
-      {!active && research.state.runs.length > 0 && <div className="company-report-version-controls">
+      {research.state.runs.length > 0 && <div className="company-report-version-controls">
         <label className="company-report-version">报告版本<select value={research.selectedRunId} onChange={(event) => research.selectRun(event.target.value)}>
+          {currentTask && <option value={currentTask.run.id}>当前调研 · {currentTask.run.status === "researching" ? "进行中" : "整理中"}</option>}
           {research.state.runs.map((entry) => <option key={entry.id} value={entry.id}>{runLabel(entry)}</option>)}
         </select></label>
         <button type="button" className="company-report-delete" disabled={research.pending || occupied || !summary} onClick={() => { setDeleteError(undefined); setDeleteConfirmationOpen(true); }}>删除</button>

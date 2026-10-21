@@ -7,9 +7,10 @@ import { ActionCallSchema, canonicalActionJson, DraftRefSchema, TaskScopeProposa
 import type { Repositories } from "@deepfield/persistence";
 import type { CapabilityRegistry } from "../capabilities/registry.js";
 import type { CapabilityRuntime } from "../capabilities/runtime.js";
+import type { InteractionResponseClassifier, ResponseIntent } from "./response-intent.js";
 
 type TaskProposal = { id: string; calls: ExactTaskCall[]; remainingSummary: string };
-type Binding = { owner: InteractionOwner; capabilityId: string; actionId: string; contractDigest: string; packageVersion: string; formId?: string; input?: unknown; sourceDraftRefs?: DraftRef[]; taskProposal?: TaskProposal; taskScope?: { scope: FrozenTaskScope; summary: string }; scopeAuthority?: { grantId: string; authorityId: string } };
+type Binding = { owner: InteractionOwner; capabilityId: string; actionId: string; contractDigest: string; packageVersion: string; formId?: string; input?: unknown; sourceDraftRefs?: DraftRef[]; preparationInvocationId?: string; taskProposal?: TaskProposal; taskScope?: { scope: FrozenTaskScope; summary: string }; scopeAuthority?: { grantId: string; authorityId: string } };
 const permissions = ["read", "execute", "write", "cancel"] as const;
 const hash = (value: unknown) => createHash("sha256").update(canonicalActionJson(value)).digest("hex");
 const questionSchema = Type.Object({ question: Type.String({ minLength: 1, maxLength: 4000 }), options: Type.Optional(Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), label: Type.String({ minLength: 1 }) }, { additionalProperties: false }), { maxItems: 6 })) }, { additionalProperties: false });
@@ -33,6 +34,7 @@ export class ChatInteractionHost {
   private readonly interactionEpochs = new Map<string, number>();
   private readonly scopes = new TaskScopeStore();
   private readonly scopeClaims = new Map<string, ScopeClaim>();
+  private readonly responseEvidence = new Map<string, { interactionId: string; revision: number; content: string; epoch: number; decision: "approve" | "cancel" }>();
   constructor(private readonly repositories: Repositories, private readonly registry: CapabilityRegistry,
     private readonly runtime: () => CapabilityRuntime | undefined,
     private readonly resume: (conversationId: string) => void,
@@ -94,6 +96,10 @@ export class ChatInteractionHost {
   }
   onChanged(listener: (conversationId: string) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   list(conversationId: string) { return this.coordinator.list(conversationId); }
+  interactionForPreparation(conversationId: string, invocationId: string): InteractionRecord | undefined {
+    return this.list(conversationId).find(item => item.payload.kind === "approval" && item.payload.operation.provider === "capability"
+      && (JSON.parse(item.payload.operation.operationId) as Binding).preparationInvocationId === invocationId);
+  }
   interactionForSourceDraft(conversationId: string, draft: DraftRef): string | undefined {
     return this.list(conversationId).findLast(item => {
       if (item.payload.kind !== "approval" || item.payload.operation.provider !== "capability") return false;
@@ -108,7 +114,7 @@ export class ChatInteractionHost {
     this.scopes.revoke(conversationId);
     this.taskEpochs.set(conversationId, (this.taskEpochs.get(conversationId) ?? 0) + 1);
   }
-  dispose(): void { this.taskGrants.clear(); this.scopes.clear(); for (const id of this.taskDraining) this.revokeTask(id); }
+  dispose(): void { this.taskGrants.clear(); this.scopes.clear(); this.responseEvidence.clear(); for (const id of this.taskDraining) this.revokeTask(id); }
   taskScope(conversationId: string): FrozenTaskScope | undefined { return this.scopes.active(conversationId); }
   resultFor(item: InteractionRecord): unknown {
     const invocations = this.repositories.chatCapabilities.invocations(item.conversationId);
@@ -159,6 +165,17 @@ export class ChatInteractionHost {
     } catch (error) { this.revokeTask(first.conversationId); throw error; }
   }
   /** Called only by real-user message ingress. The tool surface cannot call this method. */
+  async classifyResponse(pending: InteractionRecord, content: string, requestId: string, classifier: InteractionResponseClassifier): Promise<ResponseIntent> {
+    const current = this.coordinator.active(pending.conversationId);
+    if (pending.payload.kind !== "approval" || current?.id !== pending.id || current.revision !== pending.revision || current.status !== "waiting") return "unclear";
+    const epoch = this.interactionEpochs.get(pending.conversationId) ?? 0;
+    const decision = await classifier.classify(content, pending.payload.summary, requestId);
+    const latest = this.coordinator.active(pending.conversationId);
+    if (latest?.id !== pending.id || latest.revision !== pending.revision || latest.status !== "waiting"
+      || epoch !== (this.interactionEpochs.get(pending.conversationId) ?? 0)) throw new Error("内容已更新，请核对后重新确认");
+    if (decision === "approve" || decision === "cancel") this.responseEvidence.set(requestId, { interactionId: pending.id, revision: pending.revision, content, epoch, decision });
+    return decision;
+  }
   async respondToTask(conversationId: string, command: RespondCommand, userMessageId: string): Promise<InteractionRecord> {
     const message = this.repositories.messages.listByConversation(conversationId as never).find(item => item.id === userMessageId);
     const item = this.coordinator.get(command.interactionId);
@@ -275,17 +292,23 @@ export class ChatInteractionHost {
     return this.openEditor(conversationId, editor.form.view, generation);
   }
   async respond(conversationId: string, command: RespondCommand, source: "chat_button" | "form_button" | "user_message", userMessageId?: string): Promise<InteractionRecord> {
+    if (source === "user_message" && command.response.kind === "decision" && !this.taskDraining.has(conversationId)) {
+      const message = this.repositories.messages.listByConversation(conversationId as never).find(entry => entry.id === userMessageId);
+      const item = this.coordinator.get(command.interactionId);
+      const evidence = message?.requestId ? this.responseEvidence.get(message.requestId) : undefined;
+      if (message?.requestId) this.responseEvidence.delete(message.requestId);
+      const explicit = message && (classifyExplicitDecision(message.content) ?? (classifyTaskDecision(message.content) ? "approve" : null));
+      const classified = evidence && evidence.interactionId === command.interactionId && evidence.revision === command.expectedRevision
+        && evidence.content === message?.content && evidence.epoch === (this.interactionEpochs.get(conversationId) ?? 0) ? evidence.decision : null;
+      if (!message || message.role !== "user" || !item || message.createdAt < item.createdAt
+        || (explicit ?? classified) !== command.response.decision) throw new Error("确认必须来自当前真实用户消息");
+    }
     if (command.response.kind === "decision" && command.response.decision === "cancel") this.revokeTask(conversationId);
     const item = this.coordinator.get(command.interactionId);
     if (item?.conversationId === conversationId && item.payload.kind === "approval" && this.scopes.active(conversationId)
       && !this.taskDraining.has(conversationId) && !this.scopeClaims.has(item.payload.operation.operationId)) this.revokeTask(conversationId);
     if (item?.conversationId === conversationId && item.payload.kind === "approval" && item.payload.operation.provider === "capability" && command.response.kind === "decision"
       && command.response.decision === "approve" && !this.taskDraining.has(conversationId) && (this.binding(item.payload.operation).taskProposal || this.binding(item.payload.operation).taskScope)) {
-      if (source === "user_message") {
-        const message = this.repositories.messages.listByConversation(conversationId as never).find(entry => entry.id === userMessageId);
-        if (!message || message.role !== "user" || message.createdAt < item.createdAt
-          || (classifyExplicitDecision(message.content) !== "approve" && !classifyTaskDecision(message.content))) throw new Error("提案确认必须来自当前真实用户消息");
-      }
       return this.approveTask(conversationId, command, userMessageId ?? `${source}:${item.id}:${item.revision}`, source);
     }
     if (item?.conversationId === conversationId && item.revision !== command.expectedRevision) throw new Error("Stale interaction revision");
@@ -350,6 +373,20 @@ export class ChatInteractionHost {
     await this.restoreContinuations();
     return result;
   }
+  /** A package proposal prepares a pending operation; it never inherits an execution grant. */
+  async prepareProposedAction(owner: InteractionOwner, capabilityId: string, call: ActionCall, preparationInvocationId: string): Promise<InteractionRecord> {
+    this.assertFreshRequest(owner.requestId);
+    if (!Value.Check(ActionCallSchema, call) || call.capabilityId !== capabilityId) throw new Error("Invalid proposed action");
+    const receipt = this.repositories.capabilityInvocations.get(preparationInvocationId)?.result as { status?: string; proposedAction?: unknown } | undefined;
+    if (receipt?.status !== "completed" || canonicalActionJson(receipt.proposedAction ?? null) !== canonicalActionJson(call)
+      || !this.repositories.chatCapabilities.invocations(owner.conversationId).some(entry => entry.invocationId === preparationInvocationId)) throw new Error("Proposal requires a completed owned receipt");
+    const existing = this.interactionForPreparation(owner.conversationId, preparationInvocationId);
+    if (existing) return existing;
+    if (this.coordinator.active(owner.conversationId)) throw new Error("请先处理当前待确认操作");
+    await this.runtime()!.actionGateway.preview(call, { callerId: "chat-window", source: "chat", sessionId: owner.conversationId, permissions });
+    this.assertFreshRequest(owner.requestId);
+    return this.prepareApproval(owner, call, undefined, undefined, true, preparationInvocationId);
+  }
   private async proposeScope(owner: InteractionOwner, proposal: TaskScopeProposal): Promise<InteractionRecord> {
     if (this.coordinator.active(owner.conversationId) || this.scopes.active(owner.conversationId)) throw new Error("请先完成当前任务，不能扩大已有授权");
     const scope = freezeTaskScope(proposal, (cap, action) => this.runtime()?.actionCatalog.find(cap, action));
@@ -372,13 +409,14 @@ export class ChatInteractionHost {
     if (summary.length > 20000) throw new Error("任务范围过长");
     return this.prepareApproval(owner, scope.firstCall, undefined, { scope, summary }, true);
   }
-  private async prepareApproval(owner: InteractionOwner, call: ActionCall, taskProposal?: TaskProposal, taskScope?: Binding["taskScope"], requestBound = false): Promise<InteractionRecord> {
+  private async prepareApproval(owner: InteractionOwner, call: ActionCall, taskProposal?: TaskProposal, taskScope?: Binding["taskScope"], requestBound = false, preparationInvocationId?: string): Promise<InteractionRecord> {
     const active = this.coordinator.active(owner.conversationId);
     if (active) return active;
     const entry = this.runtime()?.actionCatalog.find(call.capabilityId, call.actionId);
     if (!entry) throw new Error("Capability unavailable");
     const form = this.registry.forms(call.capabilityId).find(item => item.actionIds.includes(call.actionId));
     const binding: Binding = { owner, capabilityId: call.capabilityId, actionId: call.actionId, contractDigest: call.contractDigest, packageVersion: entry.packageVersion,
+      ...(preparationInvocationId ? { preparationInvocationId } : {}),
       ...(this.scopes.authority(owner.conversationId) ? { scopeAuthority: this.scopes.authority(owner.conversationId)! } : {}),
       ...(form ? { formId: form.id } : { input: structuredClone(call.input) }), ...(taskProposal ? { taskProposal } : {}), ...(taskScope ? { taskScope } : {}) };
     const snapshot = form ? await this.provider(binding).prepare(form.id, call.actionId, call.input) : undefined;
@@ -435,7 +473,9 @@ export class ChatInteractionHost {
     if (ref.draftRef) {
       const snapshot = await this.provider(binding).read(JSON.parse(ref.draftRef));
       const title = this.runtime()!.actionCatalog.find(binding.capabilityId, binding.actionId)!.declaration.title;
-      return { version: hash({ draft: snapshot.draft, contract: ref.contractVersion }), summary: snapshot.summary ?? `${title}${snapshot.readyToSubmit ? "：请核对表单内容后确认。" : "：请先补全表单内容。"}` };
+      return { version: hash({ draft: snapshot.draft, contract: ref.contractVersion }),
+        ...(snapshot.confirmationText ? { confirmationText: snapshot.confirmationText } : {}),
+        summary: snapshot.summary ?? `${title}${snapshot.readyToSubmit ? "：请核对表单内容后确认。" : "：请先补全表单内容。"}` };
     }
     const frozen = await this.frozen(ref);
     const action = this.registry.publicAction(frozen.call.capabilityId, frozen.call.actionId);

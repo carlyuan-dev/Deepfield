@@ -75,15 +75,17 @@ describe("company research template registry", () => {
 });
 
 describe("read-only research JSON contracts", () => {
-  it("accepts one to four unique modules, optional focus and a date-shaped cutoff only", () => {
+  it("accepts one to five unique modules, optional focus and a date-shaped cutoff only", () => {
     expectTypeOf<contracts.StartCompanyResearchInput["moduleIds"][number]>().toEqualTypeOf<contracts.ResearchModuleId>();
     const input = { moduleIds: ["products_and_positioning", "technology_and_metrics"], focusScope: "手机硅碳负极电池", asOfDate: "2026-09-11" };
     expect(Value.Check(contracts.StartCompanyResearchInputSchema, input)).toBe(true);
     expect(Value.Check(contracts.StartCompanyResearchInputSchema, { moduleIds: input.moduleIds, asOfDate: input.asOfDate })).toBe(true);
+    expect(Value.Check(contracts.StartCompanyResearchInputSchema, { ...input, moduleIds: [input.moduleIds[0]] })).toBe(true);
+    expect(Value.Check(contracts.StartCompanyResearchInputSchema, { ...input, moduleIds: expectedSections.product_and_technology })).toBe(true);
     for (const invalid of [
       { ...input, moduleIds: [] }, { ...input, moduleIds: ["all"] },
       { ...input, moduleIds: ["products_and_positioning", "products_and_positioning"] },
-      { ...input, moduleIds: expectedSections.product_and_technology },
+      { ...input, moduleIds: [...expectedSections.product_and_technology, "financial_performance"] },
       { ...input, direction: "product_and_technology" }, { ...input, asOfDate: "tomorrow" },
       { ...input, asOfDate: "2026-9-11" }, { ...input, timeScope: "近一年" },
       { ...input, customRequirements: "extra" }, { ...input, focusScope: "x".repeat(1001) },

@@ -44,8 +44,8 @@ export function CompanyResearchModal({ initial, control, mode = "start", disable
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (submitting || disabled) return;
-    if (moduleIds.length < 1 || moduleIds.length > 4 || !validDate(asOfDate, localToday()) || focusScope.length > 1000) {
-      setError({ message: "请选择 1–4 个研究模块、有效的截至日期（不晚于今天），关注范围最多 1000 字。" });
+    if (moduleIds.length < 1 || moduleIds.length > 5 || !validDate(asOfDate, localToday()) || focusScope.length > 1000) {
+      setError({ message: "请选择 1–5 个研究模块、有效的截至日期（不晚于今天），关注范围最多 1000 字。" });
       return;
     }
     setSubmitting(true);
@@ -71,12 +71,12 @@ export function CompanyResearchModal({ initial, control, mode = "start", disable
       {error && <p className="error" role="alert">{error.message} {error.settingsModule && onOpenSettings && <button type="button" onClick={() => onOpenSettings(error.settingsModule!)}>前往设置</button>}</p>}
       {disabled && <p className="muted">已有调研正在运行，请稍后再试。</p>}
       <fieldset className="research-module-picker">
-        <legend>研究模块（选择 1–4 个）</legend>
-        <p className="muted" role="status">{moduleIds.length >= 4 ? "已选 4 个；取消一个后可选择其他模块。" : `已选 ${moduleIds.length} 个，可跨组选择。`}</p>
+        <legend>研究模块（选择 1–5 个）</legend>
+        <p className="muted" role="status">{moduleIds.length >= 5 ? "已选 5 个；取消一个后可选择其他模块。" : `已选 ${moduleIds.length} 个，可跨组选择。`}</p>
         {RESEARCH_MODULE_GROUPS.map(group => <section key={group.groupId} className="research-module-group" aria-label={group.title}>
           <h4>{group.title}</h4>
           <div>{group.modules.map(module => <label key={module.sectionId} className="research-module-option" title={module.coreQuestion}>
-            <input type="checkbox" checked={moduleIds.includes(module.sectionId)} disabled={submitting || (!moduleIds.includes(module.sectionId) && moduleIds.length >= 4)} onChange={event => {
+            <input type="checkbox" checked={moduleIds.includes(module.sectionId)} disabled={submitting || (!moduleIds.includes(module.sectionId) && moduleIds.length >= 5)} onChange={event => {
               onEdited?.();
               const checked = event.target.checked;
               setModuleIds(current => {
@@ -92,7 +92,7 @@ export function CompanyResearchModal({ initial, control, mode = "start", disable
       <label>截至日期<input type="date" value={asOfDate} max={today} required onChange={(event) => { onEdited?.(); setAsOfDate(event.target.value); }} /></label>
       <div className="modal-actions">
         <button type="button" disabled={submitting} onClick={onClose}>{cancelLabel}</button>
-        <button className="primary-button" type="submit" disabled={submitting || disabled || moduleIds.length < 1 || moduleIds.length > 4}>{submitting ? (submittingLabel ?? (mode === "retry" ? "正在重新尝试…" : "正在启动…")) : submitLabel}</button>
+        <button className="primary-button" type="submit" disabled={submitting || disabled || moduleIds.length < 1 || moduleIds.length > 5}>{submitting ? (submittingLabel ?? (mode === "retry" ? "正在重新尝试…" : "正在启动…")) : submitLabel}</button>
       </div>
     </form>
   </Modal>;

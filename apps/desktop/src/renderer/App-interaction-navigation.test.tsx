@@ -19,7 +19,8 @@ const makeInteraction = (id: string, requestId: string): InteractionRecord => ({
 it("opens a new bound form, then preserves the dirty old form when the next navigation is blocked", async () => {
   const api = makeFakeApi();
   const c1 = conversation("c1");
-  api.conversations.openInitial.mockResolvedValue({ active: c1, recent: [c1] });
+  const c2 = conversation("c2", "另一个会话");
+  api.conversations.openInitial.mockResolvedValue({ active: c1, recent: [c1, c2] });
   const snapshot: CapabilitySnapshot = { issues: [], packages: [{ id: "a", name: "A", description: "A", version: "1", status: "ready", enabledNextStart: true,
     navigation: { title: "Package a", order: 0, route: "/a" }, uiEntry: "deepfield-capability://a/ui.js" }] };
   api.capabilityManagement = { list: async () => snapshot, subscribe: () => () => {}, setEnabled: async () => {}, restart: async () => {} };
@@ -98,7 +99,30 @@ it("opens a new bound form, then preserves the dirty old form when the next navi
   // A terminal result arrives before the interaction subscription refreshes React.
   fireEvent.click(screen.getByLabelText("form-dirty"));
   interactions = interactions.map(item => item.id === "first" ? { ...item, status: "succeeded" as const } : item);
+  fireEvent.click(screen.getByRole("button", { name: "重新打开" }));
+  await screen.findByText("page:second");
+  await screen.findByText("bound:second");
+  act(() => { for (const listener of listeners) listener("c1"); });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "查看或编辑表单" })).toBeNull());
+  expect(screen.queryByRole("button", { name: "重新打开" })).toBeNull();
+  // Retrying the blocked open must restore the actual editor bridge, not only its page.
+  interactions = interactions.map(item => item.id === "second" ? { ...item, status: "submitted" as const } : item);
   await act(async () => { expect(await navigation.open({ capabilityId: "a", viewId: "created-result", input: {} })).toMatchObject({ status: "opened" }); });
+  expect(screen.getByText("page:created-result")).toBeTruthy();
+  expect(screen.getByText("bound:none")).toBeTruthy();
+  // An editor read resolving after the user changes conversations must not navigate or bind.
+  let finishRead!: (value: InteractionEditorState) => void;
+  api.chat.readInteractionEditor.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
+  act(() => api.emit({ type: "handed_off", requestId: "r2" }));
+  await trigger("late", "r3");
+  await waitFor(() => expect(finishRead).toBeTypeOf("function"));
+  fireEvent.click(screen.getByRole("button", { name: "另一个会话" }));
+  await act(async () => {
+    finishRead({ interaction: interactions.find(item => item.id === "late")!, formId: "late", actionId: "save",
+      form: { draft: { capabilityId: "a", draftId: "late", revision: "1" }, view: { capabilityId: "a", viewId: "late", input: {} },
+        values: {}, inputSchema: {}, transitions: [], readyToSubmit: true } });
+  });
+  expect(api.chat.autoOpenInteractionEditor).not.toHaveBeenCalledWith("c1", "late");
   expect(screen.getByText("page:created-result")).toBeTruthy();
   expect(screen.getByText("bound:none")).toBeTruthy();
   navigation.dispose();

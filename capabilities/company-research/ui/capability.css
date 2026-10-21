@@ -192,7 +192,7 @@
 .company-research-activity { max-width: min(62vw, 680px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .company-research-active,
 .company-research-completed { display: grid; gap: 14px; min-width: 0; }
-.company-report-version-controls { display: flex; flex-wrap: nowrap; align-items: end; gap: 10px; max-width: 680px; }
+.company-report-version-controls { display: flex; flex-wrap: nowrap; align-items: end; gap: 10px; width: 100%; min-width: 0; max-width: 680px; }
 .company-report-version { display: grid; flex: 1 1 auto; gap: 6px; min-width: 0; color: var(--muted); }
 .company-report-version select { width: 100%; min-width: 0; height: 36px; }
 .company-report-delete { height: 36px; flex: 0 0 auto; padding: 0 4px; border-color: transparent; background: transparent; box-shadow: none; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }

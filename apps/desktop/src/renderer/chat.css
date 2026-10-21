@@ -630,5 +630,10 @@
 .chat-interaction-option.selected { border-color: var(--accent); background: var(--accent-soft); }
 .chat-interaction-option input { accent-color: var(--accent); flex: none; }
 .chat-interaction-card.compact { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; line-height: 1.6; }
+.chat-interaction-card.question.compact { border: 0; border-radius: 0; padding: 2px 0; color: var(--muted); }
+.chat-interaction-card.approval:not(.compact) { background: var(--panel); }
+.chat-interaction-card.approval .capability-card-actions button:first-child { color: var(--accent-strong); border-color: var(--accent); }
 .chat-interaction-card.compact p { margin: 4px 0 0; flex-basis: 100%; }
 .chat-interaction-card textarea { display: block; width: 100%; min-height: 68px; margin-top: 8px; resize: vertical; }
+.chat-interaction-card .interaction-confirm { min-width: 88px; }
+.chat-interaction-card .interaction-confirm:disabled { opacity: 1; cursor: wait; }

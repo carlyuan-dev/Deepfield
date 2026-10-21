@@ -1,4 +1,5 @@
 import { Type, type Static, type TSchema } from "typebox";
+import { ActionCallSchema } from "./actions.js";
 
 const nonEmptyText = Type.String({ minLength: 1 });
 
@@ -117,6 +118,8 @@ function actionBranches<T extends TSchema, M extends Record<string, TSchema>>(da
       data: dataSchema,
       artifactRefs: Type.Optional(Type.Array(ArtifactRefSchema)),
       viewRefs: Type.Optional(Type.Array(ViewRefSchema)),
+      /** Prepare a separate, unapproved operation in the same capability. */
+      proposedAction: Type.Optional(ActionCallSchema),
       presentation: Type.Optional(OperationPresentationSchema),
     }, { additionalProperties: false }),
     Type.Object({

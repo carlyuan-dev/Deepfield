@@ -28,7 +28,7 @@ export const ResearchModuleIdSchema = Type.Union([
   Type.Literal("performance_drivers"), Type.Literal("guidance_and_risks"),
 ]);
 export type ResearchModuleId = Static<typeof ResearchModuleIdSchema>;
-export const ResearchModuleIdsSchema = Type.Array(ResearchModuleIdSchema, { minItems: 1, maxItems: 4, uniqueItems: true });
+export const ResearchModuleIdsSchema = Type.Array(ResearchModuleIdSchema, { minItems: 1, maxItems: 5, uniqueItems: true });
 
 export const HistoricalCompanyResearchTemplateSnapshotSchema = Type.Immutable(Type.Object({
   templateId: ResearchDirectionSchema,
@@ -50,7 +50,7 @@ export const ModuleCompanyResearchTemplateSnapshotSchema = Type.Immutable(Type.O
   sections: Type.Array(Type.Object({
     ...HistoricalCompanyResearchTemplateSnapshotSchema.properties.sections.items.properties,
     sectionId: ResearchModuleIdSchema,
-  }, { additionalProperties: false }), { minItems: 1, maxItems: 4 }),
+  }, { additionalProperties: false }), { minItems: 1, maxItems: 5 }),
 }, { additionalProperties: false }));
 export const CompanyResearchTemplateSnapshotSchema = Type.Union([
   HistoricalCompanyResearchTemplateSnapshotSchema, ModuleCompanyResearchTemplateSnapshotSchema,
@@ -238,9 +238,9 @@ export const RESEARCH_MODULE_GROUPS = Object.freeze(RESEARCH_DIRECTIONS.map((gro
 })));
 const researchModules = RESEARCH_MODULE_GROUPS.flatMap((group) => group.modules);
 export function normalizeResearchModuleIds(ids: readonly ResearchModuleId[]): ResearchModuleId[] {
-  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 4 || new Set(ids).size !== ids.length
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5 || new Set(ids).size !== ids.length
     || ids.some((id) => !researchModules.some((module) => module.sectionId === id))) {
-    throw new Error("Select 1–4 unique research modules");
+    throw new Error("Select 1–5 unique research modules");
   }
   return researchModules.filter((module) => ids.includes(module.sectionId)).map((module) => module.sectionId);
 }

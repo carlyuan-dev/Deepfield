@@ -21,6 +21,8 @@ export interface CapabilityFormSnapshot {
   readyToSubmit: boolean;
   /** Human-readable current values; no machine references or contract metadata. */
   summary?: string;
+  /** Stable operation and next-step copy shown beside the real form; summary retains current values. */
+  confirmationText?: string;
 }
 
 export interface CapabilityFormSubmission {

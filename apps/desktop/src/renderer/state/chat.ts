@@ -31,6 +31,7 @@ export interface ChatMessageView {
   webSearch?: boolean;
   /** Display-only tool activity for this reply; never persisted. */
   toolActivities: ToolActivityView[];
+  recovery?: { kind: "continue" };
 }
 
 export interface ChatState {
@@ -76,6 +77,7 @@ function toView(message: ChatMessage): ChatMessageView {
     status: message.status ?? "done",
     requestId: message.requestId,
     pending: false,
+    ...(message.recovery ? { recovery: message.recovery } : {}),
     toolActivities: (message.toolExecutions ?? []).map((execution) => ({
       callKey: execution.callKey,
       name: execution.name,

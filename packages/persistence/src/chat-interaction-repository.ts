@@ -89,6 +89,8 @@ export function createChatInteractionRepository(connection: DatabaseInput): Inte
       const current = get(id);
       if (!current || current.payload.kind !== "approval") return undefined;
       const payload: InteractionPayload = { ...current.payload, summary: snapshot.summary, operation: operation ?? current.payload.operation };
+      if (snapshot.confirmationText) payload.confirmationText = snapshot.confirmationText;
+      else delete payload.confirmationText;
       const result = db.prepare(`UPDATE chat_interactions SET status='waiting',revision=revision+1,
         content_version=?,payload_json=?,updated_at=? WHERE id=? AND revision=? AND status='editing'`)
         .run(snapshot.version, JSON.stringify(payload), now(), id, expectedRevision);

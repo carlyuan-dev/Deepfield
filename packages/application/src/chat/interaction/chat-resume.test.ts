@@ -143,7 +143,8 @@ it("does not busy retry a pending resume while model configuration is unavailabl
   service.interactionChanged(conversation.id);
   await vi.waitFor(() => expect(service.listMessages(conversation.id)[0]?.content).toContain("检查模型"));
   expect(profiles.getCalls).toBe(1); expect(worker.requests).toHaveLength(0);
-  expect(db.repos.chatInteractions.pendingEvents()).toHaveLength(1);
+  expect(db.repos.chatInteractions.pendingEvents()).toHaveLength(0);
+  expect(service.listMessages(conversation.id).at(-1)).toMatchObject({ status: "failed", recovery: { kind: "continue" } });
   service.dispose();
 });
 it("answers before model/search resolution, persists user once and resumes original conversation once", async () => {
@@ -181,5 +182,37 @@ it("preserves waiting turns without failed synthetic messages and surfaces inter
   expect(service.listMessages(conversation.id).at(-1)?.content).toContain("回复被中断");
   expect(db.repos.chatInteractions.claimedEvents()).toHaveLength(0);
   expect(worker.requests).toHaveLength(1);
+  service.dispose();
+});
+
+it("offers one explicit continuation after an answer resume fails, preserving results without replay", async () => {
+  const db = openTestDb(); dbs.push(db); const conversation = db.repos.conversations.create();
+  const coordinator = new ChatInteractionCoordinator(db.repos.chatInteractions, new Map());
+  const question = await coordinator.create({ conversationId: conversation.id, requestId: "original", toolCallId: "ask" }, { kind: "question", question: "Choose" });
+  const worker = new FakeWorker({ events: request => [
+    { requestId: request.requestId, type: "tool_activity", callKey: "describe", name: "capability_describe", status: "completed" },
+    { requestId: request.requestId, type: "failed", code: "provider_failed", message: "failure", failureDiagnostic: {
+      stage: "response_body", category: "network", causeCode: "ECONNRESET", operationId: "operation", attemptId: "attempt",
+    } },
+  ] });
+  const service = new ChatService(db.repos, new ContextBuilder(db.repos), makeSecrets("key"), worker, { interactions: coordinator });
+  await coordinator.respond({ interactionId: question.id, expectedRevision: 1, response: { kind: "answer", text: "A" } }, { conversationId: conversation.id, source: "chat_button" });
+  service.interactionChanged(conversation.id);
+  await vi.waitFor(() => expect(service.listMessages(conversation.id).at(-1)?.recovery).toEqual({ kind: "continue" }));
+  const message = service.listMessages(conversation.id).at(-1)!;
+  expect(message).toMatchObject({ status: "failed", toolExecutions: [{ name: "capability_describe", status: "completed" }] });
+  expect(message.content).toContain("你的回答已保存");
+  expect(message.content).toContain("网络连接失败");
+  expect(message.content).not.toContain("操作结果已保存");
+  expect(db.repos.chatSessions.list(conversation.id)[0]).toMatchObject({
+    failureCode: "provider_failed", failureDiagnostic: { stage: "response_body", category: "network", causeCode: "ECONNRESET" },
+  });
+  service.interactionChanged(conversation.id);
+  expect(worker.requests).toHaveLength(1);
+  const next = await coordinator.create({ conversationId: conversation.id, requestId: "next", toolCallId: "ask2" }, { kind: "question", question: "Next?" });
+  expect(service.listMessages(conversation.id).at(-1)?.recovery).toBeUndefined();
+  await coordinator.respond({ interactionId: next.id, expectedRevision: 1, response: { kind: "answer", text: "B" } }, { conversationId: conversation.id, source: "chat_button" });
+  db.repos.messages.append(conversation.id, "user", "继续", "continue");
+  expect(service.listMessages(conversation.id).find(item => item.id === message.id)?.recovery).toBeUndefined();
   service.dispose();
 });

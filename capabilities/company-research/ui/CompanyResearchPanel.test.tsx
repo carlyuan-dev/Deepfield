@@ -11,7 +11,7 @@ import { activeResearch, moduleResearchRun as researchRun, researchRun as histor
 
 const context = { itemId: "item-research", companyId: "company-research", topicName: "智能眼镜", topicScope: "中国市场", companyName: "小米", companyNote: "重点候选" };
 
-it("selects one or four modules across groups, blocks a fifth, and requires at least one", async () => {
+it("selects one or five modules across groups, blocks a sixth, and requires at least one", async () => {
   const user = userEvent.setup(); const onStart = vi.fn();
   render(<CompanyResearchModal {...context} onClose={() => {}} onStart={onStart} closeOnSubmit={false} />);
   const submit = screen.getByRole("button", { name: "开始调研" }) as HTMLButtonElement;
@@ -19,11 +19,11 @@ it("selects one or four modules across groups, blocks a fifth, and requires at l
   await user.click(screen.getByLabelText("核心财务表现"));
   await user.click(submit);
   expect(onStart).toHaveBeenLastCalledWith(expect.objectContaining({ moduleIds: ["financial_performance"] }));
-  for (const title of ["产业链位置", "目标市场与客户", "主要产品与定位"]) await user.click(screen.getByLabelText(title));
-  expect((screen.getByLabelText("核心技术与指标") as HTMLInputElement).disabled).toBe(true);
-  expect(screen.getByRole("status").textContent).toContain("已选 4 个");
+  for (const title of ["产业链位置", "目标市场与客户", "主要产品与定位", "核心技术与指标"]) await user.click(screen.getByLabelText(title));
+  expect((screen.getByLabelText("研发与产品阶段") as HTMLInputElement).disabled).toBe(true);
+  expect(screen.getByRole("status").textContent).toContain("已选 5 个");
   await user.click(submit);
-  expect(onStart).toHaveBeenLastCalledWith(expect.objectContaining({ moduleIds: ["products_and_positioning", "target_market_and_customers", "value_chain_position", "financial_performance"] }));
+  expect(onStart).toHaveBeenLastCalledWith(expect.objectContaining({ moduleIds: ["products_and_positioning", "technology_and_metrics", "target_market_and_customers", "value_chain_position", "financial_performance"] }));
   for (const input of screen.getAllByRole("checkbox").filter(input => (input as HTMLInputElement).checked)) await user.click(input);
   expect(submit.disabled).toBe(true);
 });
@@ -41,6 +41,58 @@ function deferred<T>() {
 }
 
 describe("two-stage company research", () => {
+  it("keeps history readable and exportable during research while progress and cancellation target the active run", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const old = researchRun({ rawReportText: "历史报告正文" });
+    const running = researchRun({ id: "running" as ResearchRun["id"], status: "researching" });
+    const state = { ...activeResearch(running, "本轮草稿"), runs: [researchSummary(old)] };
+    fake.companyResearch.getState.mockResolvedValue(state);
+    fake.companyResearch.getRun.mockResolvedValue(old);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await user.selectOptions(await screen.findByLabelText("报告版本"), old.id);
+    expect(await screen.findByText("历史报告正文")).toBeTruthy();
+    expect(screen.getByText("正在联网调研…")).toBeTruthy();
+    expect(screen.queryByText("本轮草稿")).toBeNull();
+    expect(screen.getByRole("option", { name: /截至/ }).textContent).toContain("1 个模块");
+    expect(screen.getByRole("option", { name: /截至/ }).textContent).not.toContain("主要产品与定位");
+    await user.click(screen.getByRole("button", { name: "导出 Word" }));
+    await user.click(screen.getByRole("button", { name: "确认导出" }));
+    expect(fake.companyResearch.exportWord).toHaveBeenCalledWith(context.itemId, context.companyId, old.id, { raw: false, structured: true });
+    act(() => fake.emitResearch({ type: "state_changed", ...context, runId: running.id }));
+    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(2));
+    expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(old.id);
+    await user.selectOptions(screen.getByLabelText("报告版本"), running.id);
+    expect(await screen.findByText("本轮草稿")).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText("报告版本"), old.id);
+    expect(await screen.findByText("历史报告正文")).toBeTruthy();
+    fake.companyResearch.cancel.mockImplementation(async () => {
+      fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(old)], globalActiveRun: null });
+    });
+    await user.click(screen.getByRole("button", { name: "取消调研" }));
+    expect(fake.companyResearch.cancel).toHaveBeenCalledWith(running.id);
+    await waitFor(() => expect(screen.queryByText("正在联网调研…")).toBeNull());
+    expect(screen.getByText("历史报告正文")).toBeTruthy();
+    expect(fake.companyResearch.start).not.toHaveBeenCalled();
+  });
+
+  it("shows a newly completed run once and preserves subsequent history selection across refreshes", async () => {
+    const fake = makeFakeApi(); const user = userEvent.setup();
+    const old = researchRun({ rawReportText: "历史正文" });
+    const newer = researchRun({ id: "newer" as ResearchRun["id"], rawReportText: "最新正文" });
+    fake.companyResearch.getState.mockResolvedValue({ ...activeResearch({ ...newer, status: "researching" }), runs: [researchSummary(old)] });
+    fake.companyResearch.getRun.mockImplementation(async (_item, _company, id) => id === old.id ? old : newer);
+    render(<CompanyResearchPanel api={fake} {...context} />);
+    await screen.findByText("正在联网调研…");
+    fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(newer), researchSummary(old)], globalActiveRun: null });
+    act(() => fake.emitResearch({ type: "state_changed", ...context, runId: newer.id }));
+    expect(await screen.findByText("最新正文")).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText("报告版本"), old.id);
+    expect(await screen.findByText("历史正文")).toBeTruthy();
+    act(() => fake.emitResearch({ type: "state_changed", ...context, runId: newer.id }));
+    await waitFor(() => expect(fake.companyResearch.getState).toHaveBeenCalledTimes(3));
+    expect((screen.getByLabelText("报告版本") as HTMLSelectElement).value).toBe(old.id);
+  });
+
   it("places a zero-material frozen evidence view after the report", async () => {
     const fake = makeFakeApi(); const run = researchRun();
     fake.companyResearch.getState.mockResolvedValue({ runs: [researchSummary(run)], globalActiveRun: null });

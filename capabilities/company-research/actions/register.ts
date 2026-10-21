@@ -47,7 +47,13 @@ export function registerResearchProtocol(registrar: CapabilityRegistrar, service
   };
   const withPresentation = <T extends object>(outcome: T, presentation: ReturnType<typeof presentResult>): T & { presentation?: NonNullable<typeof presentation> } => presentation ? { ...outcome, presentation } : outcome;
   const definitions = createActionDefinitions(async (id, input, context) => {
-    if (id === "research.prepare") { const data = submission.drafts.prepare(input); return withPresentation({ status: "completed", data, viewRefs: [{ capabilityId: CAPABILITY_ID, viewId: "research-draft", input: { draftId: data.draftRef.draftId, revision: data.draftRef.revision } }] }, presentResult(id, input, data)); }
+    if (id === "research.prepare") {
+      const data = submission.drafts.prepare(input);
+      const submit = declarations.find(action => action.id === "research.submit")!;
+      return withPresentation({ status: "completed", data,
+        proposedAction: { capabilityId: CAPABILITY_ID, actionId: submit.id, contractDigest: submit.contractDigest, input: data },
+        viewRefs: [{ capabilityId: CAPABILITY_ID, viewId: "research-draft", input: { draftId: data.draftRef.draftId, revision: data.draftRef.revision } }] }, presentResult(id, input, data));
+    }
     if (id === "research.submit") { const task = await submission.submit(input, context.invocationId); return withPresentation({ status: "accepted", taskRef: task.taskRef, taskStatus: task.status }, presentAccepted(id, input)); }
     if (id === "research.submitBatch") { const task = await submission.submitBatch(input.itemId, input.entries, context.invocationId); return withPresentation({ status: "accepted", taskRef: task.taskRef, taskStatus: task.status }, presentAccepted(id, input)); }
     if (id === "research.retryFailed" || id === "research.retryStructuring") {

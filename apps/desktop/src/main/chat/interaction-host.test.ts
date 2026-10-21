@@ -7,6 +7,10 @@ import { ActionGateway } from "../capabilities/action-gateway.js";
 import { ChatInteractionHost } from "./interaction-host.js";
 import { CapabilityChatHost } from "../capabilities/chat-host.js";
 import { ViewNavigation } from "../capabilities/view-navigation.js";
+import { ChatService, ContextBuilder } from "@deepfield/application";
+import { FakeWorker, makeSecrets } from "../../../../../packages/application/src/chat/chat-service-helpers.js";
+import { InteractionResponseClassifier } from "./response-intent.js";
+import type { ModelGateway } from "../../shared/model-gateway.js";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
@@ -92,13 +96,79 @@ async function editableFixture(sourceDraftRefs?: CapabilityFormSnapshot["sourceD
     update: async (_ref, patch) => { const next = (patch as { value: string }).value; if (!next) throw new Error("Invalid value"); value = next; version++; return snapshot(); },
     transition: async () => { throw new Error("Invalid transition"); }, validate: async () => ({ valid: true, fieldErrors: [] }),
     submission: async () => ({ actionId: "run", input: { value }, revision: String(version) }), release: async () => {} };
-  const action = testAction({ mode: "immediate" });
+  const handler = vi.fn((input: unknown) => ({ status: "completed" as const, data: (input as { value: string }).value }));
+  const action = testAction({ mode: "immediate", handler });
   const fixture = await actionFixture(action, (registrar, declaration) => { registrar.registerAction!({ definition: action, declaration }); registrar.registerFormProvider!([{ id: "form", actionIds: ["run"], description: "Edit" }], provider); });
   await fixture.start(); cleanups.push(() => fixture.runtime.dispose());
   const host = new ChatInteractionHost(repos, fixture.registry, () => fixture.runtime, vi.fn()); host.begin("r", conversation.id);
   const item = await host.requestApproval({ conversationId: conversation.id, requestId: "r", toolCallId: "t" }, fixture.call);
-  return { repos, conversation, fixture, provider, host, item, snapshot, mutate: () => { value = "uncertain change"; version++; } };
+  return { repos, conversation, fixture, provider, host, item, snapshot, handler, mutate: () => { value = "uncertain change"; version++; } };
 }
+
+it("routes a natural user confirmation through the same single execution claim and never carries old assent forward", async () => {
+  const f = await editableFixture();
+  const handler = f.handler;
+  const completeText = vi.fn(async () => "approve");
+  const profiles = makeSecrets("unused");
+  const classifier = new InteractionResponseClassifier(() => profiles.resolveActiveLlm(), { completeText } as unknown as ModelGateway);
+  const classify = vi.fn((pending, content, requestId) => f.host.classifyResponse(pending, content, requestId, classifier));
+  const service = new ChatService(f.repos, new ContextBuilder(f.repos), profiles, new FakeWorker({ events: () => [] }), {
+    interactions: f.host.coordinator, classifyInteractionResponse: classify,
+    onUserMessage: id => f.host.revokeTask(id),
+    respondToInteraction: (id, command, messageId) => f.host.respond(id, command, "user_message", messageId),
+  });
+  cleanups.push(() => service.dispose());
+  await service.send(f.conversation.id, "现在可以开始了", "natural-confirm", () => {});
+  const completed = f.host.coordinator.get(f.item.id)!;
+  expect(completed.status).toBe("succeeded");
+  await f.host.respond(f.conversation.id, { interactionId: completed.id, expectedRevision: completed.revision,
+    response: { kind: "decision", decision: "approve" } }, "form_button");
+  expect(handler).toHaveBeenCalledOnce();
+  await service.send(f.conversation.id, "现在可以开始了", "no-pending", () => {});
+  expect(classify).toHaveBeenCalledOnce();
+  f.host.begin("fresh", f.conversation.id);
+  const next = await f.host.requestApproval({ conversationId: f.conversation.id, requestId: "fresh", toolCallId: "next" }, f.fixture.call);
+  expect(next.status).toBe("waiting");
+  expect(handler).toHaveBeenCalledOnce();
+});
+
+it("rejects an in-flight classification after the pending draft revision changes", async () => {
+  const f = await editableFixture();
+  let finish!: (value: string) => void;
+  const classifier = new InteractionResponseClassifier(() => makeSecrets("unused").resolveActiveLlm(), {
+    completeText: () => new Promise<string>(resolve => { finish = resolve; }),
+  } as unknown as ModelGateway);
+  const response = f.host.classifyResponse(f.item, "现在可以开始了", "r2", classifier);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  f.host.beginEdit(f.conversation.id, f.item.id, f.item.revision);
+  finish("approve");
+  await expect(response).rejects.toThrow("内容已更新");
+  expect(f.host.coordinator.get(f.item.id)?.status).toBe("editing");
+});
+
+it("reconstructs exactly one pending operation from a durable proposal receipt and never recreates a cancelled one", async () => {
+  const f = await editableFixture();
+  await f.host.respond(f.conversation.id, { interactionId: f.item.id, expectedRevision: f.item.revision, response: { kind: "decision", decision: "cancel" } }, "chat_button");
+  f.host.begin("prepared", f.conversation.id);
+  const invocationId = "prepared-receipt";
+  f.repos.capabilityInvocations.issue({ id: invocationId, capabilityId: f.fixture.call.capabilityId, actionId: "prepare", bindingDigest: "prepared", issuedAt: 1, expiresAt: 100 });
+  f.repos.capabilityInvocations.claim(invocationId, 2);
+  f.repos.capabilityInvocations.complete(invocationId, { status: "completed", data: {}, proposedAction: f.fixture.call }, undefined, 3);
+  f.repos.chatCapabilities.bindInvocation({ conversationId: f.conversation.id, sourceRequestId: "prepared", toolCallId: "prepare", invocationId, callDigest: "prepared" });
+  const owner = { conversationId: f.conversation.id, requestId: "prepared", toolCallId: "prepare" };
+  const pending = await f.host.prepareProposedAction(owner, f.fixture.call.capabilityId, f.fixture.call, invocationId);
+  expect(pending.status).toBe("waiting");
+  f.repos.chatCapabilities.saveOperation({ conversationId: f.conversation.id, sourceRequestId: "prepared", invocationId, status: "completed", title: "Prepared" });
+  const chat = new CapabilityChatHost(() => f.fixture.runtime, f.fixture.registry, f.repos, f.host);
+  cleanups.push(() => chat.dispose());
+  expect(chat.operations(f.conversation.id)).toMatchObject([{ invocationId, interactionId: pending.id, interactionRole: "preparation" }]);
+  expect((await f.host.prepareProposedAction(owner, f.fixture.call.capabilityId, f.fixture.call, invocationId)).id).toBe(pending.id);
+  await f.host.respond(f.conversation.id, { interactionId: pending.id, expectedRevision: pending.revision, response: { kind: "decision", decision: "cancel" } }, "form_button");
+  f.host.begin("prepared", f.conversation.id);
+  expect(await f.host.prepareProposedAction(owner, f.fixture.call.capabilityId, f.fixture.call, invocationId)).toMatchObject({ id: pending.id, status: "cancelled" });
+  expect(f.host.list(f.conversation.id)).toHaveLength(2);
+  await expect(f.host.prepareProposedAction(owner, f.fixture.call.capabilityId, { ...f.fixture.call, input: { value: "forged" } }, invocationId)).rejects.toThrow("completed owned receipt");
+});
 
 it("recovers only unchanged model-owned rejected edits and transitions, allowing correction", async () => {
   const f = await editableFixture();

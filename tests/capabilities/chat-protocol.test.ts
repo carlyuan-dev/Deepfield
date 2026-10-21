@@ -11,6 +11,7 @@ import { CapabilityRegistry } from "../../apps/desktop/src/main/capabilities/reg
 import { createCapabilityRuntime, prepareCapabilities } from "../../apps/desktop/src/main/capabilities/runtime.js";
 import { writeCapabilityPreferences } from "../../apps/desktop/src/main/capabilities/preferences.js";
 import { CapabilityChatHost } from "../../apps/desktop/src/main/capabilities/chat-host.js";
+import { ChatInteractionHost } from "../../apps/desktop/src/main/chat/interaction-host.js";
 import { createSnapshotWorkerLoader } from "../../apps/desktop/src/shared/capability-entry.js";
 import { WorkerCapabilityRegistry } from "../../apps/desktop/src/worker/capabilities/registry.js";
 import { AgentWorkerClient } from "../../apps/desktop/src/main/agent-worker-client.js";
@@ -152,17 +153,22 @@ describe("offline company research Chat protocol", () => {
       expect(host.dismiss(deletePending.confirmationRef, conversationId)).toBe(true);
       expect(repositories.capabilityItems.getById(item.id as never)).toBeDefined();
       expect(await host.call("chat-1", "describe-prepare", "describe", { capabilityId: "company-research", actionId: "research.prepare" })).toMatchObject({ status: "described" });
-      const draft = await host.call("chat-1", "prepare", "invoke", actionCall("research.prepare", {
+      const interactionHost = new ChatInteractionHost(repositories, registry, () => runtime, () => {},
+        (owner, invocationId, result) => host!.interactionOutcome(owner, invocationId, result));
+      interactionHost.begin("chat-1", conversationId);
+      const unified = new CapabilityChatHost(() => runtime, registry, repositories, interactionHost);
+      unified.begin("chat-1", conversationId, "准备调研");
+      const draft = await unified.call("chat-1", "prepare", "invoke", actionCall("research.prepare", {
         itemId: item.id, companyId: company.id, moduleIds: ["products_and_positioning", "technology_and_metrics"], asOfDate: "2026-09-21",
-      })) as { status: string; data: unknown };
-      expect(draft.status).toBe("completed");
+      })) as { status: string; interactionId: string; revision: number };
+      expect(draft.status).toBe("awaiting_user");
+      expect((await interactionHost.readEditor(conversationId, draft.interactionId)).form.view.viewId).toBe("form");
+      expect(unified.operations(conversationId).some(operation => operation.interactionId === draft.interactionId && operation.interactionRole === "preparation")).toBe(true);
       expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toEqual([]);
-      expect(await host.call("chat-1", "describe-submit", "describe", { capabilityId: "company-research", actionId: "research.submit" })).toMatchObject({ status: "described" });
-      const pending = await host.call("chat-1", "submit", "invoke", actionCall("research.submit", draft.data)) as { status: string; confirmationRef: string };
-      expect(pending.status).toBe("requires_confirmation");
-      expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)).toEqual([]);
-      const accepted = await host.approve(pending.confirmationRef, conversationId, true) as { status: string; taskRef: { capabilityId: string; taskId: string } };
+      const submitted = await interactionHost.respond(conversationId, { interactionId: draft.interactionId, expectedRevision: draft.revision, response: { kind: "decision", decision: "approve" } }, "form_button");
+      const accepted = interactionHost.resultFor(submitted) as { status: string; taskRef: { capabilityId: string; taskId: string } };
       expect(accepted).toMatchObject({ status: "accepted", taskRef: { capabilityId: "company-research" } });
+      unified.dispose(); interactionHost.dispose();
       expect(host.tasks(conversationId)).toHaveLength(1);
       await vi.waitFor(() => expect(repositories.companyResearchRuns.listRuns(item.id as never, company.id)[0]?.status).toBe("completed"), { timeout: 10_000 });
       const task = await host.call("chat-1", "task-get", "task.get", { taskRef: accepted.taskRef }) as {

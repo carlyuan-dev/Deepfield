@@ -2,7 +2,7 @@
 
 版本：0.3 · 日期：2026-10-15
 
-状态：第 3 批实现及本阶段自动验证完成，可交付 staging，等待用户体验验收。安全契约、Pi runtime、Usage collector 及 main／Worker／Capability 接线已落地；本地协议、限定旧包服务兼容、生产边界与打包真实链路端测已完成。本文维护 [Base 抽取设计](base.extraction.设计文档.md) 的 Model 当前契约与验收边界。
+状态：第 3 批实现及阶段自动验证完成，0.1.2 本批用户体验验收已收口。安全契约、Pi runtime、Usage collector 及 main／Worker／Capability 接线已落地；本地协议、限定旧包服务兼容、生产边界与打包真实链路端测保留原证据范围。本文维护 [Base 抽取设计](base.extraction.设计文档.md) 的 Model 当前契约与验收边界；最终检查状态见 [0.1.2 发布记录](../releases/2026-10-21-v0.1.2.md)。
 
 ## 1. 职责与范围
 
@@ -101,7 +101,7 @@ Usage recorder 失败继续按现有 best-effort 契约处理，不使模型请�
 
 ## 6. 错误与 HTTP 诊断
 
-`ModelGatewayError` 保留 category、retryable、name、受控 message、diagnostic 和 `stage: "response_body"` 的职责。category 继续使用模型现有细分值；它与 Base.Errors 公共 category 不同，不强行继承 `BaseError` 或改写现有含义。分类不自动触发重试，应用仍负责将模型错误映射为既有 AppError 和用户提示。
+`ModelGatewayError` 保留 category、retryable、name、受控 message、HTTP diagnostic，以及 `stage: "request" | "response_body"` 的职责。传输失败另携带 `transport`：受控 category、白名单 name／code／causeCode、Usage operationId／attemptId 和可得的 requestId／modelRequestId；不保留原始 cause。category 继续使用模型现有细分值；它与 Base.Errors 公共 category 不同，不强行继承 `BaseError` 或改写现有含义。分类不自动触发重试，应用仍负责将模型错误映射为既有 AppError 和用户提示。
 
 安全入口与旧兼容入口引用同一个错误类，保持 `instanceof`；不能在旧壳重新定义同名类。本批不改 AppError／IPC 错误码、恢复动作或错误白名单，不传播原始 Provider message、header、URL、cause 或密钥。
 
@@ -113,7 +113,7 @@ Base 内部诊断只给受控 `httpStatus`、`reason`、可选 `toolIndex` 和�
 
 应用用本次诊断请求的原 tools 名单将 toolIndex 转回名字，再按现有 `request_user_input/interaction_draft/propose_actions` 白名单构造 Settings DTO；索引不进入旧 IPC。`ModelDiagnosticSchema` 和字段形状保持原样，Base 不内置 Chat 工具名称。该内部变化通过应用适配吸收，不以放宽旧 Schema 换取兼容。
 
-当前完整 HTTP 诊断主要用于 `completeTextResult`，流式路径已有响应体失败分类；迁移不顺带为流式增加新的 HTTP 读取和诊断行为。配置诊断仍携带当前真实 Chat 工具声明发送一次短请求，不执行工具。
+当前完整 HTTP 诊断主要用于 `completeTextResult`；流式路径捕获 fetch 拒绝与响应体读取失败，调用方取消优先。Chat 将有界传输诊断经已有 failed 事件存入会话的 `failureDiagnostic`，可用 attemptId 与 Usage 记录关联；Usage 的 `network_failed`／`stream_failed` 口径不变。流式 HTTP 读取行为不变。配置诊断仍携带当前真实 Chat 工具声明发送一次短请求，不执行工具。
 
 响应体读取失败继续记录 `stream_failed`，网关保留 `response_body` 标记；`pi-default-runtime` 捕获当前轮故障，由原执行器映射为 stream_failed。每轮开始清空旧故障，HTTP／Provider 失败和其他提示处理异常不能沿用上一轮标记。
 
@@ -131,7 +131,7 @@ Worker Chat 继续经 message-loop 的 usage context、PiChatAgent、defaultPiRu
 
 该证据仅支持该冻结包的上述服务契约兼容范围；冻结旧包的完整生命周期、独立 OS Worker、其他包版本、数据库升级、其他服务、真实 Provider 和 GUI 仍未验证。
 
-## 8. 当前验证与待验收范围
+## 8. 当前验证与证据范围
 
 已完成安全入口浏览器打包边界、Base 依赖边界、类型检查和聚焦回归验证：安全入口不加载 Pi／Node，旧入口共享错误类；同快照跨网关 fallback revision 稳定，ALS 上下文隔离；每次实际 fetch 独立计量，未发送不计量；两协议用量、观察投影、原响应字节与背压、HTTP 诊断、取消及响应体故障优先级保持。SDK 泛型负向类型约束和第 7 节旧包服务场景已验证。
 
@@ -141,7 +141,7 @@ Worker assembly 的既有工具列表断言失败已在迁移前基线复现，�
 
 回归保护覆盖共享 collector／ALS 接线、opaque token 身份稳定、请求／Usage 关联隔离、泛型 alias 兼容、toolIndex 到旧 DTO 的安全映射，以及实际公司 evidence 消费链。后续修改继续复用对应网关、HTTP 诊断、响应体故障、用量、观察与应用接线测试，行为断言保持原契约。
 
-自动验证结合本地协议 fixture、临时数据和上述真实链路端测；真实调用证据限于已验证的 Provider、模型与入口，用户体验仍待验收。
+自动验证结合本地协议 fixture、临时数据和上述真实链路端测；真实调用证据限于已验证的 Provider、模型与入口。0.1.2 本批用户体验验收已收口，未扩大上述真实调用证据范围。
 
 主要风险是重复 collector／ALS、快照脱敏后的 fallback 身份漂移、错误类或 observer 类型分裂、运行时进入 UI，以及改变取消／故障优先级。通过限定入口、显式注入和对应回归验证控制。
 

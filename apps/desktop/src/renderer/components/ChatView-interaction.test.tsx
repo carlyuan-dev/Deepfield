@@ -13,6 +13,50 @@ const question: InteractionRecord = {
 };
 
 describe("ChatView interaction ownership", () => {
+  it("continues a projected recovery through send once without replacing the composer draft", async () => {
+    const api = makeFakeApi();
+    api.chat.listMessages.mockResolvedValue([{ id: "failed" as never, conversationId: "old" as never,
+      role: "assistant", content: "后续回复失败", requestId: "resume", status: "failed",
+      recovery: { kind: "continue" }, createdAt: "2026-09-23T00:00:00Z" }]);
+    const hub = createChatEventHub();
+    render(<ChatView api={api} eventHub={hub} requestIdFactory={() => "continue-request"} conversation={conversation("old")}
+      acceptUpdated={() => {}} setWebSearchEnabled={async () => {}} savingWebSearch={false} settingError={undefined} />);
+    const button = await screen.findByRole("button", { name: "继续" });
+    fireEvent.change(screen.getByLabelText("消息输入"), { target: { value: "未发送的草稿" } });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(api.chat.send).toHaveBeenCalledTimes(1));
+    expect(api.chat.send).toHaveBeenCalledWith("old", "继续完成刚才的任务，请先核对已保存的结果，不要重复执行已完成或已取消的操作。",
+      "continue-request", { webSearch: false });
+    expect((screen.getByLabelText("消息输入") as HTMLTextAreaElement).value).toBe("未发送的草稿");
+    hub.dispose();
+  });
+  it("does not scroll when a bound form synchronizes ordinary field edits", async () => {
+    const api = makeFakeApi();
+    api.chat.listMessages.mockResolvedValue([{ id: "m" as never, conversationId: "old" as never,
+      role: "user", content: "调研", requestId: "r-old", createdAt: "2026-09-23T00:00:00Z" }]);
+    let approval: InteractionRecord = { ...question, payload: { kind: "approval", summary: "公司甲，产品模块",
+      confirmationText: "请核对右侧表单后确认。", operation: { provider: "example", operationId: "submit", contractVersion: "1", draftRef: "draft" } } };
+    api.chat.listInteractions.mockImplementation(async () => [approval]);
+    let changed = (_id: string) => {};
+    api.chat.onInteractions.mockImplementation(listener => { changed = listener; return () => {}; });
+    const hub = createChatEventHub();
+    const view = render(<ChatView api={api} eventHub={hub} requestIdFactory={() => "r-new"} conversation={conversation("old")}
+      acceptUpdated={() => {}} setWebSearchEnabled={async () => {}} savingWebSearch={false} settingError={undefined} />);
+    await screen.findByText("请核对右侧表单后确认。");
+    const list = view.container.querySelector(".messages") as HTMLDivElement;
+    const scroll = vi.fn();
+    Object.defineProperty(list, "scrollTop", { configurable: true, get: () => 0, set: scroll });
+    approval = { ...approval, revision: 2, status: "editing" };
+    act(() => changed("old"));
+    await waitFor(() => expect((screen.getByRole("button", { name: "确认执行" }) as HTMLButtonElement).disabled).toBe(true));
+    approval = { ...approval, revision: 3, status: "waiting", payload: { ...approval.payload, kind: "approval", summary: "公司甲，产品和财务模块",
+      operation: { provider: "example", operationId: "submit", contractVersion: "1", draftRef: "draft" } } };
+    act(() => changed("old"));
+    await waitFor(() => expect((screen.getByRole("button", { name: "确认执行" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(scroll).not.toHaveBeenCalled();
+    hub.dispose();
+  });
   it("follows content resize, preserves reading position and resets follow on send and conversation change", async () => {
     let resized = () => {};
     vi.stubGlobal("ResizeObserver", class {

@@ -2,12 +2,13 @@ import type { LlmRuntimeSnapshot } from "../config/llm.js";
 import { normalizeUsageMetrics } from "../usage/contracts.js";
 import type { UsageMetrics, UsageAttemptHandle } from "../usage/contracts.js";
 import type { ModelRuntimeOptions } from "./runtime.js";
+import { classifyModelTransportFailure, type ModelGatewayError } from "./errors.js";
 
 const counter = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 const object = (value: unknown): Record<string, any> => typeof value === "object" && value !== null ? value as Record<string, any> : {};
 
 /** Inline, bounded SSE observation. No clone, tee, extra consumer, or persisted body. */
-export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: LlmRuntimeSnapshot, signal?: AbortSignal, fetcher: typeof fetch = globalThis.fetch, onResponseBodyError?: (error: unknown) => void, requestIdentity?: () => { readonly requestId: string; readonly modelRequestId: string } | undefined) {
+export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: LlmRuntimeSnapshot, signal?: AbortSignal, fetcher: typeof fetch = globalThis.fetch, onResponseBodyError?: (error: unknown) => void, requestIdentity?: () => { readonly requestId: string; readonly modelRequestId: string } | undefined, onTransportFailure?: (error: ModelGatewayError) => void) {
   const attempts: UsageAttemptHandle[] = [];
   const cleanups: (() => void)[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -23,6 +24,11 @@ export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: 
     const onAbort = () => attempt.finish("cancelled", "cancelled");
     abort?.addEventListener("abort", onAbort, { once: true });
     cleanups.push(() => abort?.removeEventListener("abort", onAbort));
+    const reportFailure = (error: unknown, stage: "request" | "response_body") => {
+      if (abort?.aborted) return;
+      try { onTransportFailure?.(classifyModelTransportFailure(error, stage, { ...requestIdentity?.(), operationId: attempt.operationId, attemptId: attempt.attemptId })); }
+      catch { /* Optional diagnostic notifications must not change the transport result. */ }
+    };
     try {
       const pending = fetcher(input, init);
       // Internal correlation is best-effort, unlike the mandatory request observer.
@@ -72,6 +78,7 @@ export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: 
           let result: ReadableStreamReadResult<Uint8Array>;
           try { result = await reader.read(); }
           catch (error) {
+            reportFailure(error, "response_body");
             if (!abort?.aborted) { try { onResponseBodyError?.(error); } catch { /* Diagnostics must not change body consumption. */ } }
             attempt.finish(abort?.aborted ? "cancelled" : "failed", abort?.aborted ? "cancelled" : "stream_failed");
             controller.error(error);
@@ -82,7 +89,7 @@ export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: 
         async cancel(reason) { if (abort?.aborted) attempt.finish("cancelled", "cancelled"); await reader.cancel(reason); },
       }, { highWaterMark: 0 });
       return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-    } catch (error) { attempt.finish(abort?.aborted ? "cancelled" : "failed", abort?.aborted ? "cancelled" : "network_failed"); throw error; }
+    } catch (error) { reportFailure(error, "request"); attempt.finish(abort?.aborted ? "cancelled" : "failed", abort?.aborted ? "cancelled" : "network_failed"); throw error; }
   };
   return { fetch, finish(stopReason: string) {
     for (const cleanup of cleanups) cleanup();

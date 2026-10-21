@@ -92,6 +92,12 @@ export async function bootstrap(_registrar: CapabilityRegistrar, services: Capab
 
 快照可选提供 `sourceDraftRefs`（省略等同空数组），声明准备当前表单的来源草稿。宿主仅接受同一能力、当前会话已保存的精确引用，允许跨请求继续，再与真实完成回执中的草稿引用关联，将准备回执与确认合并为同一操作卡。宿主投影区分准备回执和实际执行回执，准备完成不能代表提交完成；此字段只用于展示关联，不产生执行权限，也不要求宿主理解业务参数。表单自身的 `draft` 可以与来源草稿不同。
 
+`CapabilityFormSnapshot.confirmationText` 是可选的简短操作说明，经 `OperationSnapshot.confirmationText` 传递，仅在绑定真实表单时用于左侧确认卡，例如提示用户在右侧核对公司与条件后提交。完整 `summary` 仍描述当前值，供模型理解和授权核对；缺失或空白的短说明回退到完整摘要。破坏性操作和无表单操作仍须展示具体目标与影响，公司包的删除确认保留完整摘要。包应保持短说明稳定，避免逐字段复制表单；右侧更新仍推进真实 revision，左右确认继续校验当前版本，隐藏修订变化不驱动聊天滚动。
+
+准备动作的 `completed` 结果可选返回 `proposedAction: { capabilityId, actionId, contractDigest, input }`，声明同一包的下一待确认动作。包使用构建出的真实契约摘要；宿主先保存准备成功回执，再校验当前已启用动作、权限、契约及完整输入，创建唯一待办并通过 Renderer 的通知路径打开、绑定真实表单。该声明本身不执行下一动作，也不继承任务范围批准。准备调用身份直接关联原确认卡，旧调用可继续通过 `sourceDraftRefs` 关联；参数编辑和最终提交都使用该卡绑定的同一表单。未提供此扩展的包沿用现有调用路径。
+
+待办保存准备调用的 `invocationId`，查询该成功回执时复用原待办，已取消或完成的不再重建。若准备成功后待办创建失败，仍返回原 `completed` 结果及 `proposalIssue`，不得重放准备或提交来补状态；表单自动打开失败时保留 `awaiting_user` 待办。进程恰在两次持久化之间退出时，可查询原调用继续准备待办，原操作的成功回执始终有效。
+
 关联页面收到可选 `interactionEditor` 时，先 `read()` 取得当前修订；用户开始编辑即调用 `beginEdit(revision)`（返回 `void`），成功后再 `read()` 取得本次锁的新修订并用于 `update` 或 `transition`。同步和校验完成后才允许 `respond(revision, "approve" | "cancel")`。模型修改同一草稿时也须带预期修订；冲突后重新读取，不覆盖用户修改。页面本地可留尚未同步的输入缓冲，但不能再保存一份独立的待执行参数。`interactionEditor` 已绑定一个会话内待办，包不能自行构造批准票据。普通人工入口没有该桥时，仍按原页面提交路径工作。
 
 不提供表单绑定的 v2 包仍可被 Chat 调用；需确认动作显示只读摘要。损坏的可选声明不应让相应动作失效。请用 `tests/capabilities/form-protocol.test.ts` 的离线便签夹具核对发现、共享修改、网关提交与禁用后启动快照；该夹具不证明自己的 UI 组件已接线，实际页面和连续步骤仍应手测。

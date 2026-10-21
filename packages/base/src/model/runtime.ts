@@ -37,14 +37,6 @@ const defaultFactories: ModelGatewayFactories = {
   anthropicMessagesApi,
 };
 
-function classifyResponseBodyError(error: unknown): ModelGatewayError {
-  const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : {};
-  const cause = typeof record.cause === "object" && record.cause !== null ? record.cause as Record<string, unknown> : {};
-  // Only stable names/codes participate; raw provider text and causes never survive.
-  const classified = classifyModelGatewayError({ name: record.name, code: record.code, cause: { code: cause.code } });
-  return new ModelGatewayError(classified.category, classified.retryable, undefined, "response_body");
-}
-
 export interface ModelRequestAssociation {
   readonly requestId?: string;
   readonly modelRequestId?: string;
@@ -67,14 +59,14 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
 
   createStream(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver<Origin, Phase>, onModelFailure?: (error: ModelGatewayError) => void): ModelStream<Origin, Phase> {
     return (model, context, options) => {
-      let bodyFailure: ModelGatewayError | undefined;
-      const usage = createLlmUsageTransport(this.runtime, snapshot, options?.signal, options?.fetch ?? globalThis.fetch, error => { bodyFailure = classifyResponseBodyError(error); }, () => observation?.identity);
+      let transportFailure: ModelGatewayError | undefined;
+      const usage = createLlmUsageTransport(this.runtime, snapshot, options?.signal, options?.fetch ?? globalThis.fetch, undefined, () => observation?.identity, error => { transportFailure = error; });
       const observation = observer ? observeSerializedRequest(context, options, observer, usage.fetch) : undefined;
       const stream = streamSimple(model, context, { ...options, maxRetries: 0, fetch: usage.fetch, ...(observation ? { onPayload: observation.onPayload, fetch: observation.fetch } : {}) });
       const finished = stream.result().then((message) => {
         usage.finish(message.stopReason);
         observation?.finish(message.stopReason);
-        if (!options?.signal?.aborted && bodyFailure && (message.stopReason === "error" || message.stopReason === "aborted")) onModelFailure?.(bodyFailure);
+        if (!options?.signal?.aborted && transportFailure && (message.stopReason === "error" || message.stopReason === "aborted")) onModelFailure?.(transportFailure);
         return message;
       }, error => { usage.finish("error"); observation?.finish("error"); throw error; });
       // Pi represents provider failures as messages; observer/storage failures
@@ -108,7 +100,7 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
     options?: ModelCompletionOptions,
   ): Promise<ModelCompletionResult> {
     let transportFailure: ModelGatewayError | undefined;
-    const usage = createLlmUsageTransport(this.runtime, snapshot, signal, globalThis.fetch, error => { transportFailure = classifyResponseBodyError(error); });
+    const usage = createLlmUsageTransport(this.runtime, snapshot, signal, globalThis.fetch, undefined, undefined, error => { transportFailure = error; });
     const captureFetch: typeof globalThis.fetch = async (input, init) => {
       try {
         const response = await usage.fetch(input, init);
@@ -120,7 +112,7 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
         }
         return response;
       } catch (error) {
-        transportFailure = classifyModelGatewayError(error);
+        transportFailure ??= classifyModelGatewayError(error);
         throw error;
       }
     };

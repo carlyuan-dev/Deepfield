@@ -1,12 +1,14 @@
 import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
-import { AgentWorkerEventSchema, ChatTranscriptMessageSchema, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "@deepfield/contracts";
+import { AgentWorkerEventSchema, ChatFailureDiagnosticSchema, ChatTranscriptMessageSchema, type ChatFailureDiagnostic, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "@deepfield/contracts";
 
 export interface ChatSessionRecord {
   requestId: string;
   network: "enabled" | "disabled";
   completed: boolean;
   failed?: boolean;
+  failureCode?: string;
+  failureDiagnostic?: ChatFailureDiagnostic;
   awaitingUser?: boolean;
   messages: ChatTranscriptMessage[];
   activities: ChatToolExecution[];
@@ -49,10 +51,12 @@ export function createChatSessionRepository(connection: DatabaseInput) {
       const record = read(conversationId, requestId);
       if (record) update(conversationId, requestId, record.network, current => { current.awaitingUser = true; });
     },
-    fail(conversationId: ConversationId, requestId: string) {
+    fail(conversationId: ConversationId, requestId: string, code = "chat_failed", diagnostic?: ChatFailureDiagnostic) {
       const record = read(conversationId, requestId);
-      if (record) update(conversationId, requestId, record.network, current => {
+      update(conversationId, requestId, record?.network ?? "disabled", current => {
         current.failed = true;
+        current.failureCode = ["network_failed", "provider_failed", "stream_failed", "timeout", "aborted", "cancelled", "worker_send_failed", "worker_stream_failed", "worker_stream_ended_without_terminal", "chat_persistence_failed", "configuration_unavailable", "resume_interrupted"].includes(code) ? code : "chat_failed";
+        if (diagnostic && Value.Check(ChatFailureDiagnosticSchema, diagnostic)) current.failureDiagnostic = diagnostic;
         current.activities = current.activities.map(activity => activity.status === "running" ? { ...activity, status: "failed" } : activity);
       });
     },

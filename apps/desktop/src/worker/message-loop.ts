@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { PiAgentError } from "@deepfield/base/agent";
 import { UsageFlushRequestSchema, UsageRepairRequestSchema } from "@deepfield/contracts";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema, ToolExecutionEventSchema, ToolRunRequestSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
@@ -119,7 +120,11 @@ export function createWorkerMessageLoop(
           );
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (!execution.controller.signal.aborted && error instanceof PiAgentError && error.failureDiagnostic) {
+          emit({ requestId: request.requestId, type: "failed", code: error.code, message: "agent execution failed", failureDiagnostic: error.failureDiagnostic });
+          return;
+        }
         execution.settle("agent_error", "agent execution failed", false);
       });
   }

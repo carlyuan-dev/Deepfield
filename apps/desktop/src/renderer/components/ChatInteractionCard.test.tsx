@@ -11,6 +11,27 @@ const base: InteractionRecord = {
 };
 
 describe("ChatInteractionCard", () => {
+  it("keeps bound-form copy stable through edits and confirms only the latest revision, with full fallback without a form", async () => {
+    const approval: InteractionRecord = { ...base, payload: { kind: "approval", summary: "公司甲；产品模块",
+      confirmationText: "提交调研。请在右侧核对公司和调研条件，确认后提交后台调研。",
+      operation: { provider: "example", operationId: "submit", contractVersion: "1", draftRef: "draft" } } };
+    const respond = vi.fn(async () => ({ ...approval, status: "submitted" as const }));
+    const view = render(<ChatInteractionCard interaction={approval} respond={respond} />);
+    const text = view.container.textContent;
+    view.rerender(<ChatInteractionCard interaction={{ ...approval, status: "editing", revision: 3 }} respond={respond} />);
+    expect(view.container.textContent).toBe(text);
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    expect(respond).not.toHaveBeenCalled();
+    view.rerender(<ChatInteractionCard interaction={{ ...approval, revision: 4,
+      payload: { ...approval.payload, kind: "approval", summary: "公司甲；产品、财务模块",
+        operation: { provider: "example", operationId: "submit", contractVersion: "1", draftRef: "draft" } } }} respond={respond} />);
+    expect(view.container.textContent).toBe(text);
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(respond).toHaveBeenCalledWith({ interactionId: "i1", expectedRevision: 4, response: { kind: "decision", decision: "approve" } }));
+    view.rerender(<ChatInteractionCard interaction={{ ...approval, payload: { kind: "approval", summary: "删除公司甲及关联报告",
+      confirmationText: "删除", operation: { provider: "example", operationId: "delete", contractVersion: "1" } } }} respond={respond} />);
+    expect(screen.getByText("删除公司甲及关联报告")).toBeTruthy();
+  });
   it("preserves an authoritative continuation failure warning alongside the successful result link", () => {
     const warning = "添加完成。后续表单准备失败，请重新打开表单；不要重复执行已完成的操作。";
     const interaction: InteractionRecord = { ...base, status: "succeeded", resultSummary: warning,

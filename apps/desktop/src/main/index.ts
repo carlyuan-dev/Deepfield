@@ -41,6 +41,7 @@ import { listSearchProviderManifests } from "@deepfield/base/config";
 import { ConfigurationService } from "./configuration-service.js";
 import { CapabilityChatHost } from "./capabilities/chat-host.js";
 import { ChatInteractionHost } from "./chat/interaction-host.js";
+import { InteractionResponseClassifier } from "./chat/response-intent.js";
 import { registerChatInteractionIpc } from "./chat/interaction-ipc.js";
 import { registerCapabilityChatIpc } from "./capabilities/chat-ipc.js";
 import { availableChatTools } from "../worker/tools/tool-runtime.js";
@@ -141,6 +142,7 @@ void app.whenReady().then(async () => {
   });
   await profiles.initialize();
   const modelGateway = new PiModelGateway();
+  const interactionClassifier = new InteractionResponseClassifier(() => profiles.resolveActiveLlm(), modelGateway);
   const configuredLlm = new ConfiguredLlmService(
     () => profiles.resolveActiveLlm(),
     modelGateway,
@@ -170,6 +172,7 @@ void app.whenReady().then(async () => {
     interactions: interactionHost.coordinator,
     respondToInteraction: (conversationId, command, messageId) => interactionHost!.respond(conversationId, command, "user_message", messageId),
     respondToTask: (conversationId, command, messageId) => interactionHost!.respondToTask(conversationId, command, messageId),
+    classifyInteractionResponse: (pending, content, requestId) => interactionHost!.classifyResponse(pending, content, requestId, interactionClassifier),
     onUserMessage: conversationId => interactionHost!.revokeTask(conversationId),
     onTaskStopped: conversationId => interactionHost!.revokeTask(conversationId),
     taskScope: conversationId => interactionHost!.taskScope(conversationId),

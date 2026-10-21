@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { companyForms, createCompanyFormProvider } from "./form-bindings.js";
 import { ResearchDrafts, type ProtocolStore } from "./drafts.js";
 import type { CompanyResearchService } from "../application/company-research-service.js";
+import { createBusinessActions } from "./business-actions.js";
+import type { CompanyResearchOperationServices } from "../main.js";
 
-export function formFixture() {
+export function formFixture(describeInput?: Parameters<typeof createCompanyFormProvider>[1]) {
   const rows = new Map<string, string>();
   const store = { getDraft: (id: string) => rows.get(id), saveDraft: (id: string, value: string) => rows.set(id, value), deleteDraft: (id: string) => rows.delete(id) } as unknown as ProtocolStore;
   const drafts = new ResearchDrafts(store, { validateBatchEntry: vi.fn() } as unknown as CompanyResearchService);
-  return { rows, drafts, provider: createCompanyFormProvider(drafts) };
+  return { rows, drafts, provider: createCompanyFormProvider(drafts, describeInput) };
 }
 const parameters = { itemId: "topic", companyId: "company", moduleIds: ["products_and_positioning" as const, "technology_and_metrics" as const, "development_and_readiness" as const, "competitive_position" as const], asOfDate: "2026-09-01" };
 describe("company forms", () => {
@@ -48,6 +50,35 @@ describe("company forms", () => {
     snapshot = await provider.update(snapshot.draft, { entries: [{ companyId: "a", input: { moduleIds: parameters.moduleIds, asOfDate: parameters.asOfDate, focusScope: "用户最新条件" } }] });
     snapshot = await provider.transition(snapshot.draft, "confirm");
     expect((await provider.submission(snapshot.draft)).input).toMatchObject({ entries: [{ input: { focusScope: "用户最新条件" } }] });
+  });
+  it("keeps incomplete batch edits readable with real business summaries until all companies have modules", async () => {
+    const companies = [{ id: "a", name: "公司甲" }, { id: "b", name: "公司乙" }];
+    const business = createBusinessActions({ industryResearch: {
+      getItem: () => ({ industry: "机器人" }), listCompanies: () => companies,
+    } } as unknown as CompanyResearchOperationServices);
+    const { provider } = formFixture((id, input) => {
+      const result = business.present(id, input);
+      return `${result.title}\n${result.fields.map(field => `${field.label}：${field.value}`).join("\n")}`;
+    });
+    const initial = { companyId: "a", input: { moduleIds: parameters.moduleIds, asOfDate: parameters.asOfDate } };
+    let snapshot = await provider.prepare("research-batch", "research.submitBatch", { itemId: "topic", entries: [initial] });
+    expect(snapshot.summary).toContain("公司甲");
+    const confirmationText = snapshot.confirmationText;
+    expect(confirmationText).toContain("确认后提交后台调研");
+    snapshot = await provider.update(snapshot.draft, { entries: [initial, { companyId: "b", input: { moduleIds: [], asOfDate: parameters.asOfDate } }] });
+    expect((await provider.read(snapshot.draft)).summary).toContain("待补全");
+    expect(snapshot.readyToSubmit).toBe(false);
+    snapshot = await provider.transition(snapshot.draft, "common");
+    snapshot = await provider.update(snapshot.draft, { common: { moduleIds: ["products_and_positioning"], asOfDate: parameters.asOfDate } });
+    expect((await provider.read(snapshot.draft)).readyToSubmit).toBe(false);
+    snapshot = await provider.update(snapshot.draft, { entries: [initial, { companyId: "b", input: { moduleIds: ["products_and_positioning"], asOfDate: parameters.asOfDate } }] });
+    snapshot = await provider.transition(snapshot.draft, "confirm");
+    expect(snapshot).toMatchObject({ readyToSubmit: true });
+    expect(snapshot.summary).toContain("公司乙");
+    expect(snapshot.confirmationText).toBe(confirmationText);
+    expect((await provider.submission(snapshot.draft)).input).toMatchObject({ entries: [{ companyId: "a" }, { companyId: "b" }] });
+    companies.pop();
+    await expect(provider.read(snapshot.draft)).rejects.toMatchObject({ code: "not_found" });
   });
   it("keeps research parameters only in ResearchDrafts and updates that draft", async () => {
     const f = formFixture(); const prepared = f.drafts.prepare(parameters);

@@ -108,6 +108,7 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
             if (requestedRevision !== revision) continue;
             const previousActive = current.state.active?.run;
             const finished = previousActive && snapshot.runs.some((run) => run.id === previousActive.id);
+            if (pinnedRunId === previousActive?.id && !finished && snapshot.active?.run.id !== pinnedRunId) pinnedRunId = undefined;
             const selectedRunId = pinnedRunId ?? snapshot.active?.run.id
               ?? (finished ? previousActive.id : snapshot.runs.find((run) => run.id === current.selectedRunId)?.id)
               ?? snapshot.runs[0]?.id;
@@ -308,13 +309,19 @@ export function useCompanyResearch(api: DesktopApi, itemId: string, companyId: s
         void refresh();
       },
       selectRun(id) {
-        if (current.state.active || !current.state.runs.some((run) => run.id === id)) return;
+        if (current.state.active?.run.id !== id && !current.state.runs.some((run) => run.id === id)) return;
         pinnedRunId = id;
+        pinnedRevision = undefined;
+        ++detailTicket;
         publish({
           selectedRunId: id, selectedRun: undefined, streamedRaw: undefined,
           error: current.error?.kind === "detail-load" || current.error?.kind === "execution" ? undefined : current.error,
         });
-        void loadDetail(id);
+        if (current.state.active?.run.id === id && current.state.active.run.status === "researching") {
+          publish({ detailLoading: false });
+        } else {
+          void loadDetail(id);
+        }
       },
     };
     void refresh();

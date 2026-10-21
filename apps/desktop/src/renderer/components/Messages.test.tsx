@@ -22,6 +22,44 @@ function message(
 }
 
 describe("Chat message rendering", () => {
+  it("keeps answered questions compact and reopens only the pending editor after it is closed", async () => {
+    const question: InteractionRecord = { id: "question", conversationId: "c", requestId: "r", toolCallId: "q", revision: 2,
+      status: "answered", answer: "产品与技术", createdAt: "today", updatedAt: "today",
+      payload: { kind: "question", question: "选择方向", options: [{ id: "tech", label: "产品与技术" }] } };
+    const approval: InteractionRecord = { ...question, id: "approval", toolCallId: "a", status: "waiting",
+      payload: { kind: "approval", summary: "启动调研", operation: { provider: "capability", operationId: "opaque", contractVersion: "1", draftRef: "draft" } } };
+    const openEditor = vi.fn(async () => {});
+    const props = { messages: [{ ...message("assistant", ""), requestId: "r" }],
+      interactionCards: { interactions: [question, approval], respond: vi.fn(), openEditor, activeEditorInteractionId: "approval" } };
+    const { container, rerender } = render(<Messages {...props} />);
+    expect(container.querySelectorAll(".chat-interaction-card")).toHaveLength(2);
+    expect(screen.getByLabelText("问题记录").classList.contains("compact")).toBe(true);
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByRole("button", { name: "查看或编辑表单" })).toBeNull();
+    rerender(<Messages {...props} interactionCards={{ ...props.interactionCards, activeEditorInteractionId: undefined }} />);
+    fireEvent.click(screen.getByRole("button", { name: "查看或编辑表单" }));
+    await waitFor(() => expect(openEditor).toHaveBeenCalledWith(approval));
+    rerender(<Messages {...props} interactionCards={{ ...props.interactionCards,
+      interactions: [question, { ...approval, status: "submitted", resultSummary: "已加入队列" }] }} />);
+    expect(screen.getByText("已提交 ·")).toBeTruthy();
+    expect(screen.getByText("已加入队列")).toBeTruthy();
+    expect(screen.queryByText("已完成 ·")).toBeNull();
+    expect(screen.queryByRole("button", { name: "确认执行" })).toBeNull();
+  });
+  it("preserves a different pending operation in the same request", () => {
+    const approval: InteractionRecord = { id: "approval", conversationId: "c", requestId: "r", toolCallId: "a", revision: 1,
+      status: "waiting", createdAt: "today", updatedAt: "today", payload: { kind: "approval", summary: "当前操作",
+        operation: { provider: "capability", operationId: "opaque", contractVersion: "1" } } };
+    render(<Messages messages={[{ ...message("assistant", ""), requestId: "r" }]}
+      interactionCards={{ interactions: [approval], respond: vi.fn() }}
+      capabilityCards={{ tasks: [], confirmations: [], operations: [
+        { conversationId: "c", sourceRequestId: "r", invocationId: "same", interactionId: approval.id, status: "awaiting_confirmation", title: "重复记录" },
+        { conversationId: "c", sourceRequestId: "r", invocationId: "other", status: "awaiting_confirmation", title: "另一操作" },
+      ], approve: vi.fn(), dismiss: vi.fn(), open: vi.fn() }} />);
+    expect(screen.getByText("当前操作")).toBeTruthy();
+    expect(screen.getByText("另一操作")).toBeTruthy();
+    expect(screen.queryByText("重复记录")).toBeNull();
+  });
   it("uses trusted task associations when two packages share the same local task ID", () => {
     const interactions: InteractionRecord[] = ["a", "b"].map(id => ({ id, conversationId: "c", requestId: "r", toolCallId: id, revision: 3, status: "submitted", taskId: "local-task", createdAt: "today", updatedAt: "today", payload: { kind: "approval", summary: `Start ${id}`, operation: { provider: "capability", operationId: "opaque", contractVersion: "1" } } }));
     const tasks = ["a", "b"].map(id => ({ conversationId: "c", sourceRequestId: "r", interactionId: id, analyzeAfter: false, analysisState: "none" as const,

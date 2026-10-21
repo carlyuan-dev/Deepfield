@@ -39,6 +39,7 @@ export interface ChatServiceOptions {
   interactions?: ChatInteractionCoordinator;
   respondToInteraction?: (conversationId: string, command: import("@deepfield/contracts").RespondCommand, userMessageId?: string) => Promise<import("@deepfield/contracts").InteractionRecord>;
   respondToTask?: (conversationId: string, command: import("@deepfield/contracts").RespondCommand, userMessageId: string) => Promise<import("@deepfield/contracts").InteractionRecord>;
+  classifyInteractionResponse?: (pending: import("@deepfield/contracts").InteractionRecord, content: string, requestId: string) => Promise<"approve" | "cancel" | "edit" | "unclear">;
   onUserMessage?: (conversationId: string) => void;
   onTaskStopped?: (conversationId: string) => void;
   taskScope?: (conversationId: string) => unknown;
@@ -97,8 +98,17 @@ export class ChatService {
     // Capture the one pending revision before any asynchronous configuration/model work.
     const pending = this.options.interactions?.active(conversationId);
     const taskDecision = classifyTaskDecision(content);
-    const decision = classifyExplicitDecision(content) ?? (taskDecision ? "approve" : null);
+    let decision = classifyExplicitDecision(content) ?? (taskDecision ? "approve" : null);
+    let decisionReason = decision ? "explicit" : "no_explicit_decision";
     if (decision === "cancel" || !(pending?.status === "waiting" && pending.payload.kind === "question")) this.options.onUserMessage?.(conversationId);
+    if (pending?.status === "waiting" && pending.payload.kind === "approval" && !decision && this.options.classifyInteractionResponse) {
+      const intent = await this.options.classifyInteractionResponse(pending, content, requestId);
+      if (intent === "approve" || intent === "cancel") decision = intent;
+      decisionReason = `classified_${intent}`;
+    }
+    if (pending?.payload.kind === "approval") console.info("[chat-interaction-response]", {
+      requestId, interactionId: pending.id, revision: pending.revision, decision: decision ?? "unclear", reason: decisionReason,
+    });
     if (pending && ((pending.status === "waiting" && (pending.payload.kind === "question" || decision !== null)) || (pending.status === "editing" && decision === "cancel"))) {
       const conversation = this.repositories.conversations.getById(conversationId as ConversationId);
       if (!conversation) throw new ChatServiceError("conversation not found");
@@ -244,8 +254,14 @@ export class ChatService {
       const options = { webSearch: conversation.webSearchEnabled === true };
       let llm; let search;
       try { llm = await this.profiles.resolveActiveLlm(); if (options.webSearch) search = await this.profiles.resolveActiveSearch(); } catch {
-        const requestId = `interaction-configuration:${event.id}`;
-        if (!this.repositories.messages.listByConversation(conversation.id).some(message => message.requestId === requestId)) this.repositories.messages.append(conversation.id, "assistant", "操作结果已保存。请检查模型和搜索配置，配置可用后将继续回复，不会重复执行操作。", requestId);
+        const requestId = `interaction-resume:${event.id}`;
+        const interactionId = event.interactionId;
+        this.repositories.runInTransaction(() => {
+          this.repositories.chatSessions.fail(conversation.id, requestId, "configuration_unavailable");
+          if (!this.repositories.messages.listByConversation(conversation.id).some(message => message.requestId === requestId)) this.repositories.messages.append(conversation.id, "assistant", this.resumeFailureMessage(interactionId, "configuration_unavailable"), requestId);
+          for (const item of pendingEvents) if (this.repositories.chatInteractions.claimEvent(item.id)) this.repositories.chatInteractions.consumeEvent(item.id);
+        });
+        this.options.onAutoEvent?.(conversationId, { requestId, type: "failed", code: "configuration_unavailable", message: FAILED_MESSAGE });
         return false;
       }
       if (this.disposed || this.options.interactions?.active(conversationId) || [...this.activeRequests.values()].some(item => item.conversationId === conversationId)) return false;
@@ -264,17 +280,30 @@ export class ChatService {
           context: this.withCapabilities(context, conversationId as ConversationId),
           options, llm, ...(search ? { search } : {}), toolAccess: { ...(options.webSearch ? WEB_CHAT_POLICY : OFFLINE_CHAT_POLICY), maxAgentTurns: 8 } };
         this.options.onRequestStarted?.(requestId, conversationId, prompt, this.restoredKeys(conversationId as ConversationId));
-        await this.consume(request, conversationId as ConversationId, value => this.options.onAutoEvent?.(conversationId, value));
+        let failure: Extract<AgentWorkerEvent, { type: "failed" }> | undefined;
+        await this.consume(request, conversationId as ConversationId, value => {
+          if (value.type === "failed") failure = value;
+          else this.options.onAutoEvent?.(conversationId, value);
+        });
         this.repositories.runInTransaction(() => {
           const turn = this.repositories.chatSessions.list(conversationId as ConversationId).find(turn => turn.requestId === requestId);
-          if (!turn?.awaitingUser && !this.repositories.messages.listByConversation(conversationId as ConversationId).some(message => message.role === "assistant" && message.requestId === requestId)) this.repositories.messages.append(conversationId as ConversationId, "assistant", "操作结果已保存，但后续回复中断。请查看确认卡片；不会自动重复执行。", requestId);
+          if (!turn?.awaitingUser && !this.repositories.messages.listByConversation(conversationId as ConversationId).some(message => message.role === "assistant" && message.requestId === requestId)) this.repositories.messages.append(conversationId as ConversationId, "assistant", this.resumeFailureMessage(event.interactionId, turn?.failureCode, turn?.failureDiagnostic?.category), requestId);
           for (const item of [...batched, event]) this.repositories.chatInteractions.consumeEvent(item.id);
         });
+        if (failure) this.options.onAutoEvent?.(conversationId, failure);
       } finally {
         // Never duplicate a model turn or replay execution after an interrupted resume.
         this.activeRequests.delete(requestId);
       }
     }
+  }
+  private resumeFailureMessage(interactionId: string, code?: string, category?: string): string {
+    const interaction = this.repositories.chatInteractions.get(interactionId);
+    const saved = interaction?.status === "answered" ? "你的回答已保存。" : "交互状态和已有回执已保留，请以卡片中的实际状态为准。";
+    const reason = code === "configuration_unavailable" ? "后续回复未启动，请检查模型和搜索配置。"
+      : code === "network_failed" || category === "network" ? "后续回复因网络连接失败而中断。"
+        : code === "timeout" || category === "timeout" ? "后续回复因请求超时而中断。" : "后续回复被中断。";
+    return `${saved}${reason}可点击“继续”核对已有结果后接着处理；已完成或已取消的操作不会自动重放。`;
   }
   recoverInteractionResumes(): void {
     for (const event of this.repositories.chatInteractions.claimedEvents()) {
@@ -282,7 +311,8 @@ export class ChatService {
       if (conversation) this.repositories.runInTransaction(() => {
         const requestId = `interaction-resume:${event.id}`;
         if (!this.repositories.messages.listByConversation(conversation.id).some(message => message.requestId === requestId && message.role === "assistant")) {
-          this.repositories.messages.append(conversation.id, "assistant", "上次操作后的回复被中断。操作状态已保留，请查看确认卡片；不会自动重复执行。", requestId);
+          this.repositories.chatSessions.fail(conversation.id, requestId, "resume_interrupted");
+          this.repositories.messages.append(conversation.id, "assistant", this.resumeFailureMessage(event.interactionId, "resume_interrupted"), requestId);
         }
         this.repositories.chatInteractions.consumeEvent(event.id);
       });
@@ -409,12 +439,17 @@ export class ChatService {
       if (message.role !== "user" || turn === undefined || turn.completed || turn.awaitingUser || (!turn.failed && turn.activities.length === 0) || messages.some(item => item.role === "assistant" && item.requestId === turn.requestId)) return [message];
       return [message, { id: `interrupted-${turn.requestId}` as MessageId, conversationId: conversation.id, requestId: turn.requestId, role: "assistant", content: "", status: "failed", createdAt: message.createdAt }];
     });
-    return displayed.map((message) => {
+    const canContinue = !this.options.interactions?.active(conversationId)
+      && ![...this.activeRequests.values()].some(request => request.conversationId === conversationId);
+    return displayed.map((message, index) => {
       if (message.role !== "assistant" || message.requestId === undefined) return message;
       const associated = byRequest.get(message.requestId) ?? [];
       const projected = (sessions.get(message.requestId)?.activities ?? []).map(activity => message.status === "failed" && activity.status === "running" ? { ...activity, status: "failed" as const } : activity);
       return {
         ...message,
+        ...(sessions.get(message.requestId)?.failed ? { status: "failed" as const } : {}),
+        ...(canContinue && index === displayed.length - 1 && message.requestId.startsWith("interaction-resume:")
+          && sessions.get(message.requestId)?.failed ? { recovery: { kind: "continue" as const } } : {}),
         toolExecutions: [...projected, ...associated.filter(tool => !projected.some(activity =>
           activity.callKey === tool.id || (activity.toolCallId !== undefined && activity.toolCallId === tool.toolCallId),
         )).map((tool) => {
@@ -460,7 +495,7 @@ export class ChatService {
       }
       settled = true;
       this.options.onTaskStopped?.(conversationId);
-      try { this.repositories.chatSessions.fail(conversationId, request.requestId); } catch { /* Preserve the original failure. */ }
+      try { this.repositories.chatSessions.fail(conversationId, request.requestId, code); } catch { /* Preserve the original failure. */ }
       safeEmit({ requestId: request.requestId, type: "failed", code, message: FAILED_MESSAGE });
     };
 
@@ -549,7 +584,7 @@ export class ChatService {
         }
         if (event.type === "failed") {
           this.options.onTaskStopped?.(conversationId);
-          this.repositories.chatSessions.fail(conversationId, request.requestId);
+          this.repositories.chatSessions.fail(conversationId, request.requestId, event.code, event.failureDiagnostic);
           safeEmit(event);
           settled = true;
           return;

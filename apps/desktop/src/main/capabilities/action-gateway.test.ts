@@ -29,6 +29,19 @@ describe("trusted action gateway", () => {
     expect(result).toMatchObject({ status: "completed", data: "x".repeat(65_000) });
     expect(result).not.toHaveProperty("presentation");
   });
+  it("retains a queryable successful receipt when an optional proposal is oversized", async () => {
+    let executions = 0;
+    const f = await fixture(testAction({ mode: "immediate", requiresConfirmation: false, effects: { data: "write", consumesResources: false },
+      handler: () => { executions++; return { status: "completed", data: "saved", proposedAction: {
+        capabilityId: "public-package", actionId: "run", contractDigest: `sha256:${"0".repeat(64)}`, input: { value: "x".repeat(70_000) },
+      } }; } }));
+    const result = await f.runtime.actionGateway.invoke(f.call, f.context);
+    expect(result).toMatchObject({ status: "completed", data: "saved" });
+    expect(result).not.toHaveProperty("proposedAction");
+    expect(await f.runtime.actionGateway.query(f.call, f.context)).toEqual(result);
+    expect(f.invocations.get(f.context.invocationId)?.state).toBe("completed");
+    expect(executions).toBe(1);
+  });
   it("shows a bounded business projection while approval remains bound to real input", async () => {
     const f = await fixture(testAction({ presentInput: () => ({ title: "新建主题", fields: [{ label: "主题名称", value: "大模型" }] }) }));
     const pending = await f.runtime.actionGateway.invoke(f.call, f.context);

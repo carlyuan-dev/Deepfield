@@ -32,7 +32,7 @@ export class ChatInteractionCoordinator {
     if (payload.kind === "approval") {
       const snapshot = await this.adapter(payload.operation).read(payload.operation);
       contentVersion = snapshot.version;
-      storedPayload = { ...payload, summary: snapshot.summary };
+      storedPayload = { ...payload, summary: snapshot.summary, ...(snapshot.confirmationText ? { confirmationText: snapshot.confirmationText } : {}) };
     }
     assertCurrent?.();
     try { return this.changed(this.repository.create(owner, storedPayload, contentVersion)); }
@@ -154,7 +154,8 @@ export class ChatInteractionCoordinator {
       }
       try {
         const snapshot = await adapter.read(item.payload.operation);
-        if (snapshot.version === item.contentVersion && snapshot.summary === item.payload.summary) {
+        if (snapshot.version === item.contentVersion && snapshot.summary === item.payload.summary
+          && snapshot.confirmationText === item.payload.confirmationText) {
           recovered.push(item); continue;
         }
         const editing = this.repository.beginEdit(item.id, item.revision);

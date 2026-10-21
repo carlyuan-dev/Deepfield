@@ -109,8 +109,9 @@ export class CapabilityChatHost {
       const receipt = this.repositories.capabilityInvocations.get(item.invocationId);
       const result = receipt?.result as { status?: string; data?: { draftRef?: unknown } } | undefined;
       const draft = result?.status === "completed" ? result.data?.draftRef : undefined;
-      const preparedInteraction = binding && Value.Check(DraftRefSchema, draft) && receipt?.capabilityId === draft.capabilityId
-        ? this.interactions?.interactionForSourceDraft(conversationId, draft) : undefined;
+      const preparedInteraction = this.interactions?.interactionForPreparation(conversationId, item.invocationId)?.id
+        ?? (binding && Value.Check(DraftRefSchema, draft) && receipt?.capabilityId === draft.capabilityId
+          ? this.interactions?.interactionForSourceDraft(conversationId, draft) : undefined);
       const interactionId = interaction?.id ?? preparedInteraction;
       return { ...item, ...(interactionId ? { interactionId,
         interactionRole: interaction ? "execution" as const : "preparation" as const } : {}) };
@@ -287,7 +288,10 @@ export class CapabilityChatHost {
           const reconciled = await runtime.actionGateway.query(call, issued.context);
           if (reconciled.status === "accepted") this.linkAccepted(session.conversationId, chatRequestId,
             reconciled.taskRef, reconciled.taskStatus, session.prompt, undefined, reconciled.presentation);
-          if (reconciled.status === "completed") this.saveCompletedViews(session.conversationId, chatRequestId, reconciled);
+          if (reconciled.status === "completed") {
+            this.saveCompletedViews(session.conversationId, chatRequestId, reconciled);
+            return this.prepareCompletedProposal(session.conversationId, chatRequestId, toolCallId, reconciled);
+          }
           return reconciled;
         }
         issued = { call, context: runtime.actionGateway.issue(call, context) };
@@ -332,6 +336,10 @@ export class CapabilityChatHost {
           this.saveCompletedViews(session.conversationId, chatRequestId, result);
           if (result.presentation) this.repositories.chatCapabilities.saveOperation({ conversationId: session.conversationId,
             sourceRequestId: chatRequestId, invocationId: issued.context.invocationId, status: "completed", title: "", presentation: result.presentation });
+          if (result.proposedAction && this.interactions) {
+            try { return await this.prepareCompletedProposal(session.conversationId, chatRequestId, toolCallId, result); }
+            finally { this.operationGeneration.delete(issued.context.invocationId); }
+          }
           this.tryAutoOpen(session.conversationId, issued.context.invocationId, "result", result.presentation);
         } else if (result.status === "error" && result.presentation) this.repositories.chatCapabilities.saveOperation({ conversationId: session.conversationId,
           sourceRequestId: chatRequestId, invocationId: issued.context.invocationId, status: "failed", title: "", presentation: result.presentation });
@@ -363,6 +371,25 @@ export class CapabilityChatHost {
       }
       throw { code: "INPUT.INVALID" };
     } catch (error) { return { status: "error", error: safeGatewayError(error) }; }
+  }
+
+  private async prepareCompletedProposal(conversationId: string, requestId: string, toolCallId: string,
+    result: Extract<Awaited<ReturnType<CapabilityRuntime["actionGateway"]["invoke"]>>, { status: "completed" }>): Promise<unknown> {
+    if (!result.proposedAction || !this.interactions) return result;
+    // A successful receipt survives follow-up validation/navigation failure. Queries
+    // reconstruct its one pending operation, never replay preparation or execution.
+    try {
+      const item = await this.interactions.prepareProposedAction({ conversationId, requestId, toolCallId },
+        result.capabilityId, result.proposedAction, result.invocationId);
+      if (item.status === "waiting" || item.status === "editing") {
+        // The interaction notification lets renderer read, open and bind the editor
+        // as one operation. Opening here would consume its navigation generation.
+        return { status: "awaiting_user", interactionId: item.id, revision: item.revision, preparationReceipt: result };
+      }
+      return { ...result, interactionId: item.id, interactionStatus: item.status };
+    } catch (error) {
+      return { ...result, proposalIssue: { code: "proposal_unavailable", message: "准备已完成，待确认操作未能打开。请核对已有结果后继续。", cause: safeGatewayError(error).code } };
+    }
   }
 
   interactionOutcome(owner: import("@deepfield/contracts").InteractionOwner, invocationId: string, outcome: unknown, generation?: number): void {

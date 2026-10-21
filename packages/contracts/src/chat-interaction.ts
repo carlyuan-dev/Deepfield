@@ -22,7 +22,7 @@ export interface OperationRef {
 
 export type InteractionPayload =
   | { kind: "question"; question: string; options?: { id: string; label: string }[]; allowFreeText?: boolean }
-  | { kind: "approval"; summary: string; operation: OperationRef };
+  | { kind: "approval"; summary: string; confirmationText?: string; operation: OperationRef };
 
 export type InteractionStatus = "waiting" | "editing" | "executing" | "answered" |
   "cancelled" | "invalidated" | "submitted" | "succeeded" | "failed" | "uncertain";
@@ -63,7 +63,7 @@ export interface InteractionResumeEvent {
   state: "pending" | "claimed" | "consumed";
 }
 
-export interface OperationSnapshot { version: string; summary: string }
+export interface OperationSnapshot { version: string; summary: string; confirmationText?: string }
 export type OperationResult =
   | { status: "succeeded"; summary: string }
   | { status: "submitted"; summary: string; taskId: string }
@@ -96,7 +96,7 @@ export const InteractionRecordSchema = Type.Object({
   answer: Type.Optional(Type.String()), resultSummary: Type.Optional(Type.String()), taskId: Type.Optional(Type.String()), failureReason: Type.Optional(Type.String()),
   payload: Type.Union([
     Type.Object({ kind: Type.Literal("question"), question: Type.String(), options: Type.Optional(Type.Array(Type.Object({ id: Type.String(), label: Type.String() }))), allowFreeText: Type.Optional(Type.Boolean()) }),
-    Type.Object({ kind: Type.Literal("approval"), summary: Type.String(), operation: Type.Object({ provider: interactionId, operationId: interactionId, contractVersion: interactionId, draftRef: Type.Optional(Type.String()) }) }),
+    Type.Object({ kind: Type.Literal("approval"), summary: Type.String(), confirmationText: Type.Optional(Type.String()), operation: Type.Object({ provider: interactionId, operationId: interactionId, contractVersion: interactionId, draftRef: Type.Optional(Type.String()) }) }),
   ]),
 });
 export const InteractionEditorStateSchema = Type.Object({ interaction: InteractionRecordSchema, formId: interactionId, actionId: interactionId,

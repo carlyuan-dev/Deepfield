@@ -152,7 +152,7 @@ export class ActionGateway {
       if (!this.receipts!.claim(context.invocationId, this.now())) throw new GatewayError("reconciliation_required");
       // Identity fields are selected explicitly. Neither call.input nor arbitrary context extras are forwarded.
       const outcome = await action.handler(input, { invocationId: context.invocationId, source: context.source, ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }) });
-      const { presentation: optionalPresentation, ...coreOutcome } = outcome;
+      const { presentation: optionalPresentation, proposedAction: optionalProposal, ...coreOutcome } = outcome as typeof outcome & { proposedAction?: unknown };
       if (!Value.Check(ActionOutcomeSchema(action.outputSchema), coreOutcome)) throw new AppError("INTERNAL.UNKNOWN");
       const presentation = safeOperationPresentation(optionalPresentation, call.capabilityId);
       // Confirmation references belong to this host, never to package handlers.
@@ -166,7 +166,17 @@ export class ActionGateway {
         return presentation ? { ...error, presentation } : error;
       }
       const resultPresentation = presentation ?? (outcome.status === "accepted" ? preview : undefined);
-      const result = boundedWithPresentation({ ...coreOutcome, ...metadata }, resultPresentation);
+      let coreResult = bounded({ ...coreOutcome, ...metadata });
+      if (optionalProposal !== undefined) {
+        try {
+          if (outcome.status !== "completed" || !Value.Check(ActionCallSchema, optionalProposal)
+            || optionalProposal.capabilityId !== call.capabilityId) throw new Error("Invalid proposal");
+          coreResult = bounded({ ...coreResult, proposedAction: normalizeInput(optionalProposal) }) as typeof coreResult;
+        } catch {
+          console.warn("[capability-proposal] ignored invalid optional proposal", { capabilityId: call.capabilityId, actionId: call.actionId, invocationId: context.invocationId });
+        }
+      }
+      const result = boundedWithPresentation(coreResult, resultPresentation);
       this.receipts!.complete(context.invocationId, result, outcome.status === "accepted" ? outcome.taskRef.taskId : undefined, this.now());
       if (outcome.status === "accepted" && ["succeeded", "failed", "cancelled", "interrupted"].includes(outcome.taskStatus)) this.receipts!.markTaskTerminal(call.capabilityId, outcome.taskRef.taskId, this.now());
       return result;

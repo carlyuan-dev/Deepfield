@@ -13,6 +13,8 @@ export interface MessagesProps {
   emptyLabel?: string;
   messagesRef?: RefObject<HTMLDivElement | null>;
   onScroll?(element: HTMLDivElement): void;
+  onContinue?(): void;
+  continuing?: boolean;
   interactionCards?: {
     interactions: InteractionRecord[];
     respond(interaction: InteractionRecord, command: RespondCommand): Promise<InteractionRecord>;
@@ -33,6 +35,8 @@ export function Messages({
   onScroll,
   capabilityCards,
   interactionCards,
+  onContinue,
+  continuing,
 }: MessagesProps) {
   const owner = new Map<string, number>();
   messages.forEach((message, index) => {
@@ -53,9 +57,10 @@ export function Messages({
       {...(interactionCards?.openEditor && interactionCards.activeEditorInteractionId !== item.id ? { openEditor: () => interactionCards.openEditor!(item) } : {})} />)}
     {capabilityCards && <CapabilityChatCards
     tasks={capabilityCards.tasks.filter(item => item.sourceRequestId === requestId && !interactionsFor(requestId).some(interaction => taskFor(interaction) === item))}
-    confirmations={interactionsFor(requestId).some(item => item.payload.kind === "approval") ? [] : capabilityCards.confirmations.filter(item => item.sourceRequestId === requestId)}
-    operations={independentOperations.filter(item => item.sourceRequestId === requestId
-      && (item.status !== "awaiting_confirmation" || !interactionsFor(requestId).some(interaction => interaction.payload.kind === "approval")))}
+    confirmations={capabilityCards.confirmations.filter(item => item.sourceRequestId === requestId
+      && !capabilityCards.operations.some(operation => operation.invocationId === item.invocationId
+        && interactionCards?.interactions.some(interaction => interaction.id === operation.interactionId)))}
+    operations={independentOperations.filter(item => item.sourceRequestId === requestId)}
     approve={capabilityCards.approve} dismiss={capabilityCards.dismiss} open={capabilityCards.open} />}
   </>;
   const hasCards = (requestId: string) => Boolean(interactionsFor(requestId).length || (capabilityCards && (
@@ -119,6 +124,9 @@ export function Messages({
             <p className="message-error" role="alert">
               回复失败，请重试
             </p>
+          )}
+          {message.role === "assistant" && message.recovery?.kind === "continue" && onContinue && (
+            <button type="button" className="capability-card-link" disabled={continuing} onClick={onContinue}>继续</button>
           )}
           {message.role === "assistant" && message.requestId && owner.get(message.requestId) === index && cardsFor(message.requestId)}
         </div>

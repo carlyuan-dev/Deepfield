@@ -62,7 +62,7 @@ export const HistoricalStructuredResearchContentSchema = Type.Object({
 }, { additionalProperties: false });
 export const ModuleStructuredResearchContentSchema = Type.Object({
   ...HistoricalStructuredResearchContentSchema.properties,
-  sections: Type.Array(HistoricalStructuredResearchContentSchema.properties.sections.items, { minItems: 1, maxItems: 4 }),
+  sections: Type.Array(HistoricalStructuredResearchContentSchema.properties.sections.items, { minItems: 1, maxItems: 5 }),
 }, { additionalProperties: false });
 export const StructuredResearchContentSchema = Type.Union([HistoricalStructuredResearchContentSchema, ModuleStructuredResearchContentSchema]);
 export type StructuredResearchContent = Static<typeof StructuredResearchContentSchema>;

@@ -3,6 +3,10 @@ import { PiModelGateway, ModelGatewayError } from "./model-gateway.js";
 import { defaultPiRuntime, createPiChatAgent } from "../worker/agent/pi-chat-agent.js";
 import { capture, request, FakePiAgent, makeRuntime, stubModel } from "../worker/agent/pi-chat-agent-test-helpers.js";
 import { createLlmUsageTransport } from "./usage-collection.js";
+import { createWorkerMessageLoop } from "../worker/message-loop.js";
+import { InMemoryEndpoint } from "../worker/message-loop-test-helpers.js";
+import { Value } from "typebox/value";
+import { AgentWorkerEventSchema } from "@deepfield/contracts";
 
 const snapshot = { id: "fixture", name: "fixture", provider: "custom" as const, protocol: "openai_compatible" as const, baseUrl: "https://fixture.invalid/v1", modelId: "fixture", contextWindow: 32000, apiKey: "fixture-key" };
 const context = { messages: [{ role: "user" as const, content: "fixture", timestamp: 1 }] };
@@ -86,6 +90,9 @@ it.each([true, false])("classifies actual Pi Agent body failure precisely: %s", 
   const input = request(); input.llm = snapshot;
   const result = await capture(createPiChatAgent(), undefined, input);
   expect(result.error).toMatchObject({ code: bodyFailure ? "stream_failed" : "provider_failed" });
+  if (bodyFailure) expect(result.error).toMatchObject({ failureDiagnostic: { stage: "response_body", category: "network", causeCode: "ECONNRESET", operationId: expect.any(String), attemptId: expect.any(String) } });
+  else expect(result.error).not.toHaveProperty("failureDiagnostic", expect.anything());
+  expect(JSON.stringify(result.error)).not.toContain("secret");
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
@@ -96,4 +103,41 @@ it("does not relabel an arbitrary prompt rejection using a previous model failur
   runtime.createSession = () => ({ ...session, getModelFailure: () => new ModelGatewayError("network", true, undefined, "response_body") });
   const result = await capture(createPiChatAgent(runtime));
   expect(result.error).toMatchObject({ code: "provider_failed" });
+});
+
+it.each([
+  ["ECONNREFUSED", "network"],
+  ["ENOTFOUND", "network"],
+  ["UND_ERR_CONNECT_TIMEOUT", "timeout"],
+  ["secret-code", "unknown"],
+])("delivers a correlated sanitized request failure through the real Chat worker for %s", async (code, category) => {
+  const fetch = vi.fn(async () => { throw new TypeError("secret-url/key/prompt", { cause: { code, message: "secret-body" } }); });
+  vi.stubGlobal("fetch", fetch);
+  const endpoint = new InMemoryEndpoint();
+  const loop = createWorkerMessageLoop(endpoint, createPiChatAgent());
+  const input = request(); input.llm = snapshot;
+  endpoint.emit(input);
+  await vi.waitFor(() => expect(endpoint.posted.some((event: any) => event.type === "failed")).toBe(true));
+  const failure = endpoint.posted.find((event: any) => event.type === "failed") as any;
+  expect(Value.Check(AgentWorkerEventSchema, failure)).toBe(true);
+  expect(failure).toMatchObject({ code: "provider_failed", failureDiagnostic: {
+    stage: "request", category, name: "TypeError", operationId: expect.any(String), attemptId: expect.any(String),
+    ...(code === "secret-code" ? {} : { causeCode: code }),
+  } });
+  expect(JSON.stringify(failure)).not.toContain("secret");
+  expect(JSON.stringify(failure)).not.toContain(snapshot.apiKey);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  loop.dispose();
+});
+
+it("does not publish request failure diagnostics for caller cancellation", async () => {
+  const controller = new AbortController();
+  const failures: ModelGatewayError[] = [];
+  const fetch = vi.fn(async () => { controller.abort(); throw new DOMException("secret", "AbortError"); });
+  const gateway = new PiModelGateway();
+  const stream = gateway.createStream(snapshot, undefined, error => failures.push(error))(
+    gateway.createModel(snapshot), context, { apiKey: snapshot.apiKey, signal: controller.signal, fetch });
+  await stream.result();
+  expect(failures).toEqual([]);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

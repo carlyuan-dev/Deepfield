@@ -123,7 +123,10 @@ export function createPiAgentRun(
         throw new PiAgentError(signal.aborted ? "stream_failed" : "provider_failed", "agent execution failed");
       }
       if (signal.aborted) throw new PiAgentError("stream_failed", "agent execution aborted");
-      if (failed) throw new PiAgentError(limits.getModelFailure?.()?.stage === "response_body" ? "stream_failed" : "provider_failed", "agent execution failed");
+      if (failed) {
+        const failure = limits.getModelFailure?.();
+        throw new PiAgentError(failure?.stage === "response_body" ? "stream_failed" : "provider_failed", "agent execution failed", failure?.transport);
+      }
       if (!started || !ended) throw new PiAgentError("incomplete_lifecycle", "agent finished without a complete start/end sequence");
       if (limits.handoff?.isRequested()) return { status: "handed_off" };
       const last = [...messages].reverse().find(message => message.role === "assistant");

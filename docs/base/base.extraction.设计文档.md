@@ -2,7 +2,7 @@
 
 版本：0.9 · 日期：2026-10-20
 
-状态：八批实现已齐，安全契约与 runtime 分入口、实际消费者接线、模块迁移账本及公司仓储归属已收口，必要自动检查与代码复核通过。当前 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路及 Usage 已验证；隔离打包界面与重启读回已通过，新公司包完整真实调研与用户体验仍待验收。Errors、Config 已完成其此前声明范围的用户验收；本文件维护长期边界与当前真实状态。
+状态：八批实现已齐，安全契约与 runtime 分入口、实际消费者接线、模块迁移账本及公司仓储归属已收口；0.1.2 本批用户体验验收已完成，最终类型检查、全套 Vitest 与差异检查通过。既有真实链路、Usage、隔离打包界面与重启读回证据保留原范围；本文件维护长期边界，版本范围与限制见 [0.1.2 发布记录](../releases/2026-10-21-v0.1.2.md)。
 
 当前 Errors 实现在 `packages/base/src/errors/`，旧接口在 `packages/contracts/src/errors.ts` 保留薄兼容适配；其他模块的当前归属见下表。
 
@@ -156,4 +156,4 @@ Capability 自有数据结构由其仓储与迁移管理；Base.Database 的通�
 
 已实现模块的长期契约见 [Base.Errors 设计](base.errors.设计文档.md)、[Base.Config 设计](base.config.设计文档.md)、[Base.Model 设计](base.model.设计文档.md)、[Base.Search 设计](base.search.设计文档.md)、[Base.Tools 设计](base.tools.设计文档.md)、[Base.Agent 设计](base.agent.设计文档.md)、[Base.Database 设计](base.database.设计文档.md)和 [Base.Usage 设计](base.usage.设计文档.md)。此前 Model 阶段已完成本地协议回归、限定冻结旧包服务兼容、生产边界与打包验证，并在 DeepSeek `deepseek-flash`／Tavily 下验证配置诊断、Chat、资料更新和完整两阶段调研，证据与 Usage 对齐。该历史证据不代表公司包 3.0.0 的完整真实调研已验收；新宿主与未升级旧包不承诺兼容。
 
-八批实现已完成：公司仓储在包内构造，通过 database.v1 与 tools.audit.v1 使用同库服务，启动校验、迁移隔离与延后撤销已接入。当前实现已通过自动回归、生产依赖边界和代码复核，并验证 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路及 Usage 记录。公司包 3.0.0 的隔离打包界面与重启读回已通过；新公司包完整真实调研与集中用户体验仍待验收，其他真实 Provider／模型未由此次链路验证覆盖。
+八批实现已完成：公司仓储在包内构造，通过 database.v1 与 tools.audit.v1 使用同库服务，启动校验、迁移隔离与延后撤销已接入。既有自动回归、生产依赖边界和代码复核，以及 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路与 Usage 记录证据保留原范围。公司包 3.0.0 的隔离打包界面与重启读回已通过；当前公司包 4.0.0 随 0.1.2 完成本批用户体验验收，不将此视为所有完整真实调研及其他 Provider／模型的覆盖证明。

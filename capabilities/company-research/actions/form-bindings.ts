@@ -31,7 +31,7 @@ export function mergeFormPatch(value: any, patch: any): any {
   }
   return next;
 }
-export function createCompanyFormProvider(drafts: ResearchDrafts, describeDeletion?: (actionId: string, input: unknown) => string): CapabilityFormProvider & { retainRecognition(itemId: string, text: string, candidates: unknown[]): string | undefined } {
+export function createCompanyFormProvider(drafts: ResearchDrafts, describeInput?: (actionId: string, input: unknown) => string): CapabilityFormProvider & { retainRecognition(itemId: string, text: string, candidates: unknown[]): string | undefined } {
   const actions = createActionDefinitions();
   const activeImports = new Set<string>();
   const definition = (id: string) => { const found = actions.find(action => action.id === id); if (!found) throw protocolError("not_found"); return found; };
@@ -54,6 +54,18 @@ export function createCompanyFormProvider(drafts: ResearchDrafts, describeDeleti
     if (form.formId === "companies-import") return form.actionId === "companies.recognize" ? { itemId: values.itemId, text: (form.recognition?.chunks ?? chunkRecognitionText(values.text ?? ""))[form.recognition?.index ?? 0] ?? "" } : { itemId: values.itemId, companies: values.companies?.slice(0, 100) };
     return values;
   };
+  const summary = (form: StoredForm): string => {
+    if (["research.submit", "research.retryFailed", "research.submitBatch"].includes(form.actionId)
+      && !Value.Check(definition(form.actionId).inputSchema, input(form))) {
+      return "调研参数待补全，请检查研究模块和截止日期后确认。";
+    }
+    if (["topics.delete", "companies.remove", "reports.delete", "research.submit", "research.retryFailed", "research.submitBatch"].includes(form.actionId) && describeInput) {
+      return describeInput(form.actionId, input(form));
+    }
+    return [companyForms.find(entry => entry.id === form.formId)?.description, form.values.industry ?? form.values.changes?.industry,
+      form.values.notes ?? form.values.changes?.notes, form.values.companies ? `${form.values.companies.length} 家公司` : undefined,
+      form.values.entries ? `${form.values.entries.length} 条调研` : undefined].filter(Boolean).join(" · ");
+  };
   const snapshot = (form: StoredForm): CapabilityFormSnapshot => ({
     draft: form.ref, view: { capabilityId: CAPABILITY_ID, viewId: "form", input: { draftId: form.ref.draftId, revision: form.ref.revision } },
     ...(form.actionId === "research.submit" ? { sourceDraftRefs: [form.values.draftRef] } : {}),
@@ -63,9 +75,13 @@ export function createCompanyFormProvider(drafts: ResearchDrafts, describeDeleti
         const value = (form.values.parameters ?? form.values)[key]; return value ? [[key, value]] : [];
       })) },
     values: form.values, inputSchema: definition(form.actionId).inputSchema, step: form.step,
-    summary: ["topics.delete", "companies.remove", "reports.delete"].includes(form.actionId) && describeDeletion
-      ? describeDeletion(form.actionId, input(form))
-      : [companyForms.find(entry => entry.id === form.formId)?.description, form.values.industry ?? form.values.changes?.industry, form.values.notes ?? form.values.changes?.notes, form.values.companies ? `${form.values.companies.length} 家公司` : undefined, form.values.entries ? `${form.values.entries.length} 条调研` : undefined].filter(Boolean).join(" · "),
+    summary: summary(form),
+    ...(["topics.delete", "companies.remove", "reports.delete"].includes(form.actionId) ? {} : {
+      confirmationText: `${definition(form.actionId).title}。${["research.submit", "research.retryFailed", "research.submitBatch"].includes(form.actionId)
+        ? "请在右侧核对公司和调研条件，确认后提交后台调研。"
+        : form.actionId === "companies.recognize" ? "请在右侧核对待识别文本，确认后开始识别公司。"
+        : "请在右侧核对并补全表单，确认后执行。"}`,
+    }),
     transitions: form.formId === "research-batch" ? (form.step === "select" ? [{ id: "common", label: "下一步" }] : form.step === "common" ? [{ id: "select", label: "上一步" }, { id: "confirm", label: "下一步" }] : [{ id: "common", label: "上一步" }]) : [],
     readyToSubmit: (form.formId !== "research-batch" || form.step === "confirm") && (form.formId !== "report-export" || !!(form.values.selection?.raw || form.values.selection?.structured)) && Value.Check(definition(form.actionId).inputSchema, input(form)),
   });

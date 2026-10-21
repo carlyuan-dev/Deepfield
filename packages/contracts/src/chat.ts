@@ -111,6 +111,24 @@ const ToolActivityEventSchema = Type.Union([
   ),
 ]);
 
+const TransportFailureCodeSchema = Type.Union([
+  Type.Literal("ECONNRESET"), Type.Literal("ECONNREFUSED"), Type.Literal("EHOSTUNREACH"), Type.Literal("ENETUNREACH"),
+  Type.Literal("ETIMEDOUT"), Type.Literal("EAI_AGAIN"), Type.Literal("ENOTFOUND"), Type.Literal("EPIPE"),
+  Type.Literal("UND_ERR_SOCKET"), Type.Literal("UND_ERR_CONNECT_TIMEOUT"), Type.Literal("UND_ERR_HEADERS_TIMEOUT"), Type.Literal("UND_ERR_BODY_TIMEOUT"),
+]);
+export const ChatFailureDiagnosticSchema = Type.Object({
+  stage: Type.Union([Type.Literal("request"), Type.Literal("response_body")]),
+  category: Type.Union([Type.Literal("network"), Type.Literal("timeout"), Type.Literal("unknown")]),
+  name: Type.Optional(Type.Union([Type.Literal("Error"), Type.Literal("TypeError"), Type.Literal("AbortError"), Type.Literal("TimeoutError")])),
+  code: Type.Optional(TransportFailureCodeSchema),
+  causeCode: Type.Optional(TransportFailureCodeSchema),
+  operationId: Type.String(),
+  attemptId: Type.String(),
+  requestId: Type.Optional(Type.String()),
+  modelRequestId: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+export type ChatFailureDiagnostic = Static<typeof ChatFailureDiagnosticSchema>;
+
 export const AgentWorkerEventSchema = Type.Union([
   Type.Object({ requestId: Type.String(), type: Type.Literal("transcript_checkpoint"), messages: Type.Array(ChatTranscriptMessageSchema) }, { additionalProperties: false }),
   Type.Object(
@@ -145,6 +163,7 @@ export const AgentWorkerEventSchema = Type.Union([
       type: Type.Literal("failed"),
       code: Type.String(),
       message: Type.String(),
+      failureDiagnostic: Type.Optional(ChatFailureDiagnosticSchema),
     },
     { additionalProperties: false },
   ),
@@ -160,6 +179,7 @@ export interface ChatMessage {
   requestId?: string;
   toolExecutions?: ChatToolExecution[];
   status?: "failed";
+  recovery?: { kind: "continue" };
 }
 
 export interface ChatToolExecution {

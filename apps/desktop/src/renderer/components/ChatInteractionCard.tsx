@@ -22,6 +22,9 @@ export function ChatInteractionCard({ interaction, respond, openEditor, operatio
   const payload = interaction.payload;
   const waiting = interaction.status === "waiting";
   const editing = interaction.status === "editing";
+  const approvalText = payload.kind === "approval"
+    ? (payload.operation.draftRef && payload.confirmationText?.trim() ? payload.confirmationText : payload.summary)
+    : undefined;
   const selectedLabel = payload.kind === "question" ? payload.options?.find(option => option.id === choice)?.label : undefined;
   const displayResult = interaction.resultSummary && !/^[\s]*[\[{]/.test(interaction.resultSummary) ? interaction.resultSummary : undefined;
   const abandoned = interaction.status === "cancelled" || interaction.status === "invalidated";
@@ -38,9 +41,9 @@ export function ChatInteractionCard({ interaction, respond, openEditor, operatio
       .catch(() => setError("内容已更新或操作失败，请核对后重试。"))
       .finally(() => setBusy(false));
   };
-  return <article className={`chat-interaction-card ${waiting || editing ? "" : "compact"}`} aria-label={payload.kind === "question" ? "待回答问题" : "操作确认"}>
+  return <article className={`chat-interaction-card ${payload.kind} ${waiting || editing ? "" : "compact"}`} aria-label={payload.kind === "question" ? waiting ? "待回答问题" : "问题记录" : "操作确认"}>
     {waiting || editing ? <>
-      <p className="chat-interaction-prompt">{payload.kind === "question" ? payload.question : payload.summary}</p>
+      <p className="chat-interaction-prompt">{payload.kind === "question" ? payload.question : approvalText}</p>
       {payload.kind === "question" ? <>
         {payload.options?.map(option => <label key={option.id} className={`chat-interaction-option ${choice === option.id ? "selected" : ""}`}>
           <input type="radio" name={`interaction-${interaction.id}`} checked={choice === option.id} disabled={!waiting || busy}
@@ -58,14 +61,14 @@ export function ChatInteractionCard({ interaction, respond, openEditor, operatio
               ? "请先保存或关闭右侧当前表单，再打开此表单。"
               : "暂时无法打开表单，请稍后重试。",
           )); }}>查看或编辑表单</button>}
-        {editing && <p role="status">正在同步编辑，请稍候…</p>}
-        <div className="capability-card-actions">
-          <button disabled={!waiting || busy} onClick={() => decide({ kind: "decision", decision: "approve" })}>确认执行</button>
+        <div className="capability-card-actions" aria-busy={editing || busy}>
+          <button className="interaction-confirm" title={editing ? "正在同步编辑，完成后可确认" : undefined}
+            disabled={!waiting || busy} onClick={() => decide({ kind: "decision", decision: "approve" })}>{busy ? "提交中…" : "确认执行"}</button>
           <button disabled={busy} onClick={() => decide({ kind: "decision", decision: "cancel" })}>取消</button>
         </div>
       </>}
     </> : <><span className="capability-card-status">{task && !abandoned ? taskLabels[task.snapshot.status] : terminalLabels[interaction.status]} · </span>
-      <span>{payload.kind === "question" ? interaction.answer ?? payload.question : resultText ?? payload.summary}</span>
+      <span>{payload.kind === "question" ? interaction.answer ?? payload.question : resultText ?? approvalText}</span>
       {presentation?.target && open && <button className="capability-card-link" onClick={() => {
         void open(presentation.target!).catch(() => setError("打开页面失败。"));
       }}>{presentation.linkLabel ?? "查看"}</button>}

@@ -2,7 +2,7 @@
 
 版本：0.3 · 更新日期：2026-09-18
 
-状态：已实现，包含统计投影、完整性提示与投递恢复。Model／collector 本阶段自动验证完成，可交付 staging；当前 DeepSeek `deepseek-flash`／Tavily 的真实链路已验证用量对齐与无重复计量，等待用户体验验收。其他真实 Provider／模型的返回情况仍待验证。
+状态：已实现，包含统计投影、完整性提示与投递恢复。0.1.2 本批用户体验验收已收口，最终检查状态见 [发布记录](../releases/2026-10-21-v0.1.2.md)。既有 DeepSeek `deepseek-flash`／Tavily 真实链路已验证用量对齐与无重复计量；其他真实 Provider／模型的返回情况仍待验证。
 上位文档：[Base.overview 设计文档](base.overview.设计文档.md)。
 
 SQLite 实现已归入 `@deepfield/base/usage/sqlite`，接收 [Base.Database](base.database.设计文档.md) view。旧 persistence 入口为薄适配；安全 Usage 入口不加载 SQLite。初始化恢复及批量删除使用同一连接的同步事务，存储探测保持 SAVEPOINT 内真实写入并回滚的语义。

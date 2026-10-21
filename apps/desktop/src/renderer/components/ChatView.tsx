@@ -66,7 +66,13 @@ export function ChatView({
   const messagesRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
   const [showLatest, setShowLatest] = useState(false);
+  const continueInFlight = useRef(false);
   const messages = visibleMessages(state);
+  // Revisions and waiting/editing transitions update approval safety, not the transcript layout.
+  const scrollContent = JSON.stringify([messages, taskCards, confirmations, operations,
+    interactions.map(item => [item.id, item.status === "editing" ? "waiting" : item.status,
+      item.payload.kind === "approval" ? (item.payload.operation.draftRef && item.payload.confirmationText || item.payload.summary) : item.payload,
+      item.answer, item.resultSummary, item.failureReason])]);
 
   useEffect(() => {
     let active = true;
@@ -139,7 +145,7 @@ export function ChatView({
     if (element !== null && followOutput.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [conversation.id, state.loadState, messages, taskCards, confirmations, operations, interactions]);
+  }, [conversation.id, state.loadState, scrollContent]);
 
   useLayoutEffect(() => {
     const element = messagesRef.current;
@@ -208,6 +214,15 @@ export function ChatView({
             messages={messages}
             messagesRef={messagesRef}
             onScroll={handleMessagesScroll}
+            continuing={state.sending || savingWebSearch || state.loadState !== "ready"}
+            onContinue={() => {
+              if (continueInFlight.current || state.sending || savingWebSearch || state.loadState !== "ready") return;
+              continueInFlight.current = true;
+              scrollToLatest();
+              void submit("继续完成刚才的任务，请先核对已保存的结果，不要重复执行已完成或已取消的操作。", { webSearch: webSearchEnabled })
+                .then(result => { if (result) acceptUpdated(result.conversation); })
+                .finally(() => { continueInFlight.current = false; });
+            }}
             interactionCards={{ interactions: interactions.filter(item => item.conversationId === conversation.id),
               activeEditorInteractionId,
               respond: async (_item, command: RespondCommand) => {
