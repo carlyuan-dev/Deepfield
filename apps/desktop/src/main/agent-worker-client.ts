@@ -1,4 +1,7 @@
 import { Value } from "typebox/value";
+import { parseTraceEvent, parseTraceHealth, parseTraceContent, type TraceContentMode, type TraceHealth, type TraceContext, type TraceEvent } from "@deepfield/base/trace";
+import { traceContentRequestSecrets, traceContentCredentialSafe, type TraceContentHost } from "../shared/trace-content.js";
+import { currentTrace } from "@deepfield/base/trace/runtime";
 import { AgentWorkerEventSchema, ToolEventEnvelopeSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
 import { CapabilityWorkerEventSchema, CapabilityActivationReplySchema, type CapabilityWorkerRequest, type CapabilityWorkerEvent } from "@deepfield/capability-sdk";
 import {
@@ -36,12 +39,20 @@ export interface MessageEndpoint {
 }
 
 export interface AgentWorkerClientOptions {
+  traceContent?: TraceContentHost;
+  trace?: (event: TraceEvent) => unknown;
+  traceHealth?: (health: TraceHealth) => unknown;
+  onTraceRejected?: () => void;
   /** Central host-request router: the single listener never competes. */
   hostHandler?: (message: unknown) => void;
   onUnavailable?: () => void;
 }
 
 export class AgentWorkerClient {
+  private readonly contentOwners = new Map<string, { rootTraceId: string; parentSpanId: string; mode: TraceContentMode; expires: number; secrets: readonly string[] }>();
+  private contentDeliveryPending = false;
+  private readonly contentExpiry: ReturnType<typeof setInterval>;
+  private readonly traceOwners = new Map<string, TraceContext>();
   private readonly pending = new Map<string, PendingStream>();
   private readonly tombstones = new ToolTransportTombstones();
   private readonly unsubscribeMessage: () => void;
@@ -57,8 +68,10 @@ export class AgentWorkerClient {
 
   constructor(
     private readonly endpoint: MessageEndpoint,
-    options: AgentWorkerClientOptions = {},
+    private readonly options: AgentWorkerClientOptions = {},
   ) {
+    this.contentExpiry = setInterval(() => { for (const [id, owner] of this.contentOwners) if (owner.expires <= Date.now()) this.contentOwners.delete(id); }, 30_000);
+    this.contentExpiry.unref();
     this.hostHandler = options.hostHandler;
     this.onUnavailable = options.onUnavailable;
     this.unsubscribeMessage = endpoint.onMessage((value) => this.handleMessage(value));
@@ -66,6 +79,11 @@ export class AgentWorkerClient {
   }
 
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent> {
+    if (request.trace && !this.pending.has(request.requestId)) {
+      this.traceOwners.set(request.requestId, request.trace);
+      // Retain late telemetry after terminal delivery, with bounded memory.
+      if (this.traceOwners.size > 2000) this.traceOwners.delete(this.traceOwners.keys().next().value!);
+    }
     return this.sendStream<AgentWorkerEvent>({
       kind: "chat",
       id: request.requestId,
@@ -126,6 +144,12 @@ export class AgentWorkerClient {
 
   sendCapability(request: CapabilityWorkerRequest, validateCapabilityEvent?: (event: CapabilityWorkerEvent) => boolean | "ignore"): AsyncIterable<CapabilityWorkerEvent> {
     if (this.tombstones.has(request.requestId)) throw new AgentWorkerTransportReuseError();
+    const parent = currentTrace();
+    if (parent) request = { ...request, trace: { rootTraceId: parent.rootTraceId, spanId: parent.spanId } };
+    if (request.trace && !this.pending.has(request.requestId)) {
+      this.traceOwners.set(request.requestId, request.trace);
+      if (this.traceOwners.size > 2000) this.traceOwners.delete(this.traceOwners.keys().next().value!);
+    }
     return this.sendStream<CapabilityWorkerEvent>({ kind: "capability", id: request.requestId, capabilityId: request.capabilityId, operation: request.operation, request, ...(validateCapabilityEvent ? { validateCapabilityEvent } : {}) });
   }
 
@@ -169,7 +193,18 @@ export class AgentWorkerClient {
     };
     this.pending.set(spec.id, stream);
     try {
-      this.endpoint.postMessage(spec.request);
+      let outbound = spec.request;
+      const request = spec.request as { trace?: TraceContext; requestId?: string };
+      let mode: TraceContentMode | undefined;
+      try { mode = this.options.traceContent?.modeFor(spec.id); } catch { /* Optional policy lookup cannot fail dispatch. */ }
+      if (mode && request.trace && request.requestId === spec.id) {
+        for (const [id, owner] of this.contentOwners) if (owner.expires <= Date.now()) this.contentOwners.delete(id);
+        if (!this.contentOwners.has(spec.id) && this.contentOwners.size < 1000) {
+          this.contentOwners.set(spec.id, { rootTraceId: request.trace.rootTraceId, parentSpanId: request.trace.spanId, mode, expires: Date.now() + 3600_000, secrets: traceContentRequestSecrets(spec.request) });
+          outbound = { kind: "trace.content.run", mode, request: spec.request };
+        }
+      }
+      this.endpoint.postMessage(outbound);
     } catch (error) {
       this.pending.delete(spec.id);
       // The message may or may not have been delivered before the transport
@@ -205,6 +240,8 @@ export class AgentWorkerClient {
       return;
     }
     this.disposed = true;
+    clearInterval(this.contentExpiry);
+    this.contentOwners.clear();
     for (const activation of [...this.activations.values()]) activation.finish(false);
     this.notifyUnavailable();
     this.unsubscribeMessage();
@@ -217,6 +254,40 @@ export class AgentWorkerClient {
 
   private handleMessage(value: unknown): void {
     if (this.disposed) {
+      return;
+    }
+    if (typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "trace.content") {
+      const message = value as { deliveryId?: unknown; serialized?: unknown };
+      const deliveryId = typeof message.deliveryId === "string" && /^[A-Za-z0-9-]{1,100}$/.test(message.deliveryId) ? message.deliveryId : undefined;
+      if (!deliveryId) return;
+      if (this.contentDeliveryPending) { try { this.endpoint.postMessage({ kind: "trace.content.ack", deliveryId, accepted: false }); } catch {} return; }
+      this.contentDeliveryPending = true;
+      void (async () => {
+        let accepted = false;
+        try {
+          if (typeof message.serialized !== "string") throw new Error("invalid_record");
+          const record = parseTraceContent(message.serialized);
+          const owner = this.contentOwners.get(record.requestId);
+          if (!owner || owner.expires <= Date.now() || owner.rootTraceId !== record.rootTraceId || owner.parentSpanId === record.spanId || owner.mode !== record.captureMode) throw new Error("unauthorized_record");
+          if (!traceContentCredentialSafe(record, owner.secrets)) throw new Error("unsafe_record");
+          accepted = (await this.options.traceContent?.record(message.serialized)) !== false;
+        } catch { /* Reject content without changing the business stream. */ }
+        this.contentDeliveryPending = false;
+        try { this.endpoint.postMessage({ kind: "trace.content.ack", deliveryId, accepted }); } catch { /* Dead optional transport. */ }
+      })();
+      return;
+    }
+    if (typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "trace.health") {
+      try { void Promise.resolve(this.options.traceHealth?.(parseTraceHealth((value as { health?: unknown }).health))).catch(() => undefined); } catch { /* Optional health only. */ }
+      return;
+    }
+    if (typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "trace.event") {
+      try {
+        const event = parseTraceEvent((value as { event?: unknown }).event);
+        const owner = this.traceOwners.get(event.requestId);
+        if (owner?.rootTraceId === event.rootTraceId && event.spanId !== owner.spanId && !("kind" in event && event.kind === "request") && !event.links?.some(link => link.rootTraceId !== owner.rootTraceId)) void Promise.resolve(this.options.trace?.(event)).catch(() => undefined);
+        else this.options.onTraceRejected?.();
+      } catch { try { this.options.onTraceRejected?.(); } catch { /* Optional telemetry. */ } }
       return;
     }
     if (isHostRequest(value)) {
@@ -334,6 +405,7 @@ export class AgentWorkerClient {
   }
 
   private close(id: string, stream: PendingStream, error: Error): void {
+    this.contentOwners.delete(id);
     stream.error = error;
     stream.queue = [];
     for (const waiter of stream.waiters.splice(0)) {
@@ -353,6 +425,8 @@ export class AgentWorkerClient {
   }
 
   private cleanup(id: string, stream: PendingStream): void {
+    const contentOwner = this.contentOwners.get(id);
+    if (contentOwner) contentOwner.expires = Math.min(contentOwner.expires, Date.now() + 30_000);
     if (this.pending.get(id) === stream) {
       this.pending.delete(id);
     }
@@ -367,6 +441,8 @@ export class AgentWorkerClient {
       return;
     }
     this.exited = true;
+    clearInterval(this.contentExpiry);
+    this.contentOwners.clear();
     for (const activation of [...this.activations.values()]) activation.finish(false);
     this.notifyUnavailable();
     this.exitCode = code;

@@ -1,4 +1,5 @@
 import { Type, type TSchema } from "typebox";
+import { getCapabilityTrace } from "@deepfield/capability-sdk";
 import type { CapabilityRegistrar, CapabilityHostServices } from "@deepfield/capability-sdk";
 import { randomUUID } from "node:crypto";
 import { createCompanyResearchWorkerClient, type WorkerTransport } from "./worker-client.js";
@@ -38,9 +39,11 @@ export function bootstrap(registrar: CapabilityRegistrar, services: CapabilityHo
   const configuration = services.get<{ profiles: CompanyResearchMainPorts["profiles"]; settings: CompanyResearchMainPorts["settings"]; onConfigurationChanged: NonNullable<CompanyResearchMainPorts["onConfigurationChanged"]> }>("model.configuration");
   const execution = services.get<{ gateway: CompanyRecognitionModelGateway; transport: WorkerTransport; mode?: string }>("model.execution");
   const worker = createCompanyResearchWorkerClient(execution.transport);
+  const trace = getCapabilityTrace(services);
   activate(registrar, {
     repositories, profiles: configuration.profiles, settings: configuration.settings,
     onConfigurationChanged: configuration.onConfigurationChanged, worker,
+    ...(trace ? { trace } : {}),
     companyRecognizer: execution.mode === "fake" ? new FakeCompanyRecognizer() : new ConfiguredCompanyRecognizer(
       () => configuration.profiles.resolveActiveLlm(), execution.gateway, services.get<UsageContextRunner>("usage.context")),
     companyCompleter: createCompanyProfileCompleter(configuration.profiles, worker, diagnostic => repositories.companyProfileDiagnostics.record(diagnostic)),

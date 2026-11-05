@@ -1,4 +1,6 @@
 import type { LlmRuntimeSnapshot } from "../config/llm.js";
+import { captureTraceContent } from "../trace/content-runtime.js";
+import { currentTrace, traceUsage } from "../trace/runtime.js";
 import { normalizeUsageMetrics } from "../usage/contracts.js";
 import type { UsageMetrics, UsageAttemptHandle } from "../usage/contracts.js";
 import type { ModelRuntimeOptions } from "./runtime.js";
@@ -21,6 +23,11 @@ export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: 
       profileName: snapshot.name, providerId: snapshot.provider, modelId: snapshot.modelId, serviceKind: "llm",
       ...(snapshot.configRevisionId !== undefined ? { configRevisionId: snapshot.configRevisionId } : {}),
     }, runtime.snapshotIdentity(snapshot)); attempts.push(attempt);
+    try {
+      const identity = requestIdentity?.() ?? currentTrace();
+      traceUsage({ type: "usage.link", usageAttemptId: attempt.attemptId, serviceKind: "llm", ...(identity?.modelRequestId ? { modelRequestId: identity.modelRequestId } : {}) });
+      captureTraceContent({ kind: "model.request", source: "provider.http_json", usageAttemptId: attempt.attemptId, ...(identity?.modelRequestId ? { modelRequestId: identity.modelRequestId } : {}) }, () => init?.body, { jsonString: true, secrets: [snapshot.apiKey] });
+    } catch { /* Optional content association cannot prevent dispatch. */ }
     const onAbort = () => attempt.finish("cancelled", "cancelled");
     abort?.addEventListener("abort", onAbort, { once: true });
     cleanups.push(() => abort?.removeEventListener("abort", onAbort));

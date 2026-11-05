@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { currentTrace, startTraceSpan } from "@deepfield/base/trace/runtime";
 import { Type } from "typebox";
 import {
   TraceBudgetPool,
@@ -322,6 +323,8 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
         throw new Error("synthetic tool audit is unavailable");
       }
       await options.audit.recordSynthetic(record);
+      const scope = currentTrace();
+      if (scope) startTraceSpan("tool", scope.requestId, { executionId: record.executionId, toolName: record.tool.name, ...(record.toolCallId ? { toolCallId: record.toolCallId } : {}), ...(record.agentTurnIndex !== undefined ? { turn: record.agentTurnIndex } : {}) }).end(record.status === "failed" ? "failed" : record.status);
     },
     createAgentTools(context) {
       const tools = createPiAgentTools(registry, runner, {

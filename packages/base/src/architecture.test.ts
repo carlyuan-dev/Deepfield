@@ -20,8 +20,11 @@ function checkBoundary(entries: string[], read: (path: string) => string, root: 
       if (name === "typebox" || name === "typebox/value") return;
       if (name === "typebox/format" && path === resolve(root, "tools/contracts.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "usage/collector.ts")) return;
+      if (["node:crypto", "node:async_hooks"].includes(name) && path === resolve(root, "trace/runtime.ts")) return;
+      if (name === "node:crypto" && path === resolve(root, "trace/content-runtime.ts")) return;
       if (name === "node:sqlite" && path === resolve(root, "database/runtime.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "model/request-observation.ts")) return;
+      if (name === "node:crypto" && path === resolve(root, "model/trace.ts")) return;
       const piImports: Record<string, readonly string[]> = {
         "agent/runtime.ts": ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai"],
         "agent/message-utils.ts": ["@earendil-works/pi-ai"],

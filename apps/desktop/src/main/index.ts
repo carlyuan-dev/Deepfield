@@ -5,6 +5,10 @@ import { capabilityPaths } from "./capabilities/installation.js";
 import { prepareCapabilities, createCapabilityRuntime, type CapabilityRuntime } from "./capabilities/runtime.js";
 import type { TrustedCapabilityEntry } from "../shared/capability-entry.js";
 import { withUsageContext } from "../shared/usage-collection.js";
+import { configureTraceCollector, createTraceCollector, createTracePort, configureTraceLookup, createTraceContentCollector, configureTraceContent } from "@deepfield/base/trace/runtime";
+import { openTraceContentStore } from "./trace-content-store.js";
+import { traceContentPolicyFromEnvironment } from "../shared/trace-content.js";
+import { openTraceStore } from "./trace-store.js";
 import { randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityProcess, protocol } from "electron";
@@ -62,6 +66,11 @@ let ipcDispose: (() => void) | undefined;
 let database: ReturnType<typeof openDatabase> | undefined;
 let mainSkillCatalog: PiSkillCatalog | undefined;
 let usageRuntime: ReturnType<typeof createMainUsageRuntime> | undefined;
+let traceStore: ReturnType<typeof openTraceStore> | undefined;
+let contentStore: ReturnType<typeof openTraceContentStore> | undefined;
+let contentCollector: ReturnType<typeof createTraceContentCollector> | undefined;
+const contentModeFor = traceContentPolicyFromEnvironment(process.env.DEEPFIELD_TRACE_CONTENT_POLICY);
+let traceCollector: ReturnType<typeof createTraceCollector> | undefined;
 
 const ipcMainAdapter = createTrustedIpcMainAdapter(
   ipcMain,
@@ -94,7 +103,7 @@ function startAgentWorker(
     postMessage: (value) => runtimeRef.postMessage(value),
   });
   toolHost = host;
-  const runtime = createAgentWorkerRuntime(child, { host });
+  const runtime = createAgentWorkerRuntime(child, { host, ...(contentStore ? { traceContent: { modeFor: contentModeFor, record: (serialized: string) => contentStore?.record(serialized) ?? false } } : {}), trace: event => traceCollector?.emit(event), traceHealth: health => traceStore?.deliveryHealth("worker", health), onTraceRejected: () => traceCollector?.emit(undefined) });
   runtimeRef = runtime;
   child.on("exit", () => {
     void usageRuntime?.workerExited(!usageShutdownComplete);
@@ -118,7 +127,30 @@ void app.whenReady().then(async () => {
     isE2E: process.env.DEEPFIELD_E2E === "1",
   });
   const paths = createAppPaths(userDataRoot);
+  if (process.env.DEEPFIELD_TRACE !== "0" && process.env.DEEPFIELD_TRACE_CONTENT_POLICY) {
+    try {
+      contentStore = openTraceContentStore(join(userDataRoot, "trace-content.sqlite"));
+      contentCollector = createTraceContentCollector(serialized => contentStore?.record(serialized) ?? false);
+      configureTraceContent(contentCollector);
+    } catch { console.warn("[trace-content] initialization_failed"); }
+  }
   database = openDatabase(paths.database);
+  if (process.env.DEEPFIELD_TRACE !== "0") {
+    try {
+      traceStore = openTraceStore(join(userDataRoot, "trace.sqlite"));
+      traceCollector = createTraceCollector(event => traceStore?.record(event), { onHealth: health => traceStore?.deliveryHealth("main", health) });
+      const metadata = traceCollector;
+      configureTraceCollector({ ...metadata, emit(value) {
+        const event = value as { type?: string; requestId?: string; rootTraceId?: string } | undefined;
+        if (event?.type === "span.start" && event.requestId && event.rootTraceId) {
+          const mode = contentModeFor(event.requestId);
+          if (mode) contentCollector?.authorize(event.requestId, event.rootTraceId, mode);
+        }
+        metadata.emit(value);
+      } });
+      configureTraceLookup(ref => traceStore?.find(ref));
+    } catch { console.warn("[trace] initialization_failed"); }
+  }
   database.legacy(migrate);
   usageRuntime = createMainUsageRuntime(createUsageRepository(database.database), () => agentRuntime);
   configureUsageRecorder(usageRuntime.recorder);
@@ -146,7 +178,7 @@ void app.whenReady().then(async () => {
   const configuredLlm = new ConfiguredLlmService(
     () => profiles.resolveActiveLlm(),
     modelGateway,
-    { onTitleDiagnostic: ({ category }) => console.warn(`[conversation-title] ${category}`) },
+    { agentMode: process.env.DEEPFIELD_AGENT_MODE, onTitleDiagnostic: ({ category }) => console.warn(`[conversation-title] ${category}`) },
   );
   const configuration = new ConfigurationService(profiles, modelGateway);
   const skillsDir = resolveSkillsDir({
@@ -207,6 +239,7 @@ void app.whenReady().then(async () => {
   const disposeNavigation = registerNavigationIpc(ipcMainAdapter, capabilityRuntime.navigation);
   agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
   const services = createCapabilityHostServices({
+    "trace.v1": createTracePort(),
     "tools.audit.v1": { version: 1, deleteByTraceIds: (ids: readonly string[]) => repositories.toolExecutions.deleteByTraceIds(ids) },
     "model.configuration": {
       profiles: { resolveActiveLlm: () => profiles.resolveActiveLlm(), resolveActiveSearch: () => profiles.resolveActiveSearch() },
@@ -279,6 +312,8 @@ app.on("before-quit", (event) => {
         // Pass the current Worker into the bounded shutdown orchestration so
         // an unacknowledged flush remains visible even if it exits meanwhile.
         await usageRuntime?.shutdown(agentRuntime);
+        await traceCollector?.close();
+        await contentCollector?.close();
       })().catch(() => {}).finally(() => { usageShutdownComplete = true; app.quit(); });
     }
     return;
@@ -295,6 +330,13 @@ app.on("before-quit", (event) => {
   agentRuntime = undefined;
   void capabilityRuntime?.dispose();
   appRuntime = undefined;
+  try { traceStore?.close(); } catch { console.warn("[trace] close_failed"); }
+  traceStore = undefined;
+  try { contentStore?.close(); } catch { console.warn("[trace-content] close_failed"); }
+  contentStore = undefined;
+  configureTraceContent(undefined);
+  configureTraceCollector(undefined);
+  configureTraceLookup(undefined);
   if (database) {
     try {
       database.close();

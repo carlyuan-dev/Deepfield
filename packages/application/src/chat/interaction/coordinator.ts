@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { findTrace, startTraceSpan, traceLinks, withTrace, type TraceSpan } from "@deepfield/base/trace/runtime";
 import type { InteractionOwner, InteractionPayload, InteractionRecord, OperationRef, RespondCommand } from "@deepfield/contracts";
 import type { InteractionRepository, OperationAdapter, TrustedInteractionContext } from "./ports.js";
 
 export class ChatInteractionCoordinator {
+  private readonly traces = new Map<string, { span: TraceSpan; transition: string }>();
   constructor(
     private readonly repository: InteractionRepository,
     private readonly adapters: ReadonlyMap<string, OperationAdapter>,
@@ -10,6 +12,25 @@ export class ChatInteractionCoordinator {
   ) {}
 
   private changed(record: InteractionRecord): InteractionRecord {
+    try {
+      let tracked = this.traces.get(record.id);
+      if (!tracked) {
+        const previous = findTrace({ kind: "interaction", id: record.id });
+        const parent = findTrace({ kind: "request", id: record.requestId });
+        const span = startTraceSpan("interaction", record.requestId, { interactionId: record.id, conversationId: record.conversationId, toolCallId: record.toolCallId,
+          revision: record.revision, ...(record.receiptId ? { receiptId: record.receiptId } : {}) }, parent ?? null);
+        if (!parent || previous) traceLinks(span.context, [previous ?? parent]);
+        tracked = { span, transition: "" }; this.traces.set(record.id, tracked);
+        if (this.traces.size > 2000) this.traces.delete(this.traces.keys().next().value!);
+      }
+      const transition = JSON.stringify([record.revision, record.status, record.receiptId ?? null]);
+      if (tracked.transition !== transition) {
+        tracked.transition = transition;
+        if (record.status === "waiting" || record.status === "editing" || record.status === "executing") tracked.span.state(record.status, { revision: record.revision, ...(record.receiptId ? { receiptId: record.receiptId } : {}) });
+        else tracked.span.end(record.status === "answered" || record.status === "succeeded" ? "succeeded"
+          : record.status === "submitted" ? "accepted" : record.status === "uncertain" ? "unknown" : record.status);
+      }
+    } catch { /* Telemetry never changes an already committed interaction. */ }
     try { this.onChanged?.(record); }
     catch { /* UI observers cannot interrupt an already committed state transition. */ }
     return record;
@@ -99,8 +120,9 @@ export class ChatInteractionCoordinator {
     if (!claimed) return this.repository.get(item.id)!;
     this.changed(claimed);
     let result;
+    const operation = item.payload.operation;
     try {
-      result = await adapter.execute(item.payload.operation, claimed.revision, receiptId, item.contentVersion!);
+      result = await withTrace(this.traces.get(item.id)?.span.context, () => adapter.execute(operation, claimed.revision, receiptId, item.contentVersion!));
     } catch (error) {
       // An exception does not prove whether a non-idempotent write committed.
       try { result = await adapter.reconcile(receiptId); }

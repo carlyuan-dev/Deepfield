@@ -23,6 +23,12 @@ const PACKAGE_ENTRIES = {
   "@deepfield/base/model": {
     packageDirectory: "packages/base", exportKey: "./model", target: "./src/model/index.ts",
   },
+  "@deepfield/base/model/trace": {
+    packageDirectory: "packages/base", exportKey: "./model/trace", target: "./src/model/trace.ts",
+  },
+  "@deepfield/base/trace/runtime": {
+    packageDirectory: "packages/base", exportKey: "./trace/runtime", target: "./src/trace/runtime.ts",
+  },
   "@deepfield/capability-sdk/execution": {
     packageDirectory: "packages/capability-sdk", exportKey: "./execution", target: "./src/execution.ts",
   },
@@ -74,7 +80,8 @@ function checkExecutionBoundary(
       resolve(layout.repositoryRoot, "packages/contracts/src/tools.ts"),
       ...["execution", "model-observation"].map(file => resolve(layout.repositoryRoot, `packages/capability-sdk/src/${file}.ts`)),
       ...["index", "runtime", "message-utils", "errors"].map(file => resolve(layout.repositoryRoot, `packages/base/src/agent/${file}.ts`)),
-      ...["index", "contracts", "observation", "errors"].map(file => resolve(layout.repositoryRoot, `packages/base/src/model/${file}.ts`)),
+      ...["index", "contracts", "observation", "errors", "trace"].map(file => resolve(layout.repositoryRoot, `packages/base/src/model/${file}.ts`)),
+      ...["index", "runtime", "content", "content-runtime"].map(file => resolve(layout.repositoryRoot, `packages/base/src/trace/${file}.ts`)),
       ...["index", "llm", "search", "definition", "types", "config-error"].map(file => resolve(layout.repositoryRoot, `packages/base/src/config/${file}.ts`)),
       ...["index", "errors"].map(file => resolve(layout.repositoryRoot, `packages/base/src/errors/${file}.ts`)),
       ...["index", "contracts", "definition", "errors", "budget-contract", "budget", "audit", "tool-set", "events", "retry"].map((file) => resolve(layout.repositoryRoot, `packages/base/src/tools/${file}.ts`)),
@@ -135,6 +142,7 @@ function checkExecutionBoundary(
         specifier === "@earendil-works/pi-agent-core" ||
         specifier === "@earendil-works/pi-ai" ||
         specifier === "node:crypto" ||
+        (specifier === "node:async_hooks" && path === resolve(layout.repositoryRoot, "packages/base/src/trace/runtime.ts")) ||
         specifier === "typebox" ||
         specifier.startsWith("typebox/")
       ) return;
@@ -201,6 +209,22 @@ describe("Pi executor dependency boundary", () => {
   });
 
   it.each([
+    ["../database/runtime.js", "packages/base/src/database/runtime.ts"],
+    ["../../../application/src/chat/chat-service.js", "packages/application/src/chat/chat-service.ts"],
+  ])("rejects Trace runtime smuggling %s through a relative import", (specifier, forbidden) => {
+    const entry = resolve(agentRoot, "trace-boundary-fixture.ts");
+    const runtime = resolve(repositoryRoot, "packages/base/src/trace/runtime.ts");
+    const read = (path: string): string => path === entry ? 'import "@deepfield/base/trace/runtime";'
+      : path === runtime ? `import ${JSON.stringify(specifier)};` : readFileSync(path, "utf8");
+    expect(() => checkExecutionBoundary([entry], read, layout)).toThrow(forbidden);
+  });
+
+  it.each([
+    {
+      edge: "async_hooks from an executor rather than the narrow Trace runtime",
+      files: { "entry.ts": 'import { AsyncLocalStorage } from "node:async_hooks";' },
+      error: "node:async_hooks",
+    },
     {
       edge: "the SDK aggregate export",
       files: { "entry.ts": 'import type { PiExecutionRequest } from "@deepfield/capability-sdk";' },

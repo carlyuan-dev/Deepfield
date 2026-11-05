@@ -6,23 +6,29 @@ Deepfield 是面向财经记者的 Apple Silicon macOS 桌面研究工具。本�
 
 ## 分支与版本管理
 
-三个长期分支按 `develop → staging → main` 流转：
+两个长期分支按 `develop → main` 流转：
 
-- `develop`：日常开发与修复，只在这里修改代码。
-- `staging`：已提交的待验收最新版；按下述批次提交条件从最新 `develop` 合并并推送。
-- `main`：稳定版；仅在用户单独验收并授权晋级后从 `staging` 合并，不直接开发。
+- `develop`：日常开发、自验、打包交用户手测；未通过就在这里继续修复。
+- `main`：稳定版；用户手测反馈通过且主 Agent 确认本批验收条件满足后，从 `develop` 合并本批已验证改动，不直接开发。
 
-手测问题回到 `develop` 修复，再按同一路径推进。默认不强推、不覆盖已有提交。每次稳定验收添加可追溯标签。仓库默认分支为 `main`，本地日常工作分支为 `develop`；临时 worktree 按任务建立与整理。
+`staging` 已退役，开发包与用户手测都在 `develop` 完成。默认不强推、不覆盖已有提交。仓库默认分支为 `main`，本地日常工作分支为 `develop`；临时 worktree 按任务建立与整理。历史发布记录中的三分支流程仅描述当时事实。
 
-版本事实见 [0.1.2 发布记录](releases/2026-10-21-v0.1.2.md)。日常打包不要求每次提升正式版本号；正式版本发布另行确认。
+版本事实见 [0.1.3 发布记录](releases/2026-11-05-v0.1.3.md)。日常测试打包不要求每次提升正式版本号；正式发布按下述版本标签规则执行。
 
 ### 验收批次与提交
 
-同一验收批次在 `develop` 持续开发与修复，通过必要自验后直接打包交用户手测；每次打包或修复不自动提交、推送。用户确认该批次完成或明确要求提交时，将本批已验证修改整理为一个有意义的提交，再将最新 `develop` 合并到 `staging`，推送远端两个分支。提交前应明确批次范围、同步文档并解决相关阻塞。按风险与收益选择验证；关键行为无法由现有证据覆盖时，按[测试指南](testing.md)做针对性真实验证。未验证部分如实说明，存在关键证据缺口时不晋级；构建通过不代替验收。
+同一验收批次在 `develop` 持续开发与修复，通过必要自验后直接打包交用户手测；每次打包或修复不自动提交、推送。用户手测反馈通过且主 Agent 确认本批验收条件满足后，将本批已验证修改整理为一个有意义的提交，直接合并到 `main`，推送远端 `develop` 与 `main`，无需再次请求稳定晋级授权。用户仅要求提前提交时可保存／推送 `develop`，正式合并仍须通过验收。提交前应明确批次范围、同步文档并解决相关阻塞。按风险与收益选择验证；关键行为无法由现有证据覆盖时，按[测试指南](testing.md)做针对性真实验证。未验证部分如实说明，存在关键证据缺口时不晋级；构建通过不代替验收。
 
 提交前确认改动归属，只纳入本批内容，保留无关用户改动；其他未完成验收的改动单独保留，不能随约定文档整体提交。确需本地安全检查点时可临时提交，不自动推送；批次结束时将本批未推送检查点合并整理。已有共享或推送提交须先核对影响分支及其他工作窗口，取得具体整理范围的批准后再处理，不默认改写共享历史。合并前核对当前分支及远端差异，采用正常合并、不强推；冲突、权限不足或无法确认提交范围时，停止对应同步并报告。推送后说明提交、分支、验证结果与限制。
 
-`staging` 用于用户体验验收；`main` 不自动更新。关键旅程通过、无已知严重缺陷且迁移／回滚风险可控时，建议用户单独稳定验收并授权晋级 `main`。
+合入 `main` 的全部提交都须已验收，不能把其他未完成批次随分支一起带入。晋级前核对关键旅程、已知缺陷及迁移／回滚风险；不满足条件就继续在 `develop` 修复。发布完成后回到 `develop` 开展下一批工作。
+
+### 正式发布与版本标签
+
+- 每次正式发布在 `main` 对应的已验收提交创建带注释的 `vX.Y.Z` 标签，并显式推送该标签；仅测试打包不创建正式发布标签。
+- 发布提交中的应用版本、锁文件、发布说明与最终安装包版本一致；必要的版本更新纳入本批提交，重新打包后核对版本和产物。标签指向实际交付源码，不指向后续开发提交。
+- 已发布标签保持不变，不复用或移动；后续修复使用新的版本号。保留现有历史标签，便于定位已发布代码。
+- 回退时以标签定位代码及对应产物，先核对数据库／配置兼容性并保护用户数据；代码标签本身不保证数据可降级。不通过强推改写共享历史完成回退。
 
 ## 文档同步
 
@@ -65,7 +71,7 @@ npm run build        # 桌面构建 + Capability 构建 → out/
 DEEPFIELD_AGENT_MODE=fake npm run dev
 ```
 
-Fake Agent 固定回复“测试回复”，适合验证界面与接线。真实模式在设置页分别配置、保存并启用 LLM / Search Profile；联网功能需要可用的当前 Search Profile。凭据加密保存，页面不回显已保存的 key。配置与连接诊断契约见 [Base.Config](base/base.config.设计文档.md)，用量口径见 [Base.Usage](base/base.usage.设计文档.md)。
+Fake Agent 固定回复“测试回复”，自动对话标题保留本地默认值，不发起标题模型请求，适合验证界面与接线。此开关并非全局网络隔离：手动连接测试等其他入口仍使用各自配置。真实模式在设置页分别配置、保存并启用 LLM / Search Profile；联网功能需要可用的当前 Search Profile。凭据加密保存，页面不回显已保存的 key。配置与连接诊断契约见 [Base.Config](base/base.config.设计文档.md)，用量口径见 [Base.Usage](base/base.usage.设计文档.md)。
 
 默认 Vitest 发现 `apps/`、`packages/`、`capabilities/`、`scripts/`、`tests/` 下的测试，排除 live 与构建输出等目录。真实 Provider / 搜索测试显式使用 `vitest.live.config.ts` 或 `test:providers:live` 等专用脚本，在测试指南的每轮额度内已获费用授权；联网与系统权限仍按实际环境执行。
 
@@ -96,6 +102,18 @@ DEEPFIELD_ALLOW_ELECTRON_E2E=1 npm run test:e2e
 userData 包含 `deepfield.sqlite`、`secrets.json`、`settings.json`、`attachments/` 和宿主管理的 `capability-config/`。普通配置与内部凭据引用存入配置目录，凭据仍由加密 SecretStore 保存；包通过 `config.v1` 访问，禁用／移除包保留配置。详细契约见 [Base.Config](base/base.config.设计文档.md)。
 
 内置 Skill 在开发态从仓库 `skills/` 读取，打包态位于 `Deepfield.app/Contents/Resources/skills/`，由 `electron-builder.yml` 的 `extraResources` 携带。当前包含 `structured-brief`。
+
+## 执行追踪
+
+Trace 默认将执行元数据写入 userData 的独立 `trace.sqlite`，`DEEPFIELD_TRACE=0` 可关闭持久化。先列出根，再查询调用树与已有 Usage：
+
+```sh
+npm run trace:export -- <userData>/trace.sqlite --list
+npm run trace:export -- <userData>/trace.sqlite <rootTraceId> <userData>/deepfield.sqlite
+npm run trace:phoenix -- <userData>/trace.sqlite <rootTraceId> <userData>/deepfield.sqlite
+```
+
+Phoenix 默认只预览导出，显式 `--send` 才发送本地接收端。正文默认关闭，需按请求显式授权并独立存储。字段、容量、正文权限和开发者接口以 [Base.Trace](base/base.trace.设计文档.md) 为准。元数据、正文、导出及实验材料均为运行数据，不提交到仓库。
 
 ## 本地打包（arm64）
 

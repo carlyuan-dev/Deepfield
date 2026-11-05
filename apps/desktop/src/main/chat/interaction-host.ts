@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { findTrace, withTrace } from "@deepfield/base/trace/runtime";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { ChatInteractionCoordinator, classifyExplicitDecision, classifyTaskDecision, snapshotExactTaskCalls, exactTaskCallDigest, TaskGrantStore, freezeTaskScope, TaskScopeStore, type FrozenTaskScope, type ScopeClaim, type ExactTaskCall, type TaskGrantClaim, type OperationAdapter } from "@deepfield/application";
@@ -341,6 +342,9 @@ export class ChatInteractionHost {
     for (const [requestId, owner] of this.active) if (owner === conversationId) this.active.delete(requestId);
   }
   async call(requestId: string, toolCallId: string, operation: "question" | "draft.read" | "draft.update" | "draft.transition" | "proposal.create", args: unknown): Promise<unknown> {
+    return withTrace(findTrace({ kind: "request", id: requestId }), () => this.callTraced(requestId, toolCallId, operation, args));
+  }
+  private async callTraced(requestId: string, toolCallId: string, operation: "question" | "draft.read" | "draft.update" | "draft.transition" | "proposal.create", args: unknown): Promise<unknown> {
     const conversationId = this.active.get(requestId);
     if (!conversationId) throw new Error("Inactive request");
     if (operation !== "draft.read") this.assertFreshRequest(requestId);

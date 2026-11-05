@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { startTraceSpan, withTrace, type TraceSpan } from "@deepfield/base/trace/runtime";
 import type { TSchema, Static } from "typebox";
 import { createResourceScope, CapabilityWorkerRequestSchema, CapabilityWorkerCancelSchema, CapabilityActivationRequestSchema, CapabilityDeactivationSchema, type CapabilityWorkerRegistrar, type CapabilityWorkerRequest, type CapabilityWorkerEvent, type CapabilityActivationRequest, type Cleanup } from "@deepfield/capability-sdk";
 
@@ -7,7 +8,7 @@ export type CapabilityWorkerLoader = (request: CapabilityActivationRequest, regi
 /** The loader receives only Main's trusted snapshot entries, never renderer payload paths. */
 export class WorkerCapabilityRegistry {
   private readonly packages = new Map<string, { handlers: Map<string, Handler>; dispose(): Promise<void>; ready: boolean }>();
-  private readonly active = new Map<string, { request: CapabilityWorkerRequest; controller: AbortController; finish(type: CapabilityWorkerEvent["type"], payload: unknown): void }>();
+  private readonly active = new Map<string, { request: CapabilityWorkerRequest; controller: AbortController; span?: TraceSpan; finish(type: CapabilityWorkerEvent["type"], payload: unknown): void }>();
   private disposed = false;
   private readonly activations = new Map<string, { capabilityId: string; dispose(): Promise<void> }>();
   constructor(private readonly post: (event: unknown) => void, private readonly loader?: CapabilityWorkerLoader) {}
@@ -54,6 +55,8 @@ export class WorkerCapabilityRegistry {
     if (execution) { execution.finish("failed", { code: "duplicate_request" }); execution.controller.abort(); }
   }
   activeCount(): number { return this.active.size; }
+  /** Observation-only shutdown boundary; never changes a task's business outcome. */
+  interruptTrace(): void { for (const execution of this.active.values()) execution.span?.end("interrupted", "process_exit"); }
   handle(value: unknown): boolean {
     if (this.disposed) return false;
     if (Value.Check(CapabilityActivationRequestSchema, value)) {
@@ -80,15 +83,16 @@ export class WorkerCapabilityRegistry {
     const entry = this.packages.get(value.capabilityId);
     const handler = entry?.ready ? entry.handlers.get(value.operation) : undefined;
     const controller = new AbortController();
+    const span = value.trace ? startTraceSpan("worker", value.requestId, { capabilityId: value.capabilityId }, { ...value.trace, requestId: value.requestId }) : undefined;
     let settled = false;
     const finish = (type: CapabilityWorkerEvent["type"], payload: unknown) => {
       if (settled || this.disposed) return;
-      if (type !== "progress") { settled = true; this.active.delete(value.requestId); }
+      if (type !== "progress") { settled = true; this.active.delete(value.requestId); span?.end(type === "completed" ? "succeeded" : type === "cancelled" ? "cancelled" : "failed"); }
       this.post({ kind: "capability.event", capabilityId: value.capabilityId, operation: value.operation, requestId: value.requestId, type, payload } satisfies CapabilityWorkerEvent);
     };
-    this.active.set(value.requestId, { request: value, controller, finish });
+    this.active.set(value.requestId, { request: value, controller, ...(span ? { span } : {}), finish });
     if (!handler) { finish("failed", { code: "capability_unavailable" }); return true; }
-    void Promise.resolve().then(() => handler(value, (payload, terminal) => finish(terminal ?? "progress", payload), controller.signal))
+    void Promise.resolve().then(() => withTrace(span?.context, () => handler(value, (payload, terminal) => finish(terminal ?? "progress", payload), controller.signal)))
       .then(() => finish("failed", { code: "missing_terminal" }))
       .catch(() => { finish("failed", { code: "capability_failed" }); controller.abort(); });
     return true;
@@ -107,7 +111,7 @@ export class WorkerCapabilityRegistry {
     if (!this.disposed) this.post({ kind: "capability.activated", requestId: request.requestId, capabilityId: request.capabilityId, ok });
   }
   /** Shutdown interruption must never emit a user-cancel terminal that deletes a report. */
-  abortAll(): void { this.disposed = true; for (const execution of this.active.values()) execution.controller.abort(); this.active.clear(); }
+  abortAll(): void { this.disposed = true; for (const execution of this.active.values()) { execution.span?.end("interrupted", "process_exit"); execution.controller.abort(); } this.active.clear(); }
   async dispose(): Promise<void> {
     this.disposed = true;
     this.abortAll(); this.active.clear();

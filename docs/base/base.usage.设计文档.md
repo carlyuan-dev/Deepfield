@@ -214,3 +214,7 @@ Tokens 按每次调用拆分命中缓存输入、未命中缓存输入、输出�
 - 原始流式 usage 在 SDK 映射前采集，保留缺失值；观察器单行上限 65,536 字符，过大或无法解析的事件不影响原始响应，但对应指标可能未知。Anthropic 兼容端若缺少缓存子项，不能确认的总输入保持未知。
 - Settings 的统计周期、趋势交互与模型选择见第 6 节；首次启用前标为未统计，无历史用量回填。
 - 协议 fixture 和内存 SQLite 覆盖异常与边界；当前 DeepSeek `deepseek-flash`／Tavily 的 Chat、配置诊断及公司调研真实链路已核对 Usage，其他 Provider／模型与用户体验仍待验证。本地统计不等同账单。
+
+## 与执行追踪的关联
+
+Usage 保持唯一请求用量账本。Base.Model 的实际传输边界、宿主 Search 计量边界向 Base.Trace 发出 usage.link；Trace 仅保存 attempt ID，查询时按唯一 ID 关联已存用量，不新增计费记录、不重复累计。Trace 缺失或失败不改变 Usage 的统计与修复规则。模型／工具／任务关联和记录完整性见 [Base.Trace](base.trace.设计文档.md)。

@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { scopeCapabilityTrace } from "./capability-trace.js";
 import { resolvePackageFile } from "../main/capabilities/package-paths.js";
 import type { CapabilityHostServices, CapabilityRegistrar, CapabilityWorkerRegistrar } from "@deepfield/capability-sdk";
 
@@ -23,6 +24,6 @@ export function createSnapshotWorkerLoader(snapshot: readonly TrustedCapabilityE
     if (!entry?.worker) throw new Error("capability_unavailable");
     const resolved = await resolvePackageFile(entry.root, entry.worker);
     if (!resolved || resolved !== resolve(entry.root, entry.worker) || request.entry !== resolved) throw new Error("capability_unavailable");
-    await (await load(entry, "worker")).bootstrap(registrar, services);
+    await (await load(entry, "worker")).bootstrap(registrar, scopeCapabilityTrace(services, entry.id, cleanup => registrar.defer(cleanup)));
   };
 }

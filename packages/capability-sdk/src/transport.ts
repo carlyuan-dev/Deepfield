@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { DraftRefSchema, ViewRefSchema } from "./interaction.js";
+import { TraceContextSchema } from "@deepfield/base/trace";
 
 export const CapabilityNavigationEventSchema = Type.Union([
   Type.Object({ kind: Type.Literal("open"), requestId: Type.String({ minLength: 1 }), target: Type.Union([ViewRefSchema, DraftRefSchema]), view: ViewRefSchema, expiresAt: Type.Number() }, { additionalProperties: false }),
@@ -9,7 +10,7 @@ export const CapabilityNavigationEventSchema = Type.Union([
 const Id = Type.String({ minLength: 1, maxLength: 200 });
 export const CapabilityCallSchema = Type.Object({ capabilityId: Id, operation: Id, requestId: Id, input: Type.Unknown() }, { additionalProperties: false });
 export const CapabilityEventSchema = Type.Object({ capabilityId: Id, topic: Id, payload: Type.Unknown() }, { additionalProperties: false });
-export const CapabilityWorkerRequestSchema = Type.Object({ kind: Type.Literal("capability.run"), capabilityId: Id, operation: Id, requestId: Id, input: Type.Unknown() }, { additionalProperties: false });
+export const CapabilityWorkerRequestSchema = Type.Object({ kind: Type.Literal("capability.run"), capabilityId: Id, operation: Id, requestId: Id, input: Type.Unknown(), trace: Type.Optional(TraceContextSchema) }, { additionalProperties: false });
 export const CapabilityWorkerCancelSchema = Type.Object({ kind: Type.Literal("capability.cancel"), capabilityId: Id, operation: Id, requestId: Id }, { additionalProperties: false });
 export const CapabilityWorkerEventSchema = Type.Object({ kind: Type.Literal("capability.event"), capabilityId: Id, operation: Id, requestId: Id, type: Type.Union([Type.Literal("progress"), Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled")]), payload: Type.Unknown() }, { additionalProperties: false });
 export const CapabilityActivationRequestSchema = Type.Object({ kind: Type.Literal("capability.activate"), requestId: Id, capabilityId: Id, entry: Type.String({ minLength: 1 }) }, { additionalProperties: false });

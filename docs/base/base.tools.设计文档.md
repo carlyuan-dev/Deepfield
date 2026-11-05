@@ -35,3 +35,7 @@ Provider／安全 HTTP 的 30 秒超时、web_search／read_webpage 的 40 秒�
 `packages/tool-platform`、`contracts/tools` 的中立契约和 retrieval web 工具入口单向转出 Base；只有一份实现和 Schema 身份。旧入口供现存消费者与回归设施使用，在消费者全部迁移后可删除。Worker 的 TraceBudgetPool 旧导出同样保持类身份。
 
 验证复用 Runner 准入、预算、取消、并发、重试、审计、输出与脱敏测试，Worker 运行时／Pi 适配集成，以及 retrieval 的 web 工具回归。Base 传递导入检查约束依赖方向，浏览器 bundle 验证安全契约隔离；真实 Provider 和桌面旅程按影响另行验收。
+
+## 与执行追踪的关联
+
+工具审计与 Trace 分工独立：audit 保持执行前置约束和业务清理规则；Trace 在实际执行边界关联上下文，记录调用终态及可选输入输出。授权、预算、重试和工具结果仍按 Tools 契约处理，Trace 观测失败不能改变它们。跳过、复用与真实执行分别标记；旧工具 traceId 保持原作用域，不替代 rootTraceId。接入与存储边界见 [Base.Trace](base.trace.设计文档.md)。

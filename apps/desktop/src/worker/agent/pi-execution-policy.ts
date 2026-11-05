@@ -1,4 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { traceModelStream } from "@deepfield/base/model/trace";
+import { currentTrace, startTraceSpan, withTrace, captureTraceContent } from "@deepfield/base/trace/runtime";
 import { createPiAgentRun, type PiRunResult } from "@deepfield/base/agent/runtime";
 import type {
   AgentTool,
@@ -158,6 +160,9 @@ export function createPiAgentExecutor(
         reportDiagnostic("provider_failed");
         throw new PiChatAgentError("provider_failed", "configured model is not available");
       }
+      let traceTurn = 0;
+      const tracedStream = (phase: "ordinary" | "synthesis"): typeof session.streamFn => (model, context, streamOptions) =>
+        traceModelStream(session!.streamFn, { requestId: request.requestId, turn: ++traceTurn, phase })(model, context, streamOptions);
 
       const skillName = request.skillName;
       let prompt: string;
@@ -252,11 +257,21 @@ export function createPiAgentExecutor(
           ]);
           control.observeSnapshot(toolSessions.budgetSnapshot(request.requestId));
         }
+        const tracedTools = !currentTrace() ? tools : tools.map(tool => ({ ...tool, async execute(...args: Parameters<typeof tool.execute>) {
+          const span = startTraceSpan("tool", request.requestId, { toolCallId: args[0], toolName: tool.name, turn: diagnosticAgentTurns });
+          return withTrace(span.context, async () => {
+            captureTraceContent({ kind: "tool.input", source: "tool.executor", toolCallId: args[0] }, () => args[1]);
+            // Direct AgentTool results have no common trusted business outcome
+            // contract. A returned promise alone does not prove action success.
+            try { const result = await tool.execute(...args); captureTraceContent({ kind: "tool.output", source: "tool.executor", toolCallId: args[0] }, () => result); span.end("unknown"); return result; }
+            catch (error) { captureTraceContent({ kind: "tool.output", source: "tool.executor", toolCallId: args[0] }, () => undefined, { incomplete: args[2]?.aborted ? "cancelled" : "execution_failed" }); span.end(args[2]?.aborted ? "cancelled" : "failed", "execution_failed"); throw error; }
+          });
+        } }));
         const rawRequestTools =
           toolSessions === undefined
-            ? tools
+            ? tracedTools
             : [
-                ...tools,
+                ...tracedTools,
                 ...toolSessions.createAgentTools({
                   traceId: request.requestId,
                   actor: toolActor,
@@ -541,7 +556,7 @@ export function createPiAgentExecutor(
           },
           streamFn: (model, context, options) => {
             if (finalizationReason === undefined && !forceGenericFinal) {
-              return session.streamFn(model, context, observationOptions(context, "ordinary", options));
+              return tracedStream("ordinary")(model, context, observationOptions(context, "ordinary", options));
             }
             if (!capabilityFinalization) {
               const finalContext = {
@@ -553,7 +568,7 @@ export function createPiAgentExecutor(
                 maxModelInputCharsEstimate,
                 modelInputCharsEstimate(finalContext.systemPrompt, finalContext.messages),
               );
-              return session.streamFn(model, finalContext, observationOptions(finalContext, "ordinary", { ...options, toolChoice: "none" }));
+              return tracedStream("ordinary")(model, finalContext, observationOptions(finalContext, "ordinary", { ...options, toolChoice: "none" }));
             }
             const finalContext = {
               ...context,
@@ -565,7 +580,7 @@ export function createPiAgentExecutor(
               maxModelInputCharsEstimate,
               modelInputCharsEstimate(finalContext.systemPrompt, finalContext.messages),
             );
-            return session.streamFn(model, finalContext, observationOptions(finalContext, "synthesis", { ...options, toolChoice: "none" }));
+            return tracedStream("synthesis")(model, finalContext, observationOptions(finalContext, "synthesis", { ...options, toolChoice: "none" }));
           },
           getApiKey: (provider) => getApiKey(request.llm, provider),
           sessionId: preparedContext.sessionId,

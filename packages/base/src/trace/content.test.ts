@@ -1,0 +1,71 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { captureTraceContent, configureTraceContent, createTraceContentCollector } from "./content-runtime.js";
+import { parseTraceContent } from "./content.js";
+import { withTrace } from "./runtime.js";
+
+const scope = { requestId: "req", rootTraceId: "root", spanId: "span" };
+const draft = { kind: "model.request", source: "provider.http_json" } as const;
+afterEach(() => configureTraceContent(undefined));
+it("does not evaluate bodies by default or inherit authorization through another request/root", async () => {
+  const body = vi.fn(() => "private");
+  withTrace(scope, () => captureTraceContent(draft, body));
+  const sink = vi.fn(); const collector = createTraceContentCollector(sink); configureTraceContent(collector);
+  withTrace(scope, () => captureTraceContent(draft, body));
+  collector.authorize("req", "root", "diagnostic");
+  withTrace({ ...scope, requestId: "next" }, () => captureTraceContent(draft, body));
+  withTrace({ ...scope, rootTraceId: "other" }, () => captureTraceContent(draft, body));
+  expect(body).not.toHaveBeenCalled();
+  withTrace(scope, () => captureTraceContent(draft, body)); await collector.close();
+  expect(sink).toHaveBeenCalledTimes(1);
+});
+it("redacts credentials before truncation and refuses unsafe serialization without reading accessors", async () => {
+  const records: string[] = []; const collector = createTraceContentCollector(v => { records.push(v); }, { maxBodyBytes: 128 });
+  collector.authorize("req", "root", "benchmark", ["sentinel-secret"]);
+  collector.capture(scope, draft, () => ({ password: "hidden", text: "sentinel-secret".repeat(100) }));
+  const getter = vi.fn(() => "sentinel-secret");
+  collector.capture(scope, draft, () => Object.defineProperty({}, "key", { get: getter, enumerable: true }));
+  await collector.close();
+  expect(records.join("")).not.toContain("sentinel-secret"); expect(records.join("")).not.toContain("hidden");
+  expect(parseTraceContent(records[0]!)).toMatchObject({ redacted: true, completeness: "truncated", reasonCode: "size_limit" });
+  expect(parseTraceContent(records[1]!)).toMatchObject({ completeness: "unavailable", reasonCode: "serialization_failed", byteLength: 0 });
+  expect(getter).not.toHaveBeenCalled();
+});
+it("bounds a stalled sink, rejects oversize IPC and keeps capture failures optional", async () => {
+  const collector = createTraceContentCollector(() => new Promise(() => {}), { timeoutMs: 5, maxPendingBytes: 1500 });
+  collector.authorize("req", "root", "diagnostic");
+  for (let i = 0; i < 10; i++) collector.capture(scope, draft, () => "x".repeat(500));
+  await collector.close();
+  expect(collector.health().pendingBytes).toBe(0); expect(collector.health().dropped).toBeGreaterThan(0); expect(collector.health().failed).toBe(1);
+  expect(() => parseTraceContent("x".repeat(300000))).toThrow();
+  configureTraceContent({ capture() { throw new Error("sink"); } });
+  expect(() => withTrace(scope, () => captureTraceContent(draft, () => "x"))).not.toThrow();
+});
+it("has a total shutdown deadline even when many individually slow records are queued", async () => {
+  let finish: (() => void) | undefined;
+  const sink = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+  const collector = createTraceContentCollector(sink, { timeoutMs: 100 });
+  collector.authorize("req", "root", "benchmark");
+  for (let i = 0; i < 10; i++) collector.capture(scope, draft, () => "body");
+  await collector.close(5);
+  expect(collector.health().pendingBytes).toBe(0); expect(collector.health().dropped).toBe(10);
+  finish?.(); await Promise.resolve(); expect(sink).toHaveBeenCalledTimes(1);
+});
+it("rejects reauthorization and never evaluates new bodies once shutdown starts", async () => {
+  let finish: (() => void) | undefined;
+  const collector = createTraceContentCollector(() => new Promise<void>(resolve => { finish = resolve; }), { timeoutMs: 100 });
+  collector.authorize("req", "root", "benchmark");
+  collector.capture(scope, draft, () => "queued");
+  await Promise.resolve();
+  const closing = collector.close(5);
+  const body = vi.fn(() => "must not be read");
+  const next = { ...scope, requestId: "next" };
+  expect(collector.authorize("next", "root", "diagnostic", ["new-secret"])).toBe(false);
+  expect(collector.mode("next", "root")).toBeUndefined();
+  collector.capture(next, draft, body);
+  await closing;
+  expect(collector.authorize("next", "root", "diagnostic")).toBe(false);
+  collector.capture(next, draft, body);
+  expect(body).not.toHaveBeenCalled();
+  expect(collector.health().pendingBytes).toBe(0);
+  finish?.();
+});

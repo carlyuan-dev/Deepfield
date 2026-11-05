@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { findTrace, withTrace } from "@deepfield/base/trace/runtime";
 import type { AgentWorkerEvent, ConversationId } from "@deepfield/contracts";
 import { Value } from "typebox/value";
 import {
@@ -219,6 +220,9 @@ export class CapabilityChatHost {
   }
 
   async call(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown): Promise<unknown> {
+    return withTrace(findTrace({ kind: "request", id: chatRequestId }), () => this.callTraced(chatRequestId, toolCallId, operation, args));
+  }
+  private async callTraced(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown): Promise<unknown> {
     if (operation !== "invoke") return this.callDirect(chatRequestId, toolCallId, operation, args);
     const prior = this.invokeQueue;
     let release!: () => void;

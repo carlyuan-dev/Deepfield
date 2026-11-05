@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { startTraceSpan, withTrace, type TraceSpan } from "@deepfield/base/trace/runtime";
 import { PiAgentError } from "@deepfield/base/agent";
 import { UsageFlushRequestSchema, UsageRepairRequestSchema } from "@deepfield/contracts";
 import { withUsageContext } from "../shared/usage-collection.js";
@@ -34,7 +35,9 @@ export function createWorkerMessageLoop(
   options: WorkerMessageLoopOptions = {},
 ): WorkerLoop {
   const active = new Map<string, ActiveExecution>();
+  const traceSpans = new Map<string, TraceSpan>();
   const activeExecutions = new Map<string, ActiveExecution>();
+  const runningTasks = new Set<Promise<unknown>>();
   let disposed = false;
   const unsubscribe = endpoint.onMessage((value) => handleInbound(value));
 
@@ -45,7 +48,7 @@ export function createWorkerMessageLoop(
     if (Value.Check(UsageFlushRequestSchema, value)) {
       for (const execution of active.values()) execution.controller.abort();
       options.capabilities?.abortAll();
-      void Promise.resolve().then(() => options.flushUsage?.()).catch(() => {}).then(() => {
+      void drainExecutions().then(() => options.flushUsage?.()).catch(() => {}).then(() => {
         endpoint.postMessage({ kind: "usage.flushed", requestId: value.requestId });
       });
       return;
@@ -85,11 +88,32 @@ export function createWorkerMessageLoop(
     }
   }
 
+  function track(task: Promise<unknown>): void {
+    runningTasks.add(task);
+    void task.then(() => runningTasks.delete(task), () => runningTasks.delete(task));
+  }
+
+  async function drainExecutions(): Promise<void> {
+    const deadline = Date.now() + 500;
+    while ((runningTasks.size || (options.capabilities?.activeCount() ?? 0)) && Date.now() < deadline) {
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(10, Math.max(0, deadline - Date.now()))));
+    }
+    // An uncooperative execution may still be running. Preserve that uncertainty
+    // before the collector closes, without changing business terminal events.
+    for (const [requestId, span] of traceSpans) {
+      span.end("interrupted", "process_exit");
+      traceSpans.delete(requestId);
+    }
+    if (options.capabilities?.activeCount()) options.capabilities.interruptTrace();
+  }
+
   function startChat(request: AgentWorkerRequest): void {
     const execution = begin(request.requestId, "chat");
     if (!execution) {
       return;
     }
+    const span = startTraceSpan("worker", request.requestId, {}, request.trace ? { ...request.trace, requestId: request.requestId } : undefined);
+    traceSpans.set(request.requestId, span);
     const emit = (event: unknown): void => {
       if (disposed || execution.settled) {
         return;
@@ -102,6 +126,8 @@ export function createWorkerMessageLoop(
         return;
       }
       if (event.type === "completed" || event.type === "failed" || event.type === "handed_off") {
+        span.end(event.type === "completed" ? "succeeded" : event.type === "handed_off" ? "handed_off" : "failed");
+        traceSpans.delete(request.requestId);
         execution.finalize();
         endpoint.postMessage(event);
         return;
@@ -109,8 +135,8 @@ export function createWorkerMessageLoop(
       endpoint.postMessage(event);
     };
 
-    void Promise.resolve()
-      .then(() => withUsageContext({ sourceId: "chat", taskId: request.requestId }, () => chatAgent.run(request, emit, execution.controller.signal)))
+    const task = Promise.resolve()
+      .then(() => withTrace(span.context, () => withUsageContext({ sourceId: "chat", taskId: request.requestId }, () => chatAgent.run(request, emit, execution.controller.signal))))
       .then(() => {
         if (!execution.settled && !disposed) {
           execution.settle(
@@ -127,6 +153,7 @@ export function createWorkerMessageLoop(
         }
         execution.settle("agent_error", "agent execution failed", false);
       });
+    track(task);
   }
 
   function startTool(request: ToolRunRequest): void {
@@ -185,7 +212,7 @@ export function createWorkerMessageLoop(
       endpoint.postMessage(toolEnvelope(request.requestId, event));
     };
 
-    void Promise.resolve()
+    const task = Promise.resolve()
       .then(() => runtime.run(request, emit, execution.controller.signal))
       .then(() => {
         if (!execution.settled && !disposed) {
@@ -199,6 +226,7 @@ export function createWorkerMessageLoop(
       .catch(() => {
         execution.settle("tool_error", "tool execution failed", false);
       });
+    track(task);
   }
 
   function postToolTerminal(
@@ -253,6 +281,8 @@ export function createWorkerMessageLoop(
       if (execution.settled) {
         return;
       }
+      traceSpans.get(requestId)?.end(controller.signal.aborted ? "cancelled" : code === "agent_no_terminal_event" ? "unknown" : "failed", code === "agent_no_terminal_event" ? "no_terminal" : "execution_failed");
+      traceSpans.delete(requestId);
       finalize();
       if (abortSignal) {
         execution.controller.abort();
@@ -302,10 +332,12 @@ export function createWorkerMessageLoop(
       disposed = true;
       unsubscribe();
       for (const execution of active.values()) {
+        traceSpans.get(execution.requestId)?.end("interrupted", "process_exit");
         execution.settled = true;
         execution.controller.abort();
       }
       active.clear();
+      traceSpans.clear();
       activeExecutions.clear();
       void options.capabilities?.dispose();
       options.onDispose?.();

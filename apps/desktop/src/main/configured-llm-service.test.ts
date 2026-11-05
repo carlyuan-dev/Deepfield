@@ -17,6 +17,17 @@ const profile = (id: string): LlmRuntimeSnapshot => ({
 });
 
 describe("ConfiguredLlmService", () => {
+  it("keeps automatic titles local in fake agent mode without resolving credentials or calling a model", async () => {
+    const resolveActiveLlm = vi.fn(async () => profile("title"));
+    const completeText = vi.fn(async () => "不应调用模型");
+    const service = new ConfiguredLlmService(resolveActiveLlm, { completeText } as unknown as ModelGateway, {
+      agentMode: "fake",
+    });
+    await expect(service.generateConversationTitle("测试首条消息")).resolves.toBeUndefined();
+    expect(resolveActiveLlm).not.toHaveBeenCalled();
+    expect(completeText).not.toHaveBeenCalled();
+  });
+
   it("keeps title and name recognition offline without a profile completion pipeline", async () => {
     const profiles = [profile("title"), profile("recognition")];
     const resolveActiveLlm = vi.fn(async () => profiles.shift()!);

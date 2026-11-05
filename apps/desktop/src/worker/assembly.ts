@@ -1,4 +1,5 @@
 import type { PiRuntime, SkillCatalogProvider } from "./agent/pi-chat-agent.js";
+import { createTracePort } from "@deepfield/base/trace/runtime";
 import type { WorkerEndpoint, WorkerLoop } from "./message-loop.js";
 import { createWorkerMessageLoop } from "./message-loop.js";
 import { createFakeChatAgent } from "./chat/fake-chat-agent.js";
@@ -72,6 +73,7 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
         (request, handoff) => [createPiFeatureCatalogTool(request, toolRuntime), ...createPiChatInteractionTools(request, deps.hostClient, handoff), ...createPiCapabilityTools(request, deps.hostClient, handoff)]),
   });
   const services = createCapabilityHostServices({
+    "trace.v1": createTracePort(),
     "model.execution": { runtime: createCapabilityAgentRuntime({ ...(deps.piRuntime ? { runtime: deps.piRuntime } : {}), toolSessions: toolRuntime }), ...(deps.agentMode ? { mode: deps.agentMode } : {}) },
     "tools.retrieval": toolRuntime, "usage.context": withUsageContext,
   });

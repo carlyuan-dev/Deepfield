@@ -146,3 +146,7 @@ Worker assembly 的既有工具列表断言失败已在迁移前基线复现，�
 主要风险是重复 collector／ALS、快照脱敏后的 fallback 身份漂移、错误类或 observer 类型分裂、运行时进入 UI，以及改变取消／故障优先级。通过限定入口、显式注入和对应回归验证控制。
 
 本批迁移保持已验收的 Prompt、工具 schema 行为、Loop、收口策略及业务流程。
+
+## 执行追踪
+
+Base.Model 在已有 Trace scope 内为每次普通／流式调用建立模型 span；共享执行器通过 `@deepfield/base/model/trace` 补充轮次和阶段，透明转发包装沿用同一次调用，避免重复 span。模型请求观察、可选正文与实际 Usage attempt 使用同一 modelRequestId 关联。Trace 旁路异常不改变调用结果；原强制请求观察契约保持原语义。Provider 返回成功与调用方后续业务校验失败分别记录。独立调用者需先建立根作用域，详细边界见 [Base.Trace](base.trace.设计文档.md)。

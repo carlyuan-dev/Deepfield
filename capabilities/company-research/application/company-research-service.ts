@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import type { TracePort, TraceScope, TraceSpan } from "@deepfield/base/trace";
 import { AppError, toPublicError, type AppErrorCode, type CapabilityItemId, type CompanyId, type ResearchRunId, type LlmRuntimeSnapshot, type SearchRuntimeSnapshot } from "@deepfield/contracts";
 import { normalizeResearchInput, researchRetryMode, CompanyResearchWorkerEventSchema, StartCompanyResearchInputSchema, buildStructuredResearchOutputSchema, createCompanyResearchTemplate, type CompanyResearchContext, type CompanyResearchEvent, type CompanyResearchModelDiagnostic, type CompanyResearchStage, type CompanyResearchState, type CompanyResearchWorkerRequest, type ModuleResearchRun, type ResearchRun, type ResearchFailureCode, type ResearchRunSummary, type StartCompanyResearchInput } from "../contracts/index.js";
 import type { CompanyResearchServiceRepositories as Repositories } from "../host-ports.js";
@@ -16,11 +17,15 @@ export class CompanyResearchServiceError extends AppError {
 }
 
 export interface CompanyResearchServiceOptions {
+  trace?: TracePort;
   requestIdFactory: RequestIdFactory;
   now?: () => Date;
 }
 
 interface ActiveResearch {
+  traceParent?: TraceScope;
+  traceSpan?: TraceSpan | undefined;
+  tracePrevious?: TraceScope;
   evidenceManifest?: EvidenceManifest;
   run: ModuleResearchRun;
   requestId: string;
@@ -64,6 +69,7 @@ export class CompanyResearchService {
   /** Invalidate old continuations without cancelling or deleting durable work. */
   dispose(): void {
     this.disposed = true;
+    this.active?.traceSpan?.end("interrupted", "process_exit");
     this.active = undefined;
     this.onOwnedRunCreated = undefined;
     this.listeners.clear();
@@ -381,7 +387,10 @@ export class CompanyResearchService {
   }
 
   private launch(run: ModuleResearchRun, requestId: string, llm: LlmRuntimeSnapshot, search?: SearchRuntimeSnapshot): void {
+    const traceParent = this.options.trace?.capture();
+    const tracePrevious = this.options.trace?.find({ kind: "run", id: run.id });
     const active: ActiveResearch = {
+      ...(traceParent ? { traceParent } : {}), ...(tracePrevious ? { tracePrevious } : {}),
       run: structuredClone(run), requestId, stage: run.status === "researching" ? "raw" : "structure",
       rawDraftText: "", dispatched: false, cancelRequested: false, done: Promise.resolve(),
       llm: structuredClone(llm), ...(search === undefined ? {} : { search: structuredClone(search) }),
@@ -446,10 +455,15 @@ export class CompanyResearchService {
     let failureOutcome: ResearchOutcome | undefined;
     try {
       while (this.active === active) {
+        const trace = this.options.trace;
+        active.traceSpan = trace?.start("stage", active.requestId, { runId: active.run.id, stage: active.stage,
+          ...(active.run.attemptId ? { artifactId: active.run.attemptId } : {}) }, active.traceParent ?? null);
+        if (active.traceSpan && active.tracePrevious) trace?.link(active.traceSpan.context, [active.tracePrevious]);
         const request = this.request(active);
         active.dispatched = true;
         let rawCompleted = false;
-        for await (const event of this.worker.sendResearch(request)) {
+        const stream = trace ? trace.run(active.traceSpan?.context, () => this.worker.sendResearch(request)) : this.worker.sendResearch(request);
+        for await (const event of stream) {
           if (this.active !== active) return;
           if (active.cancelRequested) { this.failActive(active, "cancelled"); return; }
           // Foreign/late identities cannot terminate or mutate the current stage.
@@ -501,11 +515,15 @@ export class CompanyResearchService {
                     return this.repositories.companyResearchRuns.completeRawWithEvidence(active.run.id, active.run.attemptId!, event.text, built.status === "ready" ? "ready" : "budget_exceeded");
                   });
                   if (built.status === "budget_exceeded") {
+                    active.traceSpan?.end("succeeded");
                     this.active = undefined; this.stateChanged(active.run, "context_budget_exceeded"); return;
                   }
                 } else active.run = this.repositories.runInTransaction(() => this.repositories.companyResearchRuns.completeRaw(active.run.id, event.text));
               } catch (error) { if (error instanceof ResearchConsumeFailure) throw error; throw new ResearchConsumeFailure(error instanceof Error && error.message.startsWith("evidence_incomplete") ? "evidence_incomplete" : "storage_failed"); }
               active.stage = "structure";
+              active.traceSpan?.end("succeeded");
+              if (active.traceSpan) active.tracePrevious = active.traceSpan.context;
+              delete active.traceSpan;
               active.dispatched = false;
               active.rawDraftText = "";
               delete active.latestActivity;
@@ -541,6 +559,7 @@ export class CompanyResearchService {
               throw new ResearchConsumeFailure("storage_failed");
             }
             this.active = undefined;
+            active.traceSpan?.end("succeeded");
             this.stateChanged(active.run);
             return;
           } else {
@@ -588,6 +607,7 @@ export class CompanyResearchService {
       this.active = undefined;
     }
     this.stateChanged(active.run, targetGone ? undefined : publicOutcome);
+    active.traceSpan?.end(targetGone || publicOutcome === "storage_failed" ? "unknown" : outcome === "cancelled" ? "cancelled" : "failed", outcome === "cancelled" ? "aborted" : "execution_failed");
   }
 
   private recordDiagnosticSafe(diagnostic: CompanyResearchModelDiagnostic): void {

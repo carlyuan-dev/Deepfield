@@ -19,6 +19,10 @@ import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { createLlmUsageTransport } from "./llm-usage-transport.js";
 import type { ModelRequestObserver } from "./observation.js";
 import { observeSerializedRequest } from "./request-observation.js";
+import { captureTraceContent } from "../trace/content-runtime.js";
+import { currentTrace } from "../trace/runtime.js";
+import { traceModelStream, traceModelCompletion } from "./trace.js";
+export { traceModelStream } from "./trace.js";
 export { createLlmUsageTransport } from "./llm-usage-transport.js";
 export { classifyModelHttpDiagnostic, readModelErrorPrefix } from "./http-diagnostic.js";
 export { observeSerializedRequest } from "./request-observation.js";
@@ -58,23 +62,27 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
   }
 
   createStream(snapshot: LlmRuntimeSnapshot, observer?: ModelRequestObserver<Origin, Phase>, onModelFailure?: (error: ModelGatewayError) => void): ModelStream<Origin, Phase> {
-    return (model, context, options) => {
+    const streamModel: ModelStream<Origin, Phase> = (model, context, options) => {
+      const contentScope = currentTrace();
       let transportFailure: ModelGatewayError | undefined;
       const usage = createLlmUsageTransport(this.runtime, snapshot, options?.signal, options?.fetch ?? globalThis.fetch, undefined, () => observation?.identity, error => { transportFailure = error; });
-      const observation = observer ? observeSerializedRequest(context, options, observer, usage.fetch) : undefined;
+      const observation = observer ? observeSerializedRequest(context, options, observer, usage.fetch, contentScope?.modelRequestId) : undefined;
+      const responseDraft = () => ({ kind: "model.response" as const, source: "pi.assistant_message" as const, ...(observation?.identity.modelRequestId ? { modelRequestId: observation.identity.modelRequestId } : {}) });
       const stream = streamSimple(model, context, { ...options, maxRetries: 0, fetch: usage.fetch, ...(observation ? { onPayload: observation.onPayload, fetch: observation.fetch } : {}) });
       const finished = stream.result().then((message) => {
+        captureTraceContent(responseDraft(), () => ({ content: message.content, stopReason: message.stopReason }), { secrets: [snapshot.apiKey], ...(message.stopReason === "error" || message.stopReason === "aborted" ? { incomplete: options?.signal?.aborted ? "cancelled" as const : "execution_failed" as const } : {}) }, contentScope);
         usage.finish(message.stopReason);
         observation?.finish(message.stopReason);
         if (!options?.signal?.aborted && transportFailure && (message.stopReason === "error" || message.stopReason === "aborted")) onModelFailure?.(transportFailure);
         return message;
-      }, error => { usage.finish("error"); observation?.finish("error"); throw error; });
+      }, error => { captureTraceContent(responseDraft(), () => undefined, { incomplete: options?.signal?.aborted ? "cancelled" : "execution_failed" }, contentScope); usage.finish("error"); observation?.finish("error"); throw error; });
       // Pi represents provider failures as messages; observer/storage failures
       // must still reject the execution result instead of appearing successful.
       stream.result = () => finished;
       void finished.catch(() => undefined);
       return stream;
     };
+    return traceModelStream(streamModel);
   }
 
   async getApiKey(snapshot: LlmRuntimeSnapshot, providerId: string): Promise<string> {
@@ -99,6 +107,12 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
     signal?: AbortSignal,
     options?: ModelCompletionOptions,
   ): Promise<ModelCompletionResult> {
+    return traceModelCompletion(signal, () => this.completeTextInScope(snapshot, system, prompt, signal, options));
+  }
+
+  private async completeTextInScope(snapshot: LlmRuntimeSnapshot, system: string, prompt: string, signal?: AbortSignal, options?: ModelCompletionOptions): Promise<ModelCompletionResult> {
+    const contentScope = currentTrace();
+    let responseCaptured = false;
     let transportFailure: ModelGatewayError | undefined;
     const usage = createLlmUsageTransport(this.runtime, snapshot, signal, globalThis.fetch, undefined, undefined, error => { transportFailure = error; });
     const captureFetch: typeof globalThis.fetch = async (input, init) => {
@@ -133,6 +147,8 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
           maxTokens: options?.maxTokens ?? Math.min(8192, Math.max(1024, Math.floor(snapshot.contextWindow / 8))),
         },
       );
+      responseCaptured = true;
+      captureTraceContent({ kind: "model.response", source: "pi.assistant_message" }, () => ({ content: message.content, stopReason: message.stopReason }), { secrets: [snapshot.apiKey], ...(message.stopReason === "error" || message.stopReason === "aborted" ? { incomplete: signal?.aborted ? "cancelled" as const : "execution_failed" as const } : {}) }, contentScope);
       usage.finish(message.stopReason);
       if (signal?.aborted) throw new ModelGatewayError("timeout", true);
       if (message.stopReason === "error") {
@@ -150,6 +166,7 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
         : message.stopReason === "stop" || message.stopReason === "length" ? message.stopReason : "unknown";
       return { text, stopReason };
     } catch (error) {
+      if (!responseCaptured) captureTraceContent({ kind: "model.response", source: "pi.assistant_message" }, () => undefined, { incomplete: signal?.aborted ? "cancelled" : "execution_failed" }, contentScope);
       usage.finish(signal?.aborted ? "aborted" : "error");
       throw signal?.aborted ? new ModelGatewayError("timeout", true) : classifyModelGatewayError(error);
     }

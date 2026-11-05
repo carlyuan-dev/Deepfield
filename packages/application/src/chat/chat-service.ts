@@ -1,4 +1,6 @@
 import { Value } from "typebox/value";
+import { currentTrace, findTrace, startTraceSpan, traceLinks, withTrace } from "@deepfield/base/trace/runtime";
+import type { TraceContext } from "@deepfield/base/trace";
 import {
   AgentWorkerEventSchema,
   type AgentWorkerEvent,
@@ -82,7 +84,21 @@ export class ChatService {
     private readonly options: ChatServiceOptions = {},
   ) {}
 
-  async send(
+  async send(conversationId: string, content: string, requestId: string, onEvent: (event: AgentWorkerEvent) => void, options: ChatRequestOptions = DEFAULT_CHAT_OPTIONS): Promise<ChatSendResult> {
+    const span = startTraceSpan("request", requestId, { conversationId }, null);
+    return withTrace(span.context, async () => {
+      try {
+        return await this.sendInternal(conversationId, content, requestId, event => {
+          if (event.type === "completed") span.end("succeeded");
+          if (event.type === "handed_off") span.end("handed_off");
+          if (event.type === "failed") span.end("failed", "execution_failed");
+          onEvent(event);
+        }, options);
+      } catch (error) { span.end("failed", "execution_failed"); throw error; }
+    });
+  }
+
+  private async sendInternal(
     conversationId: string,
     content: string,
     requestId: string,
@@ -256,11 +272,17 @@ export class ChatService {
       try { llm = await this.profiles.resolveActiveLlm(); if (options.webSearch) search = await this.profiles.resolveActiveSearch(); } catch {
         const requestId = `interaction-resume:${event.id}`;
         const interactionId = event.interactionId;
-        this.repositories.runInTransaction(() => {
+        const span = startTraceSpan("request", requestId, { conversationId }, null);
+        const consumed: typeof pendingEvents = [];
+        try { this.repositories.runInTransaction(() => {
           this.repositories.chatSessions.fail(conversation.id, requestId, "configuration_unavailable");
           if (!this.repositories.messages.listByConversation(conversation.id).some(message => message.requestId === requestId)) this.repositories.messages.append(conversation.id, "assistant", this.resumeFailureMessage(interactionId, "configuration_unavailable"), requestId);
-          for (const item of pendingEvents) if (this.repositories.chatInteractions.claimEvent(item.id)) this.repositories.chatInteractions.consumeEvent(item.id);
-        });
+          for (const item of pendingEvents) if (this.repositories.chatInteractions.claimEvent(item.id)) {
+            this.repositories.chatInteractions.consumeEvent(item.id); consumed.push(item);
+          }
+        }); } catch (error) { span.end("unknown", "execution_failed"); throw error; }
+        traceLinks(span.context, consumed.map(source => findTrace({ kind: "interaction", id: source.interactionId })));
+        span.end("failed", "execution_failed");
         this.options.onAutoEvent?.(conversationId, { requestId, type: "failed", code: "configuration_unavailable", message: FAILED_MESSAGE });
         return false;
       }
@@ -284,7 +306,7 @@ export class ChatService {
         await this.consume(request, conversationId as ConversationId, value => {
           if (value.type === "failed") failure = value;
           else this.options.onAutoEvent?.(conversationId, value);
-        });
+        }, [...batched, event].map(source => findTrace({ kind: "interaction", id: source.interactionId })));
         this.repositories.runInTransaction(() => {
           const turn = this.repositories.chatSessions.list(conversationId as ConversationId).find(turn => turn.requestId === requestId);
           if (!turn?.awaitingUser && !this.repositories.messages.listByConversation(conversationId as ConversationId).some(message => message.role === "assistant" && message.requestId === requestId)) this.repositories.messages.append(conversationId as ConversationId, "assistant", this.resumeFailureMessage(event.interactionId, turn?.failureCode, turn?.failureDiagnostic?.category), requestId);
@@ -396,7 +418,7 @@ export class ChatService {
         context: this.withCapabilities(this.contextBuilder.build(conversationId as ConversationId), conversationId as ConversationId),
         options: DEFAULT_CHAT_OPTIONS, llm, toolAccess: { ...OFFLINE_CHAT_POLICY, maxAgentTurns: 8 } };
       this.options.onRequestStarted?.(requestId, conversationId, prompt, this.restoredKeys(conversationId as ConversationId));
-      await this.consume(request, conversationId as ConversationId, event => this.options.onAutoEvent?.(conversationId, event));
+      await this.consume(request, conversationId as ConversationId, event => this.options.onAutoEvent?.(conversationId, event), [findTrace({ kind: "task", id: ref.taskId, capabilityId: ref.capabilityId })]);
       const completed = this.repositories.messages.listByConversation(conversationId as ConversationId)
         .some(message => message.role === "assistant" && message.requestId === requestId && message.status !== "failed");
       this.repositories.chatCapabilities.setAnalysisState(conversationId, ref.capabilityId, ref.taskId, completed ? "completed" : "interrupted");
@@ -473,6 +495,25 @@ export class ChatService {
   }
 
   private async consume(
+    request: AgentWorkerRequest,
+    conversationId: ConversationId,
+    onEvent: (event: AgentWorkerEvent) => void,
+    links: readonly (TraceContext | undefined)[] = [],
+  ): Promise<void> {
+    const inherited = currentTrace();
+    const parent = inherited?.requestId === request.requestId ? inherited : undefined;
+    const span = parent ? undefined : startTraceSpan("request", request.requestId, { conversationId }, null);
+    const scope = parent ?? span!.context;
+    traceLinks(scope, links);
+    return withTrace(scope, () => this.consumeTraced({ ...request, trace: { rootTraceId: scope.rootTraceId, spanId: scope.spanId } }, conversationId, event => {
+      if (event.type === "completed") span?.end("succeeded");
+      if (event.type === "failed") span?.end("failed", "execution_failed");
+      if (event.type === "handed_off") span?.end("handed_off");
+      onEvent(event);
+    }));
+  }
+
+  private async consumeTraced(
     request: AgentWorkerRequest,
     conversationId: ConversationId,
     onEvent: (event: AgentWorkerEvent) => void,

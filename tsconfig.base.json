@@ -18,6 +18,8 @@
     "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
+      "@deepfield/base/trace": ["./packages/base/src/trace/index.ts"],
+      "@deepfield/base/trace/runtime": ["./packages/base/src/trace/runtime.ts"],
       "@deepfield/base/database": ["./packages/base/src/database/index.ts"],
       "@deepfield/base/database/runtime": ["./packages/base/src/database/runtime.ts"],
       "@deepfield/base/usage/sqlite": ["./packages/base/src/usage/sqlite.ts"],
@@ -29,6 +31,7 @@
       "@deepfield/base/search": ["./packages/base/src/search/index.ts"],
       "@deepfield/base/search/runtime": ["./packages/base/src/search/runtime.ts"],
       "@deepfield/base/model": ["./packages/base/src/model/index.ts"],
+      "@deepfield/base/model/trace": ["./packages/base/src/model/trace.ts"],
       "@deepfield/base/model/runtime": ["./packages/base/src/model/runtime.ts"],
       "@deepfield/base/usage": ["./packages/base/src/usage/index.ts"],
       "@deepfield/base/usage/runtime": ["./packages/base/src/usage/runtime.ts"],
@@ -53,6 +56,7 @@
   },
   "include": [
     "scripts/capabilities/**/*.ts",
+    "scripts/trace/**/*.ts",
     "capabilities/**/*.ts",
     "capabilities/**/*.tsx",
     "packages/base/src/**/*.ts",

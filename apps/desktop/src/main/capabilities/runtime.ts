@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { scopeCapabilityTrace } from "../../shared/capability-trace.js";
 import type { InvocationRepository } from "@deepfield/persistence";
 import { TaskArtifactGateway } from "./task-artifact-gateway.js";
 import { relative } from "node:path";
@@ -187,6 +188,7 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
                 scopedServices = createCapabilityDatabaseServices(scopedServices, databaseScope.database);
               }
               assertStorageServices(scopedServices, entry.manifest.requirements);
+              scopedServices = scopeCapabilityTrace(scopedServices, id, cleanup => registrar.defer(cleanup));
               await module.bootstrap(registrar, scopedServices);
             },
             ...(workerEntry ? {

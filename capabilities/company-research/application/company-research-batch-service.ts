@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { TracePort } from "@deepfield/base/trace";
+import { ResearchQueueTrace } from "./research-trace.js";
 import { Value } from "typebox/value";
 import { AppError, toPublicError, type ResearchRunId, type CapabilityItemId, type CompanyId } from "@deepfield/contracts";
 import { BatchResearchEntryInputSchema, normalizeResearchInput, researchRetryMode, type BatchResearchEntry, type BatchResearchEntryInput, type CompanyResearchBatchState, type KeyResearchRun, type StartCompanyResearchInput } from "../contracts/index.js";
@@ -6,6 +8,7 @@ import type { CompanyResearchBatchServiceRepositories as Repositories } from "..
 import type { CompanyResearchService } from "./company-research-service.js";
 
 export class CompanyResearchBatchService {
+  private readonly queueTrace: ResearchQueueTrace | undefined;
   private state: CompanyResearchBatchState | undefined;
   private task: Promise<void> | undefined;
   private listeners = new Set<(state: CompanyResearchBatchState) => void>();
@@ -16,7 +19,8 @@ export class CompanyResearchBatchService {
   private persistReceipts?: (state: CompanyResearchBatchState) => void;
   /** Called only inside the queue/run's existing SQLite transaction. */
   setReceiptWriter(writer: (state: CompanyResearchBatchState) => void): void { this.persistReceipts = writer; }
-  constructor(private readonly repos: Repositories, private readonly research: CompanyResearchService, private readonly profile?: { resume(): void }) {
+  constructor(private readonly repos: Repositories, private readonly research: CompanyResearchService, private readonly profile?: { resume(): void }, private readonly trace?: TracePort) {
+    this.queueTrace = trace ? new ResearchQueueTrace(trace, id => repos.companyResearchProtocol?.getTask(id)) : undefined;
     this.unsubscribe = research.subscribe(event => {
       if (this.disposed) return;
       if (event.type === "tool_activity" && event.errorCode === "authentication_failed" && this.state) {
@@ -185,6 +189,7 @@ export class CompanyResearchBatchService {
       try { this.repos.runInTransaction(() => this.persistReceipts?.(paused)); }
       catch { /* Startup reconciles the durable queue; storage failure must not keep workers alive. */ }
     }
+    this.queueTrace?.dispose();
     this.disposed = true; this.unsubscribe(); this.listeners.clear();
   }
   private require(batchId: string): CompanyResearchBatchState {
@@ -223,15 +228,16 @@ export class CompanyResearchBatchService {
           continue;
         }
         let run: import("../contracts/index.js").ResearchRun;
+        const dispatch = <T>(work: () => T): T => this.trace ? this.trace.run(this.queueTrace?.scope(entry.entryId), work) : work();
         if (saved && this.research.isActiveRun(saved.id)) {
           run = saved;
         } else if (saved) {
           run = entry.mode === "retry_structure"
-            ? await this.research.retryStructuring(itemId, entry.companyId, saved.id, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed)
-            : await this.research.retryFailed(itemId, entry.companyId, saved.id, entry.input, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed);
+            ? await dispatch(() => this.research.retryStructuring(itemId, entry.companyId, saved.id, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed))
+            : await dispatch(() => this.research.retryFailed(itemId, entry.companyId, saved.id, entry.input, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed));
         } else {
           if (entry.mode !== "new") throw new AppError("RESOURCE.NOT_FOUND");
-          run = await this.research.start(itemId, entry.companyId, entry.input, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed);
+          run = await dispatch(() => this.research.start(itemId, entry.companyId, entry.input, state.batchId, () => this.cancelled() || !!entry.cancelRequested, () => this.disposed));
         }
         if (this.disposed) return;
         dispatchedRun = run;
@@ -329,6 +335,7 @@ export class CompanyResearchBatchService {
       else if (state.status === "completed") state.status = "paused";
       throw new AppError("STORAGE.FAILED", undefined, { cause: error });
     }
+    this.queueTrace?.observe(state);
     if (state.status === "completed" || state.status === "cancelled") {
       // Release exactly this owner before notifying: a listener may synchronously
       // admit a new batch. Its state/task must survive this batch's finalizer.

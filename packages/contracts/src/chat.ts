@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import { TraceContextSchema } from "@deepfield/base/trace";
 import type { ConversationId, MessageId } from "./ids.js";
 import type { Conversation } from "./conversations.js";
 import { LlmRuntimeSnapshotSchema, SearchRuntimeSnapshotSchema, ToolAccessPolicySchema } from "./settings.js";
@@ -52,6 +53,7 @@ export const AgentWorkerRequestSchema = Type.Object(
   {
     requestId: Type.String(),
     kind: Type.Literal("chat.prompt"),
+    trace: Type.Optional(TraceContextSchema),
     prompt: Type.String(),
     context: AgentContextSnapshotSchema,
     options: ChatRequestOptionsSchema,

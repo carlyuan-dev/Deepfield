@@ -58,10 +58,10 @@ function project<Origin, Phase extends string>(payload: unknown, context: Contex
   });
 }
 
-export function observeSerializedRequest<Origin, Phase extends string>(context: Context, options: ObservedStreamOptions<Origin, Phase> | undefined, observer: ModelRequestObserver<Origin, Phase>, fetch: typeof globalThis.fetch) {
+export function observeSerializedRequest<Origin, Phase extends string>(context: Context, options: ObservedStreamOptions<Origin, Phase> | undefined, observer: ModelRequestObserver<Origin, Phase>, fetch: typeof globalThis.fetch, modelRequestId?: string) {
   const input = options?.requestObservation;
   if (!input) return undefined;
-  const id = randomUUID();
+  const id = modelRequestId ?? randomUUID();
   let dispatched = false;
   let failed = false;
   let responseStatus: number | undefined;

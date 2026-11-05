@@ -15,6 +15,7 @@ export interface TitleGenerationDiagnostic {
 }
 
 export interface ConfiguredLlmServiceOptions {
+  agentMode?: string | undefined;
   titleTimeoutMs?: number;
   onTitleDiagnostic?: (diagnostic: TitleGenerationDiagnostic) => void;
 }
@@ -63,6 +64,9 @@ export class ConfiguredLlmService implements ConversationTitleGenerator {
   }
 
   generateConversationTitle(content: string): Promise<string | undefined> {
+    // Keep the existing local title in fake Chat journeys, including the
+    // automatic background request that runs outside the worker.
+    if (this.options.agentMode === "fake") return Promise.resolve(undefined);
     return withUsageContext({ sourceId: "conversation-title" }, () => this.generateTitle(content));
   }
 

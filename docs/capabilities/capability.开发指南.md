@@ -45,6 +45,40 @@ v2 清单使用 `protocolVersion: 2`、`hostApiVersion: 2`。`entries.main` 必�
 
 公司包 3.0.0 已移除旧宿主仓储服务需求，须与对应宿主一起更新整个构建包。`hostApiVersion: 2`、协议版本 2 不变；未升级旧包与新宿主不承诺兼容，安装目录不会被启动流程自动覆盖。
 
+### 可选执行追踪
+
+动作网关和宿主 Worker 自动记录调用边界。包内需要观察耗时步骤、后台任务或产物时，通过 SDK 获取可选 `trace.v1`；通常不把它写入必需 requirements。宿主缺失、版本不匹配或关闭采集时，业务仍可运行。主入口和 Worker 入口取得的是各自进程的宿主端口，不能自行打包 `@deepfield/base/trace/runtime` 来共享上下文。
+
+```ts
+import { getCapabilityTrace, type CapabilityHostServices } from "@deepfield/capability-sdk";
+import type { TracePort } from "@deepfield/base/trace";
+
+// bootstrap 中获取一次，并注入包内服务；无需在模型输入中声明。
+function makeDocumentService(services: CapabilityHostServices) {
+  const trace = getCapabilityTrace(services);
+  return { validate: (requestId: string, work: () => Promise<void>) => validateDocument(requestId, work, trace) };
+}
+
+async function validateDocument(requestId: string, work: () => Promise<void>, trace?: TracePort) {
+  const span = trace?.start("stage", requestId, { stage: "document.validate" });
+  try {
+    // 使用可信调用上下文中的 requestId。正文、用户输入不进入元数据。
+    if (span) await trace!.run(span.context, work);
+    else await work();
+    span?.end("succeeded");
+  } catch (error) {
+    span?.end("failed", "execution_failed");
+    throw error;
+  }
+}
+```
+
+stage 是稳定技术标识（1–64 位，小写字母开头，可含数字、点、下划线和连字符），不是显示文案。宿主固定 capabilityId；可用 taskId/runId/artifactId 关联本包任务与产物，不将全文或任意业务字段写入元数据。Trace 是可选旁路，不代替业务校验、授权、持久化回执或任务状态。
+
+后台队列在成功保存任务后捕获 `trace.capture()`，消费时用 `trace.run(savedScope, work)` 恢复。重试新建 span，通过 `trace.link(newSpan.context, [oldScope])` 关联历史；进程重启后可按持久标识 `trace.find({ kind: "task", id })` 查找，缺失保持缺失，不猜关联。多个动作汇入同一任务也使用 links。队列的恢复与幂等仍由包负责，Trace 不执行重试。
+
+在已有 scope 内通过宿主 Base.Model／工具执行器调用时，模型和实际工具调用自动关联；自建 HTTP 客户端或外部进程需由包补充边界。端口销毁由宿主管理，关闭后回调仍照常执行。正文采集权限和查询／导出工具归宿主，`trace.v1` 不开放其他包的内容读取能力。字段、生命周期、Usage 去重与本地导出见 [Base.Trace 设计](../base/base.trace.设计文档.md)。
+
 ### 包私有配置
 
 在清单 `requirements` 中加入 `"config.v1"`，主进程 `bootstrap` 即可取得宿主限定到本包 ID 的配置服务。当前 Worker 不提供此服务；包不能自行传 scope、读取目录或创建全局管理器。全局模型／搜索仍通过原 `model.configuration` 等显式服务使用，私有配置不会覆盖它们。Config 核心、作用域接入及旧 LLM／Search 兼容适配已实现并完成本轮验收，范围见 [Base.Config 设计](../base/base.config.设计文档.md)。

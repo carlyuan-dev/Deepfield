@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createRepositories, migrate, openDatabase } from "../../../../persistence/src/testing/repositories.js";
 import { ChatInteractionCoordinator } from "./coordinator.js";
 import type { OperationAdapter } from "./ports.js";
+import { configureTraceCollector, createTraceCollector } from "@deepfield/base/trace/runtime";
+import type { TraceEvent } from "@deepfield/base/trace";
 
 const operation = { provider: "fake", operationId: "create", contractVersion: "1", draftRef: "draft" };
 const approval = { kind: "approval" as const, summary: "Create item", operation };
@@ -11,6 +13,7 @@ const context = (conversationId: string) => ({ conversationId, source: "chat_but
 describe("ChatInteractionCoordinator", () => {
   it("executes a simultaneous left and right approval only once", async () => {
     const db = openDatabase(":memory:"); migrate(db);
+    const events: TraceEvent[] = []; const collector = createTraceCollector(event => { events.push(event); }); configureTraceCollector(collector);
     try {
       const repos = createRepositories(db); const conversation = repos.conversations.create();
       const execute = vi.fn(async () => ({ status: "succeeded" as const, summary: "Created" }));
@@ -25,7 +28,10 @@ describe("ChatInteractionCoordinator", () => {
       expect(coordinator.get(item.id)?.status).toBe("succeeded");
       expect(repos.chatInteractions.pendingEvents(conversation.id)).toHaveLength(1);
       expect(changed).toHaveBeenCalledWith(expect.objectContaining({ status: "executing" }));
-    } finally { db.close(); }
+      await collector.close();
+      expect(events.filter(event => event.type === "span.end" && event.kind === "interaction")).toMatchObject([{ status: "succeeded" }]);
+      expect(events.filter(event => event.type === "span.state" && event.status === "executing")).toMatchObject([{ receiptId: coordinator.get(item.id)!.receiptId, revision: item.revision }]);
+    } finally { configureTraceCollector(undefined); db.close(); }
   });
 
   it("keeps answers separate from approval and binds responses to the original conversation", async () => {
@@ -73,6 +79,27 @@ describe("ChatInteractionCoordinator", () => {
       expect((await coordinator.recover())[0]?.status).toBe("uncertain");
       expect(reconcile).toHaveBeenCalledWith("receipt");
       expect(execute).not.toHaveBeenCalled();
+      expect(repos.chatInteractions.pendingEvents(conversation.id)).toHaveLength(1);
+    } finally { db.close(); }
+  });
+
+  it("keeps an uncertain write terminal when execution and reconciliation both throw", async () => {
+    const db = openDatabase(":memory:"); migrate(db);
+    try {
+      const repos = createRepositories(db); const conversation = repos.conversations.create();
+      const execute = vi.fn(async () => { throw new Error("receipt lost after possible write"); });
+      const reconcile = vi.fn(async () => { throw new Error("receipt store unavailable"); });
+      const adapter: OperationAdapter = { read: async () => ({ version: "v1", summary: "Create item" }), execute, reconcile };
+      const coordinator = new ChatInteractionCoordinator(repos.chatInteractions, new Map([["fake", adapter]]));
+      const item = await coordinator.create(owner(conversation.id), approval);
+      const command = { interactionId: item.id, expectedRevision: item.revision, response: { kind: "decision" as const, decision: "approve" as const } };
+      const uncertain = await coordinator.respond(command, context(conversation.id));
+      expect(uncertain.status).toBe("uncertain");
+      const restarted = new ChatInteractionCoordinator(repos.chatInteractions, new Map([["fake", adapter]]));
+      await restarted.recover();
+      expect((await restarted.respond({ ...command, expectedRevision: uncertain.revision }, context(conversation.id))).status).toBe("uncertain");
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
       expect(repos.chatInteractions.pendingEvents(conversation.id)).toHaveLength(1);
     } finally { db.close(); }
   });

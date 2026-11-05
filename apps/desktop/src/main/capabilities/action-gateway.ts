@@ -1,5 +1,6 @@
 import type { TSchema } from "typebox";
 import { createHash, randomUUID } from "node:crypto";
+import { currentTrace, startTraceSpan, withTrace, type TraceSpan } from "@deepfield/base/trace/runtime";
 import type { InvocationRepository, InvocationRecord } from "@deepfield/persistence";
 import { Value } from "typebox/value";
 import { AppError } from "@deepfield/contracts";
@@ -113,6 +114,7 @@ export class ActionGateway {
     } catch (error) { return this.failure(call, context, error); }
   }
   async invoke(call: ActionCall, context: TrustedActionContext, mayDispatch?: () => boolean): Promise<GatewayResult> {
+    let trace: TraceSpan | undefined;
     try {
       const entry = this.resolve(call);
       const action = this.registry.publicAction(call.capabilityId, call.actionId);
@@ -150,8 +152,9 @@ export class ActionGateway {
       // Optional trusted-main revocation guard runs after every asynchronous preview and before dispatch.
       if (mayDispatch && !mayDispatch()) throw new GatewayError("permission_denied");
       if (!this.receipts!.claim(context.invocationId, this.now())) throw new GatewayError("reconciliation_required");
+      trace = startTraceSpan("action", currentTrace()?.requestId ?? `invocation:${context.invocationId}`, { capabilityId: call.capabilityId, actionId: call.actionId, invocationId: context.invocationId });
       // Identity fields are selected explicitly. Neither call.input nor arbitrary context extras are forwarded.
-      const outcome = await action.handler(input, { invocationId: context.invocationId, source: context.source, ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }) });
+      const outcome = await withTrace(trace.context, () => action.handler(input, { invocationId: context.invocationId, source: context.source, ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }) }));
       const { presentation: optionalPresentation, proposedAction: optionalProposal, ...coreOutcome } = outcome as typeof outcome & { proposedAction?: unknown };
       if (!Value.Check(ActionOutcomeSchema(action.outputSchema), coreOutcome)) throw new AppError("INTERNAL.UNKNOWN");
       const presentation = safeOperationPresentation(optionalPresentation, call.capabilityId);
@@ -161,6 +164,7 @@ export class ActionGateway {
         || ("artifactRefs" in outcome && outcome.artifactRefs?.some(ref => ref.capabilityId !== call.capabilityId))
         || ("viewRefs" in outcome && outcome.viewRefs?.some(ref => ref.capabilityId !== call.capabilityId))) throw new AppError("INTERNAL.UNKNOWN");
       if (outcome.status === "error") {
+        trace.end("unknown", "execution_failed");
         // Reuse the AppError allowlist; never expose a handler's raw message/stack/cause.
         const error = this.failure(call, context, new AppError(outcome.error.code as ConstructorParameters<typeof AppError>[0]));
         return presentation ? { ...error, presentation } : error;
@@ -179,8 +183,10 @@ export class ActionGateway {
       const result = boundedWithPresentation(coreResult, resultPresentation);
       this.receipts!.complete(context.invocationId, result, outcome.status === "accepted" ? outcome.taskRef.taskId : undefined, this.now());
       if (outcome.status === "accepted" && ["succeeded", "failed", "cancelled", "interrupted"].includes(outcome.taskStatus)) this.receipts!.markTaskTerminal(call.capabilityId, outcome.taskRef.taskId, this.now());
+      trace.end(outcome.status === "accepted" ? "accepted" : "succeeded");
       return result;
     } catch (error) {
+      trace?.end("unknown", "execution_failed");
       if (context.confirmationToken) this.confirmations.invalidate(context.confirmationToken);
       return this.failure(call, context, error);
     }

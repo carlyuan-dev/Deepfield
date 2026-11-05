@@ -1,5 +1,6 @@
 import { createLlmUsageTransport as createBaseLlmUsageTransport } from "@deepfield/base/model/runtime";
 import { randomUUID } from "node:crypto";
+import { traceUsage } from "@deepfield/base/trace/runtime";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type UsageRecorder, type UsageContext, type UsageMetadata, type ModelUsagePort } from "@deepfield/base/usage";
 import { createUsageCollector } from "@deepfield/base/usage/runtime";
@@ -19,7 +20,12 @@ export function snapshotIdentity(snapshot: object): object {
   return identity;
 }
 export const modelUsagePort: ModelUsagePort = {
-  startAttempt(metadata, identity) { return collector.startAttempt(metadata, contexts.getStore(), identity); },
+  startAttempt(metadata, identity) {
+    const handle = collector.startAttempt(metadata, contexts.getStore(), identity);
+    // Model transport owns LLM associations; Search uses this host boundary.
+    if (metadata.serviceKind === "search") traceUsage({ type: "usage.link", usageAttemptId: handle.attemptId, serviceKind: "search" });
+    return handle;
+  },
 };
 export function startUsageAttempt(snapshot: LlmRuntimeSnapshot | SearchRuntimeSnapshot, serviceKind: "llm" | "search") {
   const meta = snapshot as typeof snapshot & { configRevisionId?: string; draftSessionId?: string };

@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { captureTraceContent } from "../trace/content-runtime.js";
 import type { ToolCallRequest, ToolExecutionResult } from "./contracts.js";
 import type { ToolBudgetLedger } from "./budget.js";
 import type { ToolDefinition, ToolRunContext } from "./definition.js";
@@ -13,6 +14,7 @@ import { ToolPolicy } from "./policy.js";
 import { ToolRegistry } from "./registry.js";
 import { type RetryClock } from "./retry.js";
 import type { ToolAuditSink } from "./audit.js";
+import { currentTrace, startTraceSpan, withTrace, type TraceSpan } from "../trace/runtime.js";
 import { finishAuditBestEffort, runAttempt } from "./runner-attempt.js";
 import { ToolConcurrencyLimiter } from "./limiter.js";
 import {
@@ -74,6 +76,7 @@ export class ToolRunner {
     const emitter = new ToolEventEmitter(executionId, traceId, tool, () => this.#clock.now(), onEvent);
     let settled = false;
     let result: ToolExecutionResult | undefined;
+    let traceSpan: TraceSpan | undefined;
 
     const emit = (draft: ToolEventDraft): void => {
       if (settled) {
@@ -87,6 +90,7 @@ export class ToolRunner {
       }
       settled = true;
       result = next;
+      traceSpan?.end(next.status === "completed" ? "succeeded" : next.status === "cancelled" ? "cancelled" : next.failure?.code === "timeout" ? "timeout" : "failed", next.status === "completed" ? undefined : next.failure?.code === "audit_failed" ? "audit_failed" : "execution_failed");
       return result;
     };
     // Single-line result builders keep this hot-path file under 300 lines.
@@ -218,8 +222,10 @@ export class ToolRunner {
         if (attempt === 1 && definition.meter.commitOn !== "external_dispatch") markBudgetConsumed();
         // attempts increments only when an attempt is really about to start.
         attempts = attempt;
+        if (!traceSpan && currentTrace()) traceSpan = startTraceSpan("tool", currentTrace()!.requestId, { executionId, toolName: tool.name, ...(scope.toolCallId ? { toolCallId: scope.toolCallId } : {}), ...(scope.agentTurnIndex !== undefined ? { turn: scope.agentTurnIndex } : {}) });
+        if (attempt === 1) captureTraceContent({ kind: "tool.input", source: "tool.executor", executionId, ...(scope.toolCallId ? { toolCallId: scope.toolCallId } : {}) }, () => input, undefined, traceSpan?.context);
         emit({ type: "started" });
-        const outcome = await runAttempt({
+        const outcome = await withTrace(traceSpan?.context, () => runAttempt({
           definition,
           input,
           context: Object.freeze({ ...scope, markBudgetConsumed }),
@@ -228,9 +234,10 @@ export class ToolRunner {
           attempts,
           clock: this.#clock,
           onProgress: (progress) => emit({ type: "progress", progress: toSafeProgress(progress) }),
-        });
+        }));
         if (outcome.kind === "value") {
           output = outcome.value;
+          captureTraceContent({ kind: "tool.output", source: "tool.executor", executionId, ...(scope.toolCallId ? { toolCallId: scope.toolCallId } : {}) }, () => output, undefined, traceSpan?.context);
           break;
         }
         if (outcome.kind === "cancelled") {
@@ -287,6 +294,8 @@ export class ToolRunner {
         }
       }
     }
+
+    if (terminalFailure && output === undefined) captureTraceContent({ kind: "tool.output", source: "tool.executor", executionId, ...(scope.toolCallId ? { toolCallId: scope.toolCallId } : {}) }, () => undefined, { incomplete: terminalFailure.code === "cancelled" ? "cancelled" : "execution_failed" }, traceSpan?.context);
 
     if (terminalFailure === undefined) {
       if (budgetConsumed) {

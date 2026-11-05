@@ -1,4 +1,5 @@
 import type { CapabilityItemId } from "@deepfield/contracts";
+import type { TracePort } from "@deepfield/base/trace";
 import { createResourceScope } from "@deepfield/capability-sdk";
 import type {
   CompanyProfileCompleter, CompanyRecognizer, CompanyResearchWorkerPort,
@@ -12,6 +13,7 @@ import { CompanyProfileEnrichmentService } from "./company-profile-enrichment-se
 import { IndustryResearchService } from "./industry-research-service.js";
 
 export interface CompanyResearchServicesPorts {
+  trace?: TracePort;
   repositories: IndustryResearchServiceRepositories & CompanyResearchServiceRepositories
     & CompanyResearchBatchServiceRepositories & { companies: ProfileRepository };
   profiles: RuntimeProfileResolver;
@@ -28,6 +30,7 @@ export function createCompanyResearchServices(ports: CompanyResearchServicesPort
     const repositories = ports.repositories;
     const companyResearch = new CompanyResearchService(repositories, ports.profiles, ports.worker, {
       requestIdFactory: ports.requestIdFactory,
+      ...(ports.trace ? { trace: ports.trace } : {}),
     });
     scope.defer(() => companyResearch.dispose());
     let companyResearchBatch: CompanyResearchBatchService | undefined;
@@ -41,7 +44,7 @@ export function createCompanyResearchServices(ports: CompanyResearchServicesPort
     });
     scope.defer(() => companyProfiles.dispose());
     const industryResearch = new IndustryResearchService(repositories, ports.companyRecognizer, companyProfiles);
-    companyResearchBatch = new CompanyResearchBatchService(repositories, companyResearch, companyProfiles);
+    companyResearchBatch = new CompanyResearchBatchService(repositories, companyResearch, companyProfiles, ports.trace);
     const batch = companyResearchBatch;
     scope.defer(() => batch.dispose());
     scope.defer(companyResearch.subscribe(event => {

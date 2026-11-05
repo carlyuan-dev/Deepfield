@@ -1,5 +1,7 @@
 import { AgentWorkerClient, type MessageEndpoint } from "./agent-worker-client.js";
 import { randomUUID } from "node:crypto";
+import type { TraceContentHost } from "../shared/trace-content.js";
+import type { TraceEvent, TraceHealth } from "@deepfield/base/trace";
 import { Value } from "typebox/value";
 import { UsageFlushReplySchema, UsageRepairReplySchema } from "@deepfield/contracts";
 
@@ -13,6 +15,10 @@ export interface AgentWorkerChild {
 }
 
 export interface AgentWorkerRuntimeOptions {
+  traceContent?: TraceContentHost;
+  trace?: (event: TraceEvent) => unknown;
+  traceHealth?: (health: TraceHealth) => unknown;
+  onTraceRejected?: () => void;
   /** Central host-request router; the single message listener stays on the client. */
   host?: { handleRequest(message: unknown): void };
 }
@@ -46,6 +52,10 @@ export function createAgentWorkerRuntime(
     },
   };
   const client = new AgentWorkerClient(endpoint, {
+    ...(options.traceContent ? { traceContent: options.traceContent } : {}),
+    ...(options.trace ? { trace: options.trace } : {}),
+    ...(options.traceHealth ? { traceHealth: options.traceHealth } : {}),
+    ...(options.onTraceRejected ? { onTraceRejected: options.onTraceRejected } : {}),
     ...(options.host !== undefined ? { hostHandler: options.host.handleRequest } : {}),
   });
   const unsubscribeAlive = endpoint.onExit(() => {

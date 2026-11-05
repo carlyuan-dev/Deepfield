@@ -1,8 +1,10 @@
 # Deepfield Base.overview 设计文档
 
-版本：0.12 · 更新日期：2026-10-20
+版本：0.14 · 更新日期：2026-11-05
 
 状态：八批实现已齐，实际消费者、公司仓储归属与作用域注入已收口；0.1.2 本批用户体验验收已完成，最终类型检查、全套 Vitest 与差异检查通过。已有 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路、Usage、隔离打包界面与重启读回证据保留原范围；各域契约与证据边界见对应设计及 [0.1.2 发布记录](../releases/2026-10-21-v0.1.2.md)。
+
+0.1.3 新增 Base.Trace 的通用协议、可选 SDK 与宿主接线；本批工程验收和范围见 [0.1.3 发布记录](../releases/2026-11-05-v0.1.3.md)。
 
 本文维护 Base 的整体职责、依赖边界和能力域目录，随系统演进更新。
 
@@ -45,6 +47,7 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 | Agent | `@deepfield/base/agent`、`@deepfield/base/agent/runtime` | 基于 Pi 的有界模型—工具循环、取消、事件与最终输出 | 已实现并接入共享执行路径；契约见[设计](base.agent.设计文档.md) |
 | Database | `@deepfield/base/database`、`@deepfield/base/database/runtime` | 数据库连接、通用读写／CRUD、事务、迁移执行与生命周期 | 通用底座已实现，现有仓储使用同一连接的 Base view；公司仓储已回到能力包 |
 | Usage | `@deepfield/base/usage`、`@deepfield/base/usage/runtime`、`@deepfield/base/usage/sqlite` | 用量记录、实例化 collector、幂等持久化契约与汇总查询 | 已实现；ALS、输送与生命周期留应用，SQLite 适配已归位并使用 Database |
+| Trace | `@deepfield/base/trace`、`@deepfield/base/trace/runtime` | 中立执行关联、span 事件及可选观测旁路；引用 Usage attempt | 通用协议、可选 SDK 端口及宿主接线已实现；覆盖与开发者使用见[设计](base.trace.设计文档.md) |
 | Errors | `@deepfield/base/errors` | 中立错误结构、公共分类及安全传输约定 | 核心及 contracts 兼容接线已实现；已通过用户手测 |
 
 Config 管配置，不负责执行 Model／Search 调用；Search 提供能力，不负责决定何时搜索；Tools 执行调用方给定的授权，不授予授权；Agent 提供执行机制，不接管 Chat 的记忆与 Capability 的业务流程。
@@ -55,9 +58,12 @@ Database 封装“怎样读写数据”，可以提供参数化查询、写入�
 
 Database 保持同库、同连接的同步事务；公司包自行构造仓储，宿主只提供数据库作用域和窄审计清理接口。已实现契约见 [Base.Database](base.database.设计文档.md)；迁移账本、受控 CRUD、注入与清理生命周期见[抽取设计的 Database 边界](base.extraction.设计文档.md#33-database-与业务仓储)。宿主与自有公司包同步升级，旧包与数据的兼容范围及更新方式见[公开契约与 Capability 兼容](base.extraction.设计文档.md#41-公开契约与-capability-兼容)。
 
-`packages/base` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent 与 Database。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config、Model、Search、Tools、Agent 与 Database 均区分安全入口和可信端 runtime；主进程 Capability 通过 `config.v1` 取得作用域句柄。Model 的旧共享入口只做单向薄装配，SDK 精确特化其中立观察契约，见 [Base.Model 设计文档](base.model.设计文档.md)。Search 的旧 retrieval 服务入口单向转出 Base 实现，工具定义由 Base.Tools/web 适配，旧 retrieval 工具入口单向转出，见 [Base.Search 设计文档](base.search.设计文档.md)。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
+`packages/base` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent、Database 与 Trace。Errors 的真实接口与旧 API 兼容边界见 [Base.Errors 设计文档](base.errors.设计文档.md)。Config、Model、Search、Tools、Agent 与 Database 均区分安全入口和可信端 runtime；主进程 Capability 通过 `config.v1` 取得作用域句柄。Model 的旧共享入口只做单向薄装配，SDK 精确特化其中立观察契约，见 [Base.Model 设计文档](base.model.设计文档.md)。Search 的旧 retrieval 服务入口单向转出 Base 实现，工具定义由 Base.Tools/web 适配，旧 retrieval 工具入口单向转出，见 [Base.Search 设计文档](base.search.设计文档.md)。完整的当前归属、目标依赖和分批边界见 [Base 抽取设计文档](base.extraction.设计文档.md)。Capability SDK 保留独立，不并入 Base。
 
 用量在实际请求边界统一计量，上层不手工累加；字段、恢复机制与看板口径见 [Base.Usage 设计文档](base.usage.设计文档.md)。
+
+Trace 以可选旁路关联模型、工具、动作和任务，不改变业务返回值、授权与状态机。Usage 保持唯一用量账本；Trace 存储与导出由宿主管理。Capability 使用宿主 trace.v1 端口补充自身阶段，避免打包第二份上下文 runtime。各 Base 的交互与完整覆盖范围见 [Base.Trace 设计](base.trace.设计文档.md#1-职责与依赖)。
+
 
 ## 4. 演进与维护
 

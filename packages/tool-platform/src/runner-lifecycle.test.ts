@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
+import { configureTraceCollector, createTraceCollector, withTrace } from "@deepfield/base/trace/runtime";
+import type { TraceEvent } from "@deepfield/base/trace";
 import type { ToolCallRequest, ToolExecutionEvent } from "@deepfield/contracts";
 import type { ToolDefinition, ToolProgress, ToolRunContext } from "./definition.js";
 import { ToolBudgetLedger } from "./budget.js";
@@ -137,30 +139,37 @@ describe("ToolRunner lifecycle (focused revision)", () => {
   });
 
   it("times out after the definition timeout and aborts the executor", async () => {
-    let executorSignal: AbortSignal | undefined;
-    const marker = startedMarker();
-    const { runner, call, context, signal, events, clock } = setup(
-      echoDefinition({
-        timeoutMs: 1000,
-        execute: async (_input, _context, executorSignalParam) => {
-          executorSignal = executorSignalParam;
-          marker.resolve();
-          await new Promise(() => {});
-          return { text: "unreachable" };
-        },
-      }),
-    );
-    const pending = runner.execute(call, context, signal, (event) => events.push(event));
-    await marker.promise;
-    clock.advance(1000);
-    const result = await pending;
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.failure.code).toBe("timeout");
-      expect(result.failure.retryable).toBe(false);
-    }
-    expect(executorSignal!.aborted).toBe(true);
-    expect(events.filter(isTerminal)).toHaveLength(1);
+    const traceEvents: TraceEvent[] = [];
+    const collector = createTraceCollector(event => { traceEvents.push(event); });
+    configureTraceCollector(collector);
+    try {
+      let executorSignal: AbortSignal | undefined;
+      const marker = startedMarker();
+      const { runner, call, context, signal, events, clock } = setup(
+        echoDefinition({
+          timeoutMs: 1000,
+          execute: async (_input, _context, executorSignalParam) => {
+            executorSignal = executorSignalParam;
+            marker.resolve();
+            await new Promise(() => {});
+            return { text: "unreachable" };
+          },
+        }),
+      );
+      const pending = withTrace({ rootTraceId: "root", spanId: "request", requestId: "req" }, () => runner.execute(call, context, signal, (event) => events.push(event)));
+      await marker.promise;
+      clock.advance(1000);
+      const result = await pending;
+      expect(result.status).toBe("failed");
+      if (result.status === "failed") {
+        expect(result.failure.code).toBe("timeout");
+        expect(result.failure.retryable).toBe(false);
+      }
+      expect(executorSignal!.aborted).toBe(true);
+      expect(events.filter(isTerminal)).toHaveLength(1);
+      await collector.close();
+      expect(traceEvents.filter(event => event.type === "span.end")).toMatchObject([{ kind: "tool", status: "timeout", executionId: "exec-1" }]);
+    } finally { configureTraceCollector(undefined); }
   });
 
   it("settles exactly once when completion and timeout race", async () => {

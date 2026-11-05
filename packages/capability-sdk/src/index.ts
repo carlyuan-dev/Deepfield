@@ -70,5 +70,5 @@ export type * from "./model-observation.js";
 export type * from "./forms.js";
 export type { CapabilityInteractionEditor } from "./ui.js";
 export type { CapabilityRegistrar, CapabilityWorkerRegistrar } from "./host.js";
-export { createCapabilityHostServices, type CapabilityHostServices } from "./services.js";
+export { createCapabilityHostServices, getCapabilityTrace, type CapabilityHostServices } from "./services.js";
 export { TaskAuthorizationSchema, TaskScopeProposalSchema, TaskScopeRuleSchema, type TaskAuthorization, type TaskScopeProposal } from "./task-scope.js";
