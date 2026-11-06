@@ -174,7 +174,7 @@ export function createElectronE2ELauncher(launch: typeof _electron.launch) {
       assertUserData(userDataDir);
       const target = executablePath === undefined ? resolve("out/main/index.js") : validateElectronApp(executablePath);
       if (executablePath === undefined) assertFile(target);
-      const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), DEEPFIELD_AGENT_MODE: mode, DEEPFIELD_E2E: "1", DEEPFIELD_USER_DATA_DIR: userDataDir };
+      const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), DEEPFIELD_AGENT_MODE: mode, DEEPFIELD_E2E: "1", DEEPFIELD_E2E_BACKGROUND: "1", DEEPFIELD_USER_DATA_DIR: userDataDir };
       delete env.ELECTRON_RUN_AS_NODE;
       const state = userDataDirectories.get(userDataDir)!;
       state.launched = true;

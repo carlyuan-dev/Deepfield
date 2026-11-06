@@ -9,14 +9,14 @@ import { createChatSessionRepository } from "./chat-session-repository.js";
 import { createChatCapabilityRepository } from "./chat-capability-repository.js";
 import { createChatInteractionRepository } from "./chat-interaction-repository.js";
 
-export function createRepositories(connection: DatabaseInput): Repositories {
+export function createRepositories(connection: DatabaseInput, hooks: { beforeConversationDeleteInTransaction?: (id: string) => void } = {}): Repositories {
   const db = databaseView(connection);
   return {
     chatCapabilities: createChatCapabilityRepository(db),
     chatInteractions: createChatInteractionRepository(db),
     capabilityInvocations: createCapabilityInvocationRepository(db),
     chatSessions: createChatSessionRepository(db),
-    conversations: createConversationRepository(db),
+    conversations: createConversationRepository(db, hooks.beforeConversationDeleteInTransaction),
     messages: createMessageRepository(db),
     toolExecutions: createToolExecutionRepository(db),
     runInTransaction: (work) => runInTransaction(db, work),

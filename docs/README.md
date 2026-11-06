@@ -19,14 +19,17 @@
 | [Base.Database](base/base.database.设计文档.md) | 同库读写、受控 CRUD、同步事务、模块迁移及宿主生命周期 |
 | [Base.Trace](base/base.trace.设计文档.md) | 通用执行关联、与各 Base 的职责边界、可选 Capability 接入和本地可视化导出 |
 | [Base.Usage](base/base.usage.设计文档.md) | 已实现的用量账本、统计口径、采集与看板 |
+| [Base.Memory](base/base.memory.设计文档.md) | 记忆记录、范围、提炼、召回、修订与遗忘 |
 | [Chat 运行机制](chat/chat.runtime.设计文档.md) | Pi 循环、工具许可、联网额度、历史与配置调用边界 |
 | [Chat 人机交互](chat/chat.interaction.设计文档.md) | 询问／确认、真实表单共同编辑、任务范围授权与恢复 |
+| [Chat Memory 接入](chat/chat.memory.设计文档.md) | 采集策略、上下文接入、费用控制和用户管理 |
+| [Chat Compact](chat/chat.compact.设计文档.md) | 会话摘要、输入预算、安全切分与恢复 |
 | [Capability 总览](capabilities/capability.overview.设计文档.md) | 可选包、启停、加载隔离与宿主边界 |
 | [Capability 交互协议](capabilities/capability.protocol.设计文档.md) | 动作、页面、任务、产物及 Chat 双入口契约 |
 | [Capability 开发指南](capabilities/capability.开发指南.md) | 当前 SDK、构建安装与独立示例包 |
 | [公司调研设计](capabilities/company-research.设计文档.md) | 公司资料、统一队列、两轮报告、证据与导出规则 |
 
-最新版本事实见 [0.1.3 发布记录](releases/2026-11-05-v0.1.3.md)，历史版本见 [0.1.2](releases/2026-10-21-v0.1.2.md) 与 [0.1.1](releases/2026-10-12-v0.1.1.md)；发布记录描述对应版本的验证与限制，不取代当前设计。Capability 包内 `docs/actions/` 与 `docs/help.md` 是运行时使用说明，属于产品契约，必须随包维护和提交。
+最新版本事实见 [0.1.4 发布记录](releases/2026-11-06-v0.1.4.md)，历史版本见 [0.1.2](releases/2026-10-21-v0.1.2.md) 与 [0.1.1](releases/2026-10-12-v0.1.1.md)；发布记录描述对应版本的验证与限制，不取代当前设计。Capability 包内 `docs/actions/` 与 `docs/help.md` 是运行时使用说明，属于产品契约，必须随包维护和提交。
 
 ## 源码导航
 
@@ -34,7 +37,7 @@
 - `apps/desktop/src/worker/agent/`：共享 Pi 执行器及窄执行契约；`worker/chat/`：Chat 提示词、历史、溯源与 checkpoint 适配；`worker/tools/`：工具运行和活动投影。
 - `apps/desktop/src/worker/capabilities/agent-runtime.ts`：Capability 直接装配共享执行器，不经过 Chat 上下文工厂。
 - `capabilities/company-research/`：独立公司调研包，包含 application、runtime、ui、export 与 contracts。
-- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent、Database 与 Trace，并提供对应 runtime 入口（Errors 除外）。八域实际消费者、公司仓储归属与作用域注入已收口，0.1.2 本批用户体验验收已完成；各域的实现、限定真实链路和证据范围见对应设计及发布记录。
+- `packages/capability-sdk/`：领域无关的公共包协议；`packages/base/` 当前公开 Usage、Errors、Config、Model、Search、Tools、Agent、Database、Trace 与 Memory，并提供对应 runtime 入口（Errors 除外）。八域实际消费者、公司仓储归属与作用域注入已收口，0.1.2 本批用户体验验收已完成；各域的实现、限定真实链路和证据范围见对应设计及发布记录。
 - `packages/contracts/`、`packages/tool-platform/`、`packages/retrieval/`、`packages/persistence/`：当前配置／错误兼容契约、工具执行、检索工具适配与存储；retrieval 服务入口单向转出 Base.Search，迁移边界以 Base 抽取设计为准。
 
 Base.Agent 提供中立 Pi 执行核；Worker 的共享场景适配保留联网／调研策略，Chat 和 Capability 调用同一个 Base 核心。SDK 的窄执行契约单向复用 Base，职责与兼容边界见 Base.Agent 设计。

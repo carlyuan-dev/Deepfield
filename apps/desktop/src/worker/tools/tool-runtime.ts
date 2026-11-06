@@ -361,8 +361,12 @@ export function chatToolDirectory(runtime: UtilityToolRuntime, networkEnabled: b
 }
 
 /** Main mirrors the production assembly's registration options without running tools. */
-export function availableChatTools(networkEnabled: boolean): Array<{ name: string; description: string }> {
+export const memoryToolDirectory = [
+  { name: "查找与读取记忆", description: "查找已保存的偏好和约定" },
+  { name: "保存与管理记忆", description: "按你的要求记住、修改、忘记或清空偏好" },
+];
+export function availableChatTools(networkEnabled: boolean, memoryEnabled = false): Array<{ name: string; description: string }> {
   const runtime = createToolRuntime({ audit: { start: async () => {}, finish: async () => {} },
     conversationReader: { listRecent: async () => [], read: async () => undefined, search: async () => [] } });
-  return chatToolDirectory(runtime, networkEnabled);
+  return [...chatToolDirectory(runtime, networkEnabled), ...(memoryEnabled ? memoryToolDirectory : [])];
 }

@@ -1,3 +1,4 @@
+import { MemoryCommandSchema } from "./memory.js";
 import { Type, type Static, type TProperties } from "typebox";
 import { UsageAttemptSchema } from "@deepfield/base/usage";
 import { UsageHealthEnvelopeSchema, UsageFlushRequestSchema, UsageFlushReplySchema } from "./usage.js";
@@ -258,6 +259,9 @@ export const HostConversationSearchPayloadSchema = Type.Object(
 
 /** Narrow host RPC requests: explicit audit, secret and read-only conversation methods. */
 export const HostRequestSchema = Type.Union([
+  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.request"), method: Type.Literal("memory.call"), payload: Type.Object({
+    chatRequestId: Type.String({ minLength: 1 }), toolCallId: Type.String({ minLength: 1 }), command: MemoryCommandSchema,
+  }, { additionalProperties: false }) }, { additionalProperties: false }),
   Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.request"), method: Type.Literal("chat.interaction"), payload: Type.Object({
     chatRequestId: Type.String({ minLength: 1 }), toolCallId: Type.String({ minLength: 1 }),
     operation: Type.Union([Type.Literal("question"), Type.Literal("draft.read"), Type.Literal("draft.update"), Type.Literal("draft.transition"), Type.Literal("proposal.create")]), arguments: Type.Unknown(),
@@ -351,6 +355,7 @@ export const HostRequestSchema = Type.Union([
 export type HostRequest = Static<typeof HostRequestSchema>;
 
 export const HostRpcMethodSchema = Type.Union([
+  Type.Literal("memory.call"),
   Type.Literal("chat.interaction"),
   Type.Literal("capability.call"),
   Type.Literal("usage.record"),
@@ -382,7 +387,7 @@ export const HostErrorCodeSchema = Type.Union([
  * cross-method data and generic database responses are rejected.
  */
 export const HostReplySchema = Type.Union([
-  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.reply"), method: Type.Union([Type.Literal("capability.call"), Type.Literal("chat.interaction")]), ok: Type.Literal(true), payload: Type.Object({ result: Type.Unknown() }, { additionalProperties: false }) }, { additionalProperties: false }),
+  Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.reply"), method: Type.Union([Type.Literal("capability.call"), Type.Literal("chat.interaction"), Type.Literal("memory.call")]), ok: Type.Literal(true), payload: Type.Object({ result: Type.Unknown() }, { additionalProperties: false }) }, { additionalProperties: false }),
   Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.reply"), method: Type.Literal("usage.record"), ok: Type.Literal(true), payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }) }, { additionalProperties: false }),
   Type.Object({ hostRequestId: Type.String({ minLength: 1 }), kind: Type.Literal("host.reply"), method: Type.Literal("usage.health"), ok: Type.Literal(true), payload: Type.Object({ acknowledged: Type.Literal(true) }, { additionalProperties: false }) }, { additionalProperties: false }),
   Type.Object(

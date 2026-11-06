@@ -22,7 +22,10 @@
     "./tools/web": "./src/tools/web/index.ts",
     "./database": "./src/database/index.ts",
     "./database/runtime": "./src/database/runtime.ts",
-    "./usage/sqlite": "./src/usage/sqlite.ts"
+    "./usage/sqlite": "./src/usage/sqlite.ts",
+    "./memory": "./src/memory/index.ts",
+    "./memory/runtime": "./src/memory/runtime.ts",
+    "./memory/sqlite": "./src/memory/sqlite.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",

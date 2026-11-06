@@ -1,8 +1,10 @@
 import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
+import { ChatCompactionSchema, type ChatCompaction } from "@deepfield/contracts";
 import { AgentWorkerEventSchema, ChatFailureDiagnosticSchema, ChatTranscriptMessageSchema, type ChatFailureDiagnostic, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "@deepfield/contracts";
 
 export interface ChatSessionRecord {
+  compaction?: ChatCompaction;
   requestId: string;
   network: "enabled" | "disabled";
   completed: boolean;
@@ -27,6 +29,12 @@ export function createChatSessionRepository(connection: DatabaseInput) {
     db.prepare("INSERT INTO chat_sessions(conversation_id, request_id, data_json) VALUES (?, ?, ?) ON CONFLICT(conversation_id, request_id) DO UPDATE SET data_json = excluded.data_json").run(conversationId, requestId, JSON.stringify(record));
   };
   return {
+    compact(conversationId: ConversationId, requestId: string, network: ChatSessionRecord["network"], compaction: ChatCompaction) {
+      if (!Value.Check(ChatCompactionSchema, compaction)) throw new Error("invalid chat compaction");
+      const record = read(conversationId, requestId);
+      if (!record || record.messages.length < compaction.sourceMessageCount) throw new Error("compaction boundary not persisted");
+      update(conversationId, requestId, network, current => { current.compaction = compaction; });
+    },
     list(conversationId: ConversationId): ChatSessionRecord[] {
       return (db.prepare("SELECT data_json FROM chat_sessions WHERE conversation_id = ? ORDER BY rowid").all(conversationId) as { data_json: string }[]).map(row => JSON.parse(row.data_json) as ChatSessionRecord);
     },

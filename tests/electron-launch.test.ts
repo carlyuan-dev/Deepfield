@@ -74,7 +74,7 @@ describe("shared Electron launch boundary (no GUI)", () => {
     const { launch } = fakeApp();
     const run = createElectronE2ELauncher(launch);
     await run({ userDataDir: root, executablePath: executable });
-    expect(launch.mock.calls[0]?.[0]?.env).toMatchObject({ DEEPFIELD_AGENT_MODE: "fake", DEEPFIELD_E2E: "1", DEEPFIELD_USER_DATA_DIR: root });
+    expect(launch.mock.calls[0]?.[0]?.env).toMatchObject({ DEEPFIELD_AGENT_MODE: "fake", DEEPFIELD_E2E: "1", DEEPFIELD_E2E_BACKGROUND: "1", DEEPFIELD_USER_DATA_DIR: root });
     expect(launch.mock.calls[0]?.[0]?.env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
     await run({ userDataDir: root, executablePath: executable, mode: "real" });
     expect(launch.mock.calls[1]?.[0]?.env?.DEEPFIELD_AGENT_MODE).toBe("real");

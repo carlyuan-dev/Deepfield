@@ -3,12 +3,16 @@ import { join } from "node:path";
 import { isAllowedExternalUrl, isAllowedNavigation } from "./navigation.js";
 
 export function createWindow(): BrowserWindow {
+  const backgroundTest = process.env.DEEPFIELD_E2E === "1" && process.env.DEEPFIELD_E2E_BACKGROUND === "1";
   const window = new BrowserWindow({
+    show: !backgroundTest,
+    focusable: !backgroundTest,
     width: 1440,
     height: 900,
     minWidth: 1240,
     minHeight: 700,
     webPreferences: {
+      backgroundThrottling: !backgroundTest,
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,

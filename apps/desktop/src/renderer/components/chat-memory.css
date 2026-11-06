@@ -1,0 +1,4 @@
+.chat-memory-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 13px; line-height: 1.6; color: #82786e; padding: 12px 0; }
+.chat-memory-notice > span { flex: 1; min-width: 200px; }
+.chat-memory-notice > div { display: flex; gap: 10px; }
+.chat-memory-notice button { color: #a6552d; border: 0; padding: 0; box-shadow: none; background: transparent; font-size: inherit; }

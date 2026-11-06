@@ -1,3 +1,4 @@
+import { projectMemoryHistory } from "@deepfield/contracts";
 import { Value } from "typebox/value";
 import { currentTrace, findTrace, startTraceSpan, traceLinks, withTrace } from "@deepfield/base/trace/runtime";
 import type { TraceContext } from "@deepfield/base/trace";
@@ -38,6 +39,7 @@ export class ChatServiceError extends Error {
 }
 
 export interface ChatServiceOptions {
+  memory?: import("./memory-port.js").ChatMemoryPort;
   interactions?: ChatInteractionCoordinator;
   respondToInteraction?: (conversationId: string, command: import("@deepfield/contracts").RespondCommand, userMessageId?: string) => Promise<import("@deepfield/contracts").InteractionRecord>;
   respondToTask?: (conversationId: string, command: import("@deepfield/contracts").RespondCommand, userMessageId: string) => Promise<import("@deepfield/contracts").InteractionRecord>;
@@ -111,6 +113,7 @@ export class ChatService {
     if (typeof requestId !== "string" || requestId.length === 0) {
       throw new ChatServiceError("request id must not be blank");
     }
+    try { this.options.memory?.userActivity(); } catch { console.warn("[memory] activity_unavailable", { requestId }); }
     // Capture the one pending revision before any asynchronous configuration/model work.
     const pending = this.options.interactions?.active(conversationId);
     const taskDecision = classifyTaskDecision(content);
@@ -458,7 +461,7 @@ export class ChatService {
     }
     const displayed = messages.flatMap((message): ChatMessage[] => {
       const turn = message.requestId === undefined ? undefined : sessions.get(message.requestId);
-      if (message.role !== "user" || turn === undefined || turn.completed || turn.awaitingUser || (!turn.failed && turn.activities.length === 0) || messages.some(item => item.role === "assistant" && item.requestId === turn.requestId)) return [message];
+      if (message.role !== "user" || turn === undefined || this.activeRequests.has(turn.requestId) || turn.completed || turn.awaitingUser || (!turn.failed && turn.activities.length === 0) || messages.some(item => item.role === "assistant" && item.requestId === turn.requestId)) return [message];
       return [message, { id: `interrupted-${turn.requestId}` as MessageId, conversationId: conversation.id, requestId: turn.requestId, role: "assistant", content: "", status: "failed", createdAt: message.createdAt }];
     });
     const canContinue = !this.options.interactions?.active(conversationId)
@@ -543,6 +546,10 @@ export class ChatService {
     try {
       let stream: AsyncIterable<AgentWorkerEvent>;
       try {
+        try {
+          const memory = this.options.memory?.prepare(request);
+          if (memory) request = { ...request, context: { ...request.context, memory } };
+        } catch { console.warn("[memory] context_unavailable", { requestId: request.requestId }); }
         stream = this.worker.send(request);
       } catch {
         fail("worker_send_failed");
@@ -557,12 +564,22 @@ export class ChatService {
           continue;
         }
         if (event.requestId !== request.requestId) continue;
+        if (event.type === "context_compacted") {
+          try {
+            this.repositories.chatSessions.compact(conversationId, request.requestId, request.toolAccess.network, {
+              ...event.compaction, retainedMessages: projectMemoryHistory(event.compaction.retainedMessages),
+            });
+          } catch {
+            console.warn("[chat] compaction_checkpoint_failed", { requestId: request.requestId });
+          }
+          continue;
+        }
         if (event.type === "text_delta") streamedText += event.delta;
         if (event.type === "text_reset") streamedText = "";
         if (event.type === "transcript_checkpoint" || event.type === "tool_activity") {
           try {
             if (event.type === "transcript_checkpoint") {
-              this.repositories.chatSessions.checkpoint(conversationId, request.requestId, request.toolAccess.network, event.messages);
+              this.repositories.chatSessions.checkpoint(conversationId, request.requestId, request.toolAccess.network, projectMemoryHistory(event.messages));
               for (const message of event.messages) {
                 if (message.role !== "toolResult" || message.toolName !== "capability_invoke" || message.isError) continue;
                 for (const part of message.content) {
@@ -606,6 +623,7 @@ export class ChatService {
             fail("chat_persistence_failed");
             return;
           }
+          try { this.options.memory?.completed(request.requestId); } catch { console.warn("[memory] collection_unavailable", { requestId: request.requestId }); }
           settled = true;
           safeEmit(event);
           return;
@@ -636,6 +654,7 @@ export class ChatService {
     } catch {
       fail("worker_stream_failed");
     } finally {
+      try { this.options.memory?.finished(request.requestId); } catch { console.warn("[memory] finish_unavailable", { requestId: request.requestId }); }
       this.options.onConsumptionFinished?.(request.requestId);
       this.options.onRequestFinished?.(request.requestId);
       this.activeRequests.delete(request.requestId);

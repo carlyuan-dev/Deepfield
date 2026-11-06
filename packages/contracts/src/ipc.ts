@@ -18,6 +18,7 @@ export type LlmConnectionStatus = "connected" | "disconnected";
 import type { CapabilityBridge, CapabilityNavigationBridge } from "@deepfield/capability-sdk";
 
 export interface DesktopApi {
+  memory?: import("./memory.js").MemoryManagementApi;
   chatCapability?: {
     listTasks(conversationId: string): Promise<import("./chat-capability.js").ChatCapabilityTaskCard[]>;
     listConfirmations(conversationId: string): Promise<import("./chat-capability.js").ChatCapabilityConfirmation[]>;

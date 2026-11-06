@@ -2,6 +2,7 @@ import type { Repositories } from "@deepfield/persistence";
 import { ChatService, ContextBuilder, ConversationService, type AgentWorkerPort, type ConversationTitleGenerator, type RuntimeProfileResolver } from "@deepfield/application";
 
 export interface ApplicationRuntimeDeps {
+  memory?: import("@deepfield/application").ChatServiceOptions["memory"];
   interactions?: import("@deepfield/application").ChatInteractionCoordinator;
   respondToInteraction?: import("@deepfield/application").ChatServiceOptions["respondToInteraction"];
   respondToTask?: import("@deepfield/application").ChatServiceOptions["respondToTask"];
@@ -27,6 +28,7 @@ export function createApplicationRuntime(deps: ApplicationRuntimeDeps) {
   const conversationService = new ConversationService(deps.repositories);
   const contextBuilder = new ContextBuilder(deps.repositories);
   const chatService = new ChatService(deps.repositories, contextBuilder, deps.profiles, deps.worker, {
+    ...(deps.memory ? { memory: deps.memory } : {}),
     ...(deps.interactions ? { interactions: deps.interactions } : {}),
     ...(deps.respondToInteraction ? { respondToInteraction: deps.respondToInteraction } : {}),
     ...(deps.respondToTask ? { respondToTask: deps.respondToTask } : {}),

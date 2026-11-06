@@ -185,6 +185,7 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
       ? "anthropic-messages"
       : "openai-completions";
     const isDeepSeek = snapshot.provider === "deepseek" && api === "openai-completions";
+    const isQwen = snapshot.provider === "qwen" && api === "openai-completions";
     const model: Model<typeof api> = {
       id: snapshot.modelId,
       name: snapshot.name,
@@ -192,7 +193,7 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
       baseUrl: snapshot.baseUrl,
       api,
       // Pi needs controllable reasoning metadata to serialize the current off policy.
-      reasoning: isDeepSeek,
+      reasoning: isDeepSeek || isQwen,
       ...(isDeepSeek ? {
         compat: {
           thinkingFormat: "deepseek" as const,
@@ -201,7 +202,7 @@ export class PiModelGateway<Origin = unknown, Phase extends string = string> imp
           maxTokensField: "max_tokens" as const,
           requiresReasoningContentOnAssistantMessages: true,
         },
-      } : {}),
+      } : isQwen ? { compat: { thinkingFormat: "qwen" as const, supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens" as const } } : {}),
       input: ["text"],
       contextWindow: snapshot.contextWindow,
       maxTokens: Math.min(8192, Math.max(1024, Math.floor(snapshot.contextWindow / 8))),

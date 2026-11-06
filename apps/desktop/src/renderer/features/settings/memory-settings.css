@@ -1,0 +1,22 @@
+.memory-settings { max-width: 1120px; }
+.memory-switches { display: grid; gap: 20px; padding: 22px 0; border-bottom: 1px solid var(--border-color, #e3d9cf); }
+.memory-switches label { display: flex; align-items: flex-start; gap: 12px; }
+.memory-switches input { margin-top: 5px; width: 16px; height: 16px; }
+.memory-switches span { display: grid; gap: 5px; }
+.memory-switches small, .memory-row span, .memory-row small { color: #82786e; font-size: 13px; }
+.memory-toolbar { display: flex; gap: 10px; align-items: center; margin: 24px 0 12px; flex-wrap: wrap; }
+.memory-toolbar input { flex: 1; min-width: 130px; }
+.memory-layout { display: grid; gap: 24px; }
+.memory-layout.with-editor { grid-template-columns: minmax(200px, 1fr) minmax(280px, 1.2fr); }
+.memory-list { min-width: 0; }
+.memory-row { display: grid; text-align: left; gap: 8px; width: 100%; padding: 18px 12px; border: 0; border-bottom: 1px solid #e3d9cf; border-radius: 0; background: transparent; box-shadow: none; overflow-wrap: anywhere; }
+.memory-row.selected { background: #f3e7dd; border-radius: 8px; }
+.memory-editor { display: grid; align-content: start; gap: 15px; padding: 20px; background: #fffdfa; border: 1px solid #e3d9cf; border-radius: 12px; }
+.memory-editor header, .memory-error { display: flex; justify-content: space-between; gap: 15px; align-items: center; }
+.memory-editor label { display: grid; gap: 6px; }
+.memory-editor textarea, .memory-editor input { min-width: 0; width: 100%; box-sizing: border-box; }
+.memory-editor-actions { display: flex; gap: 10px; }
+.memory-history { border-top: 1px solid #e3d9cf; padding: 12px 0; white-space: pre-wrap; }
+.memory-error { padding: 14px 18px; background: #fff4e0; border-radius: 10px; }
+.memory-learning { padding-top: 24px; color: #82786e; }
+@media (max-width: 850px) { .memory-layout.with-editor { grid-template-columns: 1fr; } }

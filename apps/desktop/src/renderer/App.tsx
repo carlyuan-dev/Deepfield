@@ -27,7 +27,7 @@ export interface AppProps {
   loadCapabilityModule?: CapabilityModuleLoader;
   initialWorkspace?: WorkspaceState;
 }
-type SettingsModule = "llm" | "search";
+type SettingsModule = "llm" | "search" | "memory";
 function interactionDraftKey(item: InteractionRecord): string | undefined {
   if (item.payload.kind !== "approval" || !item.payload.operation.draftRef) return undefined;
   try { const ref: unknown = JSON.parse(item.payload.operation.draftRef);
@@ -368,6 +368,7 @@ export function App({ api, requestIdFactory = createRequestId, loadCapabilityMod
               <ChatView
                 api={api}
                 eventHub={eventHub}
+                openMemorySettings={() => { setSettingsModule("memory"); setSettingsOpen(true); }}
                 requestIdFactory={requestIdFactory}
                 conversation={conversations.activeConversation}
                 acceptUpdated={conversations.acceptUpdated}

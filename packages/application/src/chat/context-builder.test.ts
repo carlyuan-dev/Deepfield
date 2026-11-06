@@ -31,7 +31,7 @@ describe("context builder", () => {
     expect(snapshot.conversationId).toBe(conversation.id);
   });
 
-  it("returns the latest 40 messages in chronological order", () => {
+  it("keeps early goals until an explicit compacted projection replaces them", () => {
     const db = openTestDb();
     dbs.push(db);
     const builder = new ContextBuilder(db.repos);
@@ -45,13 +45,13 @@ describe("context builder", () => {
     }
 
     const snapshot = builder.build(conversation.id);
-    expect(snapshot.messages).toHaveLength(40);
-    expect(snapshot.messages[0]!.content).toBe("m5");
-    expect(snapshot.messages[39]!.content).toBe("m44");
+    expect(snapshot.messages).toHaveLength(45);
+    expect(snapshot.messages[0]!.content).toBe("m0");
+    expect(snapshot.messages[44]!.content).toBe("m44");
     expect(snapshot.messages[0]!.timestamp).toBeTypeOf("number");
   });
 
-  it("excludes the current user message by id while keeping 40", () => {
+  it("excludes only the current user message without silently dropping older context", () => {
     const db = openTestDb();
     dbs.push(db);
     const builder = new ContextBuilder(db.repos);
@@ -67,9 +67,9 @@ describe("context builder", () => {
     const current = all[44]!;
 
     const snapshot = builder.build(conversation.id, { excludeMessageId: current.id });
-    expect(snapshot.messages).toHaveLength(40);
+    expect(snapshot.messages).toHaveLength(44);
     expect(snapshot.messages.some((message) => message.content === "m44")).toBe(false);
-    expect(snapshot.messages[39]!.content).toBe("m43");
+    expect(snapshot.messages[43]!.content).toBe("m43");
   });
 
   it("fails safely when the conversation is missing", () => {

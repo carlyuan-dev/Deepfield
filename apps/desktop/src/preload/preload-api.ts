@@ -1,3 +1,4 @@
+import { MEMORY_CHANNELS } from "@deepfield/contracts";
 import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { UsageDashboardArgsSchema, UsageDashboardSchema, UsageDeleteUnknownFailuresArgsSchema, UsageRepairArgsSchema, UsageRepairResultSchema, UsageAcknowledgeUnknownArgsSchema, UsageAcknowledgeHistoryArgsSchema } from "@deepfield/contracts";
@@ -99,6 +100,16 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
     return invokeResult<T>(channel, result, ...args);
   };
   return {
+    memory: {
+      get: query => invokeResult(MEMORY_CHANNELS.get, Type.Unknown(), query ?? ""),
+      configure: patch => invokeResult(MEMORY_CHANNELS.configure, Type.Unknown(), patch),
+      read: id => invokeResult(MEMORY_CHANNELS.read, Type.Unknown(), id),
+      save: (id, revision, input) => invokeResult(MEMORY_CHANNELS.save, Type.Unknown(), id, revision, input),
+      forget: async (id, revision) => { await invokeResult(MEMORY_CHANNELS.forget, Type.Null(), id, revision); },
+      clear: async () => { await invokeResult(MEMORY_CHANNELS.clear, Type.Null()); },
+      retry: async () => { await invokeResult(MEMORY_CHANNELS.retry, Type.Null()); },
+      onChanged: listener => ipc.on(MEMORY_CHANNELS.changed, () => listener()),
+    },
     chatCapability: {
       listTasks: conversationId => invokeResult<ChatCapabilityTaskCard[]>(IPC_CHANNELS.chatCapabilityTasks, Type.Array(ChatCapabilityTaskCardSchema), conversationId),
       listConfirmations: conversationId => invokeResult<ChatCapabilityConfirmation[]>(IPC_CHANNELS.chatCapabilityConfirmations, Type.Array(ChatCapabilityConfirmationSchema), conversationId),
@@ -202,6 +213,7 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
       subscribe: (listener) => ipc.on(IPC_CHANNELS.conversationUpdates, (_event, value) => {
         const schema = Type.Object({
           id: Type.String(), title: Type.String(), hasUserMessage: Type.Boolean(),
+          webSearchEnabled: Type.Optional(Type.Boolean()),
           createdAt: Type.String(), updatedAt: Type.String(),
         }, { additionalProperties: false });
         if (Value.Check(schema, value)) listener(value as Conversation);

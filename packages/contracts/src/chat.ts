@@ -1,3 +1,5 @@
+import { ChatMemorySnapshotSchema } from "./memory.js";
+import { ChatCompactionSchema } from "./compaction.js";
 import { Type, type Static } from "typebox";
 import { TraceContextSchema } from "@deepfield/base/trace";
 import type { ConversationId, MessageId } from "./ids.js";
@@ -23,6 +25,8 @@ export const AgentContextSnapshotSchema = Type.Object(
     conversationId: Type.String(),
     systemPrompt: Type.String(),
     humanPrompt: Type.Optional(Type.String()),
+    memory: Type.Optional(ChatMemorySnapshotSchema),
+    compaction: Type.Optional(ChatCompactionSchema),
     finalizationSystemPrompt: Type.Optional(Type.String()),
     messages: Type.Array(AgentContextMessageSchema),
     historyTurns: Type.Optional(Type.Array(ChatHistoryTurnSchema)),
@@ -132,6 +136,7 @@ export const ChatFailureDiagnosticSchema = Type.Object({
 export type ChatFailureDiagnostic = Static<typeof ChatFailureDiagnosticSchema>;
 
 export const AgentWorkerEventSchema = Type.Union([
+  Type.Object({ requestId: Type.String(), type: Type.Literal("context_compacted"), compaction: ChatCompactionSchema }, { additionalProperties: false }),
   Type.Object({ requestId: Type.String(), type: Type.Literal("transcript_checkpoint"), messages: Type.Array(ChatTranscriptMessageSchema) }, { additionalProperties: false }),
   Type.Object(
     {

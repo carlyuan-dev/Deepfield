@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type PermissionHandler = (
   webContents: unknown,
@@ -9,6 +9,7 @@ type PermissionHandler = (
 const electronMock = vi.hoisted(() => {
   const state: {
     permissionHandler?: PermissionHandler;
+    options?: Record<string, unknown>;
   } = {};
   const webContents = {
     getURL: vi.fn(() => "file:///app/index.html"),
@@ -21,6 +22,7 @@ const electronMock = vi.hoisted(() => {
     setWindowOpenHandler: vi.fn(),
   };
   class BrowserWindow {
+    constructor(options: Record<string, unknown>) { state.options = options; }
     static getAllWindows = vi.fn(() => []);
     readonly webContents = webContents;
     readonly loadFile = vi.fn(async () => undefined);
@@ -42,6 +44,7 @@ vi.mock("electron", () => ({
 import { createWindow } from "./window.js";
 
 describe("desktop window permissions", () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks();
     Reflect.deleteProperty(electronMock.state, "permissionHandler");
@@ -60,5 +63,15 @@ describe("desktop window permissions", () => {
     );
 
     expect(allowed).toBe(false);
+  });
+
+  it("keeps background tests hidden and unfocusable while normal launches remain visible", () => {
+    vi.stubEnv("DEEPFIELD_E2E_BACKGROUND", "1");
+    vi.stubEnv("DEEPFIELD_E2E", "1");
+    createWindow();
+    expect(electronMock.state.options).toMatchObject({ show: false, focusable: false, webPreferences: { backgroundThrottling: false } });
+    vi.stubEnv("DEEPFIELD_E2E", "0");
+    createWindow();
+    expect(electronMock.state.options).toMatchObject({ show: true, focusable: true });
   });
 });

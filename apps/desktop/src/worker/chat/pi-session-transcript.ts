@@ -39,6 +39,9 @@ export function restoreSessionContext(context: AgentContextSnapshot, model: Mode
     return turn.messages as Message[];
   });
   const entries: Entry[] = messages.map((message, index) => ({ type: "message", id: `history-${index}`, parentId: index === 0 ? null : `history-${index - 1}`, seq: index, timestamp: message.timestamp, message }));
+  if (context.compaction) entries.unshift({ type: "compaction", id: "chat-compaction", parentId: null, seq: -1,
+    timestamp: context.compaction.createdAt, summary: context.compaction.summary,
+    retainedTail: context.compaction.retainedMessages as AgentMessage[], tokensBefore: context.compaction.tokensBefore });
   return {
     messages: buildSessionContext(entries).messages as Message[],
     provenance: (context.historyTurns ?? []).filter(turn => emitted.has(turn.requestId)).map(turn => {

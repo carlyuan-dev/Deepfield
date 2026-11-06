@@ -131,6 +131,15 @@ describe.each(["agent stream", "completeText"] as const)("PiModelGateway %s requ
     expect(requests[0]).not.toHaveProperty("thinking");
     expect(requests[0]).not.toHaveProperty("reasoning_effort");
   });
+
+  it("honors thinking-off for Qwen so bounded output is available for the requested answer", async () => {
+    const input: LlmRuntimeSnapshot = { ...snapshot("openai_compatible"), provider: "qwen", modelId: "qwen3.8-flash", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" };
+    const requests = captureCompletionRequests(input.modelId);
+    await request(input);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ enable_thinking: false });
+    expect(requests[0]).not.toHaveProperty("reasoning_effort");
+  });
 });
 
 describe("PiModelGateway", () => {

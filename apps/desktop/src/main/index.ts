@@ -1,3 +1,10 @@
+import { createSqliteMemory } from "@deepfield/base/memory/sqlite";
+import { ChatMemoryHost } from "./memory/host.js";
+import { memoryPolicyDefinition } from "./memory/policy.js";
+import { registerMemoryIpc } from "./memory/ipc.js";
+import { createMemoryLearning } from "./memory/learning.js";
+import { createCapabilityMemoryService } from "./memory/capability-service.js";
+import { MEMORY_CHANNELS } from "@deepfield/contracts";
 import { CapabilityRegistry } from "./capabilities/registry.js";
 import { registerNavigationIpc } from "./capabilities/navigation-ipc.js";
 import { createCapabilityHostServices } from "@deepfield/capability-sdk";
@@ -9,7 +16,7 @@ import { configureTraceCollector, createTraceCollector, createTracePort, configu
 import { openTraceContentStore } from "./trace-content-store.js";
 import { traceContentPolicyFromEnvironment } from "../shared/trace-content.js";
 import { openTraceStore } from "./trace-store.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, utilityProcess, protocol } from "electron";
 import { registerCapabilityManagementIpc } from "./capabilities/management-ipc.js";
@@ -51,7 +58,11 @@ import { registerCapabilityChatIpc } from "./capabilities/chat-ipc.js";
 import { availableChatTools } from "../worker/tools/tool-runtime.js";
 
 protocol.registerSchemesAsPrivileged([{ scheme: "deepfield-capability", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
+if (process.platform === "darwin" && process.env.DEEPFIELD_E2E === "1" && process.env.DEEPFIELD_E2E_BACKGROUND === "1") {
+  app.setActivationPolicy("prohibited");
+}
 
+let memoryHost: ChatMemoryHost | undefined;
 let mainWindow: BrowserWindow | undefined;
 let agentRuntime: AgentWorkerRuntime | undefined;
 let toolHost: ToolWorkerHost | undefined;
@@ -88,6 +99,7 @@ function startAgentWorker(
   });
   let runtimeRef!: AgentWorkerRuntime;
   const host = createToolWorkerHost({
+    memory: { call: (id, call, command) => memoryHost?.call(id, call, command) ?? Promise.resolve({ status: "unavailable" }) },
     chatInteraction: { call: (requestId, toolCallId, operation, args) => {
       if (!interactionHost) return Promise.reject(new Error("Interaction unavailable"));
       return interactionHost.call(requestId, toolCallId, operation, args);
@@ -154,7 +166,7 @@ void app.whenReady().then(async () => {
   database.legacy(migrate);
   usageRuntime = createMainUsageRuntime(createUsageRepository(database.database), () => agentRuntime);
   configureUsageRecorder(usageRuntime.recorder);
-  const repositories = createRepositories(database.database);
+  const repositories = createRepositories(database.database, { beforeConversationDeleteInTransaction: id => memoryHost?.invalidateConversationInTransaction(id) });
   interactionHost = new ChatInteractionHost(repositories, capabilities, () => capabilityRuntime,
     conversationId => appRuntime?.chatService.interactionChanged(conversationId),
     (owner, invocationId, result, generation) => chatHost?.interactionOutcome(owner, invocationId, result, generation),
@@ -174,6 +186,15 @@ void app.whenReady().then(async () => {
   });
   await profiles.initialize();
   const modelGateway = new PiModelGateway();
+  try {
+    const memoryStore = createSqliteMemory({ database: database.scope("base:memory").database });
+    memoryHost = new ChatMemoryHost(memoryStore, database.scope("host:chat-memory").database, repositories,
+      configRuntime.createScope("chat").service.bind(memoryPolicyDefinition));
+    await memoryHost.initialize();
+    memoryHost.learning = createMemoryLearning({ host: memoryHost, resolveLlm: () => profiles.resolveActiveLlm(), model: modelGateway, fake: process.env.DEEPFIELD_AGENT_MODE === "fake" });
+    memoryHost.subscribe(() => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(MEMORY_CHANNELS.changed); });
+  } catch { memoryHost?.dispose(); memoryHost = undefined; console.warn("[memory] initialization_failed"); }
+
   const interactionClassifier = new InteractionResponseClassifier(() => profiles.resolveActiveLlm(), modelGateway);
   const configuredLlm = new ConfiguredLlmService(
     () => profiles.resolveActiveLlm(),
@@ -201,6 +222,7 @@ void app.whenReady().then(async () => {
     mainSkillCatalog = undefined;
   }
   appRuntime = createApplicationRuntime({
+    ...(memoryHost ? { memory: memoryHost } : {}),
     interactions: interactionHost.coordinator,
     respondToInteraction: (conversationId, command, messageId) => interactionHost!.respond(conversationId, command, "user_message", messageId),
     respondToTask: (conversationId, command, messageId) => interactionHost!.respondToTask(conversationId, command, messageId),
@@ -213,7 +235,7 @@ void app.whenReady().then(async () => {
     profiles,
     capabilityDirectory: () => chatHost?.directory() ?? [],
     capabilityHelp: () => chatHost?.helpDirectory() ?? [],
-    helpTools: webSearch => availableChatTools(webSearch),
+    helpTools: webSearch => availableChatTools(webSearch, !!memoryHost),
     onRequestStarted: (requestId, conversationId, prompt, restoredKeys) => { chatHost?.begin(requestId, conversationId, prompt, restoredKeys); interactionHost?.begin(requestId, conversationId); },
     onRequestFinished: requestId => { chatHost?.end(requestId); interactionHost?.end(requestId); },
     onAnalysisChanged: conversationId => chatHost?.announce(conversationId),
@@ -235,6 +257,8 @@ void app.whenReady().then(async () => {
   capabilityRuntime = createCapabilityRuntime(prepared, capabilities, undefined, repositories.capabilityInvocations, {
     createConfigScope: capabilityId => configRuntime.createScope(capabilityId),
     databaseOwner: database,
+    ...(memoryHost ? { createMemoryScope: (id: string) => createCapabilityMemoryService(memoryHost!.store, memoryHost!.ownerId, id,
+      operationKey => memoryHost!.sourceFor(`capability:${createHash("sha256").update(operationKey).digest("hex")}`, "", "", "confirmed"), () => memoryHost!.highWatermark()) } : {}),
   });
   const disposeNavigation = registerNavigationIpc(ipcMainAdapter, capabilityRuntime.navigation);
   agentRuntime = startAgentWorker(repositories, secrets, skillsDir);
@@ -270,6 +294,7 @@ void app.whenReady().then(async () => {
     setImmediate(() => app.quit());
   });
   protocol.handle("deepfield-capability", createCapabilityResourceHandler(() => capabilityRuntime?.readyEntries().map(entry => ({ id: entry.manifest.id, root: entry.root, state: "ready" })) ?? []));
+  const disposeMemory = registerMemoryIpc(ipcMainAdapter, () => memoryHost);
   const disposeApp = registerIpcHandlers({
     beforeConversationDelete: conversationId => interactionHost!.releaseConversation(conversationId),
     capabilities,
@@ -283,7 +308,7 @@ void app.whenReady().then(async () => {
     chat: appRuntime.chatService,
   });
 
-  ipcDispose = () => { disposeInteractions(); disposeChatCapability(); disposeNavigation(); disposeManagement(); disposeApp(); protocol.unhandle("deepfield-capability"); };
+  ipcDispose = () => { disposeMemory(); disposeInteractions(); disposeChatCapability(); disposeNavigation(); disposeManagement(); disposeApp(); protocol.unhandle("deepfield-capability"); };
   mainWindow = createWindow();
 
   app.on("activate", () => {
@@ -306,6 +331,7 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     if (!usageShutdownStarted) {
       usageShutdownStarted = true;
+      memoryHost?.dispose(); memoryHost = undefined;
       ipcDispose?.(); ipcDispose = undefined;
       void (async () => {
         await capabilityRuntime?.dispose();
@@ -320,6 +346,7 @@ app.on("before-quit", (event) => {
   }
   ipcDispose?.();
   ipcDispose = undefined;
+  memoryHost?.dispose(); memoryHost = undefined;
   appRuntime?.chatService.dispose();
   // Order: reject/clean host RPC first, then kill the worker, then close the DB.
   toolHost?.dispose();

@@ -5,6 +5,7 @@ import { createPiAgentRun, type PiRunResult } from "@deepfield/base/agent/runtim
 import type {
   AgentTool,
   AgentToolResult,
+  AgentMessage,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { ModelRequestOriginRange, ModelToolOrigin } from "@deepfield/capability-sdk/model-observation";
@@ -541,6 +542,7 @@ export function createPiAgentExecutor(
           modelInputCharsEstimate(initialSystemPrompt, initialMessages, prompt),
         );
         agent = createPiAgentRun({
+          ...(preparedContext.transformContext ? { transformContext: (messages: AgentMessage[], signal?: AbortSignal) => preparedContext.transformContext!(messages, signal, { systemPrompt: composeSystemPrompt(), tools: requestTools }) } : {}),
           initialState: {
             systemPrompt: initialSystemPrompt,
             model: session.model,

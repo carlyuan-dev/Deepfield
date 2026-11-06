@@ -68,7 +68,7 @@ export function request(requestId: string): AgentWorkerRequest {
 
 export function event(
   requestId: string,
-  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint" | "handed_off">,
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint" | "context_compacted" | "handed_off">,
   text?: string,
 ): AgentWorkerEvent {
   switch (type) {
@@ -87,6 +87,7 @@ export function event(
 
 export function label(item: AgentWorkerEvent): string {
   switch (item.type) {
+    case "context_compacted": return "context_compacted";
     case "transcript_checkpoint":
       return "transcript_checkpoint";
     case "started":

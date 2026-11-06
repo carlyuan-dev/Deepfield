@@ -1,3 +1,4 @@
+import { projectMemoryHistory } from "@deepfield/contracts";
 import type { AgentContextSnapshot, ConversationId, MessageId } from "@deepfield/contracts";
 import type { Repositories } from "@deepfield/persistence";
 import { pairedSessionMessages } from "./chat-session-context.js";
@@ -23,8 +24,6 @@ export interface BuildContextOptions {
   excludeMessageId?: MessageId;
 }
 
-const RECENT_MESSAGE_LIMIT = 40;
-
 export class ContextBuilder {
   constructor(private readonly repositories: Repositories) {}
 
@@ -34,32 +33,33 @@ export class ContextBuilder {
       throw new ContextBuilderError("conversation not found");
     }
 
-    // Read the latest RECENT_MESSAGE_LIMIT + 1 so that excluding the current
-    // user message still leaves RECENT_MESSAGE_LIMIT messages.
-    const recent = this.repositories.messages.listByConversation(
-      conversation.id,
-      RECENT_MESSAGE_LIMIT + 1,
-    );
+    // Compact owns input reduction. Never silently forget older goals at 40 messages.
+    const recent = this.repositories.messages.listByConversation(conversation.id);
     const filtered =
       options.excludeMessageId === undefined
         ? recent
         : recent.filter((message) => message.id !== options.excludeMessageId);
-    const latest = filtered.slice(-RECENT_MESSAGE_LIMIT);
+    const sessions = this.repositories.chatSessions.list(conversation.id);
+    const compactIndex = sessions.findLastIndex(turn => turn.compaction && turn.messages.length >= turn.compaction.sourceMessageCount);
+    const compactTurn = compactIndex < 0 ? undefined : sessions[compactIndex];
+    const compaction = compactTurn?.compaction;
+    const sourceLastIndex = compactTurn ? filtered.findLastIndex(message => message.requestId === compactTurn.requestId) : -1;
+    const latest = compaction && sourceLastIndex >= 0
+      ? filtered.filter((message, index) => index > sourceLastIndex || message.requestId === compactTurn!.requestId)
+      : filtered;
     const requestIds = new Set(latest.map(message => message.requestId));
-    let remainingChars = 240_000;
-    const historyTurns = this.repositories.chatSessions.list(conversation.id)
+    const historyTurns = sessions.slice(compaction && sourceLastIndex >= 0 ? compactIndex : 0)
       .filter(turn => requestIds.has(turn.requestId) && turn.messages.length > 0)
-      .reverse().flatMap(turn => {
-        const messages = pairedSessionMessages(turn.messages, turn.completed);
-        const size = JSON.stringify(messages).length;
-        if (size > remainingChars) return [];
-        remainingChars -= size;
-        return [{ requestId: turn.requestId, network: turn.network, messages }];
-      }).reverse();
+      .map(turn => {
+        const raw = turn === compactTurn && compaction && sourceLastIndex >= 0 ? turn.messages.slice(compaction.sourceMessageCount) : turn.messages;
+        return { requestId: turn.requestId, network: turn.network,
+          messages: projectMemoryHistory(pairedSessionMessages(raw, turn.completed)) };
+      });
 
     return {
       conversationId: conversation.id,
       systemPrompt: MAIN_AGENT_SYSTEM_PROMPT,
+      ...(compaction && sourceLastIndex >= 0 ? { compaction } : {}),
       ...(() => { const human = [...recent].reverse().find(message => message.role === "user"); return human ? { humanPrompt: human.content } : {}; })(),
       messages: latest.map((message) => ({
         role: message.role,

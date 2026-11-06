@@ -17,6 +17,7 @@ import { Composer } from "./Composer.js";
 import { Messages } from "./Messages.js";
 import { SkillPicker } from "./SkillPicker.js";
 import { WebSearchToggle } from "./WebSearchToggle.js";
+import { MemoryNotice, useMemoryState } from "./ChatMemory.js";
 
 export interface ChatViewProps {
   api: DesktopApi;
@@ -31,6 +32,7 @@ export interface ChatViewProps {
   onNewInteraction?(interaction: InteractionRecord): void;
   onRequestStart?(requestId: string): void;
   activeEditorInteractionId?: string | undefined;
+  openMemorySettings?(): void;
 }
 
 export function ChatView({
@@ -46,7 +48,9 @@ export function ChatView({
   onNewInteraction,
   onRequestStart,
   activeEditorInteractionId,
+  openMemorySettings,
 }: ChatViewProps) {
+  const memory = useMemoryState(api.memory);
   const { state, submit, reload } = useChat(api, conversation.id, eventHub, requestIdFactory, onRequestStart);
   const [draft, setDraft] = useState("");
   const [taskCards, setTaskCards] = useState<ChatCapabilityTaskCard[]>([]);
@@ -253,6 +257,7 @@ export function ChatView({
             open: async target => { const result = await api.chatCapability?.open(conversation.id, target); if (result?.status !== "opened") throw new Error(result?.message ?? "open failed"); },
             }} />
           {showLatest && <button className="chat-latest" onClick={scrollToLatest}>回到最新</button>}
+          {memory.state?.available && !memory.state.settings.noticeSeen && <MemoryNotice acknowledge={memory.acknowledge} open={openMemorySettings} />}
           <Composer
             value={draft}
             onChange={setDraft}

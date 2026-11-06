@@ -58,7 +58,9 @@ const result = await gateway.completeTextResult(snapshot, system, prompt, signal
 
 依赖限定如下：Model 使用 Config 的 LLM 契约、Usage 的采集端口及 Pi；Base 不导入应用 contracts、Capability SDK、Chat、公司模块或业务仓储。Usage collector 不依赖 Config／Model；配置身份通过中立 metadata 传入。Config 不反向调用 Model，连接诊断继续由应用编排草稿解析和模型调用。
 
-保留两个 Pi lazy API、DeepSeek compat 和既有 Provider 构造方式，所有当前调用继续显式设置 `maxRetries: 0`。`pi-agent-core` 和共享执行循环不进入本批。包依赖和架构测试仅按实际模块精确允许 Pi、必要 Node 标准库，不放开整个旧业务包或不透明动态导入。
+使用两个 Pi lazy API、DeepSeek／Qwen compat 和既有 Provider 构造方式，所有当前调用继续显式设置 `maxRetries: 0`。`pi-agent-core` 和共享执行循环不进入本批。包依赖和架构测试仅按实际模块精确允许 Pi、必要 Node 标准库，不放开整个旧业务包或不透明动态导入。
+
+Qwen 的 OpenAI 兼容调用使用 Pi 的 `thinkingFormat: qwen`，将现有关闭思考策略明确序列化为 `enable_thinking: false`，避免服务端默认思考消耗有界输出预算。参数依据 [Model Studio 思考模式文档](https://www.alibabacloud.com/help/en/model-studio/deep-thinking)，不改变用户选择的模型与 Token 上限。
 
 ## 4. 请求观察契约
 

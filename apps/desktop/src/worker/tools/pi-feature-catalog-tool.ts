@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AgentWorkerRequest } from "@deepfield/contracts";
 import { renderChatHelp } from "@deepfield/application";
-import { chatToolDirectory, type UtilityToolRuntime } from "./tool-runtime.js";
+import { chatToolDirectory, memoryToolDirectory, type UtilityToolRuntime } from "./tool-runtime.js";
 
 /** Model-callable overview using this request's granted tools and ready capability snapshot. */
 export function createPiFeatureCatalogTool(request: AgentWorkerRequest, runtime: UtilityToolRuntime): AgentTool<any> {
@@ -13,7 +13,7 @@ export function createPiFeatureCatalogTool(request: AgentWorkerRequest, runtime:
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_toolCallId, _args, signal) {
       if (signal?.aborted) throw new Error("feature catalog call aborted");
-      const text = renderChatHelp(chatToolDirectory(runtime, request.toolAccess.network === "enabled"),
+      const text = renderChatHelp([...chatToolDirectory(runtime, request.toolAccess.network === "enabled"), ...(request.context.memory ? memoryToolDirectory : [])],
         request.context.capabilityHelp ?? []);
       return { content: [{ type: "text", text }], details: {} };
     },

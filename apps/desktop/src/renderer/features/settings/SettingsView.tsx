@@ -1,3 +1,4 @@
+import { MemorySettingsView } from "./MemorySettings.js";
 import { useEffect, useRef, useState } from "react";
 import { toPublicError, DEFAULT_DEEPSEEK_MODEL_ID, LLM_PROVIDER_PRESETS, type DesktopApi, type DiagnosticResult, type LlmProfileDraft, type SearchProfileDraft, type SettingsView as SettingsData } from "@deepfield/contracts";
 
@@ -6,7 +7,7 @@ import { UsageDashboardView } from "./UsageDashboard.js";
 import { CapabilitiesSettings } from "./CapabilitiesSettings.js";
 
 type ConfigurationModule = "llm" | "search";
-type Module = ConfigurationModule | "usage" | "capabilities";
+type Module = ConfigurationModule | "usage" | "capabilities" | "memory";
 export interface SettingsViewProps { api: DesktopApi; onKeySaved(): void; onBack(): void; initialModule?: Module }
 type DiagnosticState = DiagnosticResult | "testing";
 const newLlm = (): LlmProfileDraft => ({ name: "DeepSeek", provider: "deepseek", protocol: "openai_compatible", baseUrl: LLM_PROVIDER_PRESETS.deepseek.baseUrl, modelId: DEFAULT_DEEPSEEK_MODEL_ID, contextWindow: 128000 });
@@ -95,12 +96,13 @@ export function SettingsView({ api, onKeySaved, onBack, initialModule = "llm" }:
       <div className="settings-navigation-title">设置</div>
       <button className={module === "llm" ? "active" : ""} aria-current={module === "llm" ? "page" : undefined} onClick={() => setModule("llm")}>LLM</button>
       <button className={module === "search" ? "active" : ""} aria-current={module === "search" ? "page" : undefined} onClick={() => setModule("search")}>Search</button>
+      <button className={module === "memory" ? "active" : ""} aria-current={module === "memory" ? "page" : undefined} onClick={() => setModule("memory")}>记忆</button>
       <button className={module === "usage" ? "active" : ""} aria-current={module === "usage" ? "page" : undefined} onClick={() => setModule("usage")}>用量信息</button>
       <button className={module === "capabilities" ? "active" : ""} aria-current={module === "capabilities" ? "page" : undefined} onClick={() => setModule("capabilities")}>能力</button>
     </nav>
     <section className="settings-view" aria-label="设置">
       <div className="settings-content">
-        {module === "capabilities" ? <CapabilitiesSettings api={api.capabilityManagement} /> : module === "usage" ? <UsageDashboardView api={api} /> : <>
+        {module === "memory" ? <MemorySettingsView api={api.memory} /> : module === "capabilities" ? <CapabilitiesSettings api={api.capabilityManagement} /> : module === "usage" ? <UsageDashboardView api={api} /> : <>
         <header className="settings-header"><div><h2>模型与搜索</h2><p>配置运行时使用的模型和联网搜索服务。</p></div></header>
         {error && <p role="alert" className="error">{error}</p>}
         <div className="settings-layout">

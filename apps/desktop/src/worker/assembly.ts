@@ -1,3 +1,5 @@
+import { createPiMemoryTools } from "./tools/pi-memory-tools.js";
+import { createMemoryContextTransform } from "./chat/memory-context.js";
 import type { PiRuntime, SkillCatalogProvider } from "./agent/pi-chat-agent.js";
 import { createTracePort } from "@deepfield/base/trace/runtime";
 import type { WorkerEndpoint, WorkerLoop } from "./message-loop.js";
@@ -70,7 +72,8 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
     fake: () => createFakeChatAgent(),
     pi: () =>
       createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime, undefined, undefined, "main_agent", undefined,
-        (request, handoff) => [createPiFeatureCatalogTool(request, toolRuntime), ...createPiChatInteractionTools(request, deps.hostClient, handoff), ...createPiCapabilityTools(request, deps.hostClient, handoff)]),
+        (request, handoff) => [createPiFeatureCatalogTool(request, toolRuntime), ...createPiChatInteractionTools(request, deps.hostClient, handoff), ...createPiCapabilityTools(request, deps.hostClient, handoff), ...createPiMemoryTools(request, deps.hostClient)],
+        request => createMemoryContextTransform(request, deps.hostClient)),
   });
   const services = createCapabilityHostServices({
     "trace.v1": createTracePort(),

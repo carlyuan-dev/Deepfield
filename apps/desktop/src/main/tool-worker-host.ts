@@ -11,6 +11,7 @@ import type { ConversationRepositories } from "./conversation-reader.js";
 import { createRepositoryConversationReader } from "./conversation-reader.js";
 
 export interface ToolWorkerHostOptions {
+  memory?: { call(requestId: string, toolCallId: string, command: import("@deepfield/contracts").MemoryCommand): Promise<import("@deepfield/contracts").MemoryToolReply> };
   capabilityChat?: { call(chatRequestId: string, toolCallId: string, operation: "describe" | "invoke" | "task.get" | "task.cancel" | "read" | "open", args: unknown): Promise<unknown> };
   chatInteraction?: { call(chatRequestId: string, toolCallId: string, operation: "question" | "draft.read" | "draft.update" | "draft.transition" | "proposal.create", args: unknown): Promise<unknown> };
   usage?: { record(value: UsageAttempt): Promise<boolean>; health(sessionId: string, health: UsageDeliveryHealth): void };
@@ -28,6 +29,7 @@ export interface ToolWorkerHost {
 }
 
 const HOST_RPC_METHODS = new Set<HostRpcMethod>([
+  "memory.call",
   "capability.call",
   "chat.interaction",
   "usage.record", "usage.health",
@@ -99,6 +101,13 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
   async function handleValid(request: HostRequest): Promise<void> {
     const { hostRequestId, method } = request;
     try {
+      if (method === "memory.call") {
+        let result: import("@deepfield/contracts").MemoryToolReply;
+        try { result = await options.memory?.call(request.payload.chatRequestId, request.payload.toolCallId, request.payload.command) ?? { status: "unavailable" }; }
+        catch { result = { status: "failed", message: "记忆操作未完成，请稍后重试。" }; }
+        if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { result } });
+        return;
+      }
       if (method === "chat.interaction") {
         let result: unknown;
         try {

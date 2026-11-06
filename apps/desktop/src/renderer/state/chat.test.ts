@@ -9,7 +9,7 @@ import {
 
 function event(
   requestId: string,
-  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint" | "handed_off"> | "text_reset",
+  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint" | "context_compacted" | "handed_off"> | "text_reset",
   payload?: string,
 ): AgentWorkerEvent {
   switch (type) {

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { App } from "./App.js";
+import { createPreloadApi, IPC_CHANNELS } from "../preload/preload-api.js";
 import type { ChatSendResult } from "@deepfield/contracts";
 import {
   chatMessage,
@@ -26,6 +27,32 @@ async function openConversation(user: ReturnType<typeof userEvent.setup>, label:
 }
 
 describe("app chat edge cases", () => {
+  it("refreshes the sidebar from a generated title IPC event while settings are open", async () => {
+    const fake = makeFakeApi();
+    const active = { ...conversation("p1", "请记住青禾验收项目输出文件开头", true), webSearchEnabled: false };
+    fake.conversations.openInitial.mockResolvedValue({ active, recent: [active] });
+    let deliverUpdate!: (event: unknown, ...args: unknown[]) => void;
+    const preload = createPreloadApi({
+      invoke: async () => undefined,
+      on: (channel, listener) => {
+        if (channel === IPC_CHANNELS.conversationUpdates) deliverUpdate = listener;
+        return () => {};
+      },
+    });
+    // Keep the real IPC validation, subscription, state controller and sidebar.
+    fake.conversations.subscribe.mockImplementation(preload.conversations.subscribe);
+    const { user } = await renderApp(fake);
+    await screen.findByRole("button", { name: "请记住青禾验收项目输出文件开头" });
+    await user.click(screen.getByRole("button", { name: "设置" }));
+    await act(async () => {
+      deliverUpdate(undefined, { ...active, title: "青禾验收文件命名前缀" });
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "青禾验收文件命名前缀" })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "请记住青禾验收项目输出文件开头" })).toBeNull();
+    expect(screen.getByRole("region", { name: "设置" })).toBeTruthy();
+  });
+
   it("applies late title metadata without switching conversations or resurrecting deleted ones", async () => {
     const fake = makeFakeApi();
     const first = conversation("p1", "第一对话", true);
@@ -68,8 +95,11 @@ describe("app chat edge cases", () => {
     let resolveSend!: (result: ChatSendResult) => void;
     fake.chat.send.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
     const { user } = await renderApp(fake);
-    await user.type(await screen.findByLabelText("消息输入"), "请分析机器人行业");
+    // The first render can expose an idle composer before message loading remounts it.
+    await waitFor(() => expect((screen.getByLabelText("消息输入") as HTMLTextAreaElement).disabled).toBe(false));
+    await user.type(screen.getByLabelText("消息输入"), "请分析机器人行业");
     await user.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(fake.chat.send).toHaveBeenCalledTimes(1));
     fake.emitConversation({ ...draft, title: "机器人行业分析", hasUserMessage: true });
     resolveSend(chatSendResult(REQUEST_ID, "draft", "请分析机器人行业"));
     await waitFor(() => expect(screen.getByRole("button", { name: "机器人行业分析" })).toBeTruthy());

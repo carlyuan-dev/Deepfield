@@ -13,3 +13,6 @@ export * from "./settings.js";
 export * from "./errors.js";
 export * from "./usage.js";
 export * from "./capability-management.js";
+export * from "./memory.js";
+export * from "./memory-projection.js";
+export * from "./compaction.js";

@@ -79,6 +79,24 @@ stage 是稳定技术标识（1–64 位，小写字母开头，可含数字、�
 
 在已有 scope 内通过宿主 Base.Model／工具执行器调用时，模型和实际工具调用自动关联；自建 HTTP 客户端或外部进程需由包补充边界。端口销毁由宿主管理，关闭后回调仍照常执行。正文采集权限和查询／导出工具归宿主，`trace.v1` 不开放其他包的内容读取能力。字段、生命周期、Usage 去重与本地导出见 [Base.Trace 设计](../base/base.trace.设计文档.md)。
 
+### 可选记忆
+
+主进程 `bootstrap` 可通过 `getCapabilityMemory(services)` 取得可选 `memory.v1`。宿主固定本包范围；没有服务时继续采用业务默认值。只读句柄没有 `writer`，包卸载后既有句柄失效。用户通用和其他包的记忆不会默认暴露。
+
+```ts
+import { getCapabilityMemory } from "@deepfield/capability-sdk";
+
+const memory = getCapabilityMemory(services);
+const preferences = memory?.reader.search("输出语言") ?? [];
+// 用户已经在业务界面确认这项偏好；operationKey 使用本次操作的稳定标识。
+const result = memory?.writer?.remember({
+  kind: "preference", summary: "输出语言", content: "文档默认使用中文。",
+  applicability: "本能力生成的文档",
+}, { operationKey: confirmedOperationId });
+```
+
+只有成功回执才显示已保存。修改使用 `get(id)` 取得的 revision；冲突时让用户核对，不盲目重写。包内资源可用 `memory.resource(resourceId)` 进一步绑定；资源删除时调用该句柄的 `clear()`，只清理该资源范围。停用能力在下次启动生效，已存记忆仍可在设置里整理。当前 Worker 不直接提供此服务；需使用时由包的 main 动作通过已绑定接口处理。机制和限制见 [Base.Memory](../base/base.memory.设计文档.md)。
+
 ### 包私有配置
 
 在清单 `requirements` 中加入 `"config.v1"`，主进程 `bootstrap` 即可取得宿主限定到本包 ID 的配置服务。当前 Worker 不提供此服务；包不能自行传 scope、读取目录或创建全局管理器。全局模型／搜索仍通过原 `model.configuration` 等显式服务使用，私有配置不会覆盖它们。Config 核心、作用域接入及旧 LLM／Search 兼容适配已实现并完成本轮验收，范围见 [Base.Config 设计](../base/base.config.设计文档.md)。

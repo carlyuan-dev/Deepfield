@@ -57,7 +57,7 @@ export async function prepareCapabilities(paths: CapabilityPaths) {
 export type PreparedCapabilities = Awaited<ReturnType<typeof prepareCapabilities>>;
 
 export function createCapabilityRuntime(prepared: PreparedCapabilities, registry: CapabilityRegistry, load = loadCapabilityEntry, invocations?: InvocationRepository,
-  options: { createConfigScope?: (capabilityId: string) => ConfigScope; databaseOwner?: DatabaseOwner } = {}) {
+  options: { createMemoryScope?: (capabilityId: string) => { service: import("@deepfield/base/memory").MemoryService; dispose(): void }; createConfigScope?: (capabilityId: string) => ConfigScope; databaseOwner?: DatabaseOwner } = {}) {
   let enabled = new Set(prepared.enabled);
   const states = new Map<string, { status: CapabilityStatus["status"]; issue?: string; databaseDiagnostic?: NonNullable<CapabilityStatus["databaseDiagnostic"]> }>();
   const listeners = new Set<() => void>();
@@ -186,6 +186,15 @@ export function createCapabilityRuntime(prepared: PreparedCapabilities, registry
                 // Registered before package cleanup: LIFO preserves writes during disposal.
                 registrar.defer(databaseScope.revoke);
                 scopedServices = createCapabilityDatabaseServices(scopedServices, databaseScope.database);
+              }
+              let memoryScope;
+              try { memoryScope = options.createMemoryScope?.(id); }
+              catch { console.warn("[memory] capability_scope_unavailable", { capabilityId: id }); }
+              if (memoryScope) {
+                registrar.defer(memoryScope.dispose);
+                const baseServices = scopedServices;
+                scopedServices = Object.freeze({ version: 1 as const, has: (name: string) => name === "memory.v1" || baseServices.has(name),
+                  get: <T>(name: string): T => name === "memory.v1" ? memoryScope.service as T : baseServices.get<T>(name) });
               }
               assertStorageServices(scopedServices, entry.manifest.requirements);
               scopedServices = scopeCapabilityTrace(scopedServices, id, cleanup => registrar.defer(cleanup));

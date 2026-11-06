@@ -20,7 +20,7 @@ export function insertConversationRow(connection: DatabaseInput, conversation: N
   );
 }
 
-export function createConversationRepository(connection: DatabaseInput): ConversationRepository {
+export function createConversationRepository(connection: DatabaseInput, beforeDeleteInTransaction?: (conversationId: string) => void): ConversationRepository {
   const db = databaseView(connection);
   const insertBlank = (): Conversation => {
     const conversationId = randomUUID() as ConversationId;
@@ -107,6 +107,7 @@ export function createConversationRepository(connection: DatabaseInput): Convers
 
     delete(conversationId: ConversationId): boolean {
       return runInTransaction(db, () => {
+        beforeDeleteInTransaction?.(conversationId);
         db.prepare(
           `DELETE FROM tool_executions
            WHERE trace_id IN (

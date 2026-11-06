@@ -28,3 +28,13 @@ export function getCapabilityTrace(services: CapabilityHostServices | undefined)
     return port;
   } catch { return undefined; }
 }
+
+/** Optional scoped memory: absence preserves the package's default behavior. */
+export function getCapabilityMemory(services: CapabilityHostServices | undefined): import("@deepfield/base/memory").MemoryService | undefined {
+  try {
+    if (services?.version !== 1 || !services.has("memory.v1")) return undefined;
+    const memory = services.get<import("@deepfield/base/memory").MemoryService>("memory.v1");
+    if (memory?.version !== 1 || !memory.reader || typeof memory.reader.search !== "function" || typeof memory.reader.get !== "function") return undefined;
+    return memory;
+  } catch { return undefined; }
+}
