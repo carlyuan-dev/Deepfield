@@ -68,6 +68,10 @@ rootTraceId 标识一次根执行，spanId 标识执行片段，parentSpanId 表
 
 宿主提供 trace.v1，通常不加入 Capability 的必需 requirements。能力包通过 getCapabilityTrace 获取一次句柄，注入自己的业务服务。可运行接入方式见 [Capability 开发指南](../capabilities/capability.开发指南.md#可选执行追踪)。
 
+Chat 子 Agent 的 run 在协作检查点通过宿主归属校验并持久化后，登记到当前请求的 Trace 根；未登记的 run、冲突身份及跨根事件仍拒收。子任务沿用独立 runId，模型和工具的 Usage 关联随其入链。
+
+Memory 工具 RPC 显式携带当前 Trace scope，宿主按已登记的请求／子 run 与根关系校验后恢复，避免依赖异步 Trace 事件先到达。记忆保存、修订、删除及清空的实际提交记录 memory.commit 终态；关联缺失或观测失败不改变 Memory 权限与业务结果。
+
 包内后台队列在任务成功持久化后捕获调用上下文，执行时用 run 恢复并建立 task/stage；多个动作汇入同一任务时使用 links。跨重启只有已保存上下文或 find 查到的关联可用，找不到则保留关联缺口。能力包负责自己的任务重试、取消与恢复；Trace 不重新执行任务。公司调研是该机制的一个消费者，其队列映射和报告阶段规则保留在包内。
 
 ## 4. 旁路可靠性与资源限制

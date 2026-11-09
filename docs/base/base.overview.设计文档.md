@@ -1,6 +1,6 @@
 # Deepfield Base.overview 设计文档
 
-版本：0.14 · 更新日期：2026-11-05
+版本：0.15 · 更新日期：2026-11-06
 
 状态：八批实现已齐，实际消费者、公司仓储归属与作用域注入已收口；0.1.2 本批用户体验验收已完成，最终类型检查、全套 Vitest 与差异检查通过。已有 Base.Model → Base.Agent → Base.Tools → Tavily 真实链路、Usage、隔离打包界面与重启读回证据保留原范围；各域契约与证据边界见对应设计及 [0.1.2 发布记录](../releases/2026-10-21-v0.1.2.md)。
 
@@ -52,6 +52,8 @@ Base 提供业务无关、可以组合使用的基础能力，主要服务于 Ca
 | Memory | `@deepfield/base/memory`、`/runtime`、`/sqlite` | 记忆记录、限定范围的读写、提炼、召回、修订与遗忘 | [设计与接口](base.memory.设计文档.md)；Chat 首版接入，Capability 可选复用 |
 
 Config 管配置，不负责执行 Model／Search 调用；Search 提供能力，不负责决定何时搜索；Tools 执行调用方给定的授权，不授予授权；Agent 提供执行机制，不接管 Chat 的记忆与 Capability 的业务流程。
+
+Agent 的[可选协作扩展](base.agent.collaboration.设计文档.md)在同一能力域提供独立子任务、结果交接、并发与取消；[Chat 接入策略](../chat/chat.collaboration.设计文档.md)负责具体分工。Capability 通过可选 SDK 服务复用，普通 Model 与单 Agent 入口继续独立使用。
 
 Search 核心不依赖 Tools，web 工具适配由 Tools 使用 Search。Agent 的类别预算耗尽只撤下对应工具，场景证据要求及收口由上层策略提供。上述目标模块均以安全入口公开契约，可信端 `/runtime` 承载执行实现。
 

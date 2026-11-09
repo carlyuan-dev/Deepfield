@@ -35,6 +35,8 @@ v2 清单使用 `protocolVersion: 2`、`hostApiVersion: 2`。`entries.main` 必�
 
 动作指定 `mode: "immediate" | "task"`、`effects.data: "read" | "write" | "destructive"`、`effects.consumesResources`、`permissions` 和 `requiresConfirmation`。输入与输出都由宿主校验。`immediate` 处理器可返回 `{ status: "completed", data }`；异步任务返回 `accepted` 并需要包自己的任务提供器。写操作、破坏性操作和消耗资源的任务应按实际影响声明，确认由宿主可信通道管理，不能在输入里伪造 `confirmed: true`。调用身份、会话、`invocationId` 由宿主补充，包处理器不应从模型输入取这些值。
 
+动作说明应写清结果何时足以完成任务。分页动作须明确输入游标字段、返回游标字段及末页表示方式；区分业务结果、页面入口与待读取产物。模型应能依据契约判断是否需要下一步，而无需重复查询来猜测完整性。
+
 可选模块按实际需要添加：有页面才声明 `ui`/`views` 并注册页面解析器；有后台任务才声明 `worker` 或在 main 中接入自己的任务执行器并注册 TaskProvider；有可读长结果才注册 ArtifactProvider。小结果直接作为 `completed.data` 返回，不要求为它创建产物。LLM、Search、Usage 只能通过宿主明确提供的服务接口使用；不能读取整个配置或密钥。v1 旧包仍可服务原 UI，但不会自动获得 v2 Chat 动作入口。
 
 ### 包内数据库与审计清理
@@ -78,6 +80,45 @@ stage 是稳定技术标识（1–64 位，小写字母开头，可含数字、�
 后台队列在成功保存任务后捕获 `trace.capture()`，消费时用 `trace.run(savedScope, work)` 恢复。重试新建 span，通过 `trace.link(newSpan.context, [oldScope])` 关联历史；进程重启后可按持久标识 `trace.find({ kind: "task", id })` 查找，缺失保持缺失，不猜关联。多个动作汇入同一任务也使用 links。队列的恢复与幂等仍由包负责，Trace 不执行重试。
 
 在已有 scope 内通过宿主 Base.Model／工具执行器调用时，模型和实际工具调用自动关联；自建 HTTP 客户端或外部进程需由包补充边界。端口销毁由宿主管理，关闭后回调仍照常执行。正文采集权限和查询／导出工具归宿主，`trace.v1` 不开放其他包的内容读取能力。字段、生命周期、Usage 去重与本地导出见 [Base.Trace 设计](../base/base.trace.设计文档.md)。
+
+### 可选 Agent 协作
+
+Worker 可通过 `getCapabilityAgentCollaboration(services)` 获取 `agent.collaboration.v1`。宿主将作用域绑定到当前包，包内业务任务使用自己的 `taskScopeId`；同一活动作用域不能重复创建。调用者提供有界执行器，模型和工具仍通过原有宿主端口执行，Usage 与 Trace 继续沿实际调用记录。
+
+```ts
+import { getCapabilityAgentCollaboration } from "@deepfield/capability-sdk";
+
+const collaboration = getCapabilityAgentCollaboration(services);
+// 可选服务缺失时，按本操作的契约使用原路径或返回不可用。
+if (collaboration) {
+  const tasks = collaboration.create({
+    taskScopeId: businessTaskId,
+    signal,
+    limits: { concurrency: 2, maxTasks: 2, maxRuns: 4, maxRunsPerTask: 2,
+      maxAgentTurns: 8, deadline: Date.now() + 5 * 60_000 },
+    execute: async (run, controls) => executePackageAgent(run, controls),
+  });
+  try {
+    const first = await tasks.spawn({ title: "提取要求", text: sourceText,
+      configurationId: "requirements" }, commandId);
+    // wait 返回变化或超时，调用者须检查终态；超时本身不表示失败。
+    let cursor = 0;
+    for (;;) {
+      const update = await tasks.wait([first.runId], cursor, 30_000, signal);
+      cursor = update.cursor;
+      const run = update.runs.find(item => item.runId === first.runId);
+      if (!run || ["queued", "running", "cancelling"].includes(run.status)) continue;
+      if (run.status !== "completed") throw new Error(run.errorCode ?? run.status);
+      await saveBusinessResult(run.result!);
+      break;
+    }
+  } finally { await tasks.close(); }
+}
+```
+
+`executePackageAgent` 是包自己的适配器，返回 `{ result: { summary, text }, transcript? }`，使用 `controls.signal` 取消，并遵守 `run.maxAgentTurns`。配置标识由该适配器解析，不能把模型生成的标识视为授权。`followUp` 对同一任务追加有界执行，`send` 向运行中任务提交补充要求；只有执行器实际接收后才能调用 `acceptMessages`。方法与状态契约见 [Base.Agent 协作扩展](../base/base.agent.collaboration.设计文档.md)。
+
+未提供 `checkpoint` 的协调器为进程内状态；需要重启恢复时，由包保存检查点，并由业务状态决定下一步。写盘成功才可发布任务完成；运行中失败不能自动退回旧路径重复执行。调用方负责结果业务校验、产物提交及清理。公司包已在原始调研阶段使用此端口，随后由包内 Harness 校验并调用 Base.Model 结构化，调研队列与报告仍归公司包管理。
 
 ### 可选记忆
 

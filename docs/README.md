@@ -16,6 +16,7 @@
 | [Base.Search](base/base.search.设计文档.md) | 搜索、网页读取／解析及计量边界；0.1.2 本批用户体验验收已收口，证据范围见正文 |
 | [Base.Tools](base/base.tools.设计文档.md) | 工具安全契约、执行／审计／预算与 web 适配；通用核心已实现，Worker 已接入 |
 | [Base.Agent](base/base.agent.设计文档.md) | 通用 Pi 有界执行核、取消/事件及 Chat／Capability 场景接线 |
+| [Base.Agent 协作扩展](base/base.agent.collaboration.设计文档.md) | 独立子任务、结果交接、并发／额度／取消与可选 SDK |
 | [Base.Database](base/base.database.设计文档.md) | 同库读写、受控 CRUD、同步事务、模块迁移及宿主生命周期 |
 | [Base.Trace](base/base.trace.设计文档.md) | 通用执行关联、与各 Base 的职责边界、可选 Capability 接入和本地可视化导出 |
 | [Base.Usage](base/base.usage.设计文档.md) | 已实现的用量账本、统计口径、采集与看板 |
@@ -24,6 +25,7 @@
 | [Chat 人机交互](chat/chat.interaction.设计文档.md) | 询问／确认、真实表单共同编辑、任务范围授权与恢复 |
 | [Chat Memory 接入](chat/chat.memory.设计文档.md) | 采集策略、上下文接入、费用控制和用户管理 |
 | [Chat Compact](chat/chat.compact.设计文档.md) | 会话摘要、输入预算、安全切分与恢复 |
+| [Chat 多 Agent 接入](chat/chat.collaboration.设计文档.md) | 主 Chat 协调、组合派工、上下文隔离与任务展示 |
 | [Capability 总览](capabilities/capability.overview.设计文档.md) | 可选包、启停、加载隔离与宿主边界 |
 | [Capability 交互协议](capabilities/capability.protocol.设计文档.md) | 动作、页面、任务、产物及 Chat 双入口契约 |
 | [Capability 开发指南](capabilities/capability.开发指南.md) | 当前 SDK、构建安装与独立示例包 |

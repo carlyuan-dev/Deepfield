@@ -1,6 +1,6 @@
 # Chat Runtime 设计文档
 
-更新日期：2026-10-13 · 状态：按当前代码维护的正式设计。
+更新日期：2026-11-06 · 状态：按当前代码维护的正式设计。
 
 ## 1. 定位与产品边界
 
@@ -9,6 +9,8 @@ Chat 是通用主 Agent，Conversation 独立于研究主题和 Capability 条�
 Chat 负责会话、历史与上下文策略、每轮工具开放、Skill 使用、流式展示及人机交互。Capability 负责业务流程、输入输出契约、产物与版本，不隐式继承 Chat 记忆。工具提供原子能力，不决定业务流程；Search Provider 不管理 Prompt、Agent 循环或额度。
 
 人机交互、草稿编辑、任务范围授权、等待与恢复以 [Chat 交互设计](chat.interaction.设计文档.md) 为唯一详细说明。Base 的目标边界与迁移状态以 [Base 总览](../base/base.overview.设计文档.md) 和 [Base 抽取设计](../base/base.extraction.设计文档.md) 为准；通用 Pi 执行核已迁至 Base.Agent，desktop Worker 保留 Chat／Capability 场景装配。
+
+[Chat 多 Agent 接入](chat.collaboration.设计文档.md)定义主 Agent 的子任务委派、结果汇总、预算与人工交接。首版已接入只读子 Agent，并复用 Memory、Compact、Trace 与 Usage。
 
 ## 2. 模型、搜索与请求快照
 
@@ -63,7 +65,7 @@ Chat 同时维护两种投影：模型上下文使用安全的会话 transcript�
 
 - 用户消息与助手消息绑定 requestId；工具 traceId 使用同一请求标识，恢复时归回对应助手消息。
 - transcript 保存文本、工具调用及成对结果，按白名单移除隐藏推理、传输 details 和敏感参数；工具活动保存查询/网址、来源、数量、耗时、状态、错误和批次信息。
-- 上下文目前取最近 40 条消息，相关 transcript 总体受 240,000 字符预算约束；不宣称已提供无限历史、向量记忆或自动上下文压缩。
+- 长期记忆按 [Chat Memory](chat.memory.设计文档.md) 的有效范围与引用投影使用；会话历史和工具循环按 [Chat Compact](chat.compact.设计文档.md) 的输入预算、安全切点与摘要接续，不再依靠最近 40 条消息作为完整上下文策略。原始记录与模型输入投影分别维护。
 - 恢复通过 Pi `buildSessionContext` 组装；历史联网权限、真实结果数量及成功数量另作来源说明，不推断“开启过联网就一定执行过搜索”。
 - 搜索和网页内容作为数据证据，不能授予权限。搜索结果用于发现候选来源，本身不等于已核实事实；读取、来源展示和最终论证必须区分。
 - 当前请求观察可关联工具来源与文本范围；会话恢复依靠保存的安全结果与来源投影，不保存完整原始 Provider 响应或不受控网页/PDF 副本。
