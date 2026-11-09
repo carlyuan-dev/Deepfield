@@ -115,7 +115,7 @@ export class ToolBudgetLedger {
   #concurrency = 0;
   #perToolConcurrency = new Map<string, number>();
 
-  constructor(limits: ToolBudgetLimits, clock: () => number = Date.now) {
+  constructor(limits: ToolBudgetLimits, clock: () => number = Date.now, consumed: Partial<Record<ToolMeterCategory, number>> = {}) {
     assertValidLimits(limits);
     this.#limits = {
       ...limits,
@@ -123,6 +123,11 @@ export class ToolBudgetLedger {
     };
     this.#clock = clock;
     this.#startedAt = clock();
+    for (const [category, count] of Object.entries(consumed)) {
+      if (!METER_CATEGORIES.has(category as ToolMeterCategory) || !Number.isSafeInteger(count) || count < 0) throw new ToolBudgetError("invalid restored consumption");
+      this.#categoryConsumed.set(category as ToolMeterCategory, count);
+      this.#consumedCalls += count;
+    }
   }
 
   reserve(identity: ToolIdentity, category: ToolMeterCategory): ToolBudgetToken {

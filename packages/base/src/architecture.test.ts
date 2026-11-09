@@ -25,6 +25,7 @@ function checkBoundary(entries: string[], read: (path: string) => string, root: 
       if (name === "node:sqlite" && path === resolve(root, "database/runtime.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "model/request-observation.ts")) return;
       if (name === "node:crypto" && path === resolve(root, "model/trace.ts")) return;
+      if (name === "node:async_hooks" && path === resolve(root, "model/request-admission.ts")) return;
       if (name === "node:crypto" && ["memory/sqlite.ts", "memory/runtime.ts"].some(file => path === resolve(root, file))) return;
       const piImports: Record<string, readonly string[]> = {
         "agent/runtime.ts": ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai"],

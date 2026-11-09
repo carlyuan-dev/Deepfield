@@ -5,6 +5,7 @@ import { normalizeUsageMetrics } from "../usage/contracts.js";
 import type { UsageMetrics, UsageAttemptHandle } from "../usage/contracts.js";
 import type { ModelRuntimeOptions } from "./runtime.js";
 import { classifyModelTransportFailure, type ModelGatewayError } from "./errors.js";
+import { admitModelRequest } from "./request-admission.js";
 
 const counter = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 const object = (value: unknown): Record<string, any> => typeof value === "object" && value !== null ? value as Record<string, any> : {};
@@ -18,6 +19,7 @@ export function createLlmUsageTransport(runtime: ModelRuntimeOptions, snapshot: 
     // Only the original caller signal establishes an actual cancellation.
     const abort = signal;
     if (abort?.aborted || init?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    admitModelRequest();
     const attempt = runtime.usage.startAttempt({
       ...(snapshot.draftSessionId ? { draftSessionId: snapshot.draftSessionId } : { profileId: snapshot.id }),
       profileName: snapshot.name, providerId: snapshot.provider, modelId: snapshot.modelId, serviceKind: "llm",

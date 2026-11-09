@@ -25,7 +25,9 @@
     "./usage/sqlite": "./src/usage/sqlite.ts",
     "./memory": "./src/memory/index.ts",
     "./memory/runtime": "./src/memory/runtime.ts",
-    "./memory/sqlite": "./src/memory/sqlite.ts"
+    "./memory/sqlite": "./src/memory/sqlite.ts",
+    "./agent/collaboration": "./src/agent/collaboration/index.ts",
+    "./agent/collaboration/runtime": "./src/agent/collaboration/runtime.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",

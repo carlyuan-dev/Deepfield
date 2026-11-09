@@ -71,4 +71,5 @@ export type * from "./forms.js";
 export type { CapabilityInteractionEditor } from "./ui.js";
 export type { CapabilityRegistrar, CapabilityWorkerRegistrar } from "./host.js";
 export { createCapabilityHostServices, getCapabilityTrace, getCapabilityMemory, type CapabilityHostServices } from "./services.js";
+export { getCapabilityAgentCollaboration, type CapabilityAgentCollaboration } from "./agent-collaboration.js";
 export { TaskAuthorizationSchema, TaskScopeProposalSchema, TaskScopeRuleSchema, type TaskAuthorization, type TaskScopeProposal } from "./task-scope.js";

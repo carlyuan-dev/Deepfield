@@ -26,6 +26,7 @@ export { traceModelStream } from "./trace.js";
 export { createLlmUsageTransport } from "./llm-usage-transport.js";
 export { classifyModelHttpDiagnostic, readModelErrorPrefix } from "./http-diagnostic.js";
 export { observeSerializedRequest } from "./request-observation.js";
+export { withModelRequestAdmission } from "./request-admission.js";
 
 export interface ModelGatewayFactories {
   createModels: typeof createModels;
