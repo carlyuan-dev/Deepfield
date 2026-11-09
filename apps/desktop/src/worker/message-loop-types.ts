@@ -1,6 +1,7 @@
 import type { AgentWorkerEvent, AgentWorkerRequest, ToolExecutionEvent, ToolRunRequest } from "@deepfield/contracts";
 
 export interface ChatAgent {
+  cancelTask?(requestId: string, taskId: string): Promise<void>;
   run(
     request: AgentWorkerRequest,
     emit: (event: AgentWorkerEvent) => void,

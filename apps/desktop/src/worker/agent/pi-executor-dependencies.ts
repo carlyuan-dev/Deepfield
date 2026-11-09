@@ -28,8 +28,9 @@ export interface PiAgentExecutorOptions {
   skills?: SkillCatalogProvider;
   runtimeContext?: RuntimeSystemContextOptions;
   toolSessions?: PiToolSessionProvider;
-  toolActor?: "main_agent" | "capability";
+  toolActor?: "main_agent" | "capability" | "child_agent";
   diagnosticSink?: (diagnostic: PiRunDiagnostic) => void;
   handoff?: ExecutionHandoff;
+  hasPendingMessages?: () => boolean;
   observeModelRequest?: ModelRequestObserver;
 }

@@ -99,12 +99,18 @@ function startAgentWorker(
   });
   let runtimeRef!: AgentWorkerRuntime;
   const host = createToolWorkerHost({
+    collaboration: { save: async (requestId, state) => {
+      if (!appRuntime) throw new Error("chat_unavailable");
+      await appRuntime.chatService.saveCollaboration(requestId, state);
+      runtimeRef.client.registerCollaborationTrace(requestId, state);
+    } },
     memory: { call: (id, call, command) => memoryHost?.call(id, call, command) ?? Promise.resolve({ status: "unavailable" }) },
+    traceForMemory: (requestId, toolCallId, trace) => runtimeRef.client.traceForMemory(requestId, toolCallId, trace),
     chatInteraction: { call: (requestId, toolCallId, operation, args) => {
       if (!interactionHost) return Promise.reject(new Error("Interaction unavailable"));
       return interactionHost.call(requestId, toolCallId, operation, args);
     } },
-    capabilityChat: { call: (chatRequestId, toolCallId, operation, args) => chatHost?.call(chatRequestId, toolCallId, operation, args) ?? Promise.resolve({ status: "error", error: { code: "capability_unavailable", message: "capability_unavailable", retryable: false } }) },
+    capabilityChat: { call: (chatRequestId, toolCallId, operation, args, actor) => chatHost?.call(chatRequestId, toolCallId, operation, args, actor) ?? Promise.resolve({ status: "error", error: { code: "capability_unavailable", message: "capability_unavailable", retryable: false } }) },
     ...(usageRuntime ? { usage: usageRuntime.worker } : {}),
     audit: new SqliteToolAudit(repositories.toolExecutions),
     secrets: { get: (name) => secrets.get(name) },
@@ -242,6 +248,11 @@ void app.whenReady().then(async () => {
     onAutoEvent: (conversationId, event) => chatHost?.emitAuto(conversationId, event),
     isConversationActive: conversationId => chatHost?.isActiveConversation(conversationId) === true,
     worker: {
+      cancel: (requestId, taskId) => {
+        const client = agentRuntime?.client;
+        if (!client) throw new Error("agent worker is not available");
+        client.cancel(requestId, taskId);
+      },
       send: (request) => {
         const client = agentRuntime?.client;
         if (!client) {

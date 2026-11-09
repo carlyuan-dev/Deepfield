@@ -1,4 +1,4 @@
-import type { AgentWorkerEvent, ChatMessage, ChatToolSource } from "@deepfield/contracts";
+import type { AgentWorkerEvent, ChatMessage, ChatToolSource, ChatAgentTask } from "@deepfield/contracts";
 
 export type DraftStatus = "streaming" | "done" | "failed";
 
@@ -31,6 +31,10 @@ export interface ChatMessageView {
   webSearch?: boolean;
   /** Display-only tool activity for this reply; never persisted. */
   toolActivities: ToolActivityView[];
+  progressNotes?: string[];
+  agentTasks?: ChatAgentTask[];
+  agentTaskRevision?: number;
+  cancelled?: boolean;
   recovery?: { kind: "continue" };
 }
 
@@ -77,6 +81,9 @@ function toView(message: ChatMessage): ChatMessageView {
     status: message.status ?? "done",
     requestId: message.requestId,
     pending: false,
+    ...(message.progressNotes?.length ? { progressNotes: message.progressNotes } : {}),
+    ...(message.agentTasks ? { agentTasks: message.agentTasks } : {}),
+    ...(message.cancelled ? { cancelled: true } : {}),
     ...(message.recovery ? { recovery: message.recovery } : {}),
     toolActivities: (message.toolExecutions ?? []).map((execution) => ({
       callKey: execution.callKey,
@@ -247,6 +254,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         existing === undefined ? [...state.draftOrder, requestId] : state.draftOrder;
       let sending = state.conversationId === conversationId && event.type !== "completed" && event.type !== "failed" && event.type !== "handed_off" ? true : state.sending;
       switch (event.type) {
+        case "agent_tasks":
+          if (event.revision < (draft.agentTaskRevision ?? -1)) return state;
+          draft = { ...draft, agentTasks: event.tasks, agentTaskRevision: event.revision };
+          break;
         case "started":
           draft = {
             ...draft,
@@ -260,7 +271,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           draft = { ...draft, content: draft.content + event.delta };
           break;
         case "text_reset":
-          draft = { ...draft, content: "" };
+          draft = { ...draft, content: "", progressNotes: [...(draft.progressNotes ?? []), ...(draft.content.trim() ? [draft.content] : [])] };
           break;
         case "tool_activity": {
           const activityIndex = draft.toolActivities.findIndex(
@@ -294,6 +305,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           draft = {
             ...draft,
             content: event.text,
+            ...(draft.progressNotes ? { progressNotes: draft.progressNotes.filter(note => note.trim() !== event.text.trim()) } : {}),
             status: "done",
             toolActivities: draft.toolActivities.map((activity) =>
               activity.status === "running" ? { ...activity, status: "completed" } : activity,
@@ -310,6 +322,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           draft = {
             ...draft,
             status: "failed",
+            cancelled: event.code === "cancelled",
             toolActivities: draft.toolActivities.map((activity) =>
               activity.status === "running" ? { ...activity, status: "failed" } : activity,
             ),

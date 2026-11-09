@@ -97,6 +97,13 @@ describe("utility worker assembly (focused revision)", () => {
         (tool) => tool.name,
       ),
     ).toEqual([
+      "spawn_agent",
+      "send_agent_message",
+      "followup_agent",
+      "wait_agents",
+      "list_agents",
+      "read_agent_result",
+      "cancel_agent",
       "view_available_features",
       "request_user_input",
       "interaction_draft",

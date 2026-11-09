@@ -22,6 +22,15 @@ function message(
 }
 
 describe("Chat message rendering", () => {
+  it("shows automatic compaction explicitly outside the collapsed tool history", () => {
+    const current = { ...message("assistant", "", "streaming"), toolActivities: [{ callKey: "compact", name: "context_compaction", status: "running" as const }] };
+    const { rerender } = render(<Messages messages={[current]} />);
+    expect(screen.getByRole("status").textContent).toContain("正在压缩上下文");
+    expect(screen.queryByText("正在思考…")).toBeNull();
+    rerender(<Messages messages={[{ ...current, toolActivities: [{ ...current.toolActivities[0]!, status: "completed" }] }]} />);
+    expect(screen.getByRole("status").textContent).toContain("正在思考");
+  });
+
   it("keeps answered questions compact and reopens only the pending editor after it is closed", async () => {
     const question: InteractionRecord = { id: "question", conversationId: "c", requestId: "r", toolCallId: "q", revision: 2,
       status: "answered", answer: "产品与技术", createdAt: "today", updatedAt: "today",

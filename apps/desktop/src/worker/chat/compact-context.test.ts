@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentWorkerEvent } from "@deepfield/contracts";
 import type { ModelGateway } from "../../shared/model-gateway.js";
-import { assistant, request, stubModel } from "../agent/pi-chat-agent-test-helpers.js";
+import { assistant, request, stubModel, makeRecordingInstalledPiRuntime } from "../agent/pi-chat-agent-test-helpers.js";
+import { createMemoryDependencyTransform, messageMemoryDependencies, tagMemoryDependencies } from "./memory-dependencies.js";
+import type { HostClient } from "../host-client.js";
+import { createPiChatAgent } from "../agent/pi-chat-agent.js";
 import { compactTokens, createCompactContextTransform } from "./compact-context.js";
 
 function setup(fail = false) {
@@ -21,6 +24,29 @@ function setup(fail = false) {
 const user = (content: string): AgentMessage => ({ role: "user", content, timestamp: 1 });
 
 describe("conversation compaction", () => {
+  it("sends the compacted facts intact to the actual Pi model boundary before answering", async () => {
+    const s = setup();
+    const summary = "最终预算18万元，12家门店，2026-12-01开始。培训通知已发送，合同未签。只整理清单，不执行外部操作。";
+    s.summarize.mockResolvedValue(assistant(summary));
+    const recorded = makeRecordingInstalledPiRuntime([assistant("交接清单")]);
+    const createSession = recorded.runtime.createSession;
+    recorded.runtime.createSession = (...args) => {
+      const session = createSession(...args);
+      if (!session) throw new Error("test session unavailable");
+      return { ...session, model: { ...session.model!, maxTokens: 1024 } };
+    };
+    s.input.context.messages = Array.from({ length: 10 }, (_, i) => ({ role: "user" as const, content: "旧背景" + String(i) + "已过时的材料。".repeat(1000), timestamp: i }));
+    const agent = createPiChatAgent(recorded.runtime, [], undefined, {}, undefined, s.gateway);
+    await agent.run(s.input, e => s.events.push(e), new AbortController().signal);
+    expect(s.events.some(e => e.type === "context_compacted")).toBe(true);
+    expect(recorded.requests).toHaveLength(1);
+    const content = JSON.stringify(recorded.requests[0]!.messages);
+    expect(content).toContain(summary);
+    expect(content).toContain(s.input.prompt);
+    expect(content).not.toContain("旧背景0");
+    expect(content.length).toBeLessThan(JSON.stringify(s.input.context.messages).length / 2);
+  });
+
   it("continues past an oversized completed turn while retaining the current task and original history", async () => {
     const s = setup();
     s.input.llm.contextWindow = 32768;
@@ -88,4 +114,27 @@ describe("conversation compaction", () => {
     await expect(transform(Array.from({ length: 10 }, () => user("长上下文".repeat(600))), controller.signal)).rejects.toThrow();
     expect(s.summarize).not.toHaveBeenCalled();
   });
+  it("revalidates Memory-derived cached compaction and never resummarizes expired content", async () => {
+    const s = setup(); const secret = "EXPIRED-MEMORY-SUMMARY"; let enabled = true;
+    const summaryInputs: string[] = [];
+    s.gateway = { getApiKey: async () => "fake", createStream: () => (_model: unknown, context: unknown) => ({ result: async () => {
+      summaryInputs.push(JSON.stringify(context)); return assistant(summaryInputs.length === 1 ? secret : "只保留当前有效任务。");
+    } }) } as unknown as ModelGateway;
+    const host: Pick<HostClient,"request"> = { request: async (_method, payload) => ({ result: { status: "ok", useEnabled: enabled, validRefs: enabled ? (payload as {command:{refs:unknown[]}}).command.refs : [] } }) };
+    const refs = [{id:"memory-1",revision:1}];
+    const history = Array.from({length:10}, () => tagMemoryDependencies(user(secret + "旧材料".repeat(1000)), refs));
+    const raw = [...history,user(s.input.prompt)];
+    const transform = createCompactContextTransform(s.input,history.length,s.model,s.gateway,event=>s.events.push(event),createMemoryDependencyTransform(s.input.requestId,host));
+    const first = await transform(raw);
+    expect(first.some(message=>message.role === "compactionSummary" && message.summary.includes(secret))).toBe(true);
+    enabled = false;
+    const next = await transform([...raw,...Array.from({length:10},()=>user("新的独立资料".repeat(600))),user("继续当前有效工作")]);
+    expect(summaryInputs.length).toBeGreaterThan(1);
+    for (const input of summaryInputs.slice(1)) expect(input).not.toContain(secret);
+    expect(JSON.stringify(next)).not.toContain(secret);
+    // Redacted history must not taint a new independent summary/task with revoked refs.
+    expect(next.flatMap(message => messageMemoryDependencies(message))).toEqual([]);
+    expect(raw.flatMap(message => messageMemoryDependencies(message)).length).toBeGreaterThan(0);
+  });
+
 });

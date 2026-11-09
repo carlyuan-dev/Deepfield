@@ -11,6 +11,7 @@ export interface RuntimeProfileResolver {
 
 export interface AgentWorkerPort {
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent>;
+  cancel?(requestId: string, taskId?: string): void;
 }
 
 export interface ConversationTitleGenerator {

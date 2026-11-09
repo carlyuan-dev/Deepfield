@@ -106,7 +106,7 @@ const PROBE_GRANTS: Record<ToolActor, boolean> = {
 /** Actor-scoped trusted ToolSet: one grant per identity, never mixed actors. */
 export function createTrustedToolSet(actor: ToolActor, networkEnabled = false): ToolSet {
   const grants: ToolGrant[] = [];
-  if (actor === "main_agent") {
+  if (actor === "main_agent" || actor === "child_agent") {
     grants.push(
       {
         identity: { name: "get_current_datetime", version: 1 },
@@ -140,7 +140,7 @@ export function createTrustedToolSet(actor: ToolActor, networkEnabled = false): 
       },
     );
   }
-  if (networkEnabled && (actor === "main_agent" || actor === "capability")) grants.push(
+  if (networkEnabled && (actor === "main_agent" || actor === "capability" || actor === "child_agent")) grants.push(
     { identity: { name: "web_search", version: 1 }, actor, effect: "network.read.public" },
     { identity: { name: "read_webpage", version: 1 }, actor, effect: "network.read.public" },
   );
@@ -222,6 +222,9 @@ export interface UtilityToolRuntime extends ToolRuntime {
   tracePool: TraceBudgetPool;
   searchSessions: SearchSessionRegistry;
   bindSearchProvider(traceId: string, provider: SearchProvider, limits?: ToolBudgetLimits): void;
+  bindBudgetScope(scopeId: string, limits: ToolBudgetLimits, consumed?: { search: number; fetch: number }): void;
+  attachBudgetScope(traceId: string, scopeId: string): void;
+  releaseBudgetScope(scopeId: string): boolean;
   /** Explicit end-of-trace; false while the trace has in-flight tokens. */
   releaseTrace(traceId: string): boolean;
 }
@@ -265,13 +268,16 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
     ...(options.maxTraces !== undefined ? { maxTraces: options.maxTraces } : {}),
     clock: () => clock.now(),
   });
+  const sharedBudgets = new Map<string, ToolBudgetLedger>();
+  const traceScopes = new Map<string, string>();
+  const budgetFor = (traceId: string) => sharedBudgets.get(traceScopes.get(traceId) ?? traceId) ?? tracePool.ledgerFor(traceId);
   const runner = new ToolRunner({
     registry,
     policy,
     budget: new ToolBudgetLedger({}, () => clock.now()),
     audit: options.audit,
     clock,
-    budgetForTrace: (traceId) => tracePool.ledgerFor(traceId),
+    budgetForTrace: budgetFor,
     globalConcurrency: 4,
     networkToolConcurrency: 2,
   });
@@ -286,13 +292,33 @@ export function createToolRuntime(options: ToolRuntimeOptions): UtilityToolRunti
     audit: options.audit,
     tracePool,
     searchSessions,
+    bindBudgetScope(scopeId, limits, consumed) {
+      if (!scopeId || sharedBudgets.has(scopeId) || tracePool.has(scopeId) || sharedBudgets.size >= 64) throw new Error("invalid_budget_scope");
+      sharedBudgets.set(scopeId, new ToolBudgetLedger(limits, () => clock.now(), consumed));
+    },
+    attachBudgetScope(traceId, scopeId) {
+      if (!sharedBudgets.has(scopeId) || traceScopes.has(traceId) || tracePool.has(traceId)) throw new Error("invalid_budget_binding");
+      traceScopes.set(traceId, scopeId);
+    },
+    releaseBudgetScope(scopeId) {
+      if (sharedBudgets.get(scopeId)?.activeCount()) return false;
+      if ([...traceScopes.values()].includes(scopeId)) return false;
+      sharedBudgets.delete(scopeId);
+      return true;
+    },
     bindSearchProvider(traceId, provider, limits) {
-      if (limits !== undefined) tracePool.initializeTrace(traceId, limits);
+      if (limits !== undefined && !traceScopes.has(traceId)) tracePool.initializeTrace(traceId, limits);
       searchSessions.bind(traceId, provider);
     },
     traceLedgerCount: () => tracePool.size(),
-    budgetSnapshot: (traceId) => tracePool.ledgerFor(traceId).snapshot(),
+    budgetSnapshot: (traceId) => budgetFor(traceId).snapshot(),
     releaseTrace(traceId) {
+      if (traceScopes.has(traceId)) {
+        traceScopes.delete(traceId);
+        resourceStore.releaseTrace(traceId);
+        searchSessions.release(traceId);
+        return true;
+      }
       const released = tracePool.releaseTrace(traceId);
       if (released) {
         resourceStore.releaseTrace(traceId);
@@ -368,5 +394,6 @@ export const memoryToolDirectory = [
 export function availableChatTools(networkEnabled: boolean, memoryEnabled = false): Array<{ name: string; description: string }> {
   const runtime = createToolRuntime({ audit: { start: async () => {}, finish: async () => {} },
     conversationReader: { listRecent: async () => [], read: async () => undefined, search: async () => [] } });
-  return [...chatToolDirectory(runtime, networkEnabled), ...(memoryEnabled ? memoryToolDirectory : [])];
+  return [...chatToolDirectory(runtime, networkEnabled), ...(memoryEnabled ? memoryToolDirectory : []),
+    { name: "Agent 协作", description: "委派独立子任务、并行处理和交叉复核，再统一整理结果" }];
 }

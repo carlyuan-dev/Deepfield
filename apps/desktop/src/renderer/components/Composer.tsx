@@ -8,6 +8,7 @@ export interface ComposerProps {
   placeholder?: string;
   /** Optional controls rendered at the leading edge of the actions row. */
   actions?: ReactNode;
+  onStop?: () => void;
 }
 
 export function Composer({
@@ -17,6 +18,7 @@ export function Composer({
   onSubmit,
   placeholder = "输入消息…",
   actions,
+  onStop,
 }: ComposerProps) {
   const composing = useRef(false);
   const submit = (): void => {
@@ -58,9 +60,9 @@ export function Composer({
       />
       <div className="composer-actions">
         {actions !== undefined && <div className="composer-actions-leading">{actions}</div>}
-        <button type="submit" disabled={disabled || value.trim().length === 0}>
+        {onStop ? <button type="button" onClick={onStop}>停止</button> : <button type="submit" disabled={disabled || value.trim().length === 0}>
           发送
-        </button>
+        </button>}
       </div>
     </form>
   );

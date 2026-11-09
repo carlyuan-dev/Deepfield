@@ -1,4 +1,5 @@
 import { ChatMemorySnapshotSchema } from "./memory.js";
+import { ChatCollaborationStateSchema, ChatCollaborationEventSchema, type ChatAgentTask } from "./chat-collaboration.js";
 import { ChatCompactionSchema } from "./compaction.js";
 import { Type, type Static } from "typebox";
 import { TraceContextSchema } from "@deepfield/base/trace";
@@ -27,6 +28,7 @@ export const AgentContextSnapshotSchema = Type.Object(
     humanPrompt: Type.Optional(Type.String()),
     memory: Type.Optional(ChatMemorySnapshotSchema),
     compaction: Type.Optional(ChatCompactionSchema),
+    collaboration: Type.Optional(ChatCollaborationStateSchema),
     finalizationSystemPrompt: Type.Optional(Type.String()),
     messages: Type.Array(AgentContextMessageSchema),
     historyTurns: Type.Optional(Type.Array(ChatHistoryTurnSchema)),
@@ -136,6 +138,7 @@ export const ChatFailureDiagnosticSchema = Type.Object({
 export type ChatFailureDiagnostic = Static<typeof ChatFailureDiagnosticSchema>;
 
 export const AgentWorkerEventSchema = Type.Union([
+  ChatCollaborationEventSchema,
   Type.Object({ requestId: Type.String(), type: Type.Literal("context_compacted"), compaction: ChatCompactionSchema }, { additionalProperties: false }),
   Type.Object({ requestId: Type.String(), type: Type.Literal("transcript_checkpoint"), messages: Type.Array(ChatTranscriptMessageSchema) }, { additionalProperties: false }),
   Type.Object(
@@ -185,6 +188,9 @@ export interface ChatMessage {
   createdAt: string;
   requestId?: string;
   toolExecutions?: ChatToolExecution[];
+  progressNotes?: string[];
+  agentTasks?: ChatAgentTask[];
+  cancelled?: boolean;
   status?: "failed";
   recovery?: { kind: "continue" };
 }

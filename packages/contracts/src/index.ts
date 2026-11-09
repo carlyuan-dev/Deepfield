@@ -16,3 +16,4 @@ export * from "./capability-management.js";
 export * from "./memory.js";
 export * from "./memory-projection.js";
 export * from "./compaction.js";
+export * from "./chat-collaboration.js";

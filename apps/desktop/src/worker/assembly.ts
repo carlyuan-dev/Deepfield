@@ -1,3 +1,4 @@
+import { collaborationFeatureDirectory } from './chat/collaboration-tools.js';
 import { createPiMemoryTools } from "./tools/pi-memory-tools.js";
 import { createMemoryContextTransform } from "./chat/memory-context.js";
 import type { PiRuntime, SkillCatalogProvider } from "./agent/pi-chat-agent.js";
@@ -72,10 +73,11 @@ export function createUtilityAssembly(deps: UtilityAssemblyDeps): UtilityAssembl
     fake: () => createFakeChatAgent(),
     pi: () =>
       createPiChatAgent(deps.piRuntime, [], skills, {}, toolRuntime, undefined, undefined, "main_agent", undefined,
-        (request, handoff) => [createPiFeatureCatalogTool(request, toolRuntime), ...createPiChatInteractionTools(request, deps.hostClient, handoff), ...createPiCapabilityTools(request, deps.hostClient, handoff), ...createPiMemoryTools(request, deps.hostClient)],
-        request => createMemoryContextTransform(request, deps.hostClient)),
+        (request, handoff) => [createPiFeatureCatalogTool(request, toolRuntime, collaborationFeatureDirectory), ...createPiChatInteractionTools(request, deps.hostClient, handoff), ...createPiCapabilityTools(request, deps.hostClient, handoff), ...createPiMemoryTools(request, deps.hostClient)],
+        (request, actor) => createMemoryContextTransform(request, deps.hostClient, actor), { host: deps.hostClient, tools: toolRuntime }),
   });
   const services = createCapabilityHostServices({
+    "agent.collaboration.v1": { version: 1 }, // The trusted loader supplies an owner-bound port for each package.
     "trace.v1": createTracePort(),
     "model.execution": { runtime: createCapabilityAgentRuntime({ ...(deps.piRuntime ? { runtime: deps.piRuntime } : {}), toolSessions: toolRuntime }), ...(deps.agentMode ? { mode: deps.agentMode } : {}) },
     "tools.retrieval": toolRuntime, "usage.context": withUsageContext,

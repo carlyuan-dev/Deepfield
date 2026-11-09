@@ -9,7 +9,7 @@ import {
 
 function event(
   requestId: string,
-  type: Exclude<AgentWorkerEvent["type"], "tool_activity" | "transcript_checkpoint" | "context_compacted" | "handed_off"> | "text_reset",
+  type: Exclude<AgentWorkerEvent["type"], "agent_tasks" | "tool_activity" | "transcript_checkpoint" | "context_compacted" | "handed_off"> | "text_reset",
   payload?: string,
 ): AgentWorkerEvent {
   switch (type) {
@@ -41,6 +41,19 @@ const persisted = (id: string, role: "user" | "assistant", content: string): Cha
 });
 
 describe("chat reducer", () => {
+  it("retains streamed process text separately when tools or a collaboration continuation begin", () => {
+    let state = chatReducer(loadedConversation("c1"), { type: "USER_SUBMIT", content: "请复核", requestId: "r1" });
+    const send = (e: AgentWorkerEvent) => { state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: e }); };
+    send(event("r1", "text_delta", "先请助手分别检查。"));
+    send(event("r1", "text_reset"));
+    expect(visibleMessages(state).at(-1)).toMatchObject({ content: "", progressNotes: ["先请助手分别检查。"] });
+    send(event("r1", "text_reset"));
+    send(event("r1", "text_delta", "复核结果。"));
+    send(event("r1", "text_reset"));
+    send(event("r1", "completed", "复核结果。"));
+    expect(visibleMessages(state).at(-1)).toMatchObject({ content: "复核结果。", progressNotes: ["先请助手分别检查。"] });
+  });
+
   it("releases sending on handoff while keeping streamed text and tool activity", () => {
     let state = chatReducer(loadedConversation("c1"), { type: "USER_SUBMIT", content: "继续", requestId: "r1" });
     state = chatReducer(state, { type: "WORKER_EVENT", conversationId: "c1", event: { type: "text_delta", requestId: "r1", delta: "正在准备" } });

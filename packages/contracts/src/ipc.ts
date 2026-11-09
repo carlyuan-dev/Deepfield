@@ -60,6 +60,7 @@ export interface DesktopApi {
     list(): Promise<SkillSummary[]>;
   };
   chat: {
+    cancel?(conversationId: string, requestId: string, taskId?: string): Promise<void>;
     listInteractions(conversationId: string): Promise<import("./chat-interaction.js").InteractionRecord[]>;
     respondInteraction(conversationId: string, command: import("./chat-interaction.js").RespondCommand): Promise<import("./chat-interaction.js").InteractionRecord>;
     respondInteractionEditor(conversationId: string, command: import("./chat-interaction.js").RespondCommand): Promise<import("./chat-interaction.js").InteractionRecord>;

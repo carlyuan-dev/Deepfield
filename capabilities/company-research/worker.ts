@@ -1,4 +1,5 @@
 import type { CapabilityWorkerRegistrar, CapabilityHostServices } from "@deepfield/capability-sdk";
+import { getCapabilityAgentCollaboration, type CapabilityAgentCollaboration } from "@deepfield/capability-sdk";
 import { CompanyResearchWorkerRequestSchema, CompanyResearchWorkerEventSchema, CompanyProfileWorkerRequestSchema, CompanyProfileWorkerEventSchema } from "./contracts/index.js";
 import { createCompanyResearchAgent, type CompanyResearchAgent } from "./runtime/company-research-agent.js";
 import { createCompanyProfileAgent } from "./runtime/company-profile-agent.js";
@@ -58,16 +59,18 @@ const fakeCompanyResearchAgent: CompanyResearchAgent = {
 
 export interface CompanyResearchWorkerPorts {
   runtime: CompanyAgentRuntime;
+  collaboration?: CapabilityAgentCollaboration;
   mode?: string;
   withUsage<T>(context: { sourceId: string; taskId: string; operationId?: string; stageId?: string }, work: () => T): T;
 }
 export function bootstrap(registrar: CapabilityWorkerRegistrar, services: CapabilityHostServices): void {
   if (services.version !== 1) throw new Error("incompatible_host_services");
   const execution = services.get<{ runtime: CompanyAgentRuntime; mode?: string }>("model.execution");
-  activate(registrar, { ...execution, withUsage: services.get<CompanyResearchWorkerPorts["withUsage"]>("usage.context") });
+  const collaboration = getCapabilityAgentCollaboration(services);
+  activate(registrar, { ...execution, ...(collaboration ? { collaboration } : {}), withUsage: services.get<CompanyResearchWorkerPorts["withUsage"]>("usage.context") });
 }
 export function activate(registrar: CapabilityWorkerRegistrar, ports: CompanyResearchWorkerPorts): void {
-  const research = ports.mode === "fake" ? fakeCompanyResearchAgent : createCompanyResearchAgent({ runtime: ports.runtime });
+  const research = ports.mode === "fake" ? fakeCompanyResearchAgent : createCompanyResearchAgent({ runtime: ports.runtime, ...(ports.collaboration ? { collaboration: ports.collaboration } : {}) });
   const profile = createCompanyProfileAgent({ runtime: ports.runtime });
   registrar.register("research", CompanyResearchWorkerRequestSchema, CompanyResearchWorkerEventSchema, async (request, emit, signal) => {
     validateResearchWorkerContract(request);

@@ -3,6 +3,7 @@ import type { ToolActivityView } from "../state/chat.js";
 import { UrlPopoverLink, isSafeHttpUrl } from "./UrlPopoverLink.js";
 
 const TOOL_LABELS: Readonly<Record<string, string>> = {
+  context_compaction: "压缩上下文",
   web_search: "联网搜索",
   read_webpage: "读取网页",
   get_current_datetime: "获取日期时间",

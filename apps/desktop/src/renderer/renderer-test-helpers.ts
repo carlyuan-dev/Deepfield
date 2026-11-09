@@ -64,7 +64,7 @@ export interface FakeDesktopApi extends DesktopApi {
   skills: {
     list: Mock<() => Promise<SkillSummary[]>>;
   };
-  chat: { [K in keyof DesktopApi["chat"]]: Mock<DesktopApi["chat"][K]> };
+  chat: { [K in keyof DesktopApi["chat"]]: Mock<NonNullable<DesktopApi["chat"][K]>> };
   listeners: Set<(event: AgentWorkerEvent) => void>;
   conversationListeners: Set<(conversation: Conversation) => void>;
   researchListeners: Set<(event: CompanyResearchEvent) => void>;

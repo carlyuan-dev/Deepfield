@@ -1,4 +1,5 @@
-import type { PiExecutionRequest } from "@deepfield/capability-sdk";
+import type { PiExecutionRequest, CapabilityAgentCollaboration } from "@deepfield/capability-sdk";
+import { coordinatedResearchAgent } from "./collaboration-agent.js";
 import type { CompanyResearchModelErrorCategory, CompanyResearchWorkerEvent, CompanyResearchWorkerRequest } from "../contracts/index.js";
 import { StructuredResearchValidationError, validateStructuredResearch } from "../application/index.js";
 import type { CompanyAgent, CompanyAgentRuntime, ExecutionErrorCode, ModelGateway, ModelCompletionResult } from "./ports.js";
@@ -15,6 +16,7 @@ export interface CompanyResearchAgentOptions {
   runtime: CompanyAgentRuntime;
   gateway?: ModelGateway;
   rawAgent?: CompanyAgent;
+  collaboration?: CapabilityAgentCollaboration;
 }
 
 export interface CompanyResearchAgent {
@@ -220,7 +222,8 @@ export function createCompanyResearchAgent(options: CompanyResearchAgentOptions)
           contextMessages: [], llm: request.llm, search: request.search, toolAccess: request.toolAccess,
         };
         try {
-          await rawAgent.run(executionRequest, (event) => {
+          const execution = options.collaboration ? coordinatedResearchAgent(rawAgent, options.collaboration) : rawAgent;
+          await execution.run(executionRequest, (event) => {
             if (event.type === "text_delta") {
               const delta = previewFilter.push(event.delta);
               if (delta) emit({ ...identity, stage: "raw", type: "text_delta", delta });

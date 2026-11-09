@@ -219,25 +219,35 @@ export class CapabilityChatHost {
     return navigation.open(target, this.conversationNavigation.signal);
   }
 
-  async call(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown): Promise<unknown> {
-    return withTrace(findTrace({ kind: "request", id: chatRequestId }), () => this.callTraced(chatRequestId, toolCallId, operation, args));
+  async call(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown, actor: "main_agent" | "child_agent" = "main_agent"): Promise<unknown> {
+    return withTrace(findTrace({ kind: "request", id: chatRequestId }), () => this.callTraced(chatRequestId, toolCallId, operation, args, actor));
   }
-  private async callTraced(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown): Promise<unknown> {
-    if (operation !== "invoke") return this.callDirect(chatRequestId, toolCallId, operation, args);
+  private async callTraced(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown, actor: "main_agent" | "child_agent" = "main_agent"): Promise<unknown> {
+    if (operation !== "invoke") return this.callDirect(chatRequestId, toolCallId, operation, args, actor);
     const prior = this.invokeQueue;
     let release!: () => void;
     this.invokeQueue = new Promise<void>(resolve => { release = resolve; });
     await prior;
-    try { return await this.callDirect(chatRequestId, toolCallId, operation, args); }
+    try { return await this.callDirect(chatRequestId, toolCallId, operation, args, actor); }
     finally { release(); }
   }
 
-  private async callDirect(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown): Promise<unknown> {
+  private async callDirect(chatRequestId: string, toolCallId: string, operation: ToolOperation, args: unknown, actor: "main_agent" | "child_agent" = "main_agent"): Promise<unknown> {
     const session = this.active.get(chatRequestId);
     const runtime = this.runtime();
     if (!session || !runtime) return { status: "error", error: safeGatewayError({ code: "capability_unavailable" }) };
+    if (actor === "child_agent") {
+      if (!["describe", "invoke", "task.get", "read"].includes(operation)) return { status: "error", error: safeGatewayError({ code: "permission_denied" }) };
+      if (operation === "describe" || operation === "invoke") {
+        const input = args && typeof args === "object" ? args as Record<string, unknown> : {};
+        const entry = runtime.actionCatalog.find(String(input.capabilityId ?? ""), String(input.actionId ?? ""));
+        if (!entry || entry.declaration.effects.data !== "read" || entry.declaration.effects.consumesResources || entry.declaration.requiresConfirmation || entry.declaration.mode !== "immediate") {
+          return { status: "error", error: safeGatewayError({ code: "permission_denied" }) };
+        }
+      }
+    }
     const context: TrustedActionContext = { callerId: "chat-window", source: "chat", sessionId: session.conversationId,
-      invocationId: randomUUID(), permissions };
+      invocationId: randomUUID(), permissions: actor === "child_agent" ? ["read", "execute"] : permissions };
     try {
       if (operation === "describe") {
         if (!args || typeof args !== "object") throw { code: "INPUT.INVALID" };
@@ -251,7 +261,7 @@ export class CapabilityChatHost {
             actionId: entry.actionId, contractDigest: entry.declaration.contractDigest });
           const cached = this.repositories.chatCapabilities.description(session.conversationId, entry.capabilityId,
             entry.packageVersion, entry.actionId, entry.declaration.contractDigest);
-          if (cached && (session.restoredKeys.has(key) || session.describedThisTurn.has(key))) return { status: "already_described", capabilityId: entry.capabilityId,
+          if (actor !== "child_agent" && cached && (session.restoredKeys.has(key) || session.describedThisTurn.has(key))) return { status: "already_described", capabilityId: entry.capabilityId,
             actionId: entry.actionId, packageVersion: entry.packageVersion, contractDigest: entry.declaration.contractDigest };
           this.repositories.chatCapabilities.saveDescription({ conversationId: session.conversationId, capabilityId: entry.capabilityId,
             actionId: entry.actionId, packageVersion: entry.packageVersion, contractDigest: entry.declaration.contractDigest,
@@ -264,16 +274,28 @@ export class CapabilityChatHost {
         if (!args || typeof args !== "object" || Array.isArray(args)) throw { code: "INPUT.INVALID" };
         const { invocationId, ...candidate } = args as Record<string, unknown>;
         if (!Value.Check(ActionCallSchema, candidate) || (invocationId !== undefined && (typeof invocationId !== "string" || invocationId.length > 200 || !invocationId))) throw { code: "INPUT.INVALID" };
-        const call = candidate as ActionCall;
-        this.interactions?.assertInvocationAllowed(chatRequestId, call);
+        let call = candidate as ActionCall;
         const entry = runtime.actionCatalog.find(call.capabilityId, call.actionId);
         if (!entry) throw { code: "capability_unavailable" };
         if (entry.declaration.contractDigest !== call.contractDigest) throw { code: "contract_changed" };
+        // Accept a transport-encoded JSON value only when the exact action schema
+        // rejects the string and accepts the decoded value. Real string inputs stay intact.
+        if (typeof call.input === "string" && call.input.length <= 100_000 && !Value.Check(entry.declaration.inputSchema, call.input)) {
+          try {
+            const decoded: unknown = JSON.parse(call.input);
+            if (Value.Check(entry.declaration.inputSchema, decoded)) call = { ...call, input: decoded };
+          } catch { /* Preserve ordinary gateway validation for malformed input. */ }
+        }
+        this.interactions?.assertInvocationAllowed(chatRequestId, call);
         if (!this.repositories.chatCapabilities.description(session.conversationId, call.capabilityId,
           entry.packageVersion, call.actionId, call.contractDigest)) {
           const outdated = this.repositories.chatCapabilities.descriptions(session.conversationId)
             .some(description => description.capabilityId === call.capabilityId && description.actionId === call.actionId);
           throw { code: outdated ? "contract_changed" : "action_not_described" };
+        }
+        if (actor === "child_agent") {
+          // The declaration and gateway both validate the concrete action. No UI navigation or proposal is produced by a child.
+          return runtime.actionGateway.invoke(call, runtime.actionGateway.issue(call, context));
         }
         const key = `${chatRequestId}\0${toolCallId}`;
         const callDigest = createHash("sha256").update(canonicalActionJson(call)).digest("hex");

@@ -1,18 +1,20 @@
 import { Type, type Static } from "typebox";
+import { MemoryReferenceSchema } from "./memory.js";
 import { JsonObjectSchema } from "./tools.js";
 
 const text = Type.Object({ type: Type.Literal("text"), text: Type.String() }, { additionalProperties: false });
 const toolCall = Type.Object({ type: Type.Literal("toolCall"), id: Type.String(), name: Type.String(), arguments: JsonObjectSchema }, { additionalProperties: false });
+const dependencies = { memoryDependencies: Type.Optional(Type.Array(MemoryReferenceSchema, { maxItems: 100 })) };
 const counts = { input: Type.Number(), output: Type.Number(), cacheRead: Type.Number(), cacheWrite: Type.Number() };
 export const ChatTranscriptMessageSchema = Type.Union([
-  Type.Object({ role: Type.Literal("user"), content: Type.String(), timestamp: Type.Number() }, { additionalProperties: false }),
+  Type.Object({ ...dependencies, role: Type.Literal("user"), content: Type.String(), timestamp: Type.Number() }, { additionalProperties: false }),
   Type.Object({
-    role: Type.Literal("assistant"), content: Type.Array(Type.Union([text, toolCall])),
+    ...dependencies, role: Type.Literal("assistant"), content: Type.Array(Type.Union([text, toolCall])),
     api: Type.String(), provider: Type.String(), model: Type.String(), timestamp: Type.Number(),
     usage: Type.Object({ ...counts, totalTokens: Type.Number(), cost: Type.Object({ ...counts, total: Type.Number() }, { additionalProperties: false }) }, { additionalProperties: false }),
     stopReason: Type.Union([Type.Literal("stop"), Type.Literal("length"), Type.Literal("toolUse"), Type.Literal("error"), Type.Literal("aborted")]),
   }, { additionalProperties: false }),
-  Type.Object({ role: Type.Literal("toolResult"), toolCallId: Type.String(), toolName: Type.String(), content: Type.Array(text), isError: Type.Boolean(), timestamp: Type.Number() }, { additionalProperties: false }),
+  Type.Object({ ...dependencies, role: Type.Literal("toolResult"), toolCallId: Type.String(), toolName: Type.String(), content: Type.Array(text), isError: Type.Boolean(), timestamp: Type.Number() }, { additionalProperties: false }),
 ]);
 export type ChatTranscriptMessage = Static<typeof ChatTranscriptMessageSchema>;
 

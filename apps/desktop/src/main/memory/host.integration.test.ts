@@ -10,6 +10,14 @@ import { ChatMemoryHost } from "./host.js";
 import { hasCurrentUserRequest, memoryOperationFingerprint } from "./intent.js";
 import { createCapabilityMemoryService } from "./capability-service.js";
 import { createMemoryContextTransform } from "../../worker/chat/memory-context.js";
+import { configureTraceCollector, createTraceCollector, withTrace } from '@deepfield/base/trace/runtime';
+import type { TraceEvent } from '@deepfield/base/trace';
+import { createPiMemoryTools } from '../../worker/tools/pi-memory-tools.js';
+import { HostClient } from '../../worker/host-client.js';
+import { AgentWorkerClient } from '../agent-worker-client.js';
+import { FakeEndpoint } from '../agent-worker-client-test-helpers.js';
+import { createToolWorkerHost } from '../tool-worker-host.js';
+import { FakeAuditSink } from '@deepfield/tool-platform';
 
 const resources: Array<{ host: ChatMemoryHost; owner: DatabaseOwner }> = [];
 afterEach(() => resources.splice(0).forEach(({ host, owner }) => { host.dispose(); owner.close(); }));
@@ -35,6 +43,33 @@ async function fixture() {
   return { host, owner, repos, begin, store };
 }
 const remember = (f: Awaited<ReturnType<typeof fixture>>, request: AgentWorkerRequest, scope: "user" | "conversation" = "user") => f.host.call(request.requestId, "write", { operation: "remember", scope, input, userRequest: request.prompt });
+it.each(['forget', 'clear'] as const)('traces successful %s with the actual deletion under the calling tool', async operation => {
+  const f = await fixture();
+  const saved = await remember(f, f.begin(`记住：${input.content}`));
+  const req = f.begin(operation === 'clear' ? '清空全部记忆' : `忘记${input.summary}`);
+  const events: TraceEvent[] = []; const collector = createTraceCollector(event => { events.push(event); });
+  configureTraceCollector(collector);
+  const client = new AgentWorkerClient(new FakeEndpoint());
+  client.send({ ...req, trace: { rootTraceId: 'memory-root', spanId: 'memory-host' } });
+  let rpc: HostClient;
+  const router = createToolWorkerHost({ audit: new FakeAuditSink(), secrets: { get: () => undefined },
+    memory: f.host, traceForMemory: (requestId, callId, trace) => client.traceForMemory(requestId, callId, trace),
+    postMessage: value => rpc.handleReply(value) });
+  rpc = new HostClient({ postMessage: value => withTrace(undefined, () => router.handleRequest(value)) });
+  try {
+    const ref = saved.memoryRefs![0]!;
+    const tool = createPiMemoryTools(req, rpc).find(tool => tool.name === `memory_${operation}`)!;
+    const reply = await withTrace({ rootTraceId: 'memory-root', spanId: 'memory-tool', requestId: req.requestId }, () => tool.execute('delete',
+      operation === 'clear' ? { userRequest: req.prompt } : { ...ref, userRequest: req.prompt }));
+    const result = JSON.parse((reply.content[0] as { text: string }).text);
+    expect(result.status).toBe('deleted'); expect(f.host.get().records).toEqual([]);
+    await collector.close();
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'span.start', stage: 'memory.commit', parentSpanId: 'memory-tool', rootTraceId: 'memory-root' }),
+      expect.objectContaining({ type: 'span.end', stage: 'memory.commit', status: 'succeeded', parentSpanId: 'memory-tool' }),
+    ]));
+  } finally { rpc.dispose(); router.dispose(); client.dispose(); configureTraceCollector(undefined); }
+});
 it("saves an explicit preference, exposes a live summary across conversations, and edits/deletes without stale reads", async () => {
   const f = await fixture();
   const a = f.begin(`记住：${input.content}`);

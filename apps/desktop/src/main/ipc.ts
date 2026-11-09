@@ -51,6 +51,7 @@ export interface SkillListLike {
 }
 
 export interface ChatServiceLike {
+  cancel?(conversationId: string, requestId: string, taskId?: string): void;
   send(
     conversationId: string,
     content: string,
@@ -102,6 +103,7 @@ const INVOKE_CHANNELS = [
   IPC_CHANNELS.settingsDiagnoseSearch,
   IPC_CHANNELS.skillsList,
   IPC_CHANNELS.chatSend,
+  IPC_CHANNELS.chatCancel,
   IPC_CHANNELS.chatListMessages,
 ] as const;
 
@@ -266,6 +268,12 @@ export function registerIpcHandlers(deps: IpcServiceDeps): () => void {
     return deps.chat.send(conversationId, content, requestId, (workerEvent) => {
       emitToSender(event.sender, workerEvent);
     }, options);
+  });
+
+  deps.ipcMain.handle(IPC_CHANNELS.chatCancel, async (_event, ...args) => {
+    if ((args.length !== 2 && args.length !== 3) || args.some(arg => typeof arg !== "string" || !arg.length || arg.length > 200)) throw new Error("invalid cancellation input");
+    if (!deps.chat.cancel) throw new Error("cancellation unavailable");
+    deps.chat.cancel(args[0] as string, args[1] as string, args[2] as string | undefined);
   });
 
   deps.ipcMain.handle(IPC_CHANNELS.chatListMessages, async (_event, ...args) => {

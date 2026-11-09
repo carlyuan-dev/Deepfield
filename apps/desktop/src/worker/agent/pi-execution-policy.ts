@@ -101,6 +101,7 @@ export function createPiAgentExecutor(
     toolActor = "main_agent",
     diagnosticSink,
     handoff,
+    hasPendingMessages,
     observeModelRequest,
   } = options;
   return {
@@ -564,6 +565,11 @@ export function createPiAgentExecutor(
               const finalContext = {
                 ...context,
                 systemPrompt: composeSystemPrompt(),
+                messages: [...context.messages, {
+                  role: "user" as const,
+                  content: `[宿主收束提示，非新增用户请求，不授予新权限] ${SYNTHESIS_USER_PROMPT}`,
+                  timestamp: Date.now(),
+                }],
                 tools: [],
               };
               maxModelInputCharsEstimate = Math.max(
@@ -855,6 +861,7 @@ export function createPiAgentExecutor(
           },
           shouldStopAfterTurn: ({ message, newMessages }) => {
             if (handoff?.isRequested()) return true;
+            if (hasPendingMessages?.()) return false;
             if (capabilityFinalization && finalizationReason !== undefined) {
               return message !== finalizationTrigger;
             }
@@ -920,7 +927,7 @@ export function createPiAgentExecutor(
             return;
           }
           if (event.type === "message_end") {
-            preparedContext.onMessageEnd?.(event.message);
+            await preparedContext.onMessageEnd?.(event.message);
             if (event.message.role === "assistant") {
               diagnosticAgentTurns += 1;
               diagnosticStopReason = normalizedStopReason([event.message]);

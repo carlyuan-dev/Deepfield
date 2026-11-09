@@ -29,3 +29,24 @@ describe("Pi capability tools", () => {
       .rejects.toThrow(/fieldErrors.*\/field.*signed-id|signed-id.*fieldErrors.*\/field/);
   });
 });
+
+// The model-facing result must distinguish completed work from accepted background work.
+describe("capability completion feedback", () => {
+  it("preserves completed business data and supplies completion guidance without making further calls", async () => {
+    const reply = { status: "completed", data: { items: [{ name: "Alpha" }], nextCursor: null }, viewRefs: [{ viewId: "home" }] };
+    const rpc = vi.fn(async () => ({ result: reply }));
+    const tool = createPiCapabilityTools(request([entry]), { request: rpc })[1]!;
+    const result = await tool.execute("lookup-1", { capabilityId: "probe", actionId: "lookup", contractDigest: entry.contractDigest, input: {} });
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+    expect(payload).toMatchObject(reply);
+    expect(payload.agentGuidance).toContain("已完成");
+    expect(payload.agentGuidance).toContain("分页");
+    expect(payload.agentGuidance).toContain("重复查询");
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+  it.each(["accepted", "awaiting_user", "described"])("does not label %s as completed", async status => {
+    const tool = createPiCapabilityTools(request([entry]), { request: async () => ({ result: { status } }) })[1]!;
+    const result = await tool.execute("pending-1", { capabilityId: "probe", actionId: "lookup", contractDigest: entry.contractDigest, input: {} });
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ status });
+  });
+});

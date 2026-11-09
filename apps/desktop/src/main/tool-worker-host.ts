@@ -1,4 +1,5 @@
 import { Value } from "typebox/value";
+import { withTrace, type TraceScope } from '@deepfield/base/trace/runtime';
 import { parseUsageAttempt, type UsageAttempt, type UsageDeliveryHealth } from "@deepfield/base/usage";
 import {
   HostRequestSchema,
@@ -11,8 +12,11 @@ import type { ConversationRepositories } from "./conversation-reader.js";
 import { createRepositoryConversationReader } from "./conversation-reader.js";
 
 export interface ToolWorkerHostOptions {
+  /** The host checks the originating request/root; the Worker cannot choose a foreign trace. */
+  traceForMemory?(requestId: string, toolCallId: string, trace: TraceScope | undefined): TraceScope | undefined;
+  collaboration?: { save(requestId: string, state: import("@deepfield/contracts").ChatCollaborationState): Promise<void> };
   memory?: { call(requestId: string, toolCallId: string, command: import("@deepfield/contracts").MemoryCommand): Promise<import("@deepfield/contracts").MemoryToolReply> };
-  capabilityChat?: { call(chatRequestId: string, toolCallId: string, operation: "describe" | "invoke" | "task.get" | "task.cancel" | "read" | "open", args: unknown): Promise<unknown> };
+  capabilityChat?: { call(chatRequestId: string, toolCallId: string, operation: "describe" | "invoke" | "task.get" | "task.cancel" | "read" | "open", args: unknown, actor?: "main_agent" | "child_agent"): Promise<unknown> };
   chatInteraction?: { call(chatRequestId: string, toolCallId: string, operation: "question" | "draft.read" | "draft.update" | "draft.transition" | "proposal.create", args: unknown): Promise<unknown> };
   usage?: { record(value: UsageAttempt): Promise<boolean>; health(sessionId: string, health: UsageDeliveryHealth): void };
   audit: ToolAuditSink;
@@ -29,6 +33,7 @@ export interface ToolWorkerHost {
 }
 
 const HOST_RPC_METHODS = new Set<HostRpcMethod>([
+  "chat.collaboration",
   "memory.call",
   "capability.call",
   "chat.interaction",
@@ -101,9 +106,20 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
   async function handleValid(request: HostRequest): Promise<void> {
     const { hostRequestId, method } = request;
     try {
+      if (method === "chat.collaboration") {
+        if (!options.collaboration) throw new Error("collaboration_unavailable");
+        await options.collaboration.save(request.payload.chatRequestId, request.payload.state);
+        if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { saved: true } });
+        return;
+      }
       if (method === "memory.call") {
         let result: import("@deepfield/contracts").MemoryToolReply;
-        try { result = await options.memory?.call(request.payload.chatRequestId, request.payload.toolCallId, request.payload.command) ?? { status: "unavailable" }; }
+        try {
+          const { chatRequestId, toolCallId, command } = request.payload;
+          let trace: TraceScope | undefined;
+          try { trace = options.traceForMemory?.(chatRequestId, toolCallId, request.payload.trace); } catch { /* Optional association cannot fail the Memory operation. */ }
+          result = await withTrace(trace, () => options.memory?.call(chatRequestId, toolCallId, command)) ?? { status: "unavailable" };
+        }
         catch { result = { status: "failed", message: "记忆操作未完成，请稍后重试。" }; }
         if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { result } });
         return;
@@ -135,7 +151,7 @@ export function createToolWorkerHost(options: ToolWorkerHostOptions): ToolWorker
       if (method === "capability.call") {
         if (!options.capabilityChat) throw new Error("capability_unavailable");
         const result = await options.capabilityChat.call(request.payload.chatRequestId, request.payload.toolCallId,
-          request.payload.operation, request.payload.arguments);
+          request.payload.operation, request.payload.arguments, request.payload.actor);
         if (!disposed) reply(options.postMessage, { hostRequestId, kind: "host.reply", method, ok: true, payload: { result } });
         return;
       }

@@ -62,6 +62,7 @@ export const IPC_CHANNELS = {
   settingsDiagnoseSearch: "deepfield:settings:diagnoseSearch",
   skillsList: "deepfield:skills:list",
   chatSend: "deepfield:chat:send",
+  chatCancel: "deepfield:chat:cancel",
   chatEvents: "deepfield:chat:events",
   chatListMessages: "deepfield:chat:listMessages",
 } as const;
@@ -262,6 +263,7 @@ export function createPreloadApi(ipc: IpcBridge): DesktopApi {
           requestId,
           options,
         ) as Promise<ChatSendResult>,
+      cancel: (conversationId, requestId, taskId) => ipc.invoke(IPC_CHANNELS.chatCancel, conversationId, requestId, ...(taskId ? [taskId] : [])) as Promise<void>,
       subscribe: (listener: (event: AgentWorkerEvent) => void) =>
         ipc.on(IPC_CHANNELS.chatEvents, (_event, value) => {
           if (Value.Check(AgentWorkerEventSchema, value)) {

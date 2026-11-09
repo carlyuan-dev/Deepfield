@@ -637,3 +637,16 @@
 .chat-interaction-card textarea { display: block; width: 100%; min-height: 68px; margin-top: 8px; resize: vertical; }
 .chat-interaction-card .interaction-confirm { min-width: 88px; }
 .chat-interaction-card .interaction-confirm:disabled { opacity: 1; cursor: wait; }
+.agent-activity { margin: 10px 0; font-size: 13px; color: var(--muted); }
+.agent-activity > summary { cursor: pointer; padding: 6px 0; }
+.agent-activity-list { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--border); }
+.agent-task { padding: 8px 0; }
+.agent-task > summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; color: var(--text); }
+.agent-task-state { flex: none; color: var(--muted); font-size: 12px; }
+.agent-task-state.running { color: var(--accent); }
+.agent-task p { overflow-wrap: anywhere; }
+.agent-task-cancel { padding: 3px 8px; font-size: 12px; }
+
+.message-progress { color: var(--text-muted, #80796f); margin: 0.5rem 0; }
+.message-progress > summary { cursor: pointer; font-size: 0.9em; }
+.message-progress p { margin: 0.5rem 0; }

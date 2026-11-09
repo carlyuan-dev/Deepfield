@@ -2,6 +2,7 @@ import { Value } from "typebox/value";
 import { startTraceSpan, withTrace, type TraceSpan } from "@deepfield/base/trace/runtime";
 import { PiAgentError } from "@deepfield/base/agent";
 import { UsageFlushRequestSchema, UsageRepairRequestSchema } from "@deepfield/contracts";
+import { ChatAgentCancelSchema } from "@deepfield/contracts";
 import { withUsageContext } from "../shared/usage-collection.js";
 import { AgentWorkerEventSchema, AgentWorkerRequestSchema, ToolExecutionEventSchema, ToolRunRequestSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
 import type { WorkerCapabilityRegistry } from "./capabilities/registry.js";
@@ -61,6 +62,13 @@ export function createWorkerMessageLoop(
     }
     if (isHostReply(value)) {
       options.hostReplyHandler?.(value);
+      return;
+    }
+    if (Value.Check(ChatAgentCancelSchema, value)) {
+      const execution = active.get(value.requestId);
+      if (!execution) return;
+      if (value.taskId) void chatAgent.cancelTask?.(value.requestId, value.taskId).catch(() => console.warn("[chat] child_cancel_failed", { requestId: value.requestId, taskId: value.taskId }));
+      else execution.controller.abort();
       return;
     }
     if (Value.Check(AgentWorkerRequestSchema, value)) {
@@ -151,7 +159,7 @@ export function createWorkerMessageLoop(
           emit({ requestId: request.requestId, type: "failed", code: error.code, message: "agent execution failed", failureDiagnostic: error.failureDiagnostic });
           return;
         }
-        execution.settle("agent_error", "agent execution failed", false);
+        execution.settle(execution.controller.signal.aborted ? "cancelled" : "agent_error", "agent execution failed", false);
       });
     track(task);
   }

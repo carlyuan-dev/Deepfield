@@ -10,10 +10,22 @@ export const memoryReferenceKey = (ref: MemoryReference) => `${ref.id}:${ref.rev
  * Runtime may keep a result only while the host confirms every referenced revision.
  * Ordinary chat text and non-memory tools retain their established behavior. */
 export function projectMemoryHistory<T extends { role: string }>(messages: readonly T[], valid?: ReadonlySet<string>, receiptRefs = valid): T[] {
+  // Fresh read receipts must describe the call that actually produced them.
+  // Durable history and writes still carry reference-only receipts.
+  const liveReads = new Set<string>();
+  if (valid) for (const message of messages) {
+    const m = message as T & { toolCallId?: string; toolName?: string; content?: { text?: string }[] };
+    if (m.role !== 'toolResult' || !['memory_search', 'memory_read'].includes(m.toolName ?? '') || !m.toolCallId) continue;
+    try {
+      const payload = JSON.parse((m.content ?? []).map(part => part.text ?? '').join('\n'));
+      const refs = memoryReferences(payload.memoryRefs);
+      if ((payload.status === 'ok' || payload.status === 'miss') && refs.every(ref => valid.has(memoryReferenceKey(ref)))) liveReads.add(`${m.toolName}:${m.toolCallId}`);
+    } catch { /* Invalid receipts cannot establish a fresh read. */ }
+  }
   return messages.map(message => {
     const m = message as T & { content?: unknown; toolName?: string };
     if (m.role === "assistant" && Array.isArray(m.content)) {
-      return { ...m, content: m.content.map(part => part.type === "toolCall" && MEMORY_TOOL_NAMES.has(part.name)
+      return { ...m, content: m.content.map(part => part.type === "toolCall" && MEMORY_TOOL_NAMES.has(part.name) && !liveReads.has(`${part.name}:${part.id}`)
         ? { ...part, arguments: { memoryHistory: true, message: "历史记忆操作；不要重放写入。" } } : part) };
     }
     if (m.role !== "toolResult" || !MEMORY_TOOL_NAMES.has(m.toolName ?? "")) return message;

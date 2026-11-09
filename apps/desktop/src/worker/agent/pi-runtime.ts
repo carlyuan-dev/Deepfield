@@ -17,7 +17,7 @@ export interface SkillCatalogProvider {
 export interface PiToolSessionProvider {
   createAgentTools(context: {
     traceId: string;
-    actor: "main_agent" | "capability";
+    actor: "main_agent" | "capability" | "child_agent";
     networkEnabled?: boolean;
     batchScopeFor?: (toolCallId: string) => ToolExecutionBatchScope | undefined;
   }): AgentTool<any>[];
@@ -25,6 +25,9 @@ export interface PiToolSessionProvider {
   budgetSnapshot(traceId: string): ToolBudgetSnapshot;
   recordSynthetic(record: ToolSyntheticAuditRecord): Promise<void>;
   releaseTrace(traceId: string): boolean;
+  bindBudgetScope?(scopeId: string, limits: import('@deepfield/base/tools').ToolBudgetLimits, initialConsumed?: {search: number; fetch: number}): void;
+  attachBudgetScope?(traceId: string, scopeId: string): void;
+  releaseBudgetScope?(scopeId: string): boolean;
 }
 
 export interface PiRunDiagnostic {

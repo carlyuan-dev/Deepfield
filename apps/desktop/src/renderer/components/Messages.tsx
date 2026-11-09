@@ -5,6 +5,7 @@ import type { ChatMessageView } from "../state/chat.js";
 import { LinkifiedText } from "./LinkifiedText.js";
 import { MarkdownMessage } from "./MarkdownMessage.js";
 import { ToolActivity } from "./ToolActivity.js";
+import { AgentActivity } from "./AgentActivity.js";
 import { CapabilityChatCards } from "./CapabilityChatCards.js";
 import { ChatInteractionCard } from "./ChatInteractionCard.js";
 
@@ -15,6 +16,7 @@ export interface MessagesProps {
   onScroll?(element: HTMLDivElement): void;
   onContinue?(): void;
   continuing?: boolean;
+  onCancelAgent?(requestId: string, taskId: string): Promise<void>;
   interactionCards?: {
     interactions: InteractionRecord[];
     respond(interaction: InteractionRecord, command: RespondCommand): Promise<InteractionRecord>;
@@ -37,6 +39,7 @@ export function Messages({
   interactionCards,
   onContinue,
   continuing,
+  onCancelAgent,
 }: MessagesProps) {
   const owner = new Map<string, number>();
   messages.forEach((message, index) => {
@@ -92,11 +95,25 @@ export function Messages({
                 )}
               </div>
             )}
+          {message.role === "assistant" && Boolean(message.progressNotes?.length) && (
+            <details className="message-progress" open={message.status === "streaming"}>
+              <summary>执行过程</summary>
+              {message.progressNotes!.map((text, i) => <MarkdownMessage key={i} content={text} />)}
+            </details>
+          )}
           {message.role === "assistant" && message.toolActivities.length > 0 && (
             <ToolActivity
               activities={message.toolActivities}
               terminal={message.status !== "streaming"}
             />
+          )}
+          {message.agentTasks && <AgentActivity tasks={message.agentTasks}
+            {...(message.status === "streaming" && message.requestId && onCancelAgent
+              ? { onCancel: (taskId: string) => onCancelAgent(message.requestId!, taskId) } : {})} />}
+          {message.status === "streaming" && message.toolActivities.some(activity => activity.name === "context_compaction" && activity.status === "running") && (
+            <span className="chat-thinking" role="status" aria-label="正在压缩上下文">
+              <span className="chat-thinking-spinner" aria-hidden="true" />正在压缩上下文
+            </span>
           )}
           <div
             className={
@@ -111,7 +128,7 @@ export function Messages({
               ) : (
                 <LinkifiedText text={message.content} />
               )
-            ) : message.status === "streaming" ? (
+            ) : message.status === "streaming" && !message.toolActivities.some(activity => activity.name === "context_compaction" && activity.status === "running") ? (
               <span className="chat-thinking" role="status" aria-label="Deepfield 正在思考">
                 <span className="chat-thinking-spinner" aria-hidden="true" />
                 正在思考…
@@ -121,8 +138,8 @@ export function Messages({
             )}
           </div>
           {message.status === "failed" && (
-            <p className="message-error" role="alert">
-              回复失败，请重试
+            <p className={message.cancelled ? "muted" : "message-error"} role={message.cancelled ? "status" : "alert"}>
+              {message.cancelled ? "已停止本轮任务。" : "回复失败，请重试"}
             </p>
           )}
           {message.role === "assistant" && message.recovery?.kind === "continue" && onContinue && (

@@ -1,9 +1,11 @@
 import { databaseView, type DatabaseInput } from "./database.js";
 import { Value } from "typebox/value";
 import { ChatCompactionSchema, type ChatCompaction } from "@deepfield/contracts";
+import { ChatCollaborationStateSchema, type ChatCollaborationState } from "@deepfield/contracts";
 import { AgentWorkerEventSchema, ChatFailureDiagnosticSchema, ChatTranscriptMessageSchema, type ChatFailureDiagnostic, type AgentWorkerEvent, type ChatToolExecution, type ChatTranscriptMessage, type ConversationId } from "@deepfield/contracts";
 
 export interface ChatSessionRecord {
+  collaboration?: ChatCollaborationState;
   compaction?: ChatCompaction;
   requestId: string;
   network: "enabled" | "disabled";
@@ -29,6 +31,13 @@ export function createChatSessionRepository(connection: DatabaseInput) {
     db.prepare("INSERT INTO chat_sessions(conversation_id, request_id, data_json) VALUES (?, ?, ?) ON CONFLICT(conversation_id, request_id) DO UPDATE SET data_json = excluded.data_json").run(conversationId, requestId, JSON.stringify(record));
   };
   return {
+    collaboration(conversationId: ConversationId, requestId: string, network: ChatSessionRecord["network"], state: ChatCollaborationState) {
+      if (!Value.Check(ChatCollaborationStateSchema, state)) throw new Error("invalid collaboration checkpoint");
+      const prior = read(conversationId, requestId)?.collaboration;
+      if (prior && (prior.scopeId !== state.scopeId || state.revision < prior.revision)) throw new Error("stale collaboration checkpoint");
+      if (prior && state.revision === prior.revision && JSON.stringify(prior) !== JSON.stringify(state)) throw new Error("conflicting collaboration checkpoint");
+      update(conversationId, requestId, network, record => { record.collaboration = structuredClone(state); });
+    },
     compact(conversationId: ConversationId, requestId: string, network: ChatSessionRecord["network"], compaction: ChatCompaction) {
       if (!Value.Check(ChatCompactionSchema, compaction)) throw new Error("invalid chat compaction");
       const record = read(conversationId, requestId);

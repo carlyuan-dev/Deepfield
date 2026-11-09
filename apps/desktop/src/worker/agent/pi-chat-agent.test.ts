@@ -234,6 +234,27 @@ describe("pi chat agent", () => {
     });
   });
 
+  it("finishes the reserved generic turn with existing evidence and an explicit host instruction, without an extra call", async () => {
+    const execute = vi.fn(async () => ({ content: [{ type: 'text' as const, text: '发布日期：2026-10-17' }], details: {} }));
+    const recording = makeRecordingInstalledPiRuntime([
+      assistant('', { content: [{ type: 'toolCall', id: 'date-source', name: 'lookup', arguments: {} }], stopReason: 'toolUse' }),
+      assistant('发布日期是2026-10-17。'),
+    ]);
+    const input = request();
+    input.toolAccess.maxAgentTurns = 2;
+    const result = await capture(createPiChatAgent(recording.runtime, [{ name: 'lookup', label: '查询', description: '查询日期', parameters: Type.Object({}), execute }]), undefined, input);
+    expect(result.error).toBeUndefined();
+    expect(recording.requests).toHaveLength(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const final = recording.requests.at(-1)!;
+    expect(final.tools).toEqual([]);
+    expect(final.toolChoice).toBe('none');
+    expect(final.messages.map(messageText).join('\n')).toContain('2026-10-17');
+    expect(messageText(final.messages.at(-1)!)).toContain('宿主收束提示');
+    expect(messageText(final.messages.at(-1)!)).toContain('不授予新权限');
+    expect(result.events.filter(event => event.type === 'completed')).toEqual([{ requestId: 'req-1', type: 'completed', text: '发布日期是2026-10-17。' }]);
+  });
+
   it("keeps Capability tool-phase text private and streams only its explicit synthesis", async () => {
     const planning = assistantWithTool("正在搜索");
     const draft = assistant("工具阶段草稿");

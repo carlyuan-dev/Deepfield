@@ -53,6 +53,7 @@ export function ChatView({
   const memory = useMemoryState(api.memory);
   const { state, submit, reload } = useChat(api, conversation.id, eventHub, requestIdFactory, onRequestStart);
   const [draft, setDraft] = useState("");
+  const [cancelError, setCancelError] = useState<string>();
   const [taskCards, setTaskCards] = useState<ChatCapabilityTaskCard[]>([]);
   const [confirmations, setConfirmations] = useState<ChatCapabilityConfirmation[]>([]);
   const [operations, setOperations] = useState<ChatCapabilityOperationCard[]>([]);
@@ -198,6 +199,7 @@ export function ChatView({
 
   return (
     <section className="chat-view" aria-label="Chat">
+      {cancelError && <p className="chat-content-status error" role="alert">{cancelError}</p>}
       {settingError !== undefined && <p className="chat-content-status error" role="alert">{settingError}</p>}
       {state.loadState === "error" && (
         <div className="chat-content-status error" role="alert">
@@ -216,6 +218,7 @@ export function ChatView({
         <>
           <Messages
             messages={messages}
+            {...(api.chat.cancel ? { onCancelAgent: (requestId: string, taskId: string) => api.chat.cancel!(conversation.id, requestId, taskId) } : {})}
             messagesRef={messagesRef}
             onScroll={handleMessagesScroll}
             continuing={state.sending || savingWebSearch || state.loadState !== "ready"}
@@ -259,6 +262,11 @@ export function ChatView({
           {showLatest && <button className="chat-latest" onClick={scrollToLatest}>回到最新</button>}
           {memory.state?.available && !memory.state.settings.noticeSeen && <MemoryNotice acknowledge={memory.acknowledge} open={openMemorySettings} />}
           <Composer
+            {...(state.sending && api.chat.cancel ? { onStop: () => {
+              const requestId = messages.findLast(message => message.status === "streaming")?.requestId;
+              setCancelError(undefined);
+              if (requestId) void api.chat.cancel!(conversation.id, requestId).catch(() => setCancelError("停止请求未完成，请重试。"));
+            } } : {})}
             value={draft}
             onChange={setDraft}
             disabled={savingWebSearch || state.sending || state.loadState !== "ready"}

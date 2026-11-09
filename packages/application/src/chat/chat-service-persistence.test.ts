@@ -18,6 +18,22 @@ afterEach(() => {
 });
 
 describe("chat service persistence guarantees", () => {
+  it("restores process notes without duplicating a multi-block final answer", () => {
+    const db = openTestDb(); dbs.push(db);
+    const conversation = makeConversation(db);
+    db.repos.messages.append(conversation.id, "user", "核验", "notes");
+    db.repos.messages.append(conversation.id, "assistant", "甲乙", "notes");
+    const base = { role: "assistant" as const, api: "openai-completions", provider: "test", model: "test", timestamp: 1, stopReason: "stop" as const,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+    db.repos.chatSessions.checkpoint(conversation.id, "notes", "disabled", [
+      { ...base, content: [{ type: "text", text: "正在核验。" }] },
+      { ...base, content: [{ type: "text", text: "甲" }, { type: "text", text: "乙" }] },
+    ]);
+    db.repos.chatSessions.complete(conversation.id, "notes");
+    const messages = new ChatService(db.repos, {} as never, {} as never, {} as never).listMessages(conversation.id);
+    expect(messages.at(-1)).toMatchObject({ content: "甲乙", progressNotes: ["正在核验。"] });
+  });
+
   it("consumes internal checkpoints, persists live tool details and restores failed request activity", async () => {
     const db = openTestDb(); dbs.push(db);
     const worker = new FakeWorker({ events: request => [

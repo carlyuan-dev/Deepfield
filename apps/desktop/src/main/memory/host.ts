@@ -152,13 +152,15 @@ export class ChatMemoryHost {
       binding.grants.add(fingerprint);
       const writer = this.store.writer(scope, { origin: "user_explicit", sources: [binding.source] });
       if (this.requests.get(requestId) !== binding || binding.generation !== this.store.snapshot(this.ownerId).generation) return { status: "invalidated" };
-      if (command.operation === "clear") { this.clear(); return { status: "deleted", message: "已清空保存的记忆，原对话保留。" }; }
-      if (command.operation === "forget") { writer.forget(command.id, command.revision); this.changed(); return { status: "deleted", message: "已删除保存的记忆及历史版本，原对话保留。" }; }
       const span = startTraceSpan("stage", requestId, { stage: "memory.commit" });
       let result;
-      try { result = withTrace(span.context, () => command.operation === "remember"
-        ? writer.remember(command.input, { operationKey: `${requestId}:${toolCallId}` })
-        : writer.revise(command.id, command.revision, command.input, { operationKey: `${requestId}:${toolCallId}` })); }
+      try {
+        if (command.operation === "clear") { withTrace(span.context, () => this.clear()); span.end('succeeded'); return { status: "deleted", message: "已清空保存的记忆，原对话保留。" }; }
+        if (command.operation === "forget") { withTrace(span.context, () => { writer.forget(command.id, command.revision); this.changed(); }); span.end('succeeded'); return { status: "deleted", message: "已删除保存的记忆及历史版本，原对话保留。" }; }
+        result = withTrace(span.context, () => command.operation === "remember"
+          ? writer.remember(command.input, { operationKey: `${requestId}:${toolCallId}` })
+          : writer.revise(command.id, command.revision, command.input, { operationKey: `${requestId}:${toolCallId}` }));
+      }
       catch (error) { span.end("failed", "execution_failed"); throw error; }
       span.end("succeeded");
       this.db.run("UPDATE chat_memory_sources SET handled=1 WHERE id=?", binding.source.id);

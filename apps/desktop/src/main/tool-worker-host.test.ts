@@ -81,6 +81,16 @@ const auditFinish = {
 };
 
 describe("tool worker host", () => {
+  it('does not fail a Memory operation when optional Trace association throws', async () => {
+    const posted: unknown[] = [];
+    const host = createToolWorkerHost({ audit: fakeAudit().audit, secrets: { get: () => undefined }, postMessage: value => posted.push(value),
+      traceForMemory: () => { throw new Error('trace unavailable'); }, memory: { call: async () => ({ status: 'miss', entries: [] }) } });
+    host.handleRequest({ hostRequestId: 'memory-trace-error', kind: 'host.request', method: 'memory.call',
+      payload: { chatRequestId: 'chat', toolCallId: 'read', command: { operation: 'search', query: 'query' } } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(posted).toMatchObject([{ ok: true, payload: { result: { status: 'miss', entries: [] } } }]);
+    host.dispose();
+  });
   it("classifies interaction failures safely without returning audit errors or private exception text", async () => {
     const posted: unknown[] = [];
     const host = createToolWorkerHost({ audit: fakeAudit().audit, secrets: { get: () => undefined }, postMessage: value => posted.push(value),

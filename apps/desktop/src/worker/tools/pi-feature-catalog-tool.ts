@@ -5,7 +5,7 @@ import { renderChatHelp } from "@deepfield/application";
 import { chatToolDirectory, memoryToolDirectory, type UtilityToolRuntime } from "./tool-runtime.js";
 
 /** Model-callable overview using this request's granted tools and ready capability snapshot. */
-export function createPiFeatureCatalogTool(request: AgentWorkerRequest, runtime: UtilityToolRuntime): AgentTool<any> {
+export function createPiFeatureCatalogTool(request: AgentWorkerRequest, runtime: UtilityToolRuntime, additionalTools: readonly { name: string; description: string }[] = []): AgentTool<any> {
   return {
     name: "view_available_features",
     label: "查看可用功能",
@@ -13,7 +13,7 @@ export function createPiFeatureCatalogTool(request: AgentWorkerRequest, runtime:
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_toolCallId, _args, signal) {
       if (signal?.aborted) throw new Error("feature catalog call aborted");
-      const text = renderChatHelp([...chatToolDirectory(runtime, request.toolAccess.network === "enabled"), ...(request.context.memory ? memoryToolDirectory : [])],
+      const text = renderChatHelp([...chatToolDirectory(runtime, request.toolAccess.network === "enabled"), ...(request.context.memory ? memoryToolDirectory : []), ...additionalTools],
         request.context.capabilityHelp ?? []);
       return { content: [{ type: "text", text }], details: {} };
     },

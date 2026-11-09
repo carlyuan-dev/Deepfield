@@ -2,6 +2,8 @@ import { buildSessionContext, type AgentMessage, type Entry } from "@earendil-wo
 import type { Message } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import { ChatTranscriptMessageSchema, type AgentContextSnapshot, type ChatTranscriptMessage } from "@deepfield/contracts";
+import { hasUntrackedCollaboration, markUntrackedCollaboration, tagMemoryDependencies } from "./memory-dependencies.js";
+import { memoryReferences } from "@deepfield/contracts";
 import { mapHistoryMessages, type ModelIdentity } from "./pi-message-mapper.js";
 
 export { toolResultProjection } from "../tools/tool-source-projection.js";
@@ -25,6 +27,8 @@ export function transcriptMessage(message: AgentMessage): ChatTranscriptMessage 
       usage: { input, output, cacheRead, cacheWrite, totalTokens, cost: { input: cost.input, output: cost.output, cacheRead: cost.cacheRead, cacheWrite: cost.cacheWrite, total: cost.total } },
       content: message.content.flatMap(part => part.type === "text" ? [{ type: "text", text: part.text }] : part.type === "toolCall" ? [{ type: "toolCall", id: part.id, name: part.name, arguments: safeArguments(part.arguments) }] as unknown[] : []) };
   }
+  const memoryDependencies = memoryReferences((message as AgentMessage & { memoryDependencies?: unknown }).memoryDependencies);
+  if (clean && Array.isArray((message as AgentMessage & { memoryDependencies?: unknown }).memoryDependencies)) Object.assign(clean, { memoryDependencies });
   return Value.Check(ChatTranscriptMessageSchema, clean) ? structuredClone(clean) : undefined;
 }
 
@@ -36,14 +40,22 @@ export function restoreSessionContext(context: AgentContextSnapshot, model: Mode
     if (!turn) return mapHistoryMessages([message], model);
     if (emitted.has(turn.requestId)) return [];
     emitted.add(turn.requestId);
-    return turn.messages as Message[];
+    return markUntrackedCollaboration(turn.messages as AgentMessage[]) as Message[];
   });
   const entries: Entry[] = messages.map((message, index) => ({ type: "message", id: `history-${index}`, parentId: index === 0 ? null : `history-${index - 1}`, seq: index, timestamp: message.timestamp, message }));
+  const legacyCompaction = context.compaction?.memoryDependencies === undefined && (
+    hasUntrackedCollaboration((context.compaction?.retainedMessages ?? []) as AgentMessage[]) ||
+    (context.historyTurns ?? []).some(turn => hasUntrackedCollaboration(turn.messages as AgentMessage[]))
+  );
   if (context.compaction) entries.unshift({ type: "compaction", id: "chat-compaction", parentId: null, seq: -1,
     timestamp: context.compaction.createdAt, summary: context.compaction.summary,
-    retainedTail: context.compaction.retainedMessages as AgentMessage[], tokensBefore: context.compaction.tokensBefore });
+    retainedTail: markUntrackedCollaboration(context.compaction.retainedMessages as AgentMessage[]), tokensBefore: context.compaction.tokensBefore });
+  const restored = buildSessionContext(entries).messages;
+  if (context.compaction) for (const message of restored) if (message.role === "compactionSummary") {
+    tagMemoryDependencies(message, legacyCompaction ? [{ id: "legacy.untracked-memory", revision: 1 }] : context.compaction.memoryDependencies ?? []);
+  }
   return {
-    messages: buildSessionContext(entries).messages as Message[],
+    messages: restored as Message[],
     provenance: (context.historyTurns ?? []).filter(turn => emitted.has(turn.requestId)).map(turn => {
       const results = turn.messages.filter(message => message.role === "toolResult" && ["web_search", "read_webpage"].includes(message.toolName));
       return `历史请求 ${turn.requestId}: network=${turn.network}; networkResults=${results.length}; successfulNetworkResults=${results.filter(message => message.role === "toolResult" && !message.isError).length}。仅记录当时权限与实际工具结果，不表示本轮新核实。`;

@@ -1,7 +1,9 @@
 import { Value } from "typebox/value";
 import { parseTraceEvent, parseTraceHealth, parseTraceContent, type TraceContentMode, type TraceHealth, type TraceContext, type TraceEvent } from "@deepfield/base/trace";
 import { traceContentRequestSecrets, traceContentCredentialSafe, type TraceContentHost } from "../shared/trace-content.js";
-import { currentTrace } from "@deepfield/base/trace/runtime";
+import { currentTrace, type TraceScope } from "@deepfield/base/trace/runtime";
+import { parseAgentCoordinatorSnapshot } from '@deepfield/base/agent/collaboration';
+import type { ChatCollaborationState } from '@deepfield/contracts';
 import { AgentWorkerEventSchema, ToolEventEnvelopeSchema, type AgentWorkerEvent, type AgentWorkerRequest, type ToolExecutionEvent, type ToolRunRequest } from "@deepfield/contracts";
 import { CapabilityWorkerEventSchema, CapabilityActivationReplySchema, type CapabilityWorkerRequest, type CapabilityWorkerEvent } from "@deepfield/capability-sdk";
 import {
@@ -52,7 +54,7 @@ export class AgentWorkerClient {
   private readonly contentOwners = new Map<string, { rootTraceId: string; parentSpanId: string; mode: TraceContentMode; expires: number; secrets: readonly string[] }>();
   private contentDeliveryPending = false;
   private readonly contentExpiry: ReturnType<typeof setInterval>;
-  private readonly traceOwners = new Map<string, TraceContext>();
+  private readonly traceOwners = new Map<string, TraceContext & { conversationId?: string; parentRequestId?: string; taskId?: string }>();
   private readonly pending = new Map<string, PendingStream>();
   private readonly tombstones = new ToolTransportTombstones();
   private readonly unsubscribeMessage: () => void;
@@ -80,7 +82,7 @@ export class AgentWorkerClient {
 
   send(request: AgentWorkerRequest): AsyncIterable<AgentWorkerEvent> {
     if (request.trace && !this.pending.has(request.requestId)) {
-      this.traceOwners.set(request.requestId, request.trace);
+      this.traceOwners.set(request.requestId, { ...request.trace, conversationId: request.context.conversationId });
       // Retain late telemetry after terminal delivery, with bounded memory.
       if (this.traceOwners.size > 2000) this.traceOwners.delete(this.traceOwners.keys().next().value!);
     }
@@ -89,6 +91,28 @@ export class AgentWorkerClient {
       id: request.requestId,
       request,
     });
+  }
+
+  /** Called only after the host has validated and durably saved this checkpoint. */
+  registerCollaborationTrace(requestId: string, state: ChatCollaborationState): void {
+    const owner = this.traceOwners.get(requestId);
+    if (!owner || this.pending.get(requestId)?.kind !== 'chat' || owner.parentRequestId) return;
+    try {
+      const snapshot = parseAgentCoordinatorSnapshot(JSON.parse(state.snapshot));
+      if (snapshot.owner.kind !== 'chat' || snapshot.owner.id !== owner.conversationId) return;
+      const runs = snapshot.tasks.flatMap(task => task.runs.filter(run => ['queued', 'running', 'cancelling'].includes(run.status)).map(run => ({ taskId: task.taskId, runId: run.runId })));
+      if (runs.some(run => { const existing = this.traceOwners.get(run.runId); return existing && (existing.parentRequestId !== requestId || existing.rootTraceId !== owner.rootTraceId || existing.taskId !== run.taskId); })) return;
+      for (const run of runs) this.traceOwners.set(run.runId, { ...owner, parentRequestId: requestId, taskId: run.taskId });
+      while (this.traceOwners.size > 2000) this.traceOwners.delete(this.traceOwners.keys().next().value!);
+    } catch { /* Invalid optional telemetry never changes checkpoint delivery. */ }
+  }
+
+  traceForMemory(requestId: string, toolCallId: string, scope: TraceScope | undefined): TraceScope | undefined {
+    if (!scope) return undefined;
+    const owner = this.traceOwners.get(requestId), source = this.traceOwners.get(scope.requestId);
+    if (!owner || !source || this.pending.get(requestId)?.kind !== 'chat' || scope.rootTraceId !== owner.rootTraceId || source.rootTraceId !== owner.rootTraceId || scope.spanId === owner.spanId) return undefined;
+    if (scope.requestId !== requestId && (source.parentRequestId !== requestId || !toolCallId.startsWith(`${scope.requestId}:`) || toolCallId.length <= scope.requestId.length + 1)) return undefined;
+    return { rootTraceId: scope.rootTraceId, spanId: scope.spanId, requestId: scope.requestId };
   }
 
   activateCapability(capabilityId: string, entry: string, requestId: string, timeoutMs = 10_000): Promise<void> {
@@ -157,6 +181,12 @@ export class AgentWorkerClient {
     if (this.disposed) throw new Error("agent worker client is disposed");
     if (this.exited) throw new AgentWorkerExitedError(this.exitCode);
     this.endpoint.postMessage({ requestId, kind: "capability.cancel", capabilityId, operation });
+  }
+
+  cancel(requestId: string, taskId?: string): void {
+    if (this.disposed || this.exited) throw new Error("agent worker unavailable");
+    if (!this.pending.has(requestId)) return;
+    this.endpoint.postMessage({ requestId, kind: "chat.cancel", ...(taskId ? { taskId } : {}) });
   }
 
   private sendStream<T extends StreamEvent>(spec: {
@@ -242,6 +272,7 @@ export class AgentWorkerClient {
     this.disposed = true;
     clearInterval(this.contentExpiry);
     this.contentOwners.clear();
+    this.traceOwners.clear();
     for (const activation of [...this.activations.values()]) activation.finish(false);
     this.notifyUnavailable();
     this.unsubscribeMessage();
@@ -285,7 +316,10 @@ export class AgentWorkerClient {
       try {
         const event = parseTraceEvent((value as { event?: unknown }).event);
         const owner = this.traceOwners.get(event.requestId);
-        if (owner?.rootTraceId === event.rootTraceId && event.spanId !== owner.spanId && !("kind" in event && event.kind === "request") && !event.links?.some(link => link.rootTraceId !== owner.rootTraceId)) void Promise.resolve(this.options.trace?.(event)).catch(() => undefined);
+        const childIdentityValid = !owner?.parentRequestId || !("kind" in event && event.kind === 'task') || (event.taskId === owner.taskId && event.runId === event.requestId);
+        if (owner?.rootTraceId === event.rootTraceId && childIdentityValid && event.spanId !== owner.spanId && !("kind" in event && event.kind === "request") && !event.links?.some(link => link.rootTraceId !== owner.rootTraceId)) {
+          void Promise.resolve(this.options.trace?.(event)).catch(() => undefined);
+        }
         else this.options.onTraceRejected?.();
       } catch { try { this.options.onTraceRejected?.(); } catch { /* Optional telemetry. */ } }
       return;
